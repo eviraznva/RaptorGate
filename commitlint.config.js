@@ -48,7 +48,7 @@ module.exports = {
 
     // Subject line max length
     'subject-empty': [2, 'never'],
-    'subject-max-length': [2, 'always', 50],
+    'subject-max-length': [2, 'always', 250],
 
     // Body line max length
     'body-leading-blank': [2, 'always'],
