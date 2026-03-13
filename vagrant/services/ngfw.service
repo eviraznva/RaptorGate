@@ -1,0 +1,16 @@
+  [Unit]
+  Description=NGFW daemon
+  After=network.target
+
+  [Service]
+  ExecStart=/resources/ngfw/ngfw
+  Restart=on-failure
+  RestartSec=5
+  StandardOutput=journal
+  Type=simple
+  StandardError=journal
+  User=root
+  AmbientCapabilities=CAP_NET_RAW
+
+  [Install]
+  WantedBy=multi-user.target

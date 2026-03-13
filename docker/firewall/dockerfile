@@ -1,0 +1,29 @@
+ARG PROJECT_NAME=ngfw
+
+FROM rust:1.93.1-slim-bullseye AS build
+ARG PROJECT_NAME
+ENV PROJECT_NAME=${PROJECT_NAME}
+WORKDIR /usr/src/${PROJECT_NAME}
+
+RUN apt-get update
+RUN apt-get install -y --no-install-recommends pkg-config libpcap-dev build-essential ca-certificates curl unzip
+RUN curl -fsSL https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip -o /tmp/protoc.zip \
+    && unzip /tmp/protoc.zip -d /usr/local \
+    && rm /tmp/protoc.zip
+
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY proto ./proto
+COPY src ./src
+
+RUN cargo test
+RUN cargo build
+
+RUN mkdir -p /build/output && \
+    cp target/debug/${PROJECT_NAME} /build/output/${PROJECT_NAME}
+
+FROM alpine:3.19 AS runtime
+ARG PROJECT_NAME
+ENV PROJECT_NAME=${PROJECT_NAME}
+
+WORKDIR /app/bin
+COPY --from=build /build/output/${PROJECT_NAME} ./
