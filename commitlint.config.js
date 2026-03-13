@@ -1,68 +1,64 @@
 module.exports = {
   extends: ['@commitlint/config-conventional'],
-  
+
   rules: {
-    // Type must be one of the allowed types
+    // Typ musi być jednym z dozwolonych
     'type-enum': [
       2,
       'always',
       [
-        'feat',      // A new feature
-        'fix',       // A bug fix
-        'docs',      // Documentation only
-        'style',     // Changes that don't affect code meaning
-        'refactor',  // Code change that neither fixes bug nor adds feature
-        'perf',      // Code change that improves performance
-        'test',      // Adding missing tests or correcting existing tests
-        'chore',     // Changes to build process, dependencies, etc
-        'ci',        // Changes to CI/CD configuration
+        'feat',      // Nowa funkcjonalność
+        'fix',       // Naprawa błędu
+        'docs',      // Wyłącznie dokumentacja
+        'style',     // Zmiany nie wpływające na logikę kodu
+        'refactor',  // Zmiana kodu bez naprawy błędu ani nowej funkcji
+        'perf',      // Poprawa wydajności
+        'test',      // Dodawanie lub poprawianie testów
+        'chore',     // Zmiany w procesie budowania, zależności itp.
+        'ci',        // Zmiany w konfiguracji CI/CD
       ]
     ],
 
-    // Scope should be lowercase
+    // Zakres musi być małymi literami
     'scope-case': [2, 'always', 'lowercase'],
 
-    // Scope should be one of these (optional, but validated if present)
+    // Zakres musi być jednym z poniższych (opcjonalny, ale walidowany jeśli podany)
     'scope-enum': [
       2,
       'always',
       [
-        'firewall',       // NGFW firewall module
-        'packet-capture', // Packet capture & sniffing
-        'docker',         // Docker & containerization
-        'ci-cd',          // GitHub Actions & pipelines
-        'core',           // Core application
-        'config',         // Configuration files
-        'deps',           // Dependencies
+        'firewall',       // Pipeline Rust — pcap, parser, conntrack, NAT, policy engine, inspekcja, ML
+        'packet-capture', // Przechwytywanie pakietów
+        'docker',         // Docker i konteneryzacja
+        'ci-cd',          // GitHub Actions i potoki CI/CD
+        'core',           // Rdzeń aplikacji
+        'config',         // Pliki konfiguracyjne
+        'deps',           // Zależności
       ]
     ],
 
-    // Type must be lowercase
+    // Typ musi być małymi literami
     'type-case': [2, 'always', 'lowercase'],
 
-    // Subject must not end with a period
+    // Temat nie może kończyć się kropką
     'subject-full-stop': [2, 'never', '.'],
 
-    // Subject must use imperative (add, fix, not added, fixed)
+    // Temat musi być w trybie rozkazującym (add, fix, nie added, fixed)
     'subject-case': [2, 'never', ['start-case', 'pascal-case', 'upper-case']],
 
-    // Subject line max length
     'subject-empty': [2, 'never'],
     'subject-max-length': [2, 'always', 250],
 
-    // Body line max length
+    // Treść commita
     'body-leading-blank': [2, 'always'],
-    'body-max-line-length': [2, 'always', 72],
+    'body-max-line-length': [2, 'always', 250],
 
-    // Footer line max length
+    // Stopka commita
     'footer-leading-blank': [2, 'always'],
-    'footer-max-line-length': [2, 'always', 72],
-
-    // Require a body for non-chore commits (optional, set to 0 to disable)
-    // 'body-empty': [0, 'never'],
+    'footer-max-line-length': [2, 'always', 100],
   },
 
-  // Ignored patterns (commits that don't require validation)
+  // Wzorce ignorowane (commity niewymagające walidacji)
   ignores: [
     (commit) => commit.includes('WIP'),
     (commit) => commit.startsWith('Merge pull request'),
@@ -70,92 +66,82 @@ module.exports = {
     (commit) => commit.startsWith('Revert'),
   ],
 
-  // Prompt configuration (if using commitizen)
+  // Konfiguracja promptu (jeśli używasz commitizen)
   prompt: {
     settings: {},
     messages: {
-      skip: ':skip',
-      max: 'upper %s chars',
-      min: '%s chars at least',
-      emptyNotAllowed: 'empty not allowed',
-      upperLimitWarning: 'over limit',
-      commitIsNotInScope: 'commit message is not in the scope of this project',
-      userAbort: 'User action was cancelled.',
+      skip: ':pomiń',
+      max: 'maks. %s znaków',
+      min: 'min. %s znaków',
+      emptyNotAllowed: 'pole nie może być puste',
+      upperLimitWarning: 'przekroczono limit',
+      userAbort: 'Anulowano.',
     },
     questions: {
       type: {
         description:
-          "Select the type of change that you're committing:\n" +
-          '  feat:     A new feature\n' +
-          '  fix:      A bug fix\n' +
-          '  docs:     Documentation only\n' +
-          '  style:    Code formatting (no logic change)\n' +
-          '  refactor: Code refactoring\n' +
-          '  perf:     Performance improvement\n' +
-          '  test:     Adding or updating tests\n' +
-          '  chore:    Build, deps, config\n' +
-          '  ci:       CI/CD changes\n',
+          'Wybierz typ zmiany:\n' +
+          '  feat:     Nowa funkcjonalność\n' +
+          '  fix:      Naprawa błędu\n' +
+          '  docs:     Wyłącznie dokumentacja\n' +
+          '  style:    Formatowanie (bez zmian logiki)\n' +
+          '  refactor: Refaktoryzacja kodu\n' +
+          '  perf:     Poprawa wydajności\n' +
+          '  test:     Dodawanie lub aktualizacja testów\n' +
+          '  chore:    Zależności, narzędzia, konfiguracja\n' +
+          '  ci:       Zmiany CI/CD\n',
         enum: {
           feat: {
-            description: 'A new feature',
-            title: 'Features',
-            emoji: '✨',
+            description: 'Nowa funkcjonalność',
+            title: 'Funkcjonalności',
           },
           fix: {
-            description: 'A bug fix',
-            title: 'Bug Fixes',
-            emoji: '🐛',
+            description: 'Naprawa błędu',
+            title: 'Naprawy błędów',
           },
           docs: {
-            description: 'Documentation only changes',
-            title: 'Documentation',
-            emoji: '📝',
+            description: 'Wyłącznie zmiany dokumentacji',
+            title: 'Dokumentacja',
           },
           style: {
-            description: 'Changes that do not affect code meaning (formatting)',
-            title: 'Styles',
-            emoji: '💎',
+            description: 'Zmiany niemodyfikujące logiki (formatowanie)',
+            title: 'Styl',
           },
           refactor: {
-            description: 'A code change that neither fixes a bug nor adds a feature',
-            title: 'Code Refactoring',
-            emoji: '♻️',
+            description: 'Zmiana kodu bez naprawy błędu ani nowej funkcji',
+            title: 'Refaktoryzacja',
           },
           perf: {
-            description: 'A code change that improves performance',
-            title: 'Performance Improvements',
-            emoji: '⚡',
+            description: 'Zmiana kodu poprawiająca wydajność',
+            title: 'Wydajność',
           },
           test: {
-            description: 'Adding missing tests or correcting existing tests',
-            title: 'Tests',
-            emoji: '🧪',
+            description: 'Dodawanie lub poprawianie testów',
+            title: 'Testy',
           },
           chore: {
-            description: 'Other changes that don\'t modify src or test files',
-            title: 'Chores',
-            emoji: '🔧',
+            description: 'Inne zmiany niemodyfikujące kodu źródłowego ani testów',
+            title: 'Utrzymanie',
           },
           ci: {
-            description: 'Changes to CI/CD configuration and scripts',
+            description: 'Zmiany konfiguracji i skryptów CI/CD',
             title: 'CI/CD',
-            emoji: '👷',
           },
         },
       },
       scope: {
-        description: 'What is the scope of this change? (e.g. firewall, packet-capture)',
+        description: 'Jaki jest zakres tej zmiany? (np. firewall, packet-capture)',
         enum: {
           firewall: {
-            description: 'NGFW firewall rules',
+            description: 'Pipeline Rust — reguły, policy engine, inspekcja',
             title: 'Firewall',
           },
           'packet-capture': {
-            description: 'Packet capture module',
+            description: 'Moduł przechwytywania pakietów',
             title: 'Packet Capture',
           },
           docker: {
-            description: 'Docker configuration',
+            description: 'Konfiguracja Docker',
             title: 'Docker',
           },
           'ci-cd': {
@@ -163,37 +149,37 @@ module.exports = {
             title: 'CI/CD',
           },
           core: {
-            description: 'Core application',
+            description: 'Rdzeń aplikacji',
             title: 'Core',
           },
           config: {
-            description: 'Configuration files',
-            title: 'Config',
+            description: 'Pliki konfiguracyjne',
+            title: 'Konfiguracja',
           },
           deps: {
-            description: 'Dependencies',
-            title: 'Dependencies',
+            description: 'Zależności',
+            title: 'Zależności',
           },
         },
       },
       subject: {
-        description: 'Write a short, imperative tense description of the change:\n',
+        description: 'Napisz krótki opis zmiany w trybie rozkazującym:\n',
       },
       body: {
-        description: 'Provide a longer description of the change:\n',
+        description: 'Podaj dłuższy opis zmiany (wyjaśnij DLACZEGO):\n',
       },
       isBreaking: {
-        description: 'Are there any breaking changes?',
+        description: 'Czy są przełomowe zmiany (breaking changes)?',
       },
       breakingBody: {
-        description: 'Describe the breaking changes:\n',
+        description: 'Opisz przełomowe zmiany:\n',
       },
       footer: {
         description:
-          'List any closed issues (e.g. #31, #34):\n',
+          'Podaj zamknięte zgłoszenia (np. Closes FW-42, Fixes BE-12):\n',
       },
       confirmCommit: {
-        description: 'Are you sure you want to proceed with the commit above?',
+        description: 'Czy na pewno chcesz zatwierdzić powyższy commit?',
       },
     },
   },
