@@ -1,0 +1,28 @@
+[package]
+name = "ngfw"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+derive_more = {version =  "2.1.1", features = ["full"] }
+etherparse = "0.19.0"
+nonempty = "0.12.0"
+pcap = "2.4.0"
+thiserror = "2.0.18"
+tokio = { version = "1.50.0", features = ["full"] }
+tun = {version = "0.8.5", features = ["async"] }
+serde = { version = "1.0.228", features = ["derive"] }
+time = { version = "0.3.47", features = ["serde"] }
+prost = "0.14.3"
+tonic-prost = "0.14.5"
+prost-types = "0.14.3"
+uuid = { version = "1.22.0", features = ["v4"] }
+tonic = "0.14.5"
+anyhow = "1.0.102"
+serde_json = "1.0.149"
+arc-swap = "1.8.2"
+redis = { version = "1.0.5", features = ["aio", "tokio-comp"] }
+
+[build-dependencies]
+protoc-bin-vendored = "3.2.0"
+tonic-prost-build = "0.14.5"

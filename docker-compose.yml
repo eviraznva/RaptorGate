@@ -1,0 +1,8 @@
+services:
+  app_build:
+    build:
+      context: .
+      dockerfile: ./docker/firewall/dockerfile
+    volumes:
+      - ./bin:/host/bin
+    command: "cp -rf . /host/bin/"
