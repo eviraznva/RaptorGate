@@ -16,7 +16,9 @@ export class TokenService implements ITokenService {
   ) {}
 
   async generateAccessToken(payload: TokenPayload): Promise<string> {
-    const accessToken = await this.jwtService.signAsync(payload);
+    const accessToken = await this.jwtService.signAsync(payload, {
+      secret: this.configService.get('JWT_SECRET'),
+    });
     return accessToken;
   }
 
