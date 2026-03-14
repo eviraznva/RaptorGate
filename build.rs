@@ -4,14 +4,14 @@ const CLIENT_PROTO_FILES: &[&str] = &[
     "proto/common/common.proto",
     "proto/config/config_models.proto",
     "proto/config/config_service.proto",
-    "proto/lifecycle/lifecycle_service.proto",
+    // "proto/lifecycle/lifecycle_service.proto",
     "proto/telemetry/telemetry_models.proto",
-    "proto/telemetry/telemetry_service.proto",
+    // "proto/telemetry/telemetry_service.proto",
 ];
 
 const STATUS_SERVER_PROTO_FILES: &[&str] = &[
     "proto/common/common.proto",
-    "proto/status/firewall_status_service.proto",
+    // "proto/status/firewall_status_service.proto",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

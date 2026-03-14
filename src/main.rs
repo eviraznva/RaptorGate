@@ -1,29 +1,18 @@
-use tokio::task;
 use tokio::sync::mpsc;
+use tokio::task;
 
+use std::cmp::min;
 use std::sync::Arc;
 
+use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 use pcap::Direction;
 use tun::AsyncDevice;
-use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
-use crate::frame::RealFrame;
-use crate::policy_evaluator::PolicyEvaluator;
-use crate::rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
+use crate::{frame::RealFrame, policy_evaluator::PolicyEvaluator, rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict}};
 
-use frame::RealFrame;
-use policy_evaluator::PolicyEvaluator;
-use rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
-
-use crate::app_config::AppConfig;
-use crate::control_plane::ControlPlane;
-
-mod app_config;
-mod control_plane;
 mod frame;
-mod rule_tree;
-mod grpc_client;
 mod policy_evaluator;
+mod rule_tree;
 
 /// Set to `true` to drop all ICMPv4 packets (ping, etc.).
 /// Set to `false` to let them pass through.
@@ -31,39 +20,6 @@ const BLOCK_ICMP: bool = false;
 
 #[tokio::main]
 async fn main() {
-    let app_config = AppConfig::from_env().unwrap();
-
-    println!("Starting the firewall with config: {app_config:#?}");
-
-    let control_plane = Arc::new(ControlPlane::new(app_config.clone()));
-
-    control_plane.startup().await.unwrap();
-
-    {
-        let control_plane = Arc::clone(&control_plane);
-
-        tokio::spawn(async move {
-            if let Err(err) = control_plane.run_redis_consumer().await {
-                eprintln!("Redis consumer failed: {err:#}");
-            }
-        });
-    }
-
-    {
-        let control_plane = Arc::clone(&control_plane);
-
-        tokio::spawn(async move {
-            if let Err(err) = control_plane.run_firewall_status_server().await {
-                eprintln!("Firewall status gRPC server failed: {err:#}");
-            }
-        });
-    }
-
-    let redis_publisher = control_plane.redis_publisher();
-
-    // loop {
-    //     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-    // }
 
     let all_devices = match pcap::Device::list() {
         Ok(list) => list,
@@ -75,7 +31,6 @@ async fn main() {
 
     let devices: Vec<pcap::Device> = all_devices
         .into_iter()
-        .inspect(|dev| println!("Found device: {}", dev.name))
         .filter(|dev| dev.name == "eth1" || dev.name == "eth2")
         .collect();
 
