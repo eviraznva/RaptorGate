@@ -1,11 +1,11 @@
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Pool } from 'pg';
 import { usersTable } from './src/infrastructure/persistence/schemas/users.schema';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { Role } from './src/domain/enums/role.enum';
+import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
-import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
+import { Pool } from 'pg';
 
 dotenv.config();
 
