@@ -10,6 +10,6 @@ export class AppController {
   @IsPublic()
   @Get()
   getHello(): string {
-    return 'Hello World';
+    return 'Hello World!';
   }
 }

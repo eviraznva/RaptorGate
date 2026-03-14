@@ -11,6 +11,7 @@
   StandardError=journal
   User=root
   AmbientCapabilities=CAP_NET_RAW
+  Environment="CAPTURE_INTERFACES=eth1,eth2"
 
   [Install]
   WantedBy=multi-user.target

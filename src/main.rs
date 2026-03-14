@@ -1,15 +1,14 @@
-use tokio::task;
 use tokio::sync::mpsc;
+use tokio::task;
 
+use std::cmp::min;
 use std::sync::Arc;
 
+use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 use pcap::Direction;
 use tun::AsyncDevice;
-use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
-use crate::frame::RealFrame;
-use crate::policy_evaluator::PolicyEvaluator;
-use crate::rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
+use crate::{frame::RealFrame, policy_evaluator::PolicyEvaluator, rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict}};
 
 mod frame;
 mod rule_tree;
@@ -153,7 +152,7 @@ async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, evaluator: &
 
     let verdict = RealFrame::from_sliced(&packet).and_then(|frame| evaluator.evaluate(&frame));
 
-    let allow = matches!(verdict, Some(Verdict::Allow) | Some(Verdict::AllowWarn(_)));
+    let allow = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
 
     // Log warnings attached to verdict
     match &verdict {
