@@ -1,0 +1,216 @@
+syntax = "proto3";
+
+package raptorgate.config;
+
+import "common/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Modele sekcji konfiguracji
+//
+// Każda sekcja posiada własny numer wersji (uint64). Backend inkrementuje
+// wersję sekcji przy każdej zmianie jej zawartości. Firewall przechowuje
+// znane wersje w lokalnym snapshotcie Redb i wysyła je w GetConfigRequest
+// (pole known_versions) aby pobrać tylko zmienione sekcje (delta).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Reguły RaptorLang ────────────────────────────────────────────────────────
+
+message Rule {
+  string id           = 1;
+  string name         = 2;
+  string zone_pair_id = 3;
+  uint32 priority     = 4;
+  string content      = 5;  // źródło reguły w języku RaptorLang
+}
+
+message RuleSet {
+  uint64         version  = 1;
+  string         checksum = 2;  // SHA-256 zawartości sekcji
+  repeated Rule  items    = 3;
+}
+
+// ── Strefy sieciowe ──────────────────────────────────────────────────────────
+
+message Zone {
+  string id   = 1;
+  string name = 2;
+}
+
+message ZoneSet {
+  uint64        version = 1;
+  repeated Zone items   = 2;
+}
+
+message ZoneInterface {
+  string          id             = 1;
+  string          zone_id        = 2;
+  string          interface_name = 3;
+  optional uint32 vlan_id        = 4;
+}
+
+message ZoneInterfaceSet {
+  uint64                  version = 1;
+  repeated ZoneInterface  items   = 2;
+}
+
+message ZonePair {
+  string                   id             = 1;
+  string                   src_zone_id    = 2;
+  string                   dst_zone_id    = 3;
+  common.DefaultPolicy     default_policy = 4;
+}
+
+message ZonePairSet {
+  uint64             version = 1;
+  repeated ZonePair  items   = 2;
+}
+
+// ── NAT ──────────────────────────────────────────────────────────────────────
+
+message NatRule {
+  string              id               = 1;
+  common.NatRuleType  type             = 2;
+  string              src_ip           = 3;
+  string              dst_ip           = 4;
+  optional uint32     src_port         = 5;
+  optional uint32     dst_port         = 6;
+  string              translated_ip    = 7;
+  optional uint32     translated_port  = 8;
+  uint32              priority         = 9;
+}
+
+message NatRuleSet {
+  uint64             version = 1;
+  repeated NatRule   items   = 2;
+}
+
+// ── DNS blacklista ────────────────────────────────────────────────────────────
+
+message DnsBlacklistEntry {
+  string id     = 1;
+  string domain = 2;
+}
+
+message DnsBlacklistSet {
+  uint64                      version = 1;
+  repeated DnsBlacklistEntry  items   = 2;
+}
+
+// ── SSL/TLS bypass lista ─────────────────────────────────────────────────────
+
+message SslBypassEntry {
+  string id     = 1;
+  string domain = 2;
+}
+
+message SslBypassSet {
+  uint64                   version = 1;
+  repeated SslBypassEntry  items   = 2;
+}
+
+// ── Sygnatury IPS ────────────────────────────────────────────────────────────
+
+message IpsSignature {
+  string           id       = 1;
+  string           name     = 2;
+  string           category = 3;
+  string           pattern  = 4;
+  common.Severity  severity = 5;
+}
+
+message IpsSignatureSet {
+  uint64                  version = 1;
+  repeated IpsSignature   items   = 2;
+}
+
+// ── Model ML (ONNX) ──────────────────────────────────────────────────────────
+
+message MlModel {
+  uint64 version       = 1;
+  string id            = 2;
+  string name          = 3;
+  string artifact_path = 4;
+  string checksum      = 5;  // SHA-256 pliku modelu
+}
+
+// ── Certyfikaty TLS ──────────────────────────────────────────────────────────
+
+message FirewallCertificate {
+  string                   id              = 1;
+  common.CertificateType   cert_type       = 2;
+  string                   common_name     = 3;
+  string                   fingerprint     = 4;
+  string                   certificate_pem = 5;
+  string                   private_key_ref = 6;
+  google.protobuf.Timestamp expires_at     = 7;
+}
+
+message FirewallCertificateSet {
+  uint64                       version = 1;
+  repeated FirewallCertificate items   = 2;
+}
+
+// ── Tożsamość użytkowników ───────────────────────────────────────────────────
+
+message UserGroup {
+  string                id     = 1;
+  string                name   = 2;
+  common.IdentitySource source = 3;
+}
+
+message IdentityUser {
+  string                id           = 1;
+  string                username     = 2;
+  string                display_name = 3;
+  common.IdentitySource source       = 4;
+  string                external_id  = 5;
+}
+
+message UserGroupMember {
+  string id               = 1;
+  string group_id         = 2;
+  string identity_user_id = 3;
+}
+
+// Aktywna sesja użytkownika uwierzytelnionego przez RADIUS.
+message IdentityManagerUserSession {
+  string                    id                = 1;
+  string                    identity_user_id  = 2;
+  string                    radius_username   = 3;
+  string                    mac_address       = 4;
+  string                    ip_address        = 5;
+  string                    nas_ip            = 6;
+  string                    called_station_id = 7;
+  google.protobuf.Timestamp authenticated_at  = 8;
+  google.protobuf.Timestamp expires_at        = 9;
+}
+
+message IdentityBundle {
+  uint64                              version       = 1;
+  repeated UserGroup                  user_groups   = 2;
+  repeated IdentityUser               identity_users = 3;
+  repeated UserGroupMember            user_group_members = 4;
+  repeated IdentityManagerUserSession user_sessions = 5;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wersje sekcji — używane w mechanizmie delty
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Wersje sekcji znane firewall owi.
+// Backend wysyła daną sekcję tylko gdy jej aktualna wersja jest wyższa
+// niż wartość podana tutaj. Wartość 0 oznacza brak sekcji — backend ją wyśle.
+message ConfigSectionVersions {
+  uint64 rules           = 1;
+  uint64 zones           = 2;
+  uint64 zone_interfaces = 3;
+  uint64 zone_pairs      = 4;
+  uint64 nat_rules       = 5;
+  uint64 dns_blacklist   = 6;
+  uint64 ssl_bypass_list = 7;
+  uint64 ips_signatures  = 8;
+  uint64 ml_model        = 9;
+  uint64 certificates    = 10;
+  uint64 identity        = 11;
+}
