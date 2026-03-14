@@ -11,15 +11,21 @@ use tun::AsyncDevice;
 use crate::{frame::RealFrame, policy_evaluator::PolicyEvaluator, rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict}};
 
 mod frame;
+mod rule_tree;
+mod app_config;
+mod grpc_client;
 mod policy_evaluator;
 mod rule_tree;
 
-/// Set to `true` to drop all ICMPv4 packets (ping, etc.).
-/// Set to `false` to let them pass through.
-const BLOCK_ICMP: bool = false;
-
 #[tokio::main]
 async fn main() {
+    let config = match app_config::AppConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Configuration error: {e}");
+            return;
+        }
+    };
 
     let all_devices = match pcap::Device::list() {
         Ok(list) => list,
@@ -31,7 +37,7 @@ async fn main() {
 
     let devices: Vec<pcap::Device> = all_devices
         .into_iter()
-        .filter(|dev| dev.name == "eth1" || dev.name == "eth2")
+        .filter(|dev| config.capture_interfaces.contains(&dev.name))
         .collect();
 
     if devices.is_empty() {
@@ -48,7 +54,7 @@ async fn main() {
             .join(", ")
     );
 
-    let tun = match setup_tun() {
+    let tun = match setup_tun(&config.tun_device_name, config.tun_address, config.tun_netmask) {
         Ok(t) => Arc::new(t),
         Err(e) => {
             eprintln!("Can't set up tun: {e:?}");
@@ -56,8 +62,9 @@ async fn main() {
         }
     };
 
-    let evaluator = Arc::new(build_policy());
+    let evaluator = Arc::new(build_policy(config.block_icmp));
 
+    let pcap_timeout_ms = config.pcap_timeout_ms;
     let mut handles = Vec::new();
 
     for device in devices {
@@ -69,7 +76,7 @@ async fn main() {
         let capture_name = name.clone();
         task::spawn_blocking(move || {
             let mut cap = match pcap::Capture::from_device(device)
-                .map(|c| c.immediate_mode(true).promisc(true).timeout(5000))
+                .map(|c| c.immediate_mode(true).promisc(true).timeout(pcap_timeout_ms))
                 .and_then(pcap::Capture::open)
             {
                 Ok(c) => c,
@@ -194,10 +201,10 @@ async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, evaluator: &
     }
 }
 
-fn build_policy() -> PolicyEvaluator {
+fn build_policy(block_icmp: bool) -> PolicyEvaluator {
     use frame::Protocol;
 
-    let tree = if BLOCK_ICMP {
+    let tree = if block_icmp {
         RuleTree::new(
             "default".into(),
             "Block ICMP, allow everything else".into(),
@@ -227,12 +234,12 @@ fn build_policy() -> PolicyEvaluator {
     PolicyEvaluator::new(tree, Verdict::Drop)
 }
 
-fn setup_tun() -> tun::Result<AsyncDevice> {
+fn setup_tun(name: &str, address: std::net::Ipv4Addr, netmask: std::net::Ipv4Addr) -> tun::Result<AsyncDevice> {
     let mut config = tun::Configuration::default();
     config
-        .tun_name("tun0")
-        .address((10, 254, 254, 1))
-        .netmask((255, 255, 255, 0))
+        .tun_name(name)
+        .address(address)
+        .netmask(netmask)
         .up();
 
     #[cfg(target_os = "linux")]
