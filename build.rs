@@ -4,14 +4,10 @@ const CLIENT_PROTO_FILES: &[&str] = &[
     "proto/common/common.proto",
     "proto/config/config_models.proto",
     "proto/config/config_service.proto",
-    // "proto/lifecycle/lifecycle_service.proto",
+    "proto/events/backend_events.proto",
+    "proto/events/firewall_events.proto",
     "proto/telemetry/telemetry_models.proto",
-    // "proto/telemetry/telemetry_service.proto",
-];
-
-const STATUS_SERVER_PROTO_FILES: &[&str] = &[
-    "proto/common/common.proto",
-    // "proto/status/firewall_status_service.proto",
+    "proto/raptorgate.proto",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,10 +19,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cargo:rerun-if-changed={file}");
     }
 
-    for file in STATUS_SERVER_PROTO_FILES {
-        println!("cargo:rerun-if-changed={file}");
-    }
-
     println!("cargo:rerun-if-changed=proto");
 
     tonic_prost_build::configure()
@@ -34,10 +26,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(false)
         .compile_protos(CLIENT_PROTO_FILES, PROTO_INCLUDE_DIRS)?;
 
-    tonic_prost_build::configure()
-        .build_client(false)
-        .build_server(true)
-        .compile_protos(STATUS_SERVER_PROTO_FILES, PROTO_INCLUDE_DIRS)?;
-
     Ok(())
 }
+

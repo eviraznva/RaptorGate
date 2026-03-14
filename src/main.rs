@@ -15,7 +15,6 @@ mod rule_tree;
 mod app_config;
 mod grpc_client;
 mod policy_evaluator;
-mod rule_tree;
 
 #[tokio::main]
 async fn main() {
