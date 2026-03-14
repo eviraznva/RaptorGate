@@ -22,6 +22,7 @@
     "db:push": "drizzle-kit push",
     "db:migrate": "drizzle-kit migrate",
     "db:generate": "drizzle-kit generate",
+    "proto:generate": "bun scripts/generate-proto.ts",
     "db:seed": "tsx seed.ts"
   },
   "dependencies": {

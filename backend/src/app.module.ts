@@ -1,6 +1,7 @@
 import { DatabaseModule } from './infrastructure/persistence/database/database.module';
 import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
+import { GrpcModule } from './infrastructure/grpc/grpc.module';
 import { validate } from './shared/config/env.validation';
 import { AuthModule } from './modules/auth.module';
 import { PassportModule } from '@nestjs/passport';
@@ -18,6 +19,7 @@ import { Module } from '@nestjs/common';
     DatabaseModule,
     PassportModule,
     AuthModule,
+    GrpcModule,
   ],
   controllers: [AppController],
   providers: [

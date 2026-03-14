@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { join } from 'node:path';
+import { cwd } from 'node:process';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -45,15 +46,9 @@ async function bootstrap() {
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.GRPC,
     options: {
-      package: 'raptorgate.config',
-      protoPath: join(
-        process.cwd(),
-        '..',
-        'proto',
-        'config',
-        'config_service.proto',
-      ),
-      loader: { includeDirs: [join(process.cwd(), '..', 'proto')] },
+      package: ['raptorgate', 'raptorgate.config', 'raptorgate.events'],
+      protoPath: join(cwd(), '..', 'proto', 'raptorgate.proto'),
+      loader: { includeDirs: [join(cwd(), '..', 'proto')] },
       url: `unix://${absoluteSocketPath}`,
     },
   });
