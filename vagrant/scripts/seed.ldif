@@ -1,0 +1,58 @@
+dn: ou=users,dc=raptorgate,dc=local
+objectClass: organizationalUnit
+ou: users
+
+dn: ou=groups,dc=raptorgate,dc=local
+objectClass: organizationalUnit
+ou: groups
+
+dn: uid=admin,ou=users,dc=raptorgate,dc=local
+objectClass: inetOrgPerson
+objectClass: posixAccount
+uid: admin
+cn: Admin User
+sn: Admin
+userPassword: admin123
+uidNumber: 1001
+gidNumber: 1001
+homeDirectory: /home/admin
+
+dn: uid=user,ou=users,dc=raptorgate,dc=local
+objectClass: inetOrgPerson
+objectClass: posixAccount
+uid: user
+cn: Regular User
+sn: User
+userPassword: user123
+uidNumber: 1002
+gidNumber: 1002
+homeDirectory: /home/user
+
+dn: uid=guest,ou=users,dc=raptorgate,dc=local
+objectClass: inetOrgPerson
+objectClass: posixAccount
+uid: guest
+cn: Guest User
+sn: Guest
+userPassword: guest123
+uidNumber: 1003
+gidNumber: 1003
+homeDirectory: /home/guest
+
+dn: cn=admins,ou=groups,dc=raptorgate,dc=local
+objectClass: posixGroup
+cn: admins
+gidNumber: 1001
+memberUid: admin
+
+dn: cn=users,ou=groups,dc=raptorgate,dc=local
+objectClass: posixGroup
+cn: users
+gidNumber: 1002
+memberUid: user
+
+dn: cn=guests,ou=groups,dc=raptorgate,dc=local
+objectClass: posixGroup
+cn: guests
+gidNumber: 1003
+memberUid: guest

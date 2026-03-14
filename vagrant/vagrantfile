@@ -1,6 +1,14 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
+def configure_interface(iface, ip, mask, gateway = nil)
+  <<-SHELL
+    sudo ip link set #{iface} up
+    sudo ip addr add #{ip}/#{mask} dev #{iface}
+    #{gateway ? "ip route del default 2>/dev/null || true\nip route add default via #{gateway}" : ""}
+  SHELL
+end
+
 def setup_tun_device
   <<-SHELL
     modprobe tun
@@ -85,6 +93,16 @@ def setup_redis
   SHELL
 end
 
+def setup_backend_service
+  <<-SHELL
+    chmod +x /resources/backend/bun
+    cp -f /resources/services/backend.service /etc/systemd/system/backend.service
+    systemctl daemon-reload
+    systemctl enable backend
+    systemctl restart backend
+  SHELL
+end
+
 def setup_ngfw_service
   <<-SHELL
     sysctl -w net.ipv4.ip_forward=1
@@ -92,7 +110,7 @@ def setup_ngfw_service
 
     # Disable reverse path filtering on tun0.
     # Without this, the kernel drops packets arriving on tun0 whose source IP
-    # (e.g. 192.168.1.10) has a route through a different interface (enp0s8).
+    # (e.g. 192.168.10.10) has a route through a different interface (enp0s8).
     # rp_filter checks: "would I route a reply back through the same interface
     # this packet arrived on?" — for tun0 the answer is always no, so it drops.
     sysctl -w net.ipv4.conf.all.rp_filter=0
@@ -121,18 +139,21 @@ unless File.respond_to?(:exists?)
 end
 
 Vagrant.configure("2") do |config|
+  config.vagrant.plugins = "vagrant-libvirt"
   # config.vbguest.auto_update = true
-  config.vm.box = "ubuntu/jammy64"
+  config.vm.box = "bento/ubuntu-24.04"
 
-  config.vm.provider "virtualbox" do |vb|
-    vb.memory = 1024
-    vb.cpus   = 2
+  config.vm.provider "libvirt" do |lv|
+    lv.memory = 1024
+    lv.cpus   = 2
+    lv.uri = "qemu:///system"
   end
+  config.vm.synced_folder ".", "/vagrant", disabled: true
 
   # ---------------------------------------------------------------
   # Network layout:
-  #   192.168.1.0/24  (intnet1) : h1  (.10)  — r1 (.254)
-  #   192.168.2.0/24  (intnet2) : h2  (.10)  — r1 (.254)
+  #   192.168.10.0/24  (intnet1) : h1  (.10)  — r1 (.254)
+  #   192.168.20.0/24  (intnet2) : h2  (.10)  — r1 (.254)
   #                                             ldap  (.20)
   #                                             radius (.30)
   #   r1 also runs the backend API (internal only, port 3000)
@@ -142,13 +163,13 @@ Vagrant.configure("2") do |config|
   config.vm.define "h1" do |h1|
     h1.vm.hostname = "h1"
     h1.vm.network "private_network",
-      ip: "192.168.1.10",
+      ip: "192.168.10.10",
       netmask: "255.255.255.0",
-      virtualbox__intnet: "intnet1"
+      libvirt__network_name: "intnet1"
 
-    h1.vm.provision "shell", inline: <<-SHELL
+    h1.vm.provision "shell", inline: configure_interface("eth1", "192.168.10.10", "24", "192.168.10.254") + <<-SHELL
     ip route del default 2>/dev/null || true
-    ip route add default via 192.168.1.254
+    ip route add default via 192.168.10.254
     SHELL
   end
 
@@ -156,13 +177,13 @@ Vagrant.configure("2") do |config|
   config.vm.define "h2" do |h2|
     h2.vm.hostname = "h2"
     h2.vm.network "private_network",
-      ip: "192.168.2.10",
+      ip: "192.168.20.10",
       netmask: "255.255.255.0",
-      virtualbox__intnet: "intnet2"
+      libvirt__network_name: "intnet2"
 
-    h2.vm.provision "shell", inline: <<-SHELL
+    h2.vm.provision "shell", inline: configure_interface("eth1", "192.168.20.10", "24", "192.168.20.254") + <<-SHELL
     ip route del default 2>/dev/null || true
-    ip route add default via 192.168.2.254
+    ip route add default via 192.168.20.254
     SHELL
   end
 
@@ -170,17 +191,60 @@ Vagrant.configure("2") do |config|
   config.vm.define "r1" do |r1|
     r1.vm.hostname = "r1"
     r1.vm.network "private_network",
-      ip: "192.168.1.254",
+      ip: "192.168.10.254",
       netmask: "255.255.255.0",
-      virtualbox__intnet: "intnet1"
+      libvirt__network_name: "intnet1"
     r1.vm.network "private_network",
-      ip: "192.168.2.254",
+      ip: "192.168.20.254",
       netmask: "255.255.255.0",
-      virtualbox__intnet: "intnet2"
+      libvirt__network_name: "intnet2"
 
-    r1.vm.synced_folder ".router_sync", "/resources", id: "ngfw"
+    # config.trigger.before :provision do |t|
+    #   t.info = "rsyncing .router_sync -> /resources"
+    #   t.run = { inline: "vagrant rsync r1" }
+    # end
 
-    r1.vm.provision "shell", inline: setup_tun_device + setup_nftables + setup_ngfw_service
+    r1.vm.synced_folder ".router_sync", "/resources", id: "ngfw", type: "rsync"
+
+    r1.vm.provision "shell", inline:
+      configure_interface("eth1", "192.168.10.254", "24") +
+      configure_interface("eth2", "192.168.20.254", "24") +
+      setup_tun_device + setup_nftables + setup_ngfw_service + setup_postgres + setup_backend_service
+
+    # r1 has two interfaces, no gateway needed since it IS the gateway
   end
 
+  config.vm.define "ldap" do |ldap|
+    ldap.vm.hostname = "ldap"
+    ldap.vm.network "private_network",
+      ip: "192.168.20.20",
+      netmask: "255.255.255.0",
+      libvirt__network_name: "intnet2"
+
+    ldap.vm.provision "file",
+      source: "scripts/seed.ldif",
+      destination: "/tmp/seed.ldif"
+
+
+    ldap.vm.provision "shell", path: "scripts/provision-ldap.sh"
+    ldap.vm.provision "shell", inline: configure_interface("eth1", "192.168.20.20", "24", "192.168.20.254") + <<-SHELL
+      # ip route del default 2>/dev/null || true
+      # ip route add default via 192.168.20.254
+    SHELL
+  end
+
+  config.vm.define "radius" do |radius|
+    radius.vm.hostname = "radius"
+    radius.vm.network "private_network",
+      ip: "192.168.20.30",
+      netmask: "255.255.255.0",
+      libvirt__network_name: "intnet2"
+
+    radius.vm.provision "shell", path: "scripts/provision-radius.sh"
+
+    radius.vm.provision "shell", inline: configure_interface("eth1", "192.168.20.30", "24", "192.168.20.254") + <<-SHELL
+      ip route del default 2>/dev/null || true
+      ip route add default via 192.168.20.254
+    SHELL
+  end
 end

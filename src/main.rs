@@ -8,6 +8,15 @@ use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 use pcap::Direction;
 use tun::AsyncDevice;
 
+use frame::RealFrame;
+use policy_evaluator::PolicyEvaluator;
+use rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
+
+use crate::app_config::AppConfig;
+use crate::control_plane::ControlPlane;
+
+mod app_config;
+mod control_plane;
 mod frame;
 mod policy_evaluator;
 mod rule_tree;
@@ -18,6 +27,39 @@ const BLOCK_ICMP: bool = false;
 
 #[tokio::main]
 async fn main() {
+    let app_config = AppConfig::from_env().unwrap();
+
+    println!("Starting the firewall with config: {app_config:#?}");
+
+    let control_plane = Arc::new(ControlPlane::new(app_config.clone()));
+
+    control_plane.startup().await.unwrap();
+
+    {
+        let control_plane = Arc::clone(&control_plane);
+
+        tokio::spawn(async move {
+            if let Err(err) = control_plane.run_redis_consumer().await {
+                eprintln!("Redis consumer failed: {err:#}");
+            }
+        });
+    }
+
+    {
+        let control_plane = Arc::clone(&control_plane);
+
+        tokio::spawn(async move {
+            if let Err(err) = control_plane.run_firewall_status_server().await {
+                eprintln!("Firewall status gRPC server failed: {err:#}");
+            }
+        });
+    }
+
+    let redis_publisher = control_plane.redis_publisher();
+
+    // loop {
+    //     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+    // }
 
     let all_devices = match pcap::Device::list() {
         Ok(list) => list,
@@ -29,7 +71,8 @@ async fn main() {
 
     let devices: Vec<pcap::Device> = all_devices
         .into_iter()
-        .filter(|dev| dev.name == "enp0s8" || dev.name == "enp0s9")
+        .inspect(|dev| println!("Found device: {}", dev.name))
+        .filter(|dev| dev.name == "eth1" || dev.name == "eth2")
         .collect();
 
     if devices.is_empty() {
@@ -144,7 +187,7 @@ async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, evaluator: &
 
     let verdict = RealFrame::from_sliced(&packet).and_then(|frame| evaluator.evaluate(&frame));
 
-    let allow = matches!(verdict, Some(Verdict::Allow) | Some(Verdict::AllowWarn(_)));
+    let allow = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
 
     // Log warnings attached to verdict
     match &verdict {
