@@ -374,6 +374,24 @@ mod tests {
     );
 
     gen_space_tests!(
+        left_ge_operator,
+        "> 5",
+        vec![
+            TokenType::Pattern(PatternType::Greater),
+            TokenType::Number(5),
+        ]
+    );
+
+    gen_space_tests!(
+        left_geq_operator,
+        ">= 5",
+        vec![
+            TokenType::Pattern(PatternType::GreaterOrEqual),
+            TokenType::Number(5),
+        ]
+    );
+
+    gen_space_tests!(
         leq_operator,
         "5 <= abc",
         vec![
@@ -617,5 +635,14 @@ mod tests {
             Position { row: 1.into(), col: 8.into() },
         ];
         assert_eq!(got,expected);
+    }
+
+    #[test]
+    fn unclosed_string_literal_returns_error() {
+        let mut lexer = Lexer::new();
+        assert!(matches!(
+                lexer.tokenize("abc \"unclosed"),
+                Err(LexerError::UnclosedStringLiteral(_))
+        ));
     }
 }
