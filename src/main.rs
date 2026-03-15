@@ -15,6 +15,7 @@ mod rule_tree;
 mod app_config;
 mod grpc_client;
 mod policy_evaluator;
+mod packet_validator;
 
 #[tokio::main]
 async fn main() {
@@ -147,6 +148,11 @@ async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, evaluator: &
 
     // Only forward IPv4 packets.
     if !matches!(&packet.net, Some(NetSlice::Ipv4(_))) {
+        return;
+    }
+
+    if let Err(reason) = packet_validator::validate(&packet) {
+        println!("[{iface}] DROP (invalid packet: {reason})");
         return;
     }
 
