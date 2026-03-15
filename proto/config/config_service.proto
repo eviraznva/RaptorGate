@@ -27,11 +27,11 @@ message GetConfigRequest {
   // Powód żądania — używany przez backend do logowania zdarzenia audytowego.
   ConfigRequestReason reason = 2;
 
-  optional int32 known_version = 3;
-
   // Wersje sekcji aktualnie aktywnych w lokalnym snapshotcie (Redb).
   // Brak pola (firewall nie ma snapshotu) → backend wysyła pełny bundle.
-  optional ConfigSectionVersions known_versions = 4;
+  optional ConfigSectionVersions known_versions = 3;
+
+  optional int32 known_version = 4;
 }
 
 enum ConfigRequestReason {
