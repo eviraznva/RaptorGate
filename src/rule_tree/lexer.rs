@@ -218,6 +218,8 @@ impl Lexer {
             "{" => word.into_token(TokenType::LBrace),
             "}" => word.into_token(TokenType::RBrace),
             ":" => word.into_token(TokenType::Semicolon),
+            "match" => word.into_token(TokenType::Keyword(KeywordType::Match)),
+            "verdict" => word.into_token(TokenType::Keyword(KeywordType::Verdict)),
             _ => word.into_token(TokenType::Identifier(word.contents.clone())),
         }
     }
@@ -267,7 +269,7 @@ impl Lexer {
 mod tests {
     use std::vec;
 
-    use crate::rule_tree::lexer::{LexerError, Lexer, PatternType, Position, Token, TokenType};
+    use crate::rule_tree::lexer::{KeywordType, Lexer, LexerError, PatternType, Position, Token, TokenType};
 
     #[test]
     fn empty_ruleset_passes() {
@@ -293,6 +295,21 @@ mod tests {
                         .collect();
                     assert_eq!(got, $expected);
                 }
+                #[test]
+                fn [<$name _space>]() {
+                    let mut lexer = Lexer::new();
+                    let got: Vec<TokenType> = lexer
+                        .tokenize($stream_space)
+                        .unwrap()
+                        .into_iter()
+                        .map(|t| t.kind)
+                        .collect();
+                    assert_eq!(got, $expected);
+                }
+            }
+        };
+        ($name:ident, $stream_space:expr, $expected:expr, $disable_no_space:ident) => {
+            paste::paste! {
                 #[test]
                 fn [<$name _space>]() {
                     let mut lexer = Lexer::new();
@@ -443,6 +460,27 @@ mod tests {
             TokenType::Semicolon,
             TokenType::LBrace,
         ]
+    );
+
+    gen_space_tests!(
+        keyword_match,
+        "match ip {",
+        vec![
+            TokenType::Keyword(KeywordType::Match),
+            TokenType::Identifier("ip".into()),
+            TokenType::LBrace,
+        ],
+        disable
+    );
+
+    gen_space_tests!(
+        keyword_verdict,
+        "verdict allow",
+        vec![
+            TokenType::Keyword(KeywordType::Verdict),
+            TokenType::Identifier("allow".into()),
+        ],
+        disable
     );
 
     #[test]
