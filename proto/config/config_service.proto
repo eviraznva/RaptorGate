@@ -15,8 +15,9 @@ import "config/config_models.proto";
 //   wypełnione
 //
 // Backend porównuje known_versions z aktualnymi wersjami sekcji w PostgreSQL
-// i zwraca tylko sekcje które uległy zmianie. Sekcje niezmienione mają
-// wartość null w odpowiedzi.
+// i zwraca tylko sekcje które uległy zmianie. Informacja o tym, czy dana
+// sekcja uległa zmianie, wynika z porównania known_versions z current_versions
+// w odpowiedzi (pola repeated w proto3 nigdy nie są null).
 // ─────────────────────────────────────────────────────────────────────────────
 
 message GetConfigRequest {
@@ -59,15 +60,25 @@ message ConfigResponse {
   string correlation_id = 3;
 
   // False gdy known_versions w żądaniu były identyczne z aktualnymi wersjami
-  // backendu — firewall ma aktualną konfigurację, pola sekcji poniżej są null.
+  // backendu — firewall ma aktualną konfigurację i backend nie zwraca żadnych
+  // delt w polach sekcji poniżej (pola repeated mogą być pominięte lub puste).
   bool configuration_changed = 4;
 
   // Wersje wszystkich sekcji po stronie backendu — zawsze wypełnione.
   // Firewall zapisuje je do Redb i używa przy kolejnych wywołaniach delty.
   ConfigSectionVersions current_versions = 5;
 
-  // Sekcje ze zmianami. null = sekcja niezmieniona względem known_versions.
-  // Gdy known_versions było puste w żądaniu — wszystkie pola są wypełnione.
+  // Sekcje ze zmianami.
+  // Uwaga: w proto3 pola repeated (poniższe listy) nigdy nie są null — domyślną
+  // wartością jest pusta lista. Klient rozróżnia „sekcja niezmieniona” od
+  // „sekcja zmieniona (w tym wyczyszczona do pustej listy)” poprzez porównanie
+  // wersji danej sekcji w current_versions z wersją w known_versions:
+  //   - jeśli wersje są równe, konfiguracja sekcji nie zmieniła się,
+  //     niezależnie od tego, czy poniższa lista jest pusta lub pominięta,
+  //   - jeśli wersje są różne, konfiguracja sekcji uległa zmianie; pusta lista
+  //     oznacza, że sekcja została wyczyszczona (brak elementów w tej sekcji).
+  // Gdy known_versions było puste w żądaniu — wszystkie pola są wypełnione
+  // aktualną konfiguracją (pełny bundle).
   repeated Rule rules = 6;
   repeated Zone zones = 7;
   repeated ZoneInterface zone_interfaces = 8;
