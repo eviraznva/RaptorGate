@@ -10,23 +10,30 @@ import {
   FirewallEvent,
   HeartbeatEvent,
 } from './generated/events/firewall_events';
+import { GetActiveConfigUseCase } from 'src/application/use-cases/get-active-config.use-case';
 import { BackendEvent, HeartbeatAck } from './generated/events/backend_events';
-import { Controller, Logger } from '@nestjs/common';
+import { Controller, Inject, Logger } from '@nestjs/common';
 import { Observable } from 'rxjs';
 
 @Controller()
 @RaptorGateServiceControllerMethods()
 export class RaptorGateController implements RaptorGateServiceController {
   private readonly logger = new Logger(RaptorGateController.name);
+  constructor(
+    @Inject() private readonly getActiveConfigUseCase: GetActiveConfigUseCase,
+  ) {}
 
-  getActiveConfig(request: GetConfigRequest): ConfigResponse {
+  async getActiveConfig(request: GetConfigRequest): Promise<ConfigResponse> {
+    const activeConfig = await this.getActiveConfigUseCase.execute(
+      request.correlationId,
+      request.knownVersions,
+    );
+
     // TODO: wczytać aktywną konfigurację z bazy, porównać z known_versions,
     // odesłać pełny bundle lub delta
+
     return {
-      configVersion: 0,
-      bundleChecksum: '',
-      correlationId: request.correlationId,
-      configurationChanged: false,
+      ...activeConfig,
     };
   }
 

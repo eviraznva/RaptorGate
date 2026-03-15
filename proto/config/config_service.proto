@@ -9,8 +9,10 @@ import "config/config_models.proto";
 //
 // Firewall wywołuje tę metodę w trzech sytuacjach:
 //   1. Startup normalny (brak snapshotu Redb)        → known_versions puste
-//   2. Startup awaryjny (Redb istnieje) lub resync   → known_versions wypełnione
-//   3. Reakcja na ConfigChangedEvent z event bus     → known_versions wypełnione
+//   2. Startup awaryjny (Redb istnieje) lub resync   → known_versions
+//   wypełnione
+//   3. Reakcja na ConfigChangedEvent z event bus     → known_versions
+//   wypełnione
 //
 // Backend porównuje known_versions z aktualnymi wersjami sekcji w PostgreSQL
 // i zwraca tylko sekcje które uległy zmianie. Sekcje niezmienione mają
@@ -18,25 +20,28 @@ import "config/config_models.proto";
 // ─────────────────────────────────────────────────────────────────────────────
 
 message GetConfigRequest {
-  // Identyfikator korelacji — pozwala powiązać żądanie z eventem który je wywołał.
+  // Identyfikator korelacji — pozwala powiązać żądanie z eventem który je
+  // wywołał.
   string correlation_id = 1;
 
   // Powód żądania — używany przez backend do logowania zdarzenia audytowego.
   ConfigRequestReason reason = 2;
 
+  optional int32 known_version = 3;
+
   // Wersje sekcji aktualnie aktywnych w lokalnym snapshotcie (Redb).
   // Brak pola (firewall nie ma snapshotu) → backend wysyła pełny bundle.
-  optional ConfigSectionVersions known_versions = 3;
+  optional ConfigSectionVersions known_versions = 4;
 }
 
 enum ConfigRequestReason {
-  CONFIG_REQUEST_REASON_UNSPECIFIED    = 0;
+  CONFIG_REQUEST_REASON_UNSPECIFIED = 0;
   // Pierwszy start, brak snapshotu Redb.
-  CONFIG_REQUEST_REASON_STARTUP        = 1;
+  CONFIG_REQUEST_REASON_STARTUP = 1;
   // Start z lokalnym snapshotem — weryfikacja aktualności przed użyciem.
-  CONFIG_REQUEST_REASON_EMERGENCY      = 2;
+  CONFIG_REQUEST_REASON_EMERGENCY = 2;
   // Backend wrócił po awarii i zażądał resyncu przez event bus.
-  CONFIG_REQUEST_REASON_RESYNC         = 3;
+  CONFIG_REQUEST_REASON_RESYNC = 3;
   // Reakcja na ConfigChangedEvent (zmiana polityki lub rollback).
   CONFIG_REQUEST_REASON_CONFIG_CHANGED = 4;
 }
@@ -46,8 +51,9 @@ message ConfigResponse {
   uint64 config_version = 1;
 
   // SHA-256 pełnego aktywnego ConfigBundle po stronie backendu.
-  // Firewall może użyć tego checksumu do weryfikacji spójności po zastosowaniu delty
-  // (porównując z lokalnie wyliczonym checksumem po złożeniu pełnego bundla).
+  // Firewall może użyć tego checksumu do weryfikacji spójności po zastosowaniu
+  // delty (porównując z lokalnie wyliczonym checksumem po złożeniu pełnego
+  // bundla).
   string bundle_checksum = 2;
 
   string correlation_id = 3;
@@ -62,15 +68,15 @@ message ConfigResponse {
 
   // Sekcje ze zmianami. null = sekcja niezmieniona względem known_versions.
   // Gdy known_versions było puste w żądaniu — wszystkie pola są wypełnione.
-  optional RuleSet               rules                 = 6;
-  optional ZoneSet               zones                 = 7;
-  optional ZoneInterfaceSet      zone_interfaces       = 8;
-  optional ZonePairSet           zone_pairs            = 9;
-  optional NatRuleSet            nat_rules             = 10;
-  optional DnsBlacklistSet       dns_blacklist         = 11;
-  optional SslBypassSet          ssl_bypass_list       = 12;
-  optional IpsSignatureSet       ips_signatures        = 13;
-  optional MlModel               ml_model              = 14;
-  optional FirewallCertificateSet firewall_certificates = 15;
-  optional IdentityBundle        identity              = 16;
+  repeated Rule rules = 6;
+  repeated Zone zones = 7;
+  repeated ZoneInterface zone_interfaces = 8;
+  repeated ZonePair zone_pairs = 9;
+  repeated NatRule nat_rules = 10;
+  repeated DnsBlacklistEntry dns_blacklist = 11;
+  repeated SslBypassEntry ssl_bypass_list = 12;
+  repeated IpsSignature ips_signatures = 13;
+  optional MlModel ml_model = 14;
+  repeated FirewallCertificate firewall_certificates = 15;
+  optional IdentityBundle identity = 16;
 }
