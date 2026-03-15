@@ -317,6 +317,44 @@ mod tests {
         };
     }
 
+    macro_rules! gen_position_tests {
+        ($name:ident, $stream:expr, $expected:expr) => {
+            paste::paste! {
+                #[test]
+                fn [<$name _positions_space>]() {
+                    let mut lexer = Lexer::new();
+                    let got: Vec<Position> = lexer
+                        .tokenize($stream)
+                        .unwrap()
+                        .into_iter()
+                        .map(|t| t.pos)
+                        .collect();
+                    assert_eq!(got, $expected);
+                }
+
+                #[test]
+                fn [<$name _positions_no_space>]() {
+                    let mut lexer = Lexer::new();
+                    let mut s = String::from($stream);
+                    s.retain(|c| !c.is_whitespace());
+
+                    let got: Vec<Position> = lexer
+                        .tokenize(&s)
+                        .unwrap()
+                        .into_iter()
+                        .map(|t| t.pos)
+                        .collect();
+
+                    let expected: Vec<Position> = (0..got.len())
+                        .map(|i| Position { row: 0.into(), col: i.into() })
+                        .collect();
+
+                    assert_eq!(got, expected);
+                }
+            }
+        };
+    }
+
     gen_space_tests!(
         le_operator,
         "5 < abc",
@@ -477,4 +515,62 @@ mod tests {
         assert_eq!(got,(vec![TokenType::StringLiteral("abc { dfg } xd {} dx <".into())]));
     }
 
+    gen_position_tests!(
+        single_line_simple,
+        "abc def",
+        vec![
+            Position { row: 0.into(), col: 0.into() },
+            Position { row: 0.into(), col: 4.into() },
+        ]
+    );
+
+    gen_position_tests!(
+        multiple_spaces_and_tab,
+        "abc\t  def",
+        vec![
+            Position { row: 0.into(), col: 0.into() },
+            Position { row: 0.into(), col: 6.into() },
+        ]
+    );
+
+    gen_position_tests!(
+        linebreak_lf,
+        "abc\ndef",
+        vec![
+            Position { row: 0.into(), col: 0.into() },
+            Position { row: 1.into(), col: 0.into() },
+        ]
+    );
+
+    gen_position_tests!(
+        leading_whitespace_newline_tab,
+        " \t\n\tabc",
+        vec![
+            Position { row: 1.into(), col: 1.into() },
+        ]
+    );
+
+    gen_position_tests!(
+        braces_and_colon_across_lines,
+        "a:{\n\tb:1\n}",
+        vec![
+            Position { row: 0.into(), col: 0.into() },
+            Position { row: 0.into(), col: 1.into() },
+            Position { row: 0.into(), col: 2.into() },
+            Position { row: 1.into(), col: 1.into() },
+            Position { row: 1.into(), col: 2.into() },
+            Position { row: 1.into(), col: 3.into() },
+            Position { row: 2.into(), col: 0.into() },
+        ]
+    );
+
+    gen_position_tests!(
+        string_literal_position_after_newline,
+        "abc\n\"x y\" z",
+        vec![
+            Position { row: 0.into(), col: 0.into() },
+            Position { row: 1.into(), col: 0.into() },
+            Position { row: 1.into(), col: 6.into() },
+        ]
+    );
 }
