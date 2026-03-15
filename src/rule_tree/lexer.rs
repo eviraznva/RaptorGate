@@ -136,19 +136,29 @@ impl WordBuilder {
                 return Some(self.exchange(c, pos))
             }
 
-            if matches!(c, separating_chars!())
-                && (self.current_word.starts_with('<') || self.current_word.starts_with('>')) {
-                    let expected = if self.current_word.starts_with('>') { '<' } else { '>' };
-                    
-                    if c == '=' || c == expected {
-                        self.current_word.push(c);
-                    }
-
-                    return Some(self.exchange(c, pos))
+            if self.current_word.starts_with('<') || self.current_word.starts_with('>') {
+                let expected = if self.current_word.starts_with('>') { '<' } else { '>' };
+                
+                if c == '=' || c == expected {
+                    self.current_word.push(c);
+                    return Some(self.exchange(' ', pos)) 
                 }
+
+                return Some(self.exchange(c, pos)) 
+            }
+
+            if matches!(c, separating_chars!()) {
+                return Some(self.exchange(c, pos)) 
+            }
+            self.current_word.push(c);
         }
 
         None
+    }
+
+    fn flush(&mut self) -> Option<Word> {
+        if self.current_word.is_empty() { return None }
+        Some(self.exchange(' ', self.start_pos))
     }
 
     fn exchange(&mut self, c: char, pos: Position) -> Word {
@@ -174,6 +184,15 @@ impl Lexer {
     }
 
     fn update_pos(&mut self, current_char: char) {
+        static mut FIRST_ITER: bool = true;
+
+        unsafe {
+            if FIRST_ITER {
+                FIRST_ITER = false;
+                return
+            }
+        }
+
         if current_char == '\n' {
             self.curret_pos.row += 1.into();
             self.curret_pos.col = 0.into();
@@ -183,15 +202,35 @@ impl Lexer {
         self.curret_pos.col += 1.into();
     }
 
+    fn classify(word: Word) -> Token {
+        if let Ok(n) = word.contents.parse::<u64>() {
+            return word.into_token(TokenType::Number(n));
+        }
+
+        match word.contents.as_str() {
+            "=" => word.into_token(TokenType::Pattern(PatternType::Equal)),
+            "<" => word.into_token(TokenType::Pattern(PatternType::Lesser)),
+            ">" => word.into_token(TokenType::Pattern(PatternType::Greater)),
+            "<=" => word.into_token(TokenType::Pattern(PatternType::LesserOrEqual)),
+            ">=" => word.into_token(TokenType::Pattern(PatternType::GreaterOrEqual)),
+            "_" => word.into_token(TokenType::Pattern(PatternType::Glob)),
+            "|" => word.into_token(TokenType::Pattern(PatternType::Or)),
+            "<>" => word.into_token(TokenType::Pattern(PatternType::Range)),
+            "{" => word.into_token(TokenType::LBrace),
+            "}" => word.into_token(TokenType::RBrace),
+            _ => word.into_token(TokenType::Identifier(word.contents.clone())),
+        }
+    }
+
     pub(crate) fn tokenize(&mut self, input: &str) -> Result<Vec<Token>, LexerError> {
         let mut tokens = Vec::<Token>::new();
 
         for c in input.chars() {
             self.update_pos(c);
-
             match &mut self.mode {
                 LexerMode::Normal => {
                     if c == '\"' {
+                        if let Some(word) = self.word_builder.flush() { tokens.push(Self::classify(word)) }
                         self.mode = LexerMode::StringLiteral(StringLiteralBuilder { start_pos: self.curret_pos, contents: String::new() });
                         continue;
                     }
@@ -199,19 +238,7 @@ impl Lexer {
                     let Some(word) = self.word_builder.add_to(c, self.curret_pos) else { continue };
 
                     tokens.push(
-                        match word.contents.as_str() {
-                            "=" => word.into_token(TokenType::Pattern(PatternType::Equal)),
-                            "<" => word.into_token(TokenType::Pattern(PatternType::Lesser)),
-                            ">" => word.into_token(TokenType::Pattern(PatternType::Greater)),
-                            "<=" => word.into_token(TokenType::Pattern(PatternType::LesserOrEqual)),
-                            ">=" => word.into_token(TokenType::Pattern(PatternType::GreaterOrEqual)),
-                            "_" => word.into_token(TokenType::Pattern(PatternType::Glob)),
-                            "|" => word.into_token(TokenType::Pattern(PatternType::Or)),
-                            "<>" => word.into_token(TokenType::Pattern(PatternType::Range)),
-                            "{" => word.into_token(TokenType::LBrace),
-                            "}" => word.into_token(TokenType::RBrace),
-                            _ => word.into_token(TokenType::Identifier(word.contents.clone())),
-                        }
+                        Self::classify(word)
                     );
                 },
                 LexerMode::StringLiteral(sb) => {
@@ -226,8 +253,12 @@ impl Lexer {
             }
         }
 
-        if let LexerMode::StringLiteral(sb) = &self.mode { return Err(LexerError::UnclosedStringLiteral(sb.start_pos)) }
-
+        match &self.mode {
+            LexerMode::StringLiteral(sb) => return Err(LexerError::UnclosedStringLiteral(sb.start_pos)),
+            LexerMode::Normal => {
+                if let Some(word) = self.word_builder.flush() { tokens.push(Self::classify(word)) }
+            }
+        }
         Ok(tokens)
     }
 }
@@ -281,7 +312,7 @@ mod tests {
         le_operator,
         "5 < abc",
         vec![
-            TokenType::Identifier("5".into()),
+            TokenType::Number(5),
             TokenType::Pattern(PatternType::Lesser),
             TokenType::Identifier("abc".into()),
         ]
@@ -289,10 +320,10 @@ mod tests {
 
     gen_space_tests!(
         leq_operator,
-        "5 < abc",
+        "5 <= abc",
         vec![
-            TokenType::Identifier("5".into()),
-            TokenType::Pattern(PatternType::Lesser),
+            TokenType::Number(5),
+            TokenType::Pattern(PatternType::LesserOrEqual),
             TokenType::Identifier("abc".into()),
         ]
     );
@@ -301,8 +332,8 @@ mod tests {
         rng_operator,
         "5 <> abc",
         vec![
-            TokenType::Identifier("5".into()),
-            TokenType::Pattern(PatternType::Lesser),
+            TokenType::Number(5),
+            TokenType::Pattern(PatternType::Range),
             TokenType::Identifier("abc".into()),
         ]
     );
@@ -310,7 +341,7 @@ mod tests {
     #[test]
     fn string_literal_no_space() {
         let mut lexer = Lexer::new();
-        let mut s = String::from("abd efgh");
+        let mut s = String::from("\"abd efgh\"");
         s.retain(|c| !c.is_whitespace());
         let got: Vec<TokenType> = lexer
             .tokenize(&s)
@@ -325,7 +356,7 @@ mod tests {
     fn string_literal_space() {
         let mut lexer = Lexer::new();
         let got: Vec<TokenType> = lexer
-            .tokenize("abd efgh")
+            .tokenize("\"abd efgh\"")
             .unwrap()
             .into_iter()
             .map(|t| t.kind)
