@@ -5,7 +5,7 @@ import { ConfigurationSnapshotMapper } from '../mappers/configuration-snapshot.m
 import { DB_CONNECTION } from '../database/database.module';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Inject, Injectable } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 
 @Injectable()
 export class DrizzleConfigSnapshotRepository implements IConfigSnapshotRepository {
@@ -16,7 +16,7 @@ export class DrizzleConfigSnapshotRepository implements IConfigSnapshotRepositor
       .select()
       .from(configurationSnapshotsTable)
       .where(eq(configurationSnapshotsTable.isActive, true))
-      .orderBy(configurationSnapshotsTable.versionNumber) // DESC
+      .orderBy(desc(configurationSnapshotsTable.versionNumber))
       .limit(1);
 
     const row = rows[0];
