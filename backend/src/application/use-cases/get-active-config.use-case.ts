@@ -4,6 +4,8 @@ import type { IConfigSnapshotRepository } from 'src/domain/repositories/config-s
 import { ConfigSectionVersions } from 'src/infrastructure/grpc/generated/config/config_models';
 import { ConfigResponse } from 'src/infrastructure/grpc/generated/config/config_service';
 import { Inject, Injectable } from '@nestjs/common';
+import { RpcException } from '@nestjs/microservices';
+import { status } from '@grpc/grpc-js';
 
 @Injectable()
 export class GetActiveConfigUseCase {
@@ -18,7 +20,10 @@ export class GetActiveConfigUseCase {
     const snapshot = await this.repository.getActiveSnapshot();
 
     if (!snapshot) {
-      throw new Error('No active configuration snapshot found');
+      throw new RpcException({
+        code: status.NOT_FOUND,
+        message: 'No active configuration snapshot found',
+      });
     }
 
     const payload = snapshot.deserializePayload();
