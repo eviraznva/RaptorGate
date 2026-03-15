@@ -1,4 +1,5 @@
 mod matcher;
+mod lexer;
 
 use derive_more::{Display, Error, PartialEq};
 
