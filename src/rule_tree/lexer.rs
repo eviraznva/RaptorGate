@@ -188,19 +188,10 @@ pub(crate) struct Lexer {
 
 impl Lexer {
     pub fn new() -> Self {
-        Self { mode: LexerMode::Normal, curret_pos: Position { row: 0.into(), col: 0.into() }, word_builder: WordBuilder::new() }
+        Self { mode: LexerMode::Normal, curret_pos: Position { row: 1.into(), col: 0.into() }, word_builder: WordBuilder::new() }
     }
 
     fn update_pos(&mut self, current_char: char) {
-        static mut FIRST_ITER: bool = true;
-
-        unsafe {
-            if FIRST_ITER {
-                FIRST_ITER = false;
-                return
-            }
-        }
-
         if current_char == '\n' {
             self.curret_pos.row += 1.into();
             self.curret_pos.col = 0.into();
@@ -346,7 +337,7 @@ mod tests {
                         .collect();
 
                     let expected: Vec<Position> = (0..got.len())
-                        .map(|i| Position { row: 0.into(), col: i.into() })
+                        .map(|i| Position { row: 1.into(), col: (i + 1).into() })
                         .collect();
 
                     assert_eq!(got, expected);
@@ -514,13 +505,12 @@ mod tests {
         let got:Vec<TokenType>  = lexer.tokenize("\"abc { dfg } xd {} dx <\"").unwrap().into_iter().map(|t|t.kind).collect();
         assert_eq!(got,(vec![TokenType::StringLiteral("abc { dfg } xd {} dx <".into())]));
     }
-
     gen_position_tests!(
         single_line_simple,
         "abc def",
         vec![
-            Position { row: 0.into(), col: 0.into() },
-            Position { row: 0.into(), col: 4.into() },
+            Position { row: 1.into(), col: 1.into() },
+            Position { row: 1.into(), col: 5.into() },
         ]
     );
 
@@ -528,8 +518,8 @@ mod tests {
         multiple_spaces_and_tab,
         "abc\t  def",
         vec![
-            Position { row: 0.into(), col: 0.into() },
-            Position { row: 0.into(), col: 6.into() },
+            Position { row: 1.into(), col: 1.into() },
+            Position { row: 1.into(), col: 7.into() },
         ]
     );
 
@@ -537,8 +527,8 @@ mod tests {
         linebreak_lf,
         "abc\ndef",
         vec![
-            Position { row: 0.into(), col: 0.into() },
-            Position { row: 1.into(), col: 0.into() },
+            Position { row: 1.into(), col: 1.into() },
+            Position { row: 2.into(), col: 1.into() },
         ]
     );
 
@@ -546,7 +536,7 @@ mod tests {
         leading_whitespace_newline_tab,
         " \t\n\tabc",
         vec![
-            Position { row: 1.into(), col: 1.into() },
+            Position { row: 2.into(), col: 2.into() },
         ]
     );
 
@@ -554,23 +544,40 @@ mod tests {
         braces_and_colon_across_lines,
         "a:{\n\tb:1\n}",
         vec![
-            Position { row: 0.into(), col: 0.into() },
-            Position { row: 0.into(), col: 1.into() },
-            Position { row: 0.into(), col: 2.into() },
             Position { row: 1.into(), col: 1.into() },
             Position { row: 1.into(), col: 2.into() },
             Position { row: 1.into(), col: 3.into() },
-            Position { row: 2.into(), col: 0.into() },
+            Position { row: 2.into(), col: 2.into() },
+            Position { row: 2.into(), col: 3.into() },
+            Position { row: 2.into(), col: 4.into() },
+            Position { row: 3.into(), col: 1.into() },
         ]
     );
 
-    gen_position_tests!(
-        string_literal_position_after_newline,
-        "abc\n\"x y\" z",
-        vec![
-            Position { row: 0.into(), col: 0.into() },
-            Position { row: 1.into(), col: 0.into() },
-            Position { row: 1.into(), col: 6.into() },
-        ]
-    );
+    #[test]
+    fn string_literal_position_after_newline_positions_space(){
+        let mut lexer = Lexer::new();
+        let got:Vec<Position>  = lexer.tokenize("abc\n\"x y\" z").unwrap().into_iter().map(|t|t.pos).collect();
+        assert_eq!(got,(vec![Position {
+            row:1.into(),col:1.into()
+        },Position {
+            row:2.into(),col:1.into()
+        },Position {
+            row:2.into(),col:7.into()
+        },]));
+    }
+
+    #[test]
+    fn string_literal_position_after_newline_positions_no_space(){
+        let mut lexer = Lexer::new();
+        let mut s = String::from("abc\n\"x y\" z");
+        s.retain(|c| !c.is_whitespace());
+        let got:Vec<Position>  = lexer.tokenize(&s).unwrap().into_iter().map(|t|t.pos).collect();
+        let expected:Vec<Position> = vec![
+            Position { row: 1.into(), col: 1.into() },
+            Position { row: 1.into(), col: 4.into() },
+            Position { row: 1.into(), col: 8.into() },
+        ];
+        assert_eq!(got,expected);
+    }
 }
