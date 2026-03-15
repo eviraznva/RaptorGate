@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn special_chars_dont_break_string_literals_no_space(){
         let mut lexer = Lexer::new();
-        let mut s = String::from("abc { dfg } xd {} dx <");
+        let mut s = String::from("\"abc { dfg } xd {} dx <\"");
         s.retain(|c| !c.is_whitespace());
         let got:Vec<TokenType>  = lexer.tokenize(&s).unwrap().into_iter().map(|t|t.kind).collect();
         assert_eq!(got,(vec![TokenType::StringLiteral("abc{dfg}xd{}dx<".into())]));
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn special_chars_dont_break_string_literals_space(){
         let mut lexer = Lexer::new();
-        let got:Vec<TokenType>  = lexer.tokenize("abc { dfg } xd {} dx <").unwrap().into_iter().map(|t|t.kind).collect();
+        let got:Vec<TokenType>  = lexer.tokenize("\"abc { dfg } xd {} dx <\"").unwrap().into_iter().map(|t|t.kind).collect();
         assert_eq!(got,(vec![TokenType::StringLiteral("abc { dfg } xd {} dx <".into())]));
     }
 
