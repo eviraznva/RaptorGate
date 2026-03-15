@@ -82,6 +82,12 @@ export class ConfigurationSnapshot {
         ? JSON.parse(this.payloadJson)
         : this.payloadJson;
 
+    if (obj === null || typeof obj !== 'object') {
+      throw new Error(
+        'Invalid configuration snapshot payload: expected a JSON object.',
+      );
+    }
+
     return obj as ConfigSnapshotPayload;
   }
 }
