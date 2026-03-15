@@ -138,18 +138,25 @@ impl WordBuilder {
 
             if self.current_word.starts_with('<') || self.current_word.starts_with('>') {
                 let expected = if self.current_word.starts_with('>') { '<' } else { '>' };
-                
+
                 if c == '=' || c == expected {
                     self.current_word.push(c);
-                    return Some(self.exchange(' ', pos)) 
+                    return Some(self.exchange(' ', pos))
                 }
 
-                return Some(self.exchange(c, pos)) 
+                return Some(self.exchange(c, pos))
+            }
+
+            if self.current_word.len() == 1
+                && matches!(self.current_word.chars().next(), Some(separating_chars!()))
+            {
+                return Some(self.exchange(c, pos))
             }
 
             if matches!(c, separating_chars!()) {
-                return Some(self.exchange(c, pos)) 
+                return Some(self.exchange(c, pos))
             }
+
             self.current_word.push(c);
         }
 
@@ -334,6 +341,45 @@ mod tests {
         vec![
             TokenType::Number(5),
             TokenType::Pattern(PatternType::Range),
+            TokenType::Identifier("abc".into()),
+        ]
+    );
+    gen_space_tests!(
+        ge_operator,
+        "5 > abc",
+        vec![
+            TokenType::Number(5),
+            TokenType::Pattern(PatternType::Greater),
+            TokenType::Identifier("abc".into()),
+        ]
+    );
+
+    gen_space_tests!(
+        geq_operator,
+        "5 >= abc",
+        vec![
+            TokenType::Number(5),
+            TokenType::Pattern(PatternType::GreaterOrEqual),
+            TokenType::Identifier("abc".into()),
+        ]
+    );
+
+    gen_space_tests!(
+        eq_operator,
+        "5 = abc",
+        vec![
+            TokenType::Number(5),
+            TokenType::Pattern(PatternType::Equal),
+            TokenType::Identifier("abc".into()),
+        ]
+    );
+
+    gen_space_tests!(
+        or_operator,
+        "5 | abc",
+        vec![
+            TokenType::Number(5),
+            TokenType::Pattern(PatternType::Or),
             TokenType::Identifier("abc".into()),
         ]
     );
