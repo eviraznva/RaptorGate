@@ -15,12 +15,12 @@ export class SnapshotType {
     this.value = type;
   }
 
-  public static create(type: SnapshotTypeType): SnapshotType {
+  public static create(type: string): SnapshotType {
     if (!this.isValidType(type)) {
       throw new SnapshotTypeIsInvalidException(type);
     }
 
-    return new SnapshotType(type);
+    return new SnapshotType(type as SnapshotTypeType);
   }
 
   private static isValidType(type: string): boolean {
