@@ -64,6 +64,7 @@ enum TokenType {
     Keyword(KeywordType),
     LBrace,
     RBrace,
+    Semicolon,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -225,6 +226,7 @@ impl Lexer {
             "<>" => word.into_token(TokenType::Pattern(PatternType::Range)),
             "{" => word.into_token(TokenType::LBrace),
             "}" => word.into_token(TokenType::RBrace),
+            ":" => word.into_token(TokenType::Semicolon),
             _ => word.into_token(TokenType::Identifier(word.contents.clone())),
         }
     }
@@ -381,6 +383,36 @@ mod tests {
             TokenType::Number(5),
             TokenType::Pattern(PatternType::Or),
             TokenType::Identifier("abc".into()),
+        ]
+    );
+
+    gen_space_tests!(
+        colon_separator_alphanum,
+        "ip : 255",
+        vec![
+            TokenType::Identifier("ip".into()),
+            TokenType::Semicolon,
+            TokenType::Number(255),
+        ]
+    );
+
+    gen_space_tests!(
+        colon_separator_braces_partial,
+        "ip : {",
+        vec![
+            TokenType::Identifier("ip".into()),
+            TokenType::Semicolon,
+            TokenType::LBrace,
+        ]
+    );
+
+    gen_space_tests!(
+        colon_separator_braces_full,
+        "} : {",
+        vec![
+            TokenType::RBrace,
+            TokenType::Semicolon,
+            TokenType::LBrace,
         ]
     );
 
