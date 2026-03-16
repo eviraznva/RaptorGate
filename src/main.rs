@@ -9,15 +9,26 @@ use pcap::Direction;
 use tun::AsyncDevice;
 
 use crate::{frame::RealFrame, policy_evaluator::PolicyEvaluator, rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict}};
+use crate::grpc_client::backend_connection::BackendConnection;
+use crate::grpc_client::firewall_mode_state::FirewallModeState;
+use crate::grpc_client::proto_types::raptorgate::common::FirewallMode;
 
 mod frame;
 mod rule_tree;
 mod app_config;
 mod grpc_client;
 mod policy_evaluator;
+mod packet_validator;
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .init();
+
     let config = match app_config::AppConfig::from_env() {
         Ok(c) => c,
         Err(e) => {
@@ -25,6 +36,9 @@ async fn main() {
             return;
         }
     };
+
+    let backend = BackendConnection::startup(&config).await;
+    let mode = Arc::new(backend.mode.clone());
 
     let all_devices = match pcap::Device::list() {
         Ok(list) => list,
@@ -69,6 +83,7 @@ async fn main() {
     for device in devices {
         let tun = Arc::clone(&tun);
         let evaluator = Arc::clone(&evaluator);
+        let mode = Arc::clone(&mode);
         let name = device.name.clone();
         let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
 
@@ -119,7 +134,7 @@ async fn main() {
         let handle = tokio::spawn(async move {
             let mut rx = rx;
             while let Some(data) = rx.recv().await {
-                handle_packet(&handler_name, &data, &tun, &evaluator).await;
+                handle_packet(&handler_name, &data, &tun, &evaluator, &mode).await;
             }
             eprintln!("[{handler_name}] Handler task exiting (sender dropped)");
         });
@@ -136,7 +151,11 @@ async fn main() {
 
 /// Inspect a raw Ethernet frame, evaluate it against the firewall policy,
 /// and forward it through the TUN device or drop it based on the verdict.
-async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, evaluator: &PolicyEvaluator) {
+async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, evaluator: &PolicyEvaluator, mode: &FirewallModeState) {
+    if mode.get() == FirewallMode::SafeDeny {
+        return;
+    }
+
     let packet = match SlicedPacket::from_ethernet(data) {
         Ok(packet) => packet,
         Err(err) => {
@@ -147,6 +166,11 @@ async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, evaluator: &
 
     // Only forward IPv4 packets.
     if !matches!(&packet.net, Some(NetSlice::Ipv4(_))) {
+        return;
+    }
+
+    if let Err(reason) = packet_validator::validate(&packet) {
+        println!("[{iface}] DROP (invalid packet: {reason})");
         return;
     }
 

@@ -1,3 +1,4 @@
+import { ConfigSnapshotPayload } from '../value-objects/config-snapshot-payload.interface';
 import { SnapshotType } from '../value-objects/snapshot-type.vo';
 import { Checksum } from '../value-objects/checksum.vo';
 
@@ -8,7 +9,7 @@ export class ConfigurationSnapshot {
     private snapshotType: SnapshotType,
     private checksum: Checksum,
     private isActive: boolean,
-    private payloadJson: string,
+    private payloadJson: unknown,
     private changesSummary: string | null,
     private readonly createdAt: Date,
   ) {}
@@ -19,7 +20,7 @@ export class ConfigurationSnapshot {
     snapshotType: SnapshotType,
     checksum: Checksum,
     isActive: boolean,
-    payloadJson: string,
+    payloadJson: unknown,
     changesSummary: string | null,
     createdAt: Date,
   ): ConfigurationSnapshot {
@@ -55,7 +56,7 @@ export class ConfigurationSnapshot {
     return this.isActive;
   }
 
-  public getPayloadJson(): string {
+  public getPayloadJson(): unknown {
     return this.payloadJson;
   }
 
@@ -73,5 +74,20 @@ export class ConfigurationSnapshot {
 
   public setChangesSummary(changesSummary: string): void {
     this.changesSummary = changesSummary;
+  }
+
+  public deserializePayload(): ConfigSnapshotPayload {
+    const obj: unknown =
+      typeof this.payloadJson === 'string'
+        ? JSON.parse(this.payloadJson)
+        : this.payloadJson;
+
+    if (obj === null || typeof obj !== 'object') {
+      throw new Error(
+        'Invalid configuration snapshot payload: expected a JSON object.',
+      );
+    }
+
+    return obj as ConfigSnapshotPayload;
   }
 }

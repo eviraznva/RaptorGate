@@ -18,6 +18,9 @@ pub struct AppConfig {
     pub grpc_socket_path: String,
     pub firewall_version: String,
     pub heartbeat_interval_secs: u64,
+
+    // Redb snapshot
+    pub redb_snapshot_path: String,
 }
 
 impl AppConfig {
@@ -55,7 +58,7 @@ impl AppConfig {
                 .to_lowercase() == "true",
 
             grpc_socket_path: std::env::var("GRPC_SOCKET_PATH")
-                .unwrap_or_else(|_| "/run/raptorgate/backend.sock".into()),
+                .unwrap_or_else(|_| "./sockets/firewall.sock".into()),
 
             firewall_version: std::env::var("FIREWALL_VERSION")
                 .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into()),
@@ -64,6 +67,9 @@ impl AppConfig {
                 .unwrap_or_else(|_| "10".into())
                 .parse()
                 .context("HEARTBEAT_INTERVAL_SECS must be an integer")?,
+
+            redb_snapshot_path: std::env::var("REDB_SNAPSHOT_PATH")
+                .unwrap_or_else(|_| "./.data/snapshot.redb".into()),
         })
     }
 }

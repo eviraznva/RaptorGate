@@ -9,16 +9,20 @@ import "config/config_models.proto";
 //
 // Firewall wywołuje tę metodę w trzech sytuacjach:
 //   1. Startup normalny (brak snapshotu Redb)        → known_versions puste
-//   2. Startup awaryjny (Redb istnieje) lub resync   → known_versions wypełnione
-//   3. Reakcja na ConfigChangedEvent z event bus     → known_versions wypełnione
+//   2. Startup awaryjny (Redb istnieje) lub resync   → known_versions
+//   wypełnione
+//   3. Reakcja na ConfigChangedEvent z event bus     → known_versions
+//   wypełnione
 //
 // Backend porównuje known_versions z aktualnymi wersjami sekcji w PostgreSQL
-// i zwraca tylko sekcje które uległy zmianie. Sekcje niezmienione mają
-// wartość null w odpowiedzi.
+// i zwraca tylko sekcje które uległy zmianie. Informacja o tym, czy dana
+// sekcja uległa zmianie, wynika z porównania known_versions z current_versions
+// w odpowiedzi (pola repeated w proto3 nigdy nie są null).
 // ─────────────────────────────────────────────────────────────────────────────
 
 message GetConfigRequest {
-  // Identyfikator korelacji — pozwala powiązać żądanie z eventem który je wywołał.
+  // Identyfikator korelacji — pozwala powiązać żądanie z eventem który je
+  // wywołał.
   string correlation_id = 1;
 
   // Powód żądania — używany przez backend do logowania zdarzenia audytowego.
@@ -27,16 +31,18 @@ message GetConfigRequest {
   // Wersje sekcji aktualnie aktywnych w lokalnym snapshotcie (Redb).
   // Brak pola (firewall nie ma snapshotu) → backend wysyła pełny bundle.
   optional ConfigSectionVersions known_versions = 3;
+
+  optional int32 known_version = 4;
 }
 
 enum ConfigRequestReason {
-  CONFIG_REQUEST_REASON_UNSPECIFIED    = 0;
+  CONFIG_REQUEST_REASON_UNSPECIFIED = 0;
   // Pierwszy start, brak snapshotu Redb.
-  CONFIG_REQUEST_REASON_STARTUP        = 1;
+  CONFIG_REQUEST_REASON_STARTUP = 1;
   // Start z lokalnym snapshotem — weryfikacja aktualności przed użyciem.
-  CONFIG_REQUEST_REASON_EMERGENCY      = 2;
+  CONFIG_REQUEST_REASON_EMERGENCY = 2;
   // Backend wrócił po awarii i zażądał resyncu przez event bus.
-  CONFIG_REQUEST_REASON_RESYNC         = 3;
+  CONFIG_REQUEST_REASON_RESYNC = 3;
   // Reakcja na ConfigChangedEvent (zmiana polityki lub rollback).
   CONFIG_REQUEST_REASON_CONFIG_CHANGED = 4;
 }
@@ -46,31 +52,42 @@ message ConfigResponse {
   uint64 config_version = 1;
 
   // SHA-256 pełnego aktywnego ConfigBundle po stronie backendu.
-  // Firewall może użyć tego checksumu do weryfikacji spójności po zastosowaniu delty
-  // (porównując z lokalnie wyliczonym checksumem po złożeniu pełnego bundla).
+  // Firewall może użyć tego checksumu do weryfikacji spójności po zastosowaniu
+  // delty (porównując z lokalnie wyliczonym checksumem po złożeniu pełnego
+  // bundla).
   string bundle_checksum = 2;
 
   string correlation_id = 3;
 
   // False gdy known_versions w żądaniu były identyczne z aktualnymi wersjami
-  // backendu — firewall ma aktualną konfigurację, pola sekcji poniżej są null.
+  // backendu — firewall ma aktualną konfigurację i backend nie zwraca żadnych
+  // delt w polach sekcji poniżej (pola repeated mogą być pominięte lub puste).
   bool configuration_changed = 4;
 
   // Wersje wszystkich sekcji po stronie backendu — zawsze wypełnione.
   // Firewall zapisuje je do Redb i używa przy kolejnych wywołaniach delty.
   ConfigSectionVersions current_versions = 5;
 
-  // Sekcje ze zmianami. null = sekcja niezmieniona względem known_versions.
-  // Gdy known_versions było puste w żądaniu — wszystkie pola są wypełnione.
-  optional RuleSet               rules                 = 6;
-  optional ZoneSet               zones                 = 7;
-  optional ZoneInterfaceSet      zone_interfaces       = 8;
-  optional ZonePairSet           zone_pairs            = 9;
-  optional NatRuleSet            nat_rules             = 10;
-  optional DnsBlacklistSet       dns_blacklist         = 11;
-  optional SslBypassSet          ssl_bypass_list       = 12;
-  optional IpsSignatureSet       ips_signatures        = 13;
-  optional MlModel               ml_model              = 14;
-  optional FirewallCertificateSet firewall_certificates = 15;
-  optional IdentityBundle        identity              = 16;
+  // Sekcje ze zmianami.
+  // Uwaga: w proto3 pola repeated (poniższe listy) nigdy nie są null — domyślną
+  // wartością jest pusta lista. Klient rozróżnia „sekcja niezmieniona” od
+  // „sekcja zmieniona (w tym wyczyszczona do pustej listy)” poprzez porównanie
+  // wersji danej sekcji w current_versions z wersją w known_versions:
+  //   - jeśli wersje są równe, konfiguracja sekcji nie zmieniła się,
+  //     niezależnie od tego, czy poniższa lista jest pusta lub pominięta,
+  //   - jeśli wersje są różne, konfiguracja sekcji uległa zmianie; pusta lista
+  //     oznacza, że sekcja została wyczyszczona (brak elementów w tej sekcji).
+  // Gdy known_versions było puste w żądaniu — wszystkie pola są wypełnione
+  // aktualną konfiguracją (pełny bundle).
+  repeated Rule rules = 6;
+  repeated Zone zones = 7;
+  repeated ZoneInterface zone_interfaces = 8;
+  repeated ZonePair zone_pairs = 9;
+  repeated NatRule nat_rules = 10;
+  repeated DnsBlacklistEntry dns_blacklist = 11;
+  repeated SslBypassEntry ssl_bypass_list = 12;
+  repeated IpsSignature ips_signatures = 13;
+  optional MlModel ml_model = 14;
+  repeated FirewallCertificate firewall_certificates = 15;
+  optional IdentityBundle identity = 16;
 }
