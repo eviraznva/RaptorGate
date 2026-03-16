@@ -19,11 +19,13 @@ impl RuleTree {
 
 }
 
+#[derive(PartialEq)]
 struct Arm {
     pattern: Pattern,
     into: ArmEnd,
 }
 
+#[derive(PartialEq)]
 pub(crate) enum ArmEnd {
     Verdict(Verdict),
     Match(Match),
@@ -63,7 +65,7 @@ pub(crate) enum FieldValue {
     Port(Port),
 }
 
-#[derive(Debug, Display, Clone, Copy)]
+#[derive(Debug, Display, Clone, Copy, PartialEq)]
 pub(crate) enum MatchKind {
     SrcIp,
     DstIp,

@@ -3,6 +3,7 @@ use thiserror::Error;
 
 use crate::{frame::{Hour, Octet, Weekday}, rule_tree::{Arm, ArmEnd, FieldValue, IpVer, MatchKind, Operation, Pattern, RuleError, RuleTree, Verdict}};
 
+#[derive(PartialEq)]
 pub(crate) struct Match {
     kind: MatchKind,
     arms: NonEmpty<Box<Arm>>,

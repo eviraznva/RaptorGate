@@ -164,7 +164,6 @@ fn lower_pattern(kind: MatchKind, p: Spanned<AstPattern>) -> Result<Pattern, Low
                 lower_value(kind, from)?,
                 lower_value(kind, to)?,
         )),
-
         AstPattern::Or(patterns) => {
             let lowered = patterns
                 .val
@@ -181,6 +180,10 @@ fn lower_pattern(kind: MatchKind, p: Spanned<AstPattern>) -> Result<Pattern, Low
             .collect::<Result<Vec<_>, _>>()?;
             Ok(Pattern::Or(lowered))
         }
+        AstPattern::GreaterOrEqual(v) => Ok(Pattern::Comparison(
+                Operation::GreaterOrEqual,
+                lower_value(kind, v)?,
+        )),
     }
 }
 

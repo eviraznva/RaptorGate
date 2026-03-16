@@ -49,6 +49,7 @@ pub(super) enum AstPattern {
     Equal(Spanned<AstValue>),
     Greater(Spanned<AstValue>),
     LesserOrEqual(Spanned<AstValue>),
+    GreaterOrEqual(Spanned<AstValue>),
     Range(Spanned<AstValue>, Spanned<AstValue>),
     Or(Spanned<Vec<AstPattern>>),
     Glob,
@@ -196,6 +197,10 @@ impl Parser {
             TokenType::Pattern(PatternType::LesserOrEqual) => {
                 let value = self.parse_value()?;
                 Ok(Spanned { val: AstPattern::LesserOrEqual(value), pos: token.pos })
+            }
+            TokenType::Pattern(PatternType::GreaterOrEqual) => {
+                let value = self.parse_value()?;
+                Ok(Spanned { val: AstPattern::GreaterOrEqual(value), pos: token.pos })
             }
             _ => Err(ParseError::UnexpectedToken(token)),
         }
