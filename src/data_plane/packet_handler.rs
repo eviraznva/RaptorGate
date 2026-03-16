@@ -1,12 +1,15 @@
+use std::sync::Arc;
+
 use tun::AsyncDevice;
 
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use crate::data_plane::policy_store::PolicyStore;
 use crate::frame::RealFrame;
+use crate::ip_defrag::{DefragResult, IpDefragEngine};
 use crate::rule_tree::Verdict;
 
-pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies: &PolicyStore) {
+pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies: &PolicyStore, defrag: &Arc<IpDefragEngine>) {
     let packet = match SlicedPacket::from_ethernet(data) {
         Ok(packet) => packet,
         Err(err) => {
@@ -24,6 +27,37 @@ pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies
         return;
     }
 
+    // Pakiet sfragmentowany - przekazanie do silnika skladania.
+    if packet.is_ip_payload_fragmented() {
+        match defrag.process(&packet) {
+            DefragResult::Pending => {}
+            DefragResult::Complete(eth_frame) => {
+                // Skladanie zakonczone - ponowne parsowanie i przekazanie.
+                match SlicedPacket::from_ethernet(&eth_frame) {
+                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, policies).await,
+                    Err(err) => eprintln!("[{iface}] DROP (reassembled packet parse error: {err:?})"),
+                }
+            }
+            DefragResult::CompleteWithAnomaly(eth_frame, anomalies) => {
+                // Skladanie zakonczone mimo anomalii - logowanie i przekazanie.
+                eprintln!("[{iface}] WARN (defrag anomalies: {})", anomalies.join("; "));
+                match SlicedPacket::from_ethernet(&eth_frame) {
+                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, policies).await,
+                    Err(err) => eprintln!("[{iface}] DROP (reassembled packet parse error: {err:?})"),
+                }
+            }
+            DefragResult::Dropped(reason) => {
+                println!("[{iface}] DROP (defrag: {reason})");
+            }
+        }
+        return;
+    }
+
+    forward_packet(iface, &packet, tun, policies).await;
+}
+
+// Ocena polityki dla zlozonego lub niesfragmentowanego pakietu i przekazuje go do TUN.
+async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore) {
     let compiled_policy = policies.load();
     let verdict = RealFrame::from_sliced(&packet)
         .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));

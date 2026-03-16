@@ -8,6 +8,7 @@ use tun::AsyncDevice;
 use crate::app_config::AppConfig;
 use crate::data_plane::packet_handler::handle_packet;
 use crate::data_plane::policy_store::PolicyStore;
+use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 
 pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Result<()> {
     let all_devices = pcap::Device::list()?;
@@ -41,12 +42,15 @@ pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Resu
         config.tun_netmask,
     )?);
 
+    let defrag = Arc::new(IpDefragEngine::new(DefragConfig::default()));
+
     let pcap_timeout_ms = config.pcap_timeout_ms;
     let mut handles = Vec::new();
 
     for device in devices {
         let tun = Arc::clone(&tun);
         let policies = Arc::clone(&policies);
+        let defrag = Arc::clone(&defrag);
         let name = device.name.clone();
         let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
 
@@ -94,7 +98,7 @@ pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Resu
         let handle = tokio::spawn(async move {
             let mut rx = rx;
             while let Some(data) = rx.recv().await {
-                handle_packet(&handler_name, &data, &tun, &policies).await;
+                handle_packet(&handler_name, &data, &tun, &policies, &defrag).await;
             }
             eprintln!("[{handler_name}] Handler task exiting (sender dropped)");
         });

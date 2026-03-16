@@ -176,7 +176,7 @@ mod tests {
         assert!(validate(&packet).is_ok());
     }
 
-    // Sprawdza czy fragmentowany pakiet omija walidacje L4 (fragmentacja nie jest jeszcze zrobiona)
+    // Sprawdza czy fragmentowany pakiet omija walidacje L4 (walidacja L4 następuje po złożeniu przez ip_defrag)
     #[test]
     fn fragmented_packet_passes_validation() {
         let mut buf = build_tcp_packet([10, 0, 0, 1], [10, 0, 0, 2], 64);
