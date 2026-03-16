@@ -78,7 +78,7 @@ export class User {
     this.refreshToken = refreshToken;
   }
 
-  public setRefreshTokenExpiry(refreshTokenExpiry: Date): void {
+  public setRefreshTokenExpiry(refreshTokenExpiry: Date | null): void {
     this.refreshTokenExpiry = refreshTokenExpiry;
   }
 }

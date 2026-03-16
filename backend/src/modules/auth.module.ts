@@ -3,6 +3,7 @@ import { BcryptPasswordHasher } from 'src/infrastructure/adapters/bcrypt-passwor
 import { PASSWORD_HASHER_TOKEN } from 'src/application/ports/passowrd-hasher.interface';
 import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
 import { TOKEN_SERVICE_TOKEN } from 'src/application/ports/token-service.interface';
+import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
 import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
 import { USER_REPOSITORY_TOKEN } from 'src/domain/repositories/user.repository';
 import { AuthController } from 'src/presentation/controllers/auth.controller';
@@ -16,6 +17,7 @@ import { Module } from '@nestjs/common';
   providers: [
     LoginUserUseCase,
     RefreshTokenUseCase,
+    LogoutUserUseCase,
     {
       provide: PASSWORD_HASHER_TOKEN,
       useClass: BcryptPasswordHasher,

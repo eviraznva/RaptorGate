@@ -15,6 +15,7 @@ import {
 } from '../dtos/error-response.dto';
 import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
 import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
+import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
 import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto';
@@ -33,9 +34,10 @@ import { LoginDto } from '../dtos/login.dto';
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
   constructor(
-    @Inject() private readonly loginUserUseCase: LoginUserUseCase,
     @Inject() private readonly refreshTokenUseCase: RefreshTokenUseCase,
     @Inject() private readonly configService: ConfigService<Env, true>,
+    @Inject() private readonly logoutUserUseCase: LogoutUserUseCase,
+    @Inject() private readonly loginUserUseCase: LoginUserUseCase,
   ) {}
 
   @IsPublic()
@@ -131,5 +133,38 @@ export class AuthController {
     return {
       accessToken: useCase.accessToken,
     };
+  }
+
+  @ApiOperation({
+    summary: 'User logout',
+    description:
+      'Logs out the user by invalidating the current access token and clearing the refresh token cookie. The access token should be sent in the Authorization header as a Bearer token. Upon successful logout, the refresh token cookie will be cleared.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'User logged out',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid access token format',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  @Post('logout')
+  async logout(
+    @ExtractToken() accessToken: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<void> {
+    await this.logoutUserUseCase.execute({ accessToken });
+
+    res.clearCookie('refresh_token', {
+      httpOnly: true,
+      secure: this.configService.get('NODE_ENV') === 'development',
+      sameSite: 'strict',
+      maxAge: 60 * 60 * 1000,
+      path: '/auth/refresh',
+    });
   }
 }
