@@ -8,6 +8,7 @@ fn assert_lower_eq(source: &str, expected: Match) {
     assert_eq!(actual, expected);
 }
 
+#[test]
 fn lower_equal_ip_ver_v4() {
     assert_lower_eq(
         "match ip_ver { = v4 : verdict allow }",

@@ -1,7 +1,17 @@
-use ngfw::config::AppConfig;
-use ngfw::control_plane::{ControlPlane, ControlPlaneConfig};
-use ngfw::data_plane::policy_store::PolicyStore;
-use ngfw::data_plane::runtime as data_plane_runtime;
+mod config;
+mod control_plane;
+mod data_plane;
+mod policy;
+mod frame;
+mod ip_defrag;
+mod packet_validator;
+mod policy_evaluator;
+mod rule_tree;
+
+use crate::config::AppConfig;
+use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+use crate::data_plane::policy_store::PolicyStore;
+use crate::data_plane::runtime as data_plane_runtime;
 
 #[tokio::main]
 async fn main() {
