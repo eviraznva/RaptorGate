@@ -1,16 +1,18 @@
 use std::time::{Duration, Instant};
 
+use tokio::sync::mpsc::{Receiver, Sender};
+
 use crate::grpc_client::event_type::EventType;
+use crate::grpc_client::client::make_firewall_event;
 use crate::grpc_client::event_dispatcher::EventDispatcher;
 use crate::grpc_client::firewall_mode_state::FirewallModeState;
-use crate::grpc_client::client::{GrpcClient, make_firewall_event};
 use crate::grpc_client::proto_types::raptorgate::{
     telemetry::MetricsBatch,
-    events::{FirewallEvent, HeartbeatEvent, HeartbeatAck},
+    events::{FirewallEvent, HeartbeatEvent, HeartbeatAck, BackendEvent},
 };
 
 pub struct EventStreamManager {
-    event_sender: tokio::sync::mpsc::Sender<FirewallEvent>,
+    event_sender: Sender<FirewallEvent>,
     mode: FirewallModeState,
     start_time: Instant,
     firewall_version: String,
@@ -18,21 +20,19 @@ pub struct EventStreamManager {
 
 impl EventStreamManager {
     pub async fn start(
-        client: &mut GrpcClient,
+        fw_tx: Sender<FirewallEvent>,
+        be_rx: Receiver<BackendEvent>,
         mode: FirewallModeState,
         firewall_version: String,
         heartbeat_interval_secs: u64,
         dispatcher: EventDispatcher,
     ) -> Result<Self, tonic::Status> {
-        let (fw_tx, be_rx) = client
-            .open_event_stream(10_000).await?;
-
         let start_time = Instant::now();
 
         let initial_hb = make_firewall_event(HeartbeatEvent::TYPE, HeartbeatEvent {
             firewall_version: firewall_version.clone(),
             mode: mode.get() as i32,
-            active_config_version: 0,
+            active_config_version: mode.get_config_version(),
             uptime_seconds: 0,
         });
 
@@ -56,7 +56,7 @@ impl EventStreamManager {
                     let heartbeat = make_firewall_event(HeartbeatEvent::TYPE, HeartbeatEvent {
                         firewall_version: firewall_version.clone(),
                         mode: mode.get() as i32,
-                        active_config_version: 0,
+                        active_config_version: mode.get_config_version(),
                         uptime_seconds: start_time.elapsed().as_secs(),
                     });
 

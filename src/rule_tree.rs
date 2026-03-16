@@ -1,22 +1,28 @@
-mod matcher;
 mod lexer;
+mod matcher;
 
 use derive_more::{Display, Error, PartialEq};
 
-use crate::{frame::{Hour, IP, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
+use crate::{
+    frame::{Hour, IP, IpVer, Port, Protocol, Weekday},
+    rule_tree::matcher::Match,
+};
 pub(crate) use matcher::MatchBuilder;
 
 pub(crate) struct RuleTree {
     name: String,
     description: String,
-    pub(crate) head: Match
+    pub(crate) head: Match,
 }
 
 impl RuleTree {
     pub fn new(name: String, description: String, head: Match) -> Self {
-        Self { name, description, head }
+        Self {
+            name,
+            description,
+            head,
+        }
     }
-    
 }
 
 struct Arm {
@@ -93,20 +99,36 @@ impl Pattern {
             (Pattern::Glob(_), MatchKind::SrcIp | MatchKind::DstIp) => Ok(()),
             (Pattern::Glob(_), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Range(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour) => Ok(()),
+            (Pattern::Range(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour) => {
+                Ok(())
+            }
             (Pattern::Range(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Comparison(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour | MatchKind::DayOfWeek) => Ok(()),
+            (
+                Pattern::Comparison(..),
+                MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour | MatchKind::DayOfWeek,
+            ) => Ok(()),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Or(_), MatchKind::Protocol | MatchKind::DayOfWeek | MatchKind::IpVer | MatchKind::Hour | MatchKind::SrcIp | MatchKind::DstIp) => Ok(()),
+            (
+                Pattern::Or(_),
+                MatchKind::Protocol
+                | MatchKind::DayOfWeek
+                | MatchKind::IpVer
+                | MatchKind::Hour
+                | MatchKind::SrcIp
+                | MatchKind::DstIp,
+            ) => Ok(()),
             (Pattern::Or(_), _) => Err(RuleError::InvalidPattern(self.clone())),
         }
     }
 }
 
 pub(crate) enum Step<'a> {
-    NeedsMatch { kind: &'a MatchKind, pattern: &'a Pattern },
+    NeedsMatch {
+        kind: &'a MatchKind,
+        pattern: &'a Pattern,
+    },
     Verdict(&'a Verdict),
     NoMatch,
 }
@@ -118,7 +140,10 @@ pub(crate) struct TreeWalker<'a> {
 
 impl<'a> TreeWalker<'a> {
     pub fn new(tree: &'a RuleTree) -> Self {
-        Self { current: &tree.head, arm_index: 0 }
+        Self {
+            current: &tree.head,
+            arm_index: 0,
+        }
     }
 
     pub fn current_step(&self) -> Step<'a> {
@@ -162,7 +187,12 @@ mod tests {
     use super::*;
 
     fn dummy_ip() -> IP {
-        IP::new([Octet::Value(10), Octet::Value(0), Octet::Value(0), Octet::Value(1)])
+        IP::new([
+            Octet::Value(10),
+            Octet::Value(0),
+            Octet::Value(0),
+            Octet::Value(1),
+        ])
     }
 
     #[test]
@@ -231,4 +261,3 @@ mod tests {
         }
     }
 }
-
