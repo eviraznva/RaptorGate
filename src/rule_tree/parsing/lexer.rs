@@ -81,7 +81,7 @@ pub(super) enum TokenType {
     Keyword(KeywordType),
     LBrace,
     RBrace,
-    Semicolon,
+    Colon,
 }
 
 #[derive(Debug, Clone, PartialEq, Display)]
@@ -234,7 +234,7 @@ impl Lexer {
             "<>" => word.into_token(TokenType::Pattern(PatternType::Range)),
             "{" => word.into_token(TokenType::LBrace),
             "}" => word.into_token(TokenType::RBrace),
-            ":" => word.into_token(TokenType::Semicolon),
+            ":" => word.into_token(TokenType::Colon),
             "match" => word.into_token(TokenType::Keyword(KeywordType::Match)),
             "verdict" => word.into_token(TokenType::Keyword(KeywordType::Verdict)),
             _ => word.into_token(TokenType::Identifier(word.contents.clone())),
@@ -472,7 +472,7 @@ mod tests {
         "ip : 255",
         vec![
             TokenType::Identifier("ip".into()),
-            TokenType::Semicolon,
+            TokenType::Colon,
             TokenType::Number(255),
         ]
     );
@@ -482,7 +482,7 @@ mod tests {
         "ip : {",
         vec![
             TokenType::Identifier("ip".into()),
-            TokenType::Semicolon,
+            TokenType::Colon,
             TokenType::LBrace,
         ]
     );
@@ -492,7 +492,7 @@ mod tests {
         "} : {",
         vec![
             TokenType::RBrace,
-            TokenType::Semicolon,
+            TokenType::Colon,
             TokenType::LBrace,
         ]
     );
@@ -514,6 +514,17 @@ mod tests {
         vec![
             TokenType::Keyword(KeywordType::Verdict),
             TokenType::Identifier("allow".into()),
+        ],
+        disable
+    );
+
+    gen_space_tests!(
+        keyword_verdict_warn,
+        "verdict allow_warn \"allow message\"",
+        vec![
+            TokenType::Keyword(KeywordType::Verdict),
+            TokenType::Identifier("allow_warn".into()),
+            TokenType::StringLiteral("allow message".into()),
         ],
         disable
     );

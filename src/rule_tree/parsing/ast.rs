@@ -36,8 +36,16 @@ enum AstValue {
 
 #[derive(Debug, PartialEq)]
 enum AstBody {
-    Verdict(String),
+    Verdict(Verdict),
     Match(AstMatch),
+}
+
+#[derive(Debug, PartialEq)]
+enum Verdict {
+    Allow,
+    Drop,
+    AllowWarn(String),
+    DropWarn(String),
 }
 
 struct Parser {
@@ -113,7 +121,7 @@ impl Parser {
         }
 
         let pattern = self.parse_pattern()?;
-        self.expect_token(TokenType::Semicolon)?;
+        self.expect_token(TokenType::Colon)?;
         let body = self.parse_body()?;
 
         Ok(Some(AstArm { pattern, body }))
@@ -181,10 +189,11 @@ impl Parser {
     }
 
     fn parse_body(&mut self) -> Result<AstBody, ParseError> {
+        //TODO: figure out consisten peeking and consuming rules
         match self.peek()?.kind {
             TokenType::Keyword(KeywordType::Verdict) => {
                 self.consume()?;
-                let verdict = self.parse_ident()?;
+                let verdict = self.parse_verdict()?;
                 Ok(AstBody::Verdict(verdict))
             },
             TokenType::Keyword(KeywordType::Match) => {
@@ -196,6 +205,37 @@ impl Parser {
             }
         }
     }
+
+    fn parse_verdict(&mut self) -> Result<Verdict, ParseError> {
+        let token = self.consume()?;
+        match &token.kind {
+            TokenType::Identifier(id) => match id.as_str() {
+                "allow" => Ok(Verdict::Allow),
+                "drop" => Ok(Verdict::Drop),
+                "allow_warn" => {
+                    let msg = self.parse_value()?;
+                    if let AstValue::Str(s) = msg {
+                        Ok(Verdict::AllowWarn(s))
+                    } else {
+                        Err(ParseError::UnexpectedToken(token))
+                    }
+                },
+
+                "drop_warn" => {
+                    let msg = self.parse_value()?;
+                    if let AstValue::Str(s) = msg {
+                        Ok(Verdict::DropWarn(s))
+                    } else {
+                        Err(ParseError::UnexpectedToken(token))
+                    }
+                },
+
+                _ => Err(ParseError::UnexpectedToken(token)),
+            }
+            _ => Err(ParseError::UnexpectedToken(token)),
+        }
+    }
+
     pub fn parse(&mut self) -> Result<AstMatch, ParseError> {
         self.parse_match()
     }
@@ -345,7 +385,27 @@ mod tests {
             tok(TokenType::Keyword(KeywordType::Verdict)),
             tok(TokenType::Identifier("allow".into())),
         ]);
-        assert_eq!(p.parse_body().unwrap(), AstBody::Verdict("allow".into()));
+        assert_eq!(p.parse_body().unwrap(), AstBody::Verdict(Verdict::Allow));
+    }
+
+    #[test]
+    fn parse_body_verdict_warn() {
+        let mut p = Parser::new(vec![
+            tok(TokenType::Keyword(KeywordType::Verdict)),
+            tok(TokenType::Identifier("allow_warn".into())),
+            tok(TokenType::StringLiteral("allow warn message".into())),
+        ]);
+        assert_eq!(p.parse_body().unwrap(), AstBody::Verdict(Verdict::AllowWarn("allow warn message".into())));
+    }
+
+    #[test]
+    fn parse_body_verdict_unexpected_message() {
+        let mut p = Parser::new(vec![
+            tok(TokenType::Keyword(KeywordType::Verdict)),
+            tok(TokenType::Identifier("allow_warn".into())),
+            tok(TokenType::Number(5)),
+        ]);
+        assert!(matches!(p.parse_body(), Err(ParseError::UnexpectedToken(_))));
     }
 
     #[test]
@@ -361,7 +421,7 @@ mod tests {
         let mut p = Parser::new(vec![
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Identifier("v4".into())),
-            tok(TokenType::Semicolon),
+            tok(TokenType::Colon),
             tok(TokenType::Keyword(KeywordType::Verdict)),
             tok(TokenType::Identifier("allow".into())),
         ]);
@@ -369,7 +429,7 @@ mod tests {
             p.parse_arm().unwrap(),
             Some(AstArm {
                 pattern: AstPattern::Equal(AstValue::Ident("v4".into())),
-                body: AstBody::Verdict("allow".into()),
+                body: AstBody::Verdict(Verdict::Allow),
             })
         );
     }
@@ -390,7 +450,7 @@ mod tests {
             tok(TokenType::LBrace),
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Identifier("tcp".into())),
-            tok(TokenType::Semicolon),
+            tok(TokenType::Colon),
             tok(TokenType::Keyword(KeywordType::Verdict)),
             tok(TokenType::Identifier("allow".into())),
             tok(TokenType::RBrace),
@@ -401,7 +461,7 @@ mod tests {
                 kind: "protocol".into(),
                 arms: vec![AstArm {
                     pattern: AstPattern::Equal(AstValue::Ident("tcp".into())),
-                    body: AstBody::Verdict("allow".into()),
+                    body: AstBody::Verdict(Verdict::Allow),
                 }]
             }
         );
@@ -416,13 +476,13 @@ mod tests {
             // arm 1: = "tcp" : verdict allow
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Identifier("tcp".into())),
-            tok(TokenType::Semicolon),
+            tok(TokenType::Colon),
             tok(TokenType::Keyword(KeywordType::Verdict)),
             tok(TokenType::Identifier("allow".into())),
             // arm 2: = "udp" : verdict drop
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Identifier("udp".into())),
-            tok(TokenType::Semicolon),
+            tok(TokenType::Colon),
             tok(TokenType::Keyword(KeywordType::Verdict)),
             tok(TokenType::Identifier("drop".into())),
             tok(TokenType::RBrace),
@@ -445,14 +505,14 @@ mod tests {
             tok(TokenType::LBrace),
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Identifier("v4".into())),
-            tok(TokenType::Semicolon),
+            tok(TokenType::Colon),
             // nested match
             tok(TokenType::Keyword(KeywordType::Match)),
             tok(TokenType::Identifier("protocol".into())),
             tok(TokenType::LBrace),
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Identifier("tcp".into())),
-            tok(TokenType::Semicolon),
+            tok(TokenType::Colon),
             tok(TokenType::Keyword(KeywordType::Verdict)),
             tok(TokenType::Identifier("allow".into())),
             tok(TokenType::RBrace),
@@ -486,19 +546,19 @@ mod tests {
             tok(TokenType::Pattern(PatternType::Or)),
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Identifier("udp".into())),
-            tok(TokenType::Semicolon),
+            tok(TokenType::Colon),
             tok(TokenType::Keyword(KeywordType::Verdict)),
             tok(TokenType::Identifier("allow".into())),
             // arm 2: nested match
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Identifier("icmp".into())),
-            tok(TokenType::Semicolon),
+            tok(TokenType::Colon),
             tok(TokenType::Keyword(KeywordType::Match)),
             tok(TokenType::Identifier("dst_port".into())),
             tok(TokenType::LBrace),
             tok(TokenType::Pattern(PatternType::Greater)),
             tok(TokenType::Number(1024)),
-            tok(TokenType::Semicolon),
+            tok(TokenType::Colon),
             tok(TokenType::Keyword(KeywordType::Verdict)),
             tok(TokenType::Identifier("drop".into())),
             tok(TokenType::RBrace),
