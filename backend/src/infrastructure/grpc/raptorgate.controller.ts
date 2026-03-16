@@ -24,13 +24,13 @@ export class RaptorGateController implements RaptorGateServiceController {
   ) {}
 
   async getActiveConfig(request: GetConfigRequest): Promise<ConfigResponse> {
+    this.logger.log(`[GetActiveConfig] correlationId=${request.correlationId} reason=${request.reason}`);
     const activeConfig = await this.getActiveConfigUseCase.execute(
       request.correlationId,
       request.knownVersions,
     );
 
-    // TODO: wczytać aktywną konfigurację z bazy, porównać z known_versions,
-    // odesłać pełny bundle lub delta
+    this.logger.log(`[GetActiveConfig] sending version=${activeConfig.configVersion}`);
 
     return {
       ...activeConfig,
@@ -39,10 +39,10 @@ export class RaptorGateController implements RaptorGateServiceController {
 
   eventStream(request: Observable<FirewallEvent>): Observable<BackendEvent> {
     return new Observable<BackendEvent>((subscriber) => {
-      this.logger.debug('[EventStream] New connection established');
+      this.logger.log('[EventStream] Firewall connected');
       const sub = request.subscribe({
         next: (envelope) => {
-          this.logger.debug(envelope, '[EventStream] Received event');
+          this.logger.debug(`[EventStream] Received event type=${envelope.type}`);
 
           switch (envelope.type) {
             case 'fw.heartbeat': {

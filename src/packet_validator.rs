@@ -136,7 +136,10 @@ mod tests {
         let mut buf = build_tcp_packet([10, 0, 0, 1], [10, 0, 0, 2], 64);
         buf[24] ^= 0xFF;
         let packet = SlicedPacket::from_ethernet(&buf).unwrap();
-        assert!(matches!(validate(&packet), Err(InvalidReason::BadIpv4Checksum)));
+        assert!(matches!(
+            validate(&packet),
+            Err(InvalidReason::BadIpv4Checksum)
+        ));
     }
 
     // Sprawdza czy pakiet z zepsutą sumą kontrolną TCP jest odrzucony.
@@ -145,7 +148,10 @@ mod tests {
         let mut buf = build_tcp_packet([10, 0, 0, 1], [10, 0, 0, 2], 64);
         buf[50] ^= 0xFF;
         let packet = SlicedPacket::from_ethernet(&buf).unwrap();
-        assert!(matches!(validate(&packet), Err(InvalidReason::BadTcpChecksum)));
+        assert!(matches!(
+            validate(&packet),
+            Err(InvalidReason::BadTcpChecksum)
+        ));
     }
 
     // Sprawdza czy pakiet z zepsutą sumą kontrolną UDP jest odrzucony.
@@ -154,7 +160,10 @@ mod tests {
         let mut buf = build_udp_packet([10, 0, 0, 1], [10, 0, 0, 2], 64);
         buf[40] ^= 0xFF;
         let packet = SlicedPacket::from_ethernet(&buf).unwrap();
-        assert!(matches!(validate(&packet), Err(InvalidReason::BadUdpChecksum)));
+        assert!(matches!(
+            validate(&packet),
+            Err(InvalidReason::BadUdpChecksum)
+        ));
     }
 
     // Sprawdza czy pakiet UDP z sumą kontrolną = 0 przechodzi.

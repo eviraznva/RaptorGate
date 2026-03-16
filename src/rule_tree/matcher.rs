@@ -1,7 +1,10 @@
 use nonempty::NonEmpty;
 use thiserror::Error;
 
-use crate::{frame::Octet, rule_tree::{Arm, ArmEnd, FieldValue, IpVer, MatchKind, Pattern, RuleError, RuleTree, Verdict}};
+use crate::{
+    frame::Octet,
+    rule_tree::{Arm, ArmEnd, FieldValue, IpVer, MatchKind, Pattern, RuleError, RuleTree, Verdict},
+};
 
 pub(crate) struct Match {
     kind: MatchKind,
@@ -33,14 +36,17 @@ pub(crate) struct MatchBuilder {
 
 impl MatchBuilder {
     pub(crate) fn with_arm(kind: MatchKind, pattern: Pattern, into: ArmEnd) -> Self {
-        Self { kind, arms: NonEmpty::new(Box::new(Arm { pattern, into })) }
-    }  
-       
+        Self {
+            kind,
+            arms: NonEmpty::new(Box::new(Arm { pattern, into })),
+        }
+    }
+
     pub(crate) fn arm(mut self, pattern: Pattern, into: ArmEnd) -> Self {
         self.arms.push(Box::new(Arm { pattern, into }));
         self
-    }  
-       
+    }
+
     pub(crate) fn build(self) -> Result<Match, RuleError> {
         let m = Match::new(self.kind, self.arms)?;
         Ok(m)
@@ -48,16 +54,30 @@ impl MatchBuilder {
 }
 
 fn test() -> Result<RuleTree, RuleError> {
-    Ok(RuleTree::new("test".into(), "testdesc".into(),
+    Ok(RuleTree::new(
+        "test".into(),
+        "testdesc".into(),
         MatchBuilder::with_arm(
             MatchKind::IpVer,
             Pattern::Equal(FieldValue::IpVer(super::IpVer::V4)),
             ArmEnd::Match(
                 MatchBuilder::with_arm(
                     MatchKind::SrcIp,
-                    Pattern::Glob(FieldValue::Ip(super::IP::new([Octet::Value(192), Octet::Value(168), Octet::Any, Octet::Any]))), ArmEnd::Verdict(Verdict::Allow)
-                ).build()?
-            )
-        ).arm(Pattern::Equal(FieldValue::IpVer(IpVer::V6)), ArmEnd::Verdict(Verdict::Drop)).build()?)
-    )
+                    Pattern::Glob(FieldValue::Ip(super::IP::new([
+                        Octet::Value(192),
+                        Octet::Value(168),
+                        Octet::Any,
+                        Octet::Any,
+                    ]))),
+                    ArmEnd::Verdict(Verdict::Allow),
+                )
+                .build()?,
+            ),
+        )
+        .arm(
+            Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
+            ArmEnd::Verdict(Verdict::Drop),
+        )
+        .build()?,
+    ))
 }
