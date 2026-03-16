@@ -43,10 +43,11 @@ impl Display for Position {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct Token {
-    pos: Position,
-    kind: TokenType,
+#[derive(Debug, Clone, PartialEq, Display)]
+#[display("{}: {}", pos, kind)]
+pub(super)struct Token {
+    pub(super) pos: Position,
+    pub(super) kind: TokenType,
 }
 
 #[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]
@@ -55,8 +56,8 @@ struct Row(usize);
 #[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]
 struct Col(usize);
 
-#[derive(Debug, Clone, PartialEq)]
-enum TokenType {
+#[derive(Debug, Clone, PartialEq, Display)]
+pub(super) enum TokenType {
     Identifier(String),
     Number(u64),
     Pattern(PatternType),
@@ -67,14 +68,14 @@ enum TokenType {
     Semicolon,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum KeywordType {
+#[derive(Debug, Clone, PartialEq, Display)]
+pub(super) enum KeywordType {
     Match,
     Verdict
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum PatternType {
+#[derive(Debug, Clone, PartialEq, Display)]
+pub(super) enum PatternType {
     Equal,
     Lesser,
     Greater,
