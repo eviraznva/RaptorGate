@@ -82,13 +82,13 @@ pub(super) enum Verdict {
     DropWarn(Spanned<String>),
 }
 
-struct Parser {
+pub(super) struct Parser {
     tokens: Vec<Token>,
     pos: usize,
 }
 
 impl Parser {
-    fn new(tokens: Vec<Token>) -> Self {
+    pub(super) fn new(tokens: Vec<Token>) -> Self {
         Self { tokens, pos: 0 }
     }
 
@@ -274,7 +274,7 @@ impl Parser {
     }
 }
 #[derive(Error, Debug, Display)]
-enum ParseError {
+pub enum ParseError {
     EmptyTokens,
     UnexpectedToken(Token),
     UnexpectedEndOfInput,

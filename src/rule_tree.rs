@@ -1,15 +1,15 @@
-mod matcher;
-mod parsing;
+pub mod matcher;
+pub mod parsing;
 
 use derive_more::{Debug, Display, Error, PartialEq};
 
 use crate::{frame::{Hour, IP, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
-pub(crate) use matcher::MatchBuilder;
+pub use matcher::MatchBuilder;
 
-pub(crate) struct RuleTree {
+pub struct RuleTree {
     name: String,
     description: String,
-    pub(crate) head: Match
+    pub head: Match
 }
 
 impl RuleTree {
@@ -26,13 +26,13 @@ struct Arm {
 }
 
 #[derive(PartialEq, Debug)]
-pub(crate) enum ArmEnd {
+pub enum ArmEnd {
     Verdict(Verdict),
     Match(Match),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Verdict {
+pub enum Verdict {
     Allow,
     Drop,
     AllowWarn(String),
@@ -40,7 +40,7 @@ pub(crate) enum Verdict {
 }
 
 #[derive(Debug, Display, Clone, PartialEq)]
-pub(crate) enum Pattern {
+pub enum Pattern {
     // TODO: move equal into comparision or alternatively remove comparision entirely
     Equal(FieldValue),
     // TODO: remove `Glob`
@@ -56,7 +56,7 @@ pub(crate) enum Pattern {
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq)]
-pub(crate) enum FieldValue {
+pub enum FieldValue {
     Ip(IP),
     IpVer(IpVer),
     DayOfWeek(Weekday),
@@ -66,7 +66,7 @@ pub(crate) enum FieldValue {
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq)]
-pub(crate) enum MatchKind {
+pub enum MatchKind {
     SrcIp,
     DstIp,
     IpVer,
@@ -78,7 +78,7 @@ pub(crate) enum MatchKind {
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Operation {
+pub enum Operation {
     Greater,
     Lesser,
     GreaterOrEqual,
@@ -113,13 +113,13 @@ impl Pattern {
     }
 }
 
-pub(crate) enum Step<'a> {
+pub enum Step<'a> {
     NeedsMatch { kind: &'a MatchKind, pattern: &'a Pattern },
     Verdict(&'a Verdict),
     NoMatch,
 }
 
-pub(crate) struct TreeWalker<'a> {
+pub struct TreeWalker<'a> {
     current: &'a Match,
     arm_index: usize,
 }
@@ -159,7 +159,7 @@ impl<'a> TreeWalker<'a> {
 }
 
 #[derive(Debug, Display, Error)]
-pub(crate) enum RuleError {
+pub enum RuleError {
     #[display("Invalid Pattern Error, pattern: {}", _0)]
     InvalidPattern(#[error(not(source))] Pattern),
 }
