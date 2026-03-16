@@ -29,9 +29,6 @@ export class RaptorGateController implements RaptorGateServiceController {
       request.knownVersions,
     );
 
-    // TODO: wczytać aktywną konfigurację z bazy, porównać z known_versions,
-    // odesłać pełny bundle lub delta
-
     return {
       ...activeConfig,
     };

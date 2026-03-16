@@ -1,6 +1,7 @@
 import { DrizzleUserRepository } from 'src/infrastructure/persistence/repositories/drizzle-user.repository';
 import { BcryptPasswordHasher } from 'src/infrastructure/adapters/bcrypt-password-hasher';
 import { PASSWORD_HASHER_TOKEN } from 'src/application/ports/passowrd-hasher.interface';
+import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
 import { TOKEN_SERVICE_TOKEN } from 'src/application/ports/token-service.interface';
 import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
 import { USER_REPOSITORY_TOKEN } from 'src/domain/repositories/user.repository';
@@ -14,6 +15,7 @@ import { Module } from '@nestjs/common';
   controllers: [AuthController],
   providers: [
     LoginUserUseCase,
+    RefreshTokenUseCase,
     {
       provide: PASSWORD_HASHER_TOKEN,
       useClass: BcryptPasswordHasher,

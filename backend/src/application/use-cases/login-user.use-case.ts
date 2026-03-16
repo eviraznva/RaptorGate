@@ -34,14 +34,25 @@ export class LoginUserUseCase {
     const toknenPair = await this.tokenService.generateTokenPair({
       sub: user.getId(),
       username: user.getUsername(),
-      role: user.getRole(),
     });
+
+    const refreshTokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    user.setRefreshToken(toknenPair.refreshToken);
+    user.setRefreshTokenExpiry(refreshTokenExpiry);
+
+    await this.userRepository.setRefreshToken(
+      user.getId(),
+      toknenPair.refreshToken,
+      refreshTokenExpiry,
+    );
 
     return {
       id: user.getId(),
       username: user.getUsername(),
       createdAt: user.getCreatedAt(),
       accessToken: toknenPair.accessToken,
+      refreshToken: toknenPair.refreshToken,
     };
   }
 }

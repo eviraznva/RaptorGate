@@ -1,22 +1,40 @@
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { apiReference } from '@scalar/nestjs-api-reference';
-import { Env } from './shared/config/env.validation';
-import { existsSync, unlinkSync } from 'node:fs';
 import { Logger, ValidationPipe } from '@nestjs/common';
+import { Env } from './shared/config/env.validation';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
-import { join } from 'node:path';
 import { cwd } from 'node:process';
+import { join } from 'node:path';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+
+  const httpsOptions = {
+    key: readFileSync('/home/marek/RaptorGate/backend/devCerts/key.pem'),
+    cert: readFileSync('/home/marek/RaptorGate/backend/devCerts/cert.pem'),
+  };
+
+  const app = await NestFactory.create(AppModule, {
+    httpsOptions,
+  });
 
   const configService = app.get(ConfigService<Env, true>);
-  const grpcSocketPath = configService.get('GRPC_SOCKET_PATH', { infer: true });
   const httpPort = configService.get('PORT', { infer: true });
+  const corsOrigin = configService.get('CORS_ORIGIN', { infer: true });
+  const cookieSecret = configService.get('COOKIE_SECRET', { infer: true });
+  const grpcSocketPath = configService.get('GRPC_SOCKET_PATH', { infer: true });
+
+  app.use(cookieParser(cookieSecret));
+
+  app.enableCors({
+    origin: corsOrigin,
+    credentials: true,
+  });
 
   const absoluteSocketPath = join(process.cwd(), grpcSocketPath);
   if (existsSync(absoluteSocketPath)) {
@@ -120,4 +138,5 @@ async function bootstrap() {
   logger.log(`API Documentation: http://localhost:${httpPort}/api`);
   logger.log(`API Reference: http://localhost:${httpPort}/reference`);
 }
+
 bootstrap();

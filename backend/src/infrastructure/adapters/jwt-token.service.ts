@@ -18,6 +18,7 @@ export class TokenService implements ITokenService {
   async generateAccessToken(payload: TokenPayload): Promise<string> {
     const accessToken = await this.jwtService.signAsync(payload, {
       secret: this.configService.get('JWT_SECRET'),
+      expiresIn: this.configService.get('JWT_EXPIRES_IN'),
     });
     return accessToken;
   }
@@ -34,9 +35,17 @@ export class TokenService implements ITokenService {
     return { accessToken, refreshToken };
   }
 
-  async verifyAccessToken(token: string): Promise<TokenPayload | null> {
+  async verifyAccessToken(
+    token: string,
+    ignoreExpiration: boolean = false,
+  ): Promise<TokenPayload | null> {
     return await this.jwtService.verifyAsync<TokenPayload>(token, {
       secret: this.configService.get('JWT_SECRET'),
+      ignoreExpiration,
     });
+  }
+
+  decodeAccessToken(token: string): TokenPayload | null {
+    return this.jwtService.decode<TokenPayload>(token);
   }
 }

@@ -29,6 +29,15 @@ export class DrizzleUserRepository implements IUserRepository {
     return UserMapper.toDomain(result);
   }
 
+  async setRefreshToken(id: string, refreshToken: string): Promise<void> {
+    await this.db
+      .update(usersTable)
+      .set({
+        refreshToken: refreshToken,
+      })
+      .where(eq(usersTable.id, id));
+  }
+
   async findById(id: string): Promise<User | null> {
     const [result] = await this.db
       .select()
