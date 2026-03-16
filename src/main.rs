@@ -9,6 +9,7 @@ use pcap::Direction;
 use tun::AsyncDevice;
 
 use crate::{frame::RealFrame, policy_evaluator::PolicyEvaluator, rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict}};
+use crate::grpc_client::backend_connection::BackendConnection;
 
 mod frame;
 mod rule_tree;
@@ -19,11 +20,29 @@ mod packet_validator;
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .init();
+
     let config = match app_config::AppConfig::from_env() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Configuration error: {e}");
             return;
+        }
+    };
+
+    let _backend = match BackendConnection::startup(&config).await {
+        Ok(b) => {
+            tracing::info!("Backend połączony, konfiguracja wczytana");
+            Some(b)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Brak połączenia z backendem — tryb safe-deny (FW-144/145)");
+            None
         }
     };
 

@@ -1,4 +1,6 @@
 pub mod client;
+pub mod active_config;
+pub mod backend_connection;
 pub mod event_stream_manager;
 
 mod proto_types;

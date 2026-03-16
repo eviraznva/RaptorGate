@@ -55,7 +55,7 @@ impl AppConfig {
                 .to_lowercase() == "true",
 
             grpc_socket_path: std::env::var("GRPC_SOCKET_PATH")
-                .unwrap_or_else(|_| "/run/raptorgate/backend.sock".into()),
+                .unwrap_or_else(|_| "./sockets/firewall.sock".into()),
 
             firewall_version: std::env::var("FIREWALL_VERSION")
                 .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into()),
