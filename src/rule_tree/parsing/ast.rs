@@ -126,13 +126,13 @@ impl Parser {
                 let mut patterns = Vec::new();
                 loop {
                     patterns.push(self.parse_simple_pattern()?);
-                    if !matches!(self.peek()?.kind, TokenType::Pattern(PatternType::Or)) {
-                        break;
+                    match self.peek() {
+                        Ok(t) if t.kind == TokenType::Pattern(PatternType::Or) => { self.consume()?; }
+                        _ => break,
                     }
-                    self.consume()?;
                 }
                 Ok(AstPattern::Or(patterns))
-            }
+            }            
             _ => self.parse_simple_pattern()
         }
     }
