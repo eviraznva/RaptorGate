@@ -37,6 +37,23 @@ pub(crate) struct Position {
     col: Col,
 }
 
+#[cfg(test)]
+impl Position {
+    pub fn for_tests(row: Row, col: Col) -> Self {
+        Position { row, col }
+    } 
+}
+
+#[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]
+#[cfg_attr(test, visibility::make(pub))]
+pub struct Row(usize);
+
+#[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]
+#[cfg_attr(test, visibility::make(pub))]
+struct Col(usize);
+
+
+
 impl Display for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.row.0, self.col.0)
@@ -49,13 +66,12 @@ pub(super)struct Token {
     pub(super) pos: Position,
     pub(super) kind: TokenType,
 }
-
-#[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]
-struct Row(usize);
-
-#[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]
-struct Col(usize);
-
+impl Token {
+    #[cfg(test)]
+    pub(crate) fn for_tests(kind: TokenType, pos: Position) -> Self {
+        Self { pos, kind }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Display)]
 pub(super) enum TokenType {
     Identifier(String),
@@ -270,7 +286,7 @@ impl Lexer {
 mod tests {
     use std::vec;
 
-    use crate::rule_tree::lexer::{KeywordType, Lexer, LexerError, PatternType, Position, Token, TokenType};
+    use crate::rule_tree::parsing::lexer::{KeywordType, Lexer, LexerError, PatternType, Position, Token, TokenType};
 
     #[test]
     fn empty_ruleset_passes() {
