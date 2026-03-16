@@ -41,6 +41,27 @@ impl ActiveConfig {
         }
     }
     
+    pub fn to_config_response(&self) -> ConfigResponse {
+        ConfigResponse {
+            config_version: self.version,
+            bundle_checksum: self.bundle_checksum.clone(),
+            correlation_id: String::new(),
+            configuration_changed: true,
+            current_versions: Some(self.section_versions.clone()),
+            rules: self.rules.clone(),
+            zones: self.zones.clone(),
+            zone_interfaces: self.zone_interfaces.clone(),
+            zone_pairs: self.zone_pairs.clone(),
+            nat_rules: self.nat_rules.clone(),
+            dns_blacklist: self.dns_blacklist.clone(),
+            ssl_bypass_list: self.ssl_bypass_list.clone(),
+            ips_signatures: self.ips_signatures.clone(),
+            ml_model: self.ml_model.clone(),
+            firewall_certificates: self.firewall_certificates.clone(),
+            identity: self.identity.clone(),
+        }
+    }
+
     pub fn merge_delta(&mut self, resp: ConfigResponse) {
         self.version = resp.config_version;
         self.bundle_checksum = resp.bundle_checksum;

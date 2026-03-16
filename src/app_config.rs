@@ -18,6 +18,9 @@ pub struct AppConfig {
     pub grpc_socket_path: String,
     pub firewall_version: String,
     pub heartbeat_interval_secs: u64,
+
+    // Redb snapshot
+    pub redb_snapshot_path: String,
 }
 
 impl AppConfig {
@@ -64,6 +67,9 @@ impl AppConfig {
                 .unwrap_or_else(|_| "10".into())
                 .parse()
                 .context("HEARTBEAT_INTERVAL_SECS must be an integer")?,
+
+            redb_snapshot_path: std::env::var("REDB_SNAPSHOT_PATH")
+                .unwrap_or_else(|_| "./.data/snapshot.redb".into()),
         })
     }
 }
