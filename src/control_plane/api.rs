@@ -4,7 +4,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::app_config::AppConfig;
+use crate::config::AppConfig;
 use crate::control_plane::backend_api::proto::raptorgate::common::FirewallMode;
 use crate::control_plane::error::ControlPlaneError;
 use crate::control_plane::runtime::state::StatusPublisher;

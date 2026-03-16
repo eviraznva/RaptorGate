@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tokio::task;
 use tun::AsyncDevice;
 
-use crate::app_config::AppConfig;
+use crate::config::AppConfig;
 use crate::data_plane::packet_handler::handle_packet;
 use crate::data_plane::policy_store::PolicyStore;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};

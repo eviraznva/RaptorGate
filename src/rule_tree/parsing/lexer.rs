@@ -37,26 +37,43 @@ pub(crate) struct Position {
     col: Col,
 }
 
+#[cfg(test)]
+impl Position {
+    pub fn for_tests(row: Row, col: Col) -> Self {
+        Position { row, col }
+    } 
+}
+
+#[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]
+#[cfg_attr(test, visibility::make(pub))]
+pub struct Row(usize);
+
+#[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]
+#[cfg_attr(test, visibility::make(pub))]
+struct Col(usize);
+
+
+
 impl Display for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.row.0, self.col.0)
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct Token {
-    pos: Position,
-    kind: TokenType,
+#[derive(Debug, Clone, PartialEq, Display)]
+#[display("{}: {}", pos, kind)]
+pub(super)struct Token {
+    pub(super) pos: Position,
+    pub(super) kind: TokenType,
 }
-
-#[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]
-struct Row(usize);
-
-#[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]
-struct Col(usize);
-
-#[derive(Debug, Clone, PartialEq)]
-enum TokenType {
+impl Token {
+    #[cfg(test)]
+    pub(crate) fn for_tests(kind: TokenType, pos: Position) -> Self {
+        Self { pos, kind }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Display)]
+pub(super) enum TokenType {
     Identifier(String),
     Number(u64),
     Pattern(PatternType),
@@ -64,17 +81,17 @@ enum TokenType {
     Keyword(KeywordType),
     LBrace,
     RBrace,
-    Semicolon,
+    Colon,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum KeywordType {
+#[derive(Debug, Clone, PartialEq, Display)]
+pub(super) enum KeywordType {
     Match,
     Verdict,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum PatternType {
+#[derive(Debug, Clone, PartialEq, Display)]
+pub(super) enum PatternType {
     Equal,
     Lesser,
     Greater,
@@ -247,7 +264,7 @@ impl Lexer {
             "<>" => word.into_token(TokenType::Pattern(PatternType::Range)),
             "{" => word.into_token(TokenType::LBrace),
             "}" => word.into_token(TokenType::RBrace),
-            ":" => word.into_token(TokenType::Semicolon),
+            ":" => word.into_token(TokenType::Colon),
             "match" => word.into_token(TokenType::Keyword(KeywordType::Match)),
             "verdict" => word.into_token(TokenType::Keyword(KeywordType::Verdict)),
             _ => word.into_token(TokenType::Identifier(word.contents.clone())),
@@ -311,9 +328,7 @@ impl Lexer {
 mod tests {
     use std::vec;
 
-    use crate::rule_tree::lexer::{
-        KeywordType, Lexer, LexerError, PatternType, Position, Token, TokenType,
-    };
+    use crate::rule_tree::parsing::lexer::{KeywordType, Lexer, LexerError, PatternType, Position, Token, TokenType};
 
     #[test]
     fn empty_ruleset_passes() {
@@ -499,7 +514,7 @@ mod tests {
         "ip : 255",
         vec![
             TokenType::Identifier("ip".into()),
-            TokenType::Semicolon,
+            TokenType::Colon,
             TokenType::Number(255),
         ]
     );
@@ -509,7 +524,7 @@ mod tests {
         "ip : {",
         vec![
             TokenType::Identifier("ip".into()),
-            TokenType::Semicolon,
+            TokenType::Colon,
             TokenType::LBrace,
         ]
     );
@@ -517,7 +532,11 @@ mod tests {
     gen_space_tests!(
         colon_separator_braces_full,
         "} : {",
-        vec![TokenType::RBrace, TokenType::Semicolon, TokenType::LBrace,]
+        vec![
+            TokenType::RBrace,
+            TokenType::Colon,
+            TokenType::LBrace,
+        ]
     );
 
     gen_space_tests!(
@@ -537,6 +556,17 @@ mod tests {
         vec![
             TokenType::Keyword(KeywordType::Verdict),
             TokenType::Identifier("allow".into()),
+        ],
+        disable
+    );
+
+    gen_space_tests!(
+        keyword_verdict_warn,
+        "verdict allow_warn \"allow message\"",
+        vec![
+            TokenType::Keyword(KeywordType::Verdict),
+            TokenType::Identifier("allow_warn".into()),
+            TokenType::StringLiteral("allow message".into()),
         ],
         disable
     );
