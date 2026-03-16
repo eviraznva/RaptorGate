@@ -1,7 +1,7 @@
 use nonempty::NonEmpty;
 use thiserror::Error;
 
-use crate::{frame::Octet, rule_tree::{Arm, ArmEnd, FieldValue, IpVer, MatchKind, Pattern, RuleError, RuleTree, Verdict}};
+use crate::{frame::{Hour, Octet, Weekday}, rule_tree::{Arm, ArmEnd, FieldValue, IpVer, MatchKind, Operation, Pattern, RuleError, RuleTree, Verdict}};
 
 pub(crate) struct Match {
     kind: MatchKind,
@@ -58,6 +58,12 @@ fn test() -> Result<RuleTree, RuleError> {
                     Pattern::Glob(FieldValue::Ip(super::IP::new([Octet::Value(192), Octet::Value(168), Octet::Any, Octet::Any]))), ArmEnd::Verdict(Verdict::Allow)
                 ).build()?
             )
-        ).arm(Pattern::Equal(FieldValue::IpVer(IpVer::V6)), ArmEnd::Verdict(Verdict::Drop)).build()?)
+        ).arm(Pattern::Equal(FieldValue::IpVer(IpVer::V6)), ArmEnd::Verdict(Verdict::Drop)
+        ).arm(
+            Pattern::Or(vec![
+                Pattern::Comparison(Operation::Greater, FieldValue::DayOfWeek(Weekday::Wed)),
+                Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
+            ]), ArmEnd::Verdict(Verdict::Drop)
+        ).build()?)
     )
 }

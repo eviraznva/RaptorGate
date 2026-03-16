@@ -135,7 +135,7 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
             }
 
             MatchKind::Hour => Ok(FieldValue::Hour(
-                    Hour::try_from(n.val as u8)
+                    Hour::try_from(u8::try_from(n.val).map_err(|_| LowerError::ValueOutOfRange { kind, value: n.val, pos })?)
                     .map_err(|_| LowerError::ValueOutOfRange { kind, value: n.val, pos })?
             )),
 
@@ -164,6 +164,7 @@ fn lower_pattern(kind: MatchKind, p: Spanned<AstPattern>) -> Result<Pattern, Low
                 lower_value(kind, from)?,
                 lower_value(kind, to)?,
         )),
+
         AstPattern::Or(patterns) => {
             let lowered = patterns
                 .val
