@@ -926,6 +926,7 @@ dependencies = [
  "prost",
  "prost-types",
  "protoc-bin-vendored",
+ "redb",
  "redis",
  "serde",
  "serde_json",
@@ -1311,6 +1312,15 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "redb"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef99362319c782aa4639ad3a306b64c3bb90e12874e99b8df124cb679d988611"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "redis"
