@@ -9,6 +9,12 @@ pub struct GrpcClient {
     inner: RaptorGateServiceClient<Channel>,
 }
 
+impl Clone for GrpcClient {
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
+}
+
 impl GrpcClient {
     pub async fn connect(socket_path: &str) -> Result<Self, tonic::transport::Error> {
         let socket_path = socket_path.to_owned();
@@ -35,23 +41,41 @@ impl GrpcClient {
         Ok(response.into_inner())
     }
 
-    pub async fn open_event_stream(&mut self, buffer_size: usize) -> Result<
-        (
-            tokio::sync::mpsc::Sender<FirewallEvent>,
-            tokio::sync::mpsc::Receiver<BackendEvent>,
-        ), tonic::Status> {
-        let (fw_tx, fw_rx) =
+    pub fn open_event_stream(
+        &mut self,
+        buffer_size: usize,
+    ) -> (
+        tokio::sync::mpsc::Sender<FirewallEvent>,
+        tokio::sync::mpsc::Receiver<BackendEvent>,
+    ) {
+        let (fw_tx, fw_rx) = 
             tokio::sync::mpsc::channel::<FirewallEvent>(buffer_size);
-
-        let (be_tx, be_rx) =
+        
+        let (be_tx, be_rx) = 
             tokio::sync::mpsc::channel::<BackendEvent>(buffer_size);
 
-        let response = self.inner
-            .event_stream(ReceiverStream::new(fw_rx)).await?;
-
-        let mut be_stream = response.into_inner();
+        // Inicjacja bidirectional stream w tle.
+        //
+        // Deadlock jeśli await-ujemy tutaj: grpc-js/NestJS wysyła response HEADERS
+        // dopiero przy pierwszym call.write() (pierwsza wiadomość klienta).
+        // Tymczasem tonic czeka na response HEADERS zanim zwróci await.
+        // Rozwiązanie: zwróć (fw_tx, be_rx) natychmiast; initial heartbeat
+        // wysłany przez EventStreamManager::start trafi do bufora fw_tx
+        // i zostanie przesłany do serwera przez tonic gdy task ruszy,
+        // co odblokuje response HEADERS po stronie serwera.
+        let mut inner = self.inner.clone();
 
         tokio::spawn(async move {
+            let response = match inner.event_stream(ReceiverStream::new(fw_rx)).await {
+                Ok(r) => r,
+                Err(status) => {
+                    tracing::error!(%status, "EventStream: nieudane otwarcie streamu");
+                    return;
+                }
+            };
+
+            let mut be_stream = response.into_inner();
+
             while let Some(event) = be_stream.message().await.transpose() {
                 match event {
                     Ok(ev) => {
@@ -68,7 +92,7 @@ impl GrpcClient {
             }
         });
 
-        Ok((fw_tx, be_rx))
+        (fw_tx, be_rx)
     }
 }
 
@@ -86,7 +110,7 @@ pub fn decode_backend_payload<T: prost::Message + Default>(event: &BackendEvent)
     T::decode(event.payload.as_ref())
 }
 
-fn current_timestamp() -> prost_types::Timestamp {
+pub(crate) fn current_timestamp() -> prost_types::Timestamp {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
