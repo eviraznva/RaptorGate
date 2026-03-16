@@ -107,18 +107,18 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
                 pos,
             }),
         },
-        AstValue::Str(s) => match kind {
+        AstValue::StrLit(s) => match kind {
             MatchKind::SrcIp | MatchKind::DstIp => {
                 let ip = IP::try_from(s.val.clone()).map_err(|_| LowerError::TypeMismatch {
                     kind,
-                    value: AstValue::Str(s.clone()),
+                    value: AstValue::StrLit(s.clone()),
                     pos,
                 })?;
                 Ok(FieldValue::Ip(ip))
             }
             _ => Err(LowerError::TypeMismatch {
                 kind,
-                value: AstValue::Str(s),
+                value: AstValue::StrLit(s),
                 pos,
             }),
         },
@@ -133,16 +133,12 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
                 }
                 Ok(FieldValue::Port(Port::from(n.val as u16)))
             }
-            MatchKind::Hour => {
-                if n.val > u8::MAX as u64 {
-                    return Err(LowerError::ValueOutOfRange {
-                        kind,
-                        value: n.val,
-                        pos,
-                    });
-                }
-                Ok(FieldValue::Hour(Hour::from(n.val as u8)))
-            }
+
+            MatchKind::Hour => Ok(FieldValue::Hour(
+                    Hour::try_from(n.val as u8)
+                    .map_err(|_| LowerError::ValueOutOfRange { kind, value: n.val, pos })?
+            )),
+
             _ => Err(LowerError::TypeMismatch {
                 kind,
                 value: AstValue::Number(n),
@@ -157,16 +153,16 @@ fn lower_pattern(kind: MatchKind, p: Spanned<AstPattern>) -> Result<Pattern, Low
         AstPattern::Glob => Ok(Pattern::Wildcard),
         AstPattern::Equal(v) => Ok(Pattern::Equal(lower_value(kind, v)?)),
         AstPattern::Greater(v) => Ok(Pattern::Comparison(
-            Operation::Greater,
-            lower_value(kind, v)?,
+                Operation::Greater,
+                lower_value(kind, v)?,
         )),
         AstPattern::LesserOrEqual(v) => Ok(Pattern::Comparison(
-            Operation::LesserOrEqual,
-            lower_value(kind, v)?,
+                Operation::LesserOrEqual,
+                lower_value(kind, v)?,
         )),
         AstPattern::Range(from, to) => Ok(Pattern::Range(
-            lower_value(kind, from)?,
-            lower_value(kind, to)?,
+                lower_value(kind, from)?,
+                lower_value(kind, to)?,
         )),
         AstPattern::Or(patterns) => {
             let lowered = patterns
@@ -181,7 +177,7 @@ fn lower_pattern(kind: MatchKind, p: Spanned<AstPattern>) -> Result<Pattern, Low
                         },
                     )
                 })
-                .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
             Ok(Pattern::Or(lowered))
         }
     }
@@ -195,21 +191,25 @@ fn lower_body(body: Spanned<AstBody>) -> Result<ArmEnd, LowerError> {
 }
 
 pub(super) fn lower(ast: Spanned<AstMatch>) -> Result<Match, LowerError> {
-    let kind = lower_kind(&ast.val.kind)?;
-    let mut arms = ast.val.arms.val.into_iter();
+    let kind = lower_kind(ast.val.kind())?;
+    let arms_span = ast.val.arms();
 
-    let first = arms
-        .next()
-        .ok_or(LowerError::EmptyMatch { pos: ast.val.arms.pos })?;
+    let first = arms_span
+        .val
+        .first()
+        .ok_or(LowerError::EmptyMatch { pos: arms_span.pos })?;
 
     let mut builder = MatchBuilder::with_arm(
         kind,
-        lower_pattern(kind, first.pattern)?,
-        lower_body(first.body)?,
+        lower_pattern(kind, first.pattern().clone())?,
+        lower_body(first.body().clone())?,
     );
 
-    for arm in arms {
-        builder = builder.arm(lower_pattern(kind, arm.pattern)?, lower_body(arm.body)?);
+    for arm in arms_span.val.iter().skip(1) {
+        builder = builder.arm(
+            lower_pattern(kind, arm.pattern().clone())?,
+            lower_body(arm.body().clone())?,
+        );
     }
 
     Ok(builder.build()?)

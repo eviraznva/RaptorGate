@@ -11,19 +11,40 @@ pub(super) struct Spanned<T> {
     pub(super) pos: Position,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(super) struct AstMatch {
     kind: Spanned<String>,
     arms: Spanned<Vec<AstArm>>,
 }
 
-#[derive(Debug, PartialEq)]
-struct AstArm {
+impl AstMatch {
+    pub(super) fn kind(&self) -> &Spanned<String> {
+        &self.kind
+    }
+
+    pub(super) fn arms(&self) -> &Spanned<Vec<AstArm>> {
+        &self.arms
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub(super) struct AstArm {
     pattern: Spanned<AstPattern>,
     body: Spanned<AstBody>,
 }
 
-#[derive(Debug, PartialEq)]
+impl AstArm {
+    pub(super) fn pattern(&self) -> &Spanned<AstPattern> {
+        &self.pattern
+    }
+
+    pub(super) fn body(&self) -> &Spanned<AstBody> {
+        &self.body
+    }
+    
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub(super) enum AstPattern {
     Equal(Spanned<AstValue>),
     Greater(Spanned<AstValue>),
@@ -33,20 +54,20 @@ pub(super) enum AstPattern {
     Glob,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(super) enum AstValue {
     Number(Spanned<u64>),
-    Str(Spanned<String>),
+    StrLit(Spanned<String>),
     Ident(Spanned<String>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(super) enum AstBody {
     Verdict(Spanned<Verdict>),
     Match(Spanned<AstMatch>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(super) enum Verdict {
     Allow,
     Drop,
@@ -184,7 +205,7 @@ impl Parser {
         let token = self.consume()?;
         match token.kind {
             TokenType::Number(n) => Ok(Spanned { val: AstValue::Number(Spanned { val: n, pos: token.pos }), pos: token.pos }),
-            TokenType::StringLiteral(s) => Ok(Spanned { val: AstValue::Str(Spanned { val: s, pos: token.pos }), pos: token.pos }),
+            TokenType::StringLiteral(s) => Ok(Spanned { val: AstValue::StrLit(Spanned { val: s, pos: token.pos }), pos: token.pos }),
             TokenType::Identifier(id) => Ok(Spanned { val: AstValue::Ident(Spanned { val: id, pos: token.pos }), pos: token.pos }),
             _ => Err(ParseError::UnexpectedToken(token)),
         }
@@ -217,7 +238,7 @@ impl Parser {
                 "drop" => Ok(Spanned { val: Verdict::Drop, pos: token.pos }),
                 "allow_warn" => {
                     let msg = self.parse_value()?;
-                    if let AstValue::Str(s) = msg.val {
+                    if let AstValue::StrLit(s) = msg.val {
                         Ok(Spanned { val: Verdict::AllowWarn(s), pos: token.pos })
                     } else {
                         Err(ParseError::UnexpectedToken(token))
@@ -225,7 +246,7 @@ impl Parser {
                 },
                 "drop_warn" => {
                     let msg = self.parse_value()?;
-                    if let AstValue::Str(s) = msg.val {
+                    if let AstValue::StrLit(s) = msg.val {
                         Ok(Spanned { val: Verdict::DropWarn(s), pos: token.pos })
                     } else {
                         Err(ParseError::UnexpectedToken(token))
@@ -291,7 +312,7 @@ mod tests {
     #[test]
     fn parse_value_string() {
         let mut p = Parser::new(vec![tok(TokenType::StringLiteral("hello".into()))]);
-        assert!(matches!(p.parse_value().unwrap().val, AstValue::Str(s) if s.val == "hello"));
+        assert!(matches!(p.parse_value().unwrap().val, AstValue::StrLit(s) if s.val == "hello"));
     }
 
     #[test]
@@ -314,7 +335,7 @@ mod tests {
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::StringLiteral("tcp".into())),
         ]);
-        assert!(matches!(p.parse_simple_pattern().unwrap().val, AstPattern::Equal(v) if matches!(&v.val, AstValue::Str(s) if s.val == "tcp")));
+        assert!(matches!(p.parse_simple_pattern().unwrap().val, AstPattern::Equal(v) if matches!(&v.val, AstValue::StrLit(s) if s.val == "tcp")));
     }
 
     #[test]
