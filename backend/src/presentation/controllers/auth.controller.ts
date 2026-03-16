@@ -27,6 +27,7 @@ import { Env } from 'src/shared/config/env.validation';
 import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from '../dtos/login.dto';
+import { Throttle } from '@nestjs/throttler';
 
 @UseFilters(DomainExceptionFilter)
 @ApiTags('Authentication')
@@ -68,6 +69,7 @@ export class AuthController {
     status: 500,
     description: 'Internal server error',
   })
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) res: Response,
