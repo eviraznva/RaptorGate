@@ -27,10 +27,11 @@ import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import { Permission } from 'src/domain/enums/permissions.enum';
 import { LoginResponseDto } from '../dtos/login-response.dto';
 import { Env } from 'src/shared/config/env.validation';
+import { Role } from 'src/domain/enums/role.enum';
 import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from '../dtos/login.dto';
-import { Role } from 'src/domain/enums/role.enum';
+import { Throttle } from '@nestjs/throttler';
 
 @UseFilters(DomainExceptionFilter)
 @ApiTags('Authentication')
@@ -72,6 +73,7 @@ export class AuthController {
     status: 500,
     description: 'Internal server error',
   })
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) res: Response,
