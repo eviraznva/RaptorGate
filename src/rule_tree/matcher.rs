@@ -1,9 +1,9 @@
+use derive_more::Debug;
 use nonempty::NonEmpty;
-use thiserror::Error;
 
 use crate::{frame::{Hour, Octet, Weekday}, rule_tree::{Arm, ArmEnd, FieldValue, IpVer, MatchKind, Operation, Pattern, RuleError, RuleTree, Verdict}};
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub(crate) struct Match {
     kind: MatchKind,
     arms: NonEmpty<Box<Arm>>,

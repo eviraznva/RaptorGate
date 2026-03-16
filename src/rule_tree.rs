@@ -1,7 +1,7 @@
 mod matcher;
 mod parsing;
 
-use derive_more::{Display, Error, PartialEq};
+use derive_more::{Debug, Display, Error, PartialEq};
 
 use crate::{frame::{Hour, IP, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
 pub(crate) use matcher::MatchBuilder;
@@ -19,13 +19,13 @@ impl RuleTree {
 
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 struct Arm {
     pattern: Pattern,
     into: ArmEnd,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub(crate) enum ArmEnd {
     Verdict(Verdict),
     Match(Match),

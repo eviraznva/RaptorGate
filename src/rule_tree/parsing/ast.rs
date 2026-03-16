@@ -11,37 +11,43 @@ pub(super) struct Spanned<T> {
     pub(super) pos: Position,
 }
 
+impl AstMatch {
+    pub(super) fn kind(&self) -> &Spanned<String> { &self.kind }
+    pub(super) fn arms(&self) -> &Spanned<Vec<AstArm>> { &self.arms }
+
+    #[cfg(test)]
+    pub(super) fn for_tests(kind: Spanned<String>, arms: Spanned<Vec<AstArm>>) -> Self {
+        Self { kind, arms }
+    }
+}
+
+impl AstArm {
+    pub(super) fn pattern(&self) -> &Spanned<AstPattern> { &self.pattern }
+    pub(super) fn body(&self) -> &Spanned<AstBody> { &self.body }
+
+    #[cfg(test)]
+    pub(super) fn for_tests(pattern: Spanned<AstPattern>, body: Spanned<AstBody>) -> Self {
+        Self { pattern, body }
+    }
+}
+
+impl<T> Spanned<T> {
+    #[cfg(test)]
+    pub(super) fn for_tests(val: T, pos: Position) -> Self {
+        Self { val, pos }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub(super) struct AstMatch {
     kind: Spanned<String>,
     arms: Spanned<Vec<AstArm>>,
 }
 
-impl AstMatch {
-    pub(super) fn kind(&self) -> &Spanned<String> {
-        &self.kind
-    }
-
-    pub(super) fn arms(&self) -> &Spanned<Vec<AstArm>> {
-        &self.arms
-    }
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub(super) struct AstArm {
     pattern: Spanned<AstPattern>,
     body: Spanned<AstBody>,
-}
-
-impl AstArm {
-    pub(super) fn pattern(&self) -> &Spanned<AstPattern> {
-        &self.pattern
-    }
-
-    pub(super) fn body(&self) -> &Spanned<AstBody> {
-        &self.body
-    }
-    
 }
 
 #[derive(Debug, PartialEq, Clone)]
