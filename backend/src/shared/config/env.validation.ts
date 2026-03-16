@@ -12,6 +12,9 @@ const envSchema = z.object({
   REFRESH_TOKEN_EXPIRES_IN: z.string().default('7d'),
   BCRYPT_SALT_ROUNDS: z.coerce.number().min(10).max(31).default(12),
   GRPC_SOCKET_PATH: z.string().default('../sockets/firewall.sock'),
+  COOKIE_SECRET: z
+    .string()
+    .min(32, 'COOKIE_SECRET must be at least 32 characters'),
   CORS_ORIGIN: z
     .string()
     .or(z.array(z.string()))

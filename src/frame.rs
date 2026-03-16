@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use derive_more::{Debug, Display, Eq, Error, From};
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) trait Frame {
     fn ip_ver(&self) -> IpVer;
@@ -57,10 +58,7 @@ impl std::fmt::Display for IP {
         write!(
             f,
             "{}.{}.{}.{}",
-            self.octets[0],
-            self.octets[1],
-            self.octets[2],
-            self.octets[3],
+            self.octets[0], self.octets[1], self.octets[2], self.octets[3],
         )
     }
 }
@@ -76,7 +74,6 @@ impl PartialEq for Octet {
         match (self, other) {
             (Octet::Value(a), Octet::Value(b)) => a == b,
             _ => true,
-            
         }
     }
 }
@@ -101,7 +98,6 @@ impl TryFrom<u8> for Hour {
     }
 }
 
-
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
 pub enum Protocol { Tcp, Udp, Icmp }
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
@@ -112,7 +108,7 @@ pub struct RealFrame {
     src_ip: IP,
     dst_ip: IP,
     protocol: Protocol,
-    src_port: Option<Port>, 
+    src_port: Option<Port>,
     dst_port: Option<Port>,
     hour: Hour,
     day_of_week: Weekday,
@@ -127,8 +123,18 @@ impl RealFrame {
                 let d = h.destination();
                 (
                     IpVer::V4,
-                    IP::new([Octet::Value(s[0]), Octet::Value(s[1]), Octet::Value(s[2]), Octet::Value(s[3])]),
-                    IP::new([Octet::Value(d[0]), Octet::Value(d[1]), Octet::Value(d[2]), Octet::Value(d[3])]),
+                    IP::new([
+                        Octet::Value(s[0]),
+                        Octet::Value(s[1]),
+                        Octet::Value(s[2]),
+                        Octet::Value(s[3]),
+                    ]),
+                    IP::new([
+                        Octet::Value(d[0]),
+                        Octet::Value(d[1]),
+                        Octet::Value(d[2]),
+                        Octet::Value(d[3]),
+                    ]),
                 )
             }
             // No IPv6 for now
@@ -169,17 +175,42 @@ impl RealFrame {
             _ => Weekday::Wed,
         };
 
-        Some(Self { ip_ver, src_ip, dst_ip, protocol, src_port, dst_port, hour, day_of_week })
+        Some(Self {
+            ip_ver,
+            src_ip,
+            dst_ip,
+            protocol,
+            src_port,
+            dst_port,
+            hour,
+            day_of_week,
+        })
     }
 }
 
 impl Frame for RealFrame {
-    fn ip_ver(&self) -> IpVer { self.ip_ver }
-    fn src_ip(&self) -> IP { self.src_ip }
-    fn dst_ip(&self) -> IP { self.dst_ip }
-    fn protocol(&self) -> Protocol { self.protocol }
-    fn src_port(&self) -> Option<Port> { self.src_port }
-    fn dst_port(&self) -> Option<Port> { self.dst_port }
-    fn hour(&self) -> Hour { self.hour }
-    fn day_of_week(&self) -> Weekday { self.day_of_week }
+    fn ip_ver(&self) -> IpVer {
+        self.ip_ver
+    }
+    fn src_ip(&self) -> IP {
+        self.src_ip
+    }
+    fn dst_ip(&self) -> IP {
+        self.dst_ip
+    }
+    fn protocol(&self) -> Protocol {
+        self.protocol
+    }
+    fn src_port(&self) -> Option<Port> {
+        self.src_port
+    }
+    fn dst_port(&self) -> Option<Port> {
+        self.dst_port
+    }
+    fn hour(&self) -> Hour {
+        self.hour
+    }
+    fn day_of_week(&self) -> Weekday {
+        self.day_of_week
+    }
 }

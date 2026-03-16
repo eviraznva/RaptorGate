@@ -1,5 +1,5 @@
-use std::net::Ipv4Addr;
 use anyhow::{Context, Result};
+use std::net::Ipv4Addr;
 
 pub struct AppConfig {
     // Packet capture
@@ -40,8 +40,7 @@ impl AppConfig {
                 .parse()
                 .context("PCAP_TIMEOUT_MS must be an integer")?,
 
-            tun_device_name: std::env::var("TUN_DEVICE_NAME")
-                .unwrap_or_else(|_| "tun0".into()),
+            tun_device_name: std::env::var("TUN_DEVICE_NAME").unwrap_or_else(|_| "tun0".into()),
 
             tun_address: std::env::var("TUN_ADDRESS")
                 .unwrap_or_else(|_| "10.254.254.1".into())
@@ -55,7 +54,8 @@ impl AppConfig {
 
             block_icmp: std::env::var("BLOCK_ICMP")
                 .unwrap_or_else(|_| "false".into())
-                .to_lowercase() == "true",
+                .to_lowercase()
+                == "true",
 
             grpc_socket_path: std::env::var("GRPC_SOCKET_PATH")
                 .unwrap_or_else(|_| "./sockets/firewall.sock".into()),

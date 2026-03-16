@@ -1,8 +1,10 @@
+import { RolesPermissionsGuard } from './infrastructure/adapters/roles-permissions.guard';
 import { DatabaseModule } from './infrastructure/persistence/database/database.module';
 import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
 import { GrpcModule } from './infrastructure/grpc/grpc.module';
 import { validate } from './shared/config/env.validation';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './modules/auth.module';
 import { PassportModule } from '@nestjs/passport';
 import { AppController } from './app.controller';
@@ -16,6 +18,12 @@ import { Module } from '@nestjs/common';
       isGlobal: true,
       validate,
     }),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000, // 1 minuta
+        limit: 100, // 100 requestów globalnie
+      },
+    ]),
     DatabaseModule,
     PassportModule,
     AuthModule,
@@ -24,7 +32,8 @@ import { Module } from '@nestjs/common';
   controllers: [AppController],
   providers: [
     JwtStrategy,
-    { provide: APP_GUARD, useClass: JwtAuthGuard }, // najpierw autentykacja
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesPermissionsGuard },
   ],
 })
 export class AppModule {}

@@ -110,6 +110,30 @@ CREATE TABLE "network_session_history" (
 	"ended_at" timestamp
 );
 --> statement-breakpoint
+CREATE TABLE "permissions" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	"name" varchar(128) NOT NULL UNIQUE,
+	"description" varchar(255)
+);
+--> statement-breakpoint
+CREATE TABLE "role_permissions" (
+	"role_id" uuid,
+	"permission_id" uuid,
+	CONSTRAINT "role_permissions_pkey" PRIMARY KEY("role_id","permission_id")
+);
+--> statement-breakpoint
+CREATE TABLE "roles" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	"name" varchar(64) NOT NULL UNIQUE,
+	"description" varchar(255)
+);
+--> statement-breakpoint
+CREATE TABLE "user_roles" (
+	"user_id" uuid,
+	"role_id" uuid,
+	CONSTRAINT "user_roles_pkey" PRIMARY KEY("user_id","role_id")
+);
+--> statement-breakpoint
 CREATE TABLE "rule_change_history" (
 	"id" uuid PRIMARY KEY,
 	"rule_id" uuid NOT NULL,
@@ -167,6 +191,16 @@ CREATE TABLE "user_groups" (
 	"created_by" uuid NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "users" (
+	"id" uuid PRIMARY KEY,
+	"username" varchar(64) NOT NULL,
+	"password_hash" varchar(255) NOT NULL,
+	"refresh_token" varchar,
+	"refresh_token_expiry" timestamp,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "zone_interfaces" (
 	"id" uuid PRIMARY KEY,
 	"zone_id" uuid NOT NULL,
@@ -200,6 +234,10 @@ ALTER TABLE "identity_manager_user_sessions" ADD CONSTRAINT "identity_manager_us
 ALTER TABLE "ml_models" ADD CONSTRAINT "ml_models_created_by_users_id_fkey" FOREIGN KEY ("created_by") REFERENCES "users"("id");--> statement-breakpoint
 ALTER TABLE "nat_rules" ADD CONSTRAINT "nat_rules_created_by_users_id_fkey" FOREIGN KEY ("created_by") REFERENCES "users"("id");--> statement-breakpoint
 ALTER TABLE "network_session_history" ADD CONSTRAINT "network_session_history_XkXUscJR3Z1h_fkey" FOREIGN KEY ("identity_session_id") REFERENCES "identity_manager_user_sessions"("id");--> statement-breakpoint
+ALTER TABLE "role_permissions" ADD CONSTRAINT "role_permissions_role_id_roles_id_fkey" FOREIGN KEY ("role_id") REFERENCES "roles"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "role_permissions" ADD CONSTRAINT "role_permissions_permission_id_permissions_id_fkey" FOREIGN KEY ("permission_id") REFERENCES "permissions"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "user_roles" ADD CONSTRAINT "user_roles_user_id_users_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "user_roles" ADD CONSTRAINT "user_roles_role_id_roles_id_fkey" FOREIGN KEY ("role_id") REFERENCES "roles"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "rule_change_history" ADD CONSTRAINT "rule_change_history_rule_id_rules_id_fkey" FOREIGN KEY ("rule_id") REFERENCES "rules"("id");--> statement-breakpoint
 ALTER TABLE "rule_change_history" ADD CONSTRAINT "rule_change_history_changed_by_users_id_fkey" FOREIGN KEY ("changed_by") REFERENCES "users"("id");--> statement-breakpoint
 ALTER TABLE "rules" ADD CONSTRAINT "rules_zone_pair_id_zone_pairs_id_fkey" FOREIGN KEY ("zone_pair_id") REFERENCES "zone_pairs"("id");--> statement-breakpoint

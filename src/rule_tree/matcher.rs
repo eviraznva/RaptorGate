@@ -49,7 +49,9 @@ impl MatchBuilder {
 }
 
 fn test() -> Result<RuleTree, RuleError> {
-    Ok(RuleTree::new("test".into(), "testdesc".into(),
+    Ok(RuleTree::new(
+        "test".into(),
+        "testdesc".into(),
         MatchBuilder::with_arm(
             MatchKind::IpVer,
             Pattern::Equal(FieldValue::IpVer(super::IpVer::V4)),

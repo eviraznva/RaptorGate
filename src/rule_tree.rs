@@ -14,7 +14,11 @@ pub struct RuleTree {
 
 impl RuleTree {
     pub fn new(name: String, description: String, head: Match) -> Self {
-        Self { name, description, head }
+        Self {
+            name,
+            description,
+            head,
+        }
     }
 
 }
@@ -96,10 +100,15 @@ impl Pattern {
             (Pattern::Glob(_), MatchKind::SrcIp | MatchKind::DstIp) => Ok(()),
             (Pattern::Glob(_), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Range(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour) => Ok(()),
+            (Pattern::Range(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour) => {
+                Ok(())
+            }
             (Pattern::Range(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Comparison(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour | MatchKind::DayOfWeek) => Ok(()),
+            (
+                Pattern::Comparison(..),
+                MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour | MatchKind::DayOfWeek,
+            ) => Ok(()),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
             (Pattern::Or(patterns), MatchKind::Protocol | MatchKind::DayOfWeek | MatchKind::IpVer | MatchKind::Hour | MatchKind::SrcIp | MatchKind::DstIp) => {
@@ -126,7 +135,10 @@ pub struct TreeWalker<'a> {
 
 impl<'a> TreeWalker<'a> {
     pub fn new(tree: &'a RuleTree) -> Self {
-        Self { current: &tree.head, arm_index: 0 }
+        Self {
+            current: &tree.head,
+            arm_index: 0,
+        }
     }
 
     pub fn current_step(&self) -> Step<'a> {
@@ -170,7 +182,12 @@ mod tests {
     use super::*;
 
     fn dummy_ip() -> IP {
-        IP::new([Octet::Value(10), Octet::Value(0), Octet::Value(0), Octet::Value(1)])
+        IP::new([
+            Octet::Value(10),
+            Octet::Value(0),
+            Octet::Value(0),
+            Octet::Value(1),
+        ])
     }
 
     #[test]
@@ -252,4 +269,3 @@ mod tests {
         );
     }
 }
-

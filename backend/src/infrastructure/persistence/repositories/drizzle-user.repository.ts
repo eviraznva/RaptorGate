@@ -5,7 +5,6 @@ import { User } from 'src/domain/entities/user.entity';
 import { usersTable } from '../schemas/users.schema';
 import { UserMapper } from '../mappers/user.mapper';
 import { Inject, Injectable } from '@nestjs/common';
-import { Role } from 'src/domain/enums/role.enum';
 import { eq } from 'drizzle-orm';
 
 @Injectable()
@@ -29,6 +28,20 @@ export class DrizzleUserRepository implements IUserRepository {
     return UserMapper.toDomain(result);
   }
 
+  async setRefreshToken(
+    id: string,
+    refreshToken: string,
+    refreshTokenExpiry: Date | null,
+  ): Promise<void> {
+    await this.db
+      .update(usersTable)
+      .set({
+        refreshToken: refreshToken,
+        refreshTokenExpiry: refreshTokenExpiry,
+      })
+      .where(eq(usersTable.id, id));
+  }
+
   async findById(id: string): Promise<User | null> {
     const [result] = await this.db
       .select()
@@ -50,17 +63,6 @@ export class DrizzleUserRepository implements IUserRepository {
     }
 
     return users;
-  }
-
-  async updateRole(id: string, role: Role): Promise<void> {
-    const user = await this.findById(id);
-
-    if (!user) return;
-
-    await this.db
-      .update(usersTable)
-      .set({ role: role })
-      .where(eq(usersTable.id, user.getId()));
   }
 
   async deleteById(id: string): Promise<void> {

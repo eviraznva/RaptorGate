@@ -1,5 +1,5 @@
-use std::{char, fmt::Display, thread::current};
 use paste::paste;
+use std::{char, fmt::Display, thread::current};
 
 use derive_more::{Add, AddAssign, Debug, Display, From, derive};
 use thiserror::Error;
@@ -12,7 +12,7 @@ macro_rules! separating_chars {
 
 #[derive(Error, Debug, Display)]
 pub(crate) enum LexerError {
-    UnclosedStringLiteral(Position)
+    UnclosedStringLiteral(Position),
 }
 
 enum LexerMode {
@@ -27,7 +27,7 @@ struct StringLiteralBuilder {
 
 impl StringLiteralBuilder {
     fn push(&mut self, word: char) {
-        self.contents.push(word); 
+        self.contents.push(word);
     }
 }
 
@@ -87,7 +87,7 @@ pub(super) enum TokenType {
 #[derive(Debug, Clone, PartialEq, Display)]
 pub(super) enum KeywordType {
     Match,
-    Verdict
+    Verdict,
 }
 
 #[derive(Debug, Clone, PartialEq, Display)]
@@ -110,11 +110,20 @@ struct Word {
 
 impl Word {
     fn new(contents: String, pos: Position) -> Self {
-        Self { contents, start_pos: pos }
+        Self {
+            contents,
+            start_pos: pos,
+        }
     }
 
     fn default() -> Self {
-        Self { contents: "".into(), start_pos: Position { row: 0.into(), col: 0.into() } }
+        Self {
+            contents: "".into(),
+            start_pos: Position {
+                row: 0.into(),
+                col: 0.into(),
+            },
+        }
     }
 
     fn push(&mut self, c: char) {
@@ -122,7 +131,10 @@ impl Word {
     }
 
     fn into_token(&self, kind: TokenType) -> Token {
-        Token { pos: self.start_pos, kind }
+        Token {
+            pos: self.start_pos,
+            kind,
+        }
     }
 }
 
@@ -131,48 +143,57 @@ struct WordBuilder {
     start_pos: Position,
 }
 
-
 impl WordBuilder {
     fn new() -> Self {
-        Self { current_word: String::new(), start_pos: Position { row: 0.into(), col: 0.into() } }
+        Self {
+            current_word: String::new(),
+            start_pos: Position {
+                row: 0.into(),
+                col: 0.into(),
+            },
+        }
     }
 
     fn add_to(&mut self, c: char, pos: Position) -> Option<Word> {
-        if self.current_word.is_empty()  {
+        if self.current_word.is_empty() {
             if c.is_whitespace() {
-                return None
+                return None;
             }
 
             self.start_pos = pos;
             self.current_word.push(c);
         } else {
             if c.is_whitespace() {
-                return Some(self.exchange(c, pos))
+                return Some(self.exchange(c, pos));
             }
 
             if matches!(self.current_word.as_str(), "<=" | ">=" | "<>") {
-                return Some(self.exchange(c, pos))
+                return Some(self.exchange(c, pos));
             }
 
             if self.current_word.starts_with('<') || self.current_word.starts_with('>') {
-                let expected = if self.current_word.starts_with('>') { '<' } else { '>' };
+                let expected = if self.current_word.starts_with('>') {
+                    '<'
+                } else {
+                    '>'
+                };
 
                 if c == '=' || c == expected {
                     self.current_word.push(c);
-                    return Some(self.exchange(' ', pos))
+                    return Some(self.exchange(' ', pos));
                 }
 
-                return Some(self.exchange(c, pos))
+                return Some(self.exchange(c, pos));
             }
 
             if self.current_word.len() == 1
                 && matches!(self.current_word.chars().next(), Some(separating_chars!()))
             {
-                return Some(self.exchange(c, pos))
+                return Some(self.exchange(c, pos));
             }
 
             if matches!(c, separating_chars!()) {
-                return Some(self.exchange(c, pos))
+                return Some(self.exchange(c, pos));
             }
 
             self.current_word.push(c);
@@ -182,7 +203,9 @@ impl WordBuilder {
     }
 
     fn flush(&mut self) -> Option<Word> {
-        if self.current_word.is_empty() { return None }
+        if self.current_word.is_empty() {
+            return None;
+        }
         Some(self.exchange(' ', self.start_pos))
     }
 
@@ -205,7 +228,14 @@ pub(crate) struct Lexer {
 
 impl Lexer {
     pub fn new() -> Self {
-        Self { mode: LexerMode::Normal, curret_pos: Position { row: 1.into(), col: 0.into() }, word_builder: WordBuilder::new() }
+        Self {
+            mode: LexerMode::Normal,
+            curret_pos: Position {
+                row: 1.into(),
+                col: 0.into(),
+            },
+            word_builder: WordBuilder::new(),
+        }
     }
 
     fn update_pos(&mut self, current_char: char) {
@@ -249,33 +279,45 @@ impl Lexer {
             match &mut self.mode {
                 LexerMode::Normal => {
                     if c == '\"' {
-                        if let Some(word) = self.word_builder.flush() { tokens.push(Self::classify(word)) }
-                        self.mode = LexerMode::StringLiteral(StringLiteralBuilder { start_pos: self.curret_pos, contents: String::new() });
+                        if let Some(word) = self.word_builder.flush() {
+                            tokens.push(Self::classify(word))
+                        }
+                        self.mode = LexerMode::StringLiteral(StringLiteralBuilder {
+                            start_pos: self.curret_pos,
+                            contents: String::new(),
+                        });
                         continue;
                     }
 
-                    let Some(word) = self.word_builder.add_to(c, self.curret_pos) else { continue };
+                    let Some(word) = self.word_builder.add_to(c, self.curret_pos) else {
+                        continue;
+                    };
 
-                    tokens.push(
-                        Self::classify(word)
-                    );
-                },
+                    tokens.push(Self::classify(word));
+                }
                 LexerMode::StringLiteral(sb) => {
                     if c == '\"' {
-                        tokens.push(Token { pos: sb.start_pos, kind: TokenType::StringLiteral(sb.contents.clone()) });
+                        tokens.push(Token {
+                            pos: sb.start_pos,
+                            kind: TokenType::StringLiteral(sb.contents.clone()),
+                        });
                         self.mode = LexerMode::Normal;
                         continue;
                     }
 
                     sb.push(c);
-                },
+                }
             }
         }
 
         match &self.mode {
-            LexerMode::StringLiteral(sb) => return Err(LexerError::UnclosedStringLiteral(sb.start_pos)),
+            LexerMode::StringLiteral(sb) => {
+                return Err(LexerError::UnclosedStringLiteral(sb.start_pos));
+            }
             LexerMode::Normal => {
-                if let Some(word) = self.word_builder.flush() { tokens.push(Self::classify(word)) }
+                if let Some(word) = self.word_builder.flush() {
+                    tokens.push(Self::classify(word))
+                }
             }
         }
         Ok(tokens)
@@ -417,7 +459,7 @@ mod tests {
             TokenType::Identifier("abc".into()),
         ]
     );
-    
+
     gen_space_tests!(
         rng_operator,
         "5 <> abc",
@@ -575,26 +617,48 @@ mod tests {
     }
 
     #[test]
-    fn special_chars_dont_break_string_literals_no_space(){
+    fn special_chars_dont_break_string_literals_no_space() {
         let mut lexer = Lexer::new();
         let mut s = String::from("\"abc { dfg } xd {} dx <\"");
         s.retain(|c| !c.is_whitespace());
-        let got:Vec<TokenType>  = lexer.tokenize(&s).unwrap().into_iter().map(|t|t.kind).collect();
-        assert_eq!(got,(vec![TokenType::StringLiteral("abc{dfg}xd{}dx<".into())]));
+        let got: Vec<TokenType> = lexer
+            .tokenize(&s)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect();
+        assert_eq!(
+            got,
+            (vec![TokenType::StringLiteral("abc{dfg}xd{}dx<".into())])
+        );
     }
 
     #[test]
-    fn special_chars_dont_break_string_literals_space(){
+    fn special_chars_dont_break_string_literals_space() {
         let mut lexer = Lexer::new();
-        let got:Vec<TokenType>  = lexer.tokenize("\"abc { dfg } xd {} dx <\"").unwrap().into_iter().map(|t|t.kind).collect();
-        assert_eq!(got,(vec![TokenType::StringLiteral("abc { dfg } xd {} dx <".into())]));
+        let got: Vec<TokenType> = lexer
+            .tokenize("\"abc { dfg } xd {} dx <\"")
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect();
+        assert_eq!(
+            got,
+            (vec![TokenType::StringLiteral("abc { dfg } xd {} dx <".into())])
+        );
     }
     gen_position_tests!(
         single_line_simple,
         "abc def",
         vec![
-            Position { row: 1.into(), col: 1.into() },
-            Position { row: 1.into(), col: 5.into() },
+            Position {
+                row: 1.into(),
+                col: 1.into()
+            },
+            Position {
+                row: 1.into(),
+                col: 5.into()
+            },
         ]
     );
 
@@ -602,8 +666,14 @@ mod tests {
         multiple_spaces_and_tab,
         "abc\t  def",
         vec![
-            Position { row: 1.into(), col: 1.into() },
-            Position { row: 1.into(), col: 7.into() },
+            Position {
+                row: 1.into(),
+                col: 1.into()
+            },
+            Position {
+                row: 1.into(),
+                col: 7.into()
+            },
         ]
     );
 
@@ -611,66 +681,123 @@ mod tests {
         linebreak_lf,
         "abc\ndef",
         vec![
-            Position { row: 1.into(), col: 1.into() },
-            Position { row: 2.into(), col: 1.into() },
+            Position {
+                row: 1.into(),
+                col: 1.into()
+            },
+            Position {
+                row: 2.into(),
+                col: 1.into()
+            },
         ]
     );
 
     gen_position_tests!(
         leading_whitespace_newline_tab,
         " \t\n\tabc",
-        vec![
-            Position { row: 2.into(), col: 2.into() },
-        ]
+        vec![Position {
+            row: 2.into(),
+            col: 2.into()
+        },]
     );
 
     gen_position_tests!(
         braces_and_colon_across_lines,
         "a:{\n\tb:1\n}",
         vec![
-            Position { row: 1.into(), col: 1.into() },
-            Position { row: 1.into(), col: 2.into() },
-            Position { row: 1.into(), col: 3.into() },
-            Position { row: 2.into(), col: 2.into() },
-            Position { row: 2.into(), col: 3.into() },
-            Position { row: 2.into(), col: 4.into() },
-            Position { row: 3.into(), col: 1.into() },
+            Position {
+                row: 1.into(),
+                col: 1.into()
+            },
+            Position {
+                row: 1.into(),
+                col: 2.into()
+            },
+            Position {
+                row: 1.into(),
+                col: 3.into()
+            },
+            Position {
+                row: 2.into(),
+                col: 2.into()
+            },
+            Position {
+                row: 2.into(),
+                col: 3.into()
+            },
+            Position {
+                row: 2.into(),
+                col: 4.into()
+            },
+            Position {
+                row: 3.into(),
+                col: 1.into()
+            },
         ]
     );
 
     #[test]
-    fn string_literal_position_after_newline_positions_space(){
+    fn string_literal_position_after_newline_positions_space() {
         let mut lexer = Lexer::new();
-        let got:Vec<Position>  = lexer.tokenize("abc\n\"x y\" z").unwrap().into_iter().map(|t|t.pos).collect();
-        assert_eq!(got,(vec![Position {
-            row:1.into(),col:1.into()
-        },Position {
-            row:2.into(),col:1.into()
-        },Position {
-            row:2.into(),col:7.into()
-        },]));
+        let got: Vec<Position> = lexer
+            .tokenize("abc\n\"x y\" z")
+            .unwrap()
+            .into_iter()
+            .map(|t| t.pos)
+            .collect();
+        assert_eq!(
+            got,
+            (vec![
+                Position {
+                    row: 1.into(),
+                    col: 1.into()
+                },
+                Position {
+                    row: 2.into(),
+                    col: 1.into()
+                },
+                Position {
+                    row: 2.into(),
+                    col: 7.into()
+                },
+            ])
+        );
     }
 
     #[test]
-    fn string_literal_position_after_newline_positions_no_space(){
+    fn string_literal_position_after_newline_positions_no_space() {
         let mut lexer = Lexer::new();
         let mut s = String::from("abc\n\"x y\" z");
         s.retain(|c| !c.is_whitespace());
-        let got:Vec<Position>  = lexer.tokenize(&s).unwrap().into_iter().map(|t|t.pos).collect();
-        let expected:Vec<Position> = vec![
-            Position { row: 1.into(), col: 1.into() },
-            Position { row: 1.into(), col: 4.into() },
-            Position { row: 1.into(), col: 8.into() },
+        let got: Vec<Position> = lexer
+            .tokenize(&s)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.pos)
+            .collect();
+        let expected: Vec<Position> = vec![
+            Position {
+                row: 1.into(),
+                col: 1.into(),
+            },
+            Position {
+                row: 1.into(),
+                col: 4.into(),
+            },
+            Position {
+                row: 1.into(),
+                col: 8.into(),
+            },
         ];
-        assert_eq!(got,expected);
+        assert_eq!(got, expected);
     }
 
     #[test]
     fn unclosed_string_literal_returns_error() {
         let mut lexer = Lexer::new();
         assert!(matches!(
-                lexer.tokenize("abc \"unclosed"),
-                Err(LexerError::UnclosedStringLiteral(_))
+            lexer.tokenize("abc \"unclosed"),
+            Err(LexerError::UnclosedStringLiteral(_))
         ));
     }
 }
