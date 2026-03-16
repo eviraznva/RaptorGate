@@ -7,6 +7,14 @@ import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
 import { eq } from 'drizzle-orm';
 import { Pool } from 'pg';
+import { ROLE_PERMISSIONS } from 'src/domain/constants/role-permissions';
+import { Permission } from 'src/domain/enums/permissions.enum';
+import { permissionsTable } from 'src/infrastructure/persistence/schemas/permissions.schema';
+import {
+  rolesTable,
+  rolePermissionsTable,
+  userRolesTable,
+} from 'src/infrastructure/persistence/schemas/roles.schema';
 dotenv.config();
 const PAYLOAD = {
   section_versions: {
@@ -279,7 +287,6 @@ async function seed() {
         id: randomUUID(),
         username: 'admin',
         passwordHash,
-        role: Role.SuperAdmin,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -293,6 +300,74 @@ async function seed() {
       console.log('   Username: admin');
       console.log('   Password: admin123');
       console.log('   Role: super_admin');
+      // ── Permissions ───────────────────────────────────────────────────────────
+      const allPermissionNames = Object.values(Permission);
+      const existingPerms = await db.select().from(permissionsTable);
+      if (existingPerms.length === 0) {
+        await db
+          .insert(permissionsTable)
+          .values(
+            allPermissionNames.map((name) => ({ id: randomUUID(), name })),
+          );
+        console.log(`✅ Seeded ${allPermissionNames.length} permissions`);
+      } else {
+        console.log('⚠️  Permissions already seeded. Skipping...');
+      }
+      // ── Roles ─────────────────────────────────────────────────────────────────
+      const allRoleNames = Object.values(Role); // ['super_admin', 'admin', 'operator', 'viewer']
+      const existingRoles = await db.select().from(rolesTable);
+      if (existingRoles.length === 0) {
+        await db
+          .insert(rolesTable)
+          .values(allRoleNames.map((name) => ({ id: randomUUID(), name })));
+        console.log(`✅ Seeded ${allRoleNames.length} roles`);
+      } else {
+        console.log('⚠️  Roles already seeded. Skipping...');
+      }
+      // ── Role → Permissions ────────────────────────────────────────────────────
+      const permRows = await db.select().from(permissionsTable);
+      const roleRows = await db.select().from(rolesTable);
+      const permMap = new Map(permRows.map((p) => [p.name, p.id]));
+      const roleMap = new Map(roleRows.map((r) => [r.name, r.id]));
+      const existingRolePerms = await db.select().from(rolePermissionsTable);
+      if (existingRolePerms.length === 0) {
+        const toInsert: { roleId: string; permissionId: string }[] = [];
+        for (const [roleName, permissions] of Object.entries(
+          ROLE_PERMISSIONS,
+        )) {
+          const roleId = roleMap.get(roleName);
+          if (!roleId) continue;
+          for (const permName of permissions) {
+            const permissionId = permMap.get(permName);
+            if (permissionId) toInsert.push({ roleId, permissionId });
+          }
+        }
+        if (toInsert.length > 0) {
+          await db.insert(rolePermissionsTable).values(toInsert);
+          console.log(
+            `✅ Seeded ${toInsert.length} role-permission assignments`,
+          );
+        }
+      } else {
+        console.log('⚠️  Role permissions already seeded. Skipping...');
+      }
+      // ── Admin user roles ──────────────────────────────────────────────────────
+      const existingUserRoles = await db
+        .select()
+        .from(userRolesTable)
+        .where(eq(userRolesTable.userId, admin.id));
+      if (existingUserRoles.length === 0) {
+        const superAdminRoleId = roleMap.get(Role.SuperAdmin);
+        if (superAdminRoleId) {
+          await db.insert(userRolesTable).values({
+            userId: admin.id,
+            roleId: superAdminRoleId,
+          });
+          console.log('✅ Assigned super_admin role to admin user');
+        }
+      } else {
+        console.log('⚠️  Admin user roles already assigned. Skipping...');
+      }
     }
     // ── Snapshot ──────────────────────────────────────────────────────────────
     const existingSnapshot = await db

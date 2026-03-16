@@ -1,5 +1,4 @@
 import { User } from '../entities/user.entity';
-import { Role } from '../enums/role.enum';
 
 export interface IUserRepository {
   save(user: User): Promise<void>;
@@ -11,7 +10,6 @@ export interface IUserRepository {
     refreshToken: string | null,
     refreshTokenExpires: Date | null,
   ): Promise<void>;
-  updateRole(id: string, role: Role): Promise<void>;
   deleteById(id: string): Promise<void>;
 }
 
