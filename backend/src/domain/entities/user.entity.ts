@@ -6,6 +6,7 @@ export class User {
     private username: string,
     private passwordHash: string,
     private refreshToken: string | null,
+    private refreshTokenExpiry: Date | null,
     private roles: Role,
     private readonly createdAt: Date,
     private updatedAt: Date,
@@ -16,6 +17,7 @@ export class User {
     username: string,
     passwordHash: string,
     refreshToken: string | null,
+    refreshTokenExpiry: Date | null,
     roles: Role,
     createdAt: Date,
     updatedAt: Date,
@@ -25,6 +27,7 @@ export class User {
       username,
       passwordHash,
       refreshToken,
+      refreshTokenExpiry,
       roles,
       createdAt,
       updatedAt,
@@ -59,6 +62,10 @@ export class User {
     return this.refreshToken;
   }
 
+  public getRefreshTokenExpiry(): Date | null {
+    return this.refreshTokenExpiry;
+  }
+
   public setUsername(username: string): void {
     this.username = username;
   }
@@ -67,7 +74,11 @@ export class User {
     this.passwordHash = passwordHash;
   }
 
-  public setRefreshToken(refreshToken: string): void {
+  public setRefreshToken(refreshToken: string | null): void {
     this.refreshToken = refreshToken;
+  }
+
+  public setRefreshTokenExpiry(refreshTokenExpiry: Date): void {
+    this.refreshTokenExpiry = refreshTokenExpiry;
   }
 }

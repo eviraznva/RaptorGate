@@ -13,6 +13,7 @@ export const usersTable = pgTable('users', {
   username: varchar('username', { length: 64 }).notNull(),
   passwordHash: varchar('password_hash', { length: 255 }).notNull(),
   refreshToken: varchar('refresh_token'),
+  refreshTokenExpiry: timestamp('refresh_token_expiry'),
   role: roleEnum('role').notNull().default(Role.Viewer),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),

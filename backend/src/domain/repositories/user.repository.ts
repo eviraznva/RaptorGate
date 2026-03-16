@@ -6,6 +6,11 @@ export interface IUserRepository {
   findByUsername(username: string): Promise<User | null>;
   findById(id: string): Promise<User | null>;
   findAll(): Promise<User[]>;
+  setRefreshToken(
+    id: string,
+    refreshToken: string | null,
+    refreshTokenExpires: Date | null,
+  ): Promise<void>;
   updateRole(id: string, role: Role): Promise<void>;
   deleteById(id: string): Promise<void>;
 }
