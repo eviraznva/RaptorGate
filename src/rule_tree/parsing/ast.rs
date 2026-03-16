@@ -5,14 +5,14 @@ use thiserror::Error;
 
 use crate::rule_tree::parsing::lexer::{KeywordType, PatternType, Position, Token, TokenType};
 
-#[derive(Debug, PartialEq)]
-struct Spanned<T> {
-    val: T,
-    pos: Position,
+#[derive(Debug, PartialEq, Clone)]
+pub(super) struct Spanned<T> {
+    pub(super) val: T,
+    pub(super) pos: Position,
 }
 
 #[derive(Debug, PartialEq)]
-struct AstMatch {
+pub(super) struct AstMatch {
     kind: Spanned<String>,
     arms: Spanned<Vec<AstArm>>,
 }
@@ -24,7 +24,7 @@ struct AstArm {
 }
 
 #[derive(Debug, PartialEq)]
-enum AstPattern {
+pub(super) enum AstPattern {
     Equal(Spanned<AstValue>),
     Greater(Spanned<AstValue>),
     LesserOrEqual(Spanned<AstValue>),
@@ -34,20 +34,20 @@ enum AstPattern {
 }
 
 #[derive(Debug, PartialEq)]
-enum AstValue {
+pub(super) enum AstValue {
     Number(Spanned<u64>),
     Str(Spanned<String>),
     Ident(Spanned<String>),
 }
 
 #[derive(Debug, PartialEq)]
-enum AstBody {
+pub(super) enum AstBody {
     Verdict(Spanned<Verdict>),
     Match(Spanned<AstMatch>),
 }
 
 #[derive(Debug, PartialEq)]
-enum Verdict {
+pub(super) enum Verdict {
     Allow,
     Drop,
     AllowWarn(Spanned<String>),

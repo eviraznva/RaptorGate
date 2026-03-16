@@ -1,5 +1,5 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use derive_more::{Display, Eq, From};
+use derive_more::{Debug, Display, Eq, Error, From};
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 pub(crate) trait Frame {
@@ -24,6 +24,31 @@ pub(crate) struct IP {
 impl IP {
     pub(crate) fn new(octets: [Octet; 4]) -> Self {
         Self { octets }
+    }
+}
+
+#[derive(Error, Debug, Display)]
+pub(super) enum IPError {
+    ParseFromStringError,
+}
+
+impl TryFrom<String> for IP {
+    type Error = IPError;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let parts: Vec<&str> = value.split('.').collect();
+        if parts.len() != 4 {
+            return Err(IPError::ParseFromStringError);
+        }
+
+        let mut octets: [Octet; 4] = [Octet::Value(0); 4];
+        for (i, part) in parts.into_iter().enumerate() {
+            match part.trim().parse::<u8>() {
+                Ok(n) => octets[i] = Octet::Value(n),
+                Err(_) => return Err(IPError::ParseFromStringError),
+            }
+        }
+
+        Ok(IP::new(octets))
     }
 }
 
