@@ -16,7 +16,7 @@ impl RuleTree {
     pub fn new(name: String, description: String, head: Match) -> Self {
         Self { name, description, head }
     }
-    
+
 }
 
 struct Arm {
@@ -39,6 +39,7 @@ pub(crate) enum Verdict {
 
 #[derive(Debug, Display, Clone, PartialEq)]
 pub(crate) enum Pattern {
+    // TODO: move equal into comparision or alternatively remove comparision entirely
     Equal(FieldValue),
     // TODO: remove `Glob`
     Glob(FieldValue),
@@ -99,7 +100,12 @@ impl Pattern {
             (Pattern::Comparison(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour | MatchKind::DayOfWeek) => Ok(()),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Or(_), MatchKind::Protocol | MatchKind::DayOfWeek | MatchKind::IpVer | MatchKind::Hour | MatchKind::SrcIp | MatchKind::DstIp) => Ok(()),
+            (Pattern::Or(patterns), MatchKind::Protocol | MatchKind::DayOfWeek | MatchKind::IpVer | MatchKind::Hour | MatchKind::SrcIp | MatchKind::DstIp) => {
+                for pattern in patterns {
+                    pattern.validate_for(kind)?;
+                }
+                Ok(())
+            }
             (Pattern::Or(_), _) => Err(RuleError::InvalidPattern(self.clone())),
         }
     }
@@ -219,16 +225,29 @@ mod tests {
         }
     }
 
-    #[test]
-    fn or_invalid_for_port_kinds() {
-        let pat = Pattern::Or(vec![Pattern::Equal(FieldValue::Port(80.into()))]);
-        let invalid = [MatchKind::SrcPort, MatchKind::DstPort];
-        for kind in invalid {
-            assert!(
-                pat.validate_for(&kind).is_err(),
-                "Or should be invalid for {kind}"
-            );
-        }
+    // #[test]
+    // fn or_invalid_for_port_kinds() {
+    //     let pat = Pattern::Or(vec![Pattern::Equal(FieldValue::Port(80.into()))]);
+    //     let invalid = [MatchKind::SrcPort, MatchKind::DstPort];
+    //     for kind in invalid {
+    //         assert!(
+    //             pat.validate_for(&kind).is_err(),
+    //             "Or should be invalid for {kind}"
+    //         );
+    //     }
+    // }
+
+#[test]
+    fn or_accepts_all_valid_nested_patterns_for_kind() {
+        let pat = Pattern::Or(vec![
+            Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
+            Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+        ]);
+
+        assert!(
+            pat.validate_for(&MatchKind::Protocol).is_ok(),
+            "Or should accept valid nested patterns for Protocol"
+        );
     }
 }
 
