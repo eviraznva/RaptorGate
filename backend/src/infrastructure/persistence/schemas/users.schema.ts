@@ -1,12 +1,4 @@
-import { pgEnum, pgTable, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
-import { Role } from '../../../domain/enums/role.enum';
-
-export const roleEnum = pgEnum('user_roles', [
-  Role.SuperAdmin,
-  Role.Admin,
-  Role.Operator,
-  Role.Viewer,
-]);
+import { pgTable, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
 
 export const usersTable = pgTable('users', {
   id: uuid('id').primaryKey(),
@@ -14,7 +6,6 @@ export const usersTable = pgTable('users', {
   passwordHash: varchar('password_hash', { length: 255 }).notNull(),
   refreshToken: varchar('refresh_token'),
   refreshTokenExpiry: timestamp('refresh_token_expiry'),
-  role: roleEnum('role').notNull().default(Role.Viewer),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

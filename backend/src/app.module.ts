@@ -1,3 +1,4 @@
+import { RolesPermissionsGuard } from './infrastructure/adapters/roles-permissions.guard';
 import { DatabaseModule } from './infrastructure/persistence/database/database.module';
 import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
@@ -12,10 +13,7 @@ import { Module } from '@nestjs/common';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      validate,
-    }),
+    ConfigModule.forRoot({ isGlobal: true, validate }),
     DatabaseModule,
     PassportModule,
     AuthModule,
@@ -24,7 +22,8 @@ import { Module } from '@nestjs/common';
   controllers: [AppController],
   providers: [
     JwtStrategy,
-    { provide: APP_GUARD, useClass: JwtAuthGuard }, // najpierw autentykacja
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesPermissionsGuard },
   ],
 })
 export class AppModule {}

@@ -1,5 +1,4 @@
-import { Role } from '../enums/role.enum';
-
+import { Role } from './role.entity';
 export class User {
   private constructor(
     private readonly id: string,
@@ -7,9 +6,9 @@ export class User {
     private passwordHash: string,
     private refreshToken: string | null,
     private refreshTokenExpiry: Date | null,
-    private roles: Role,
     private readonly createdAt: Date,
     private updatedAt: Date,
+    private roles: Role[],
   ) {}
 
   public static create(
@@ -18,9 +17,9 @@ export class User {
     passwordHash: string,
     refreshToken: string | null,
     refreshTokenExpiry: Date | null,
-    roles: Role,
     createdAt: Date,
     updatedAt: Date,
+    roles: Role[] = [],
   ): User {
     return new User(
       id,
@@ -28,9 +27,9 @@ export class User {
       passwordHash,
       refreshToken,
       refreshTokenExpiry,
-      roles,
       createdAt,
       updatedAt,
+      roles,
     );
   }
 
@@ -54,16 +53,24 @@ export class User {
     return this.updatedAt;
   }
 
-  public getRole(): Role {
-    return this.roles;
-  }
-
   public getRefreshToken(): string | null {
     return this.refreshToken;
   }
 
   public getRefreshTokenExpiry(): Date | null {
     return this.refreshTokenExpiry;
+  }
+
+  public getRoles(): Role[] {
+    return this.roles;
+  }
+
+  public hasRole(roleName: string): boolean {
+    return this.roles.some((r) => r.getName() === roleName);
+  }
+
+  public hasPermission(permissionName: string): boolean {
+    return this.roles.some((r) => r.hasPermission(permissionName));
   }
 
   public setUsername(username: string): void {
