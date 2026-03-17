@@ -58,7 +58,7 @@ pub(super) enum AstPattern {
     GreaterOrEqual(Spanned<AstValue>),
     Range(Spanned<AstValue>, Spanned<AstValue>),
     Or(Spanned<Vec<AstPattern>>),
-    Glob,
+    Wildcard,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -191,7 +191,7 @@ impl Parser {
         let token = self.consume()?;
         match token.kind {
             TokenType::Pattern(PatternType::Or) => Err(ParseError::NestedCombinatorNotImplemented(token)),
-            TokenType::Pattern(PatternType::Glob) => todo!(),
+            TokenType::Pattern(PatternType::Wildcard) => Ok(Spanned { val: AstPattern::Wildcard, pos: token.pos }),
             TokenType::Pattern(PatternType::Equal) => {
                 let value = self.parse_value()?;
                 Ok(Spanned { val: AstPattern::Equal(value), pos: token.pos })
@@ -481,6 +481,18 @@ mod tests {
         let arm = p.parse_arm().unwrap().unwrap();
         assert!(matches!(arm.pattern.val, AstPattern::Equal(v) if matches!(&v.val, AstValue::Ident(s) if s.val == "v4")));
         assert!(matches!(arm.body.val, AstBody::Verdict(v) if matches!(v.val, Verdict::Allow)));
+    }
+
+    fn parse_arm_wildcard() {
+        let mut p = Parser::new(vec![
+            tok(TokenType::Pattern(PatternType::Wildcard)),
+            tok(TokenType::Colon),
+            tok(TokenType::Keyword(KeywordType::Verdict)),
+            tok(TokenType::Identifier("drop".into())),
+        ]);
+        let arm = p.parse_arm().unwrap().unwrap();
+        assert!(matches!(arm.pattern.val, AstPattern::Wildcard));
+        assert!(matches!(arm.body.val, AstBody::Verdict(v) if matches!(v.val, Verdict::Drop)));
     }
 
     #[test]

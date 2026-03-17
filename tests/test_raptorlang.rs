@@ -497,12 +497,23 @@ fn lower_nested_v6_drop() {
     );
 }
 
+#[test]
+fn lower_day_of_week_wildcard() {
+    assert_lower_eq(
+        "match day_of_week { = monday : verdict allow  _ : verdict drop }",
+        MatchBuilder::with_arm(
+            MatchKind::DayOfWeek,
+            Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
+            ArmEnd::Verdict(Verdict::Allow),
+        ).arm(
+        Pattern::Wildcard,
+        ArmEnd::Verdict(Verdict::Drop),
+        ).build().unwrap(),
+    );
+}
+
 // ── Nested: hour comparison → day_of_week ────────────────
 // Mirrors: nested_glob_ip_then_hour_range_then_day family
-// (The glob src_ip layer is omitted because AstPattern::Glob lowers to
-//  Pattern::Wildcard, not Pattern::Glob with wildcard octets, so the outer
-//  layer cannot reproduce the same tree. The hour+day sub-tree is tested
-//  directly instead.)
 
 #[test]
 fn lower_nested_hour_then_day_of_week_allow() {

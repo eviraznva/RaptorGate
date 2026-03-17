@@ -150,7 +150,7 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
 
 fn lower_pattern(kind: MatchKind, p: Spanned<AstPattern>) -> Result<Pattern, LowerError> {
     match p.val {
-        AstPattern::Glob => Ok(Pattern::Wildcard),
+        AstPattern::Wildcard => Ok(Pattern::Wildcard),
         AstPattern::Equal(v) => Ok(Pattern::Equal(lower_value(kind, v)?)),
         AstPattern::Greater(v) => Ok(Pattern::Comparison(
                 Operation::Greater,
@@ -663,7 +663,7 @@ mod tests {
  
     #[test]
     fn lower_pattern_wildcard() {
-        let p = lower_pattern(MatchKind::SrcIp, sp(AstPattern::Glob)).unwrap();
+        let p = lower_pattern(MatchKind::SrcIp, sp(AstPattern::Wildcard)).unwrap();
         assert_eq!(p, Pattern::Wildcard);
     }
  
