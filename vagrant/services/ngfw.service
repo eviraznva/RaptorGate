@@ -1,17 +1,19 @@
-  [Unit]
-  Description=NGFW daemon
-  After=network.target
+[Unit]
+Description=NGFW daemon
+After=network.target backend.service
+Wants=backend.service
 
-  [Service]
-  ExecStart=/resources/ngfw/ngfw
-  Restart=on-failure
-  RestartSec=5
-  StandardOutput=journal
-  Type=simple
-  StandardError=journal
-  User=root
-  AmbientCapabilities=CAP_NET_RAW
-  Environment="CAPTURE_INTERFACES=eth1,eth2"
+[Service]
+WorkingDirectory=/resources/ngfw
+ExecStart=/resources/ngfw/ngfw
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+Type=simple
+StandardError=journal
+User=root
+AmbientCapabilities=CAP_NET_RAW
+Environment="CAPTURE_INTERFACES=eth1,eth2"
 
-  [Install]
-  WantedBy=multi-user.target
+[Install]
+WantedBy=multi-user.target

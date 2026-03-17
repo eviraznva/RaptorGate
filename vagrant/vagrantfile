@@ -118,6 +118,8 @@ def setup_ngfw_service
     sysctl -w net.ipv4.conf.tun0.rp_filter=0
 
     mkdir -p /resources/ngfw
+    mkdir -p /resources/ngfw/.data
+    mkdir -p /resources/ngfw/sockets
     # cp -rf /opt/ngfw/bin/Debug/net10.0/linux-x64/* /resources/ngfw
     chmod +x /resources/ngfw/ngfw
     # setcap cap_net_raw+ep /resources/ngfw/ngfw
