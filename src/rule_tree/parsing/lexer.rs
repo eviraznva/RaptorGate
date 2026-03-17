@@ -99,7 +99,7 @@ pub(super) enum PatternType {
     GreaterOrEqual,
     Or,
     Range,
-    Glob,
+    Wildcard,
 }
 
 #[derive(Debug, Clone)]
@@ -259,7 +259,7 @@ impl Lexer {
             ">" => word.into_token(TokenType::Pattern(PatternType::Greater)),
             "<=" => word.into_token(TokenType::Pattern(PatternType::LesserOrEqual)),
             ">=" => word.into_token(TokenType::Pattern(PatternType::GreaterOrEqual)),
-            "_" => word.into_token(TokenType::Pattern(PatternType::Glob)),
+            "_" => word.into_token(TokenType::Pattern(PatternType::Wildcard)),
             "|" => word.into_token(TokenType::Pattern(PatternType::Or)),
             "<>" => word.into_token(TokenType::Pattern(PatternType::Range)),
             "{" => word.into_token(TokenType::LBrace),
