@@ -6,7 +6,7 @@ use thiserror::Error;
 
 macro_rules! separating_chars {
     () => {
-        '{' | '}' | '|' | '<' | '>' | '=' | ':'
+        '{' | '}' | '|' | '<' | '>' | '=' | ':' | '(' | ')'
     };
 }
 
@@ -82,6 +82,8 @@ pub(super) enum TokenType {
     LBrace,
     RBrace,
     Colon,
+    LParen,
+    RParen,
 }
 
 #[derive(Debug, Clone, PartialEq, Display)]
@@ -248,7 +250,7 @@ impl Lexer {
         self.curret_pos.col += 1.into();
     }
 
-    fn classify(word: Word) -> Token {
+    fn classify(word: &Word) -> Token {
         if let Ok(n) = word.contents.parse::<u64>() {
             return word.into_token(TokenType::Number(n));
         }
@@ -265,6 +267,8 @@ impl Lexer {
             "{" => word.into_token(TokenType::LBrace),
             "}" => word.into_token(TokenType::RBrace),
             ":" => word.into_token(TokenType::Colon),
+            "(" => word.into_token(TokenType::LParen),
+            ")" => word.into_token(TokenType::RParen),
             "match" => word.into_token(TokenType::Keyword(KeywordType::Match)),
             "verdict" => word.into_token(TokenType::Keyword(KeywordType::Verdict)),
             _ => word.into_token(TokenType::Identifier(word.contents.clone())),
@@ -280,7 +284,7 @@ impl Lexer {
                 LexerMode::Normal => {
                     if c == '\"' {
                         if let Some(word) = self.word_builder.flush() {
-                            tokens.push(Self::classify(word))
+                            tokens.push(Self::classify(&word));
                         }
                         self.mode = LexerMode::StringLiteral(StringLiteralBuilder {
                             start_pos: self.curret_pos,
@@ -293,7 +297,7 @@ impl Lexer {
                         continue;
                     };
 
-                    tokens.push(Self::classify(word));
+                    tokens.push(Self::classify(&word));
                 }
                 LexerMode::StringLiteral(sb) => {
                     if c == '\"' {
@@ -316,7 +320,7 @@ impl Lexer {
             }
             LexerMode::Normal => {
                 if let Some(word) = self.word_builder.flush() {
-                    tokens.push(Self::classify(word))
+                    tokens.push(Self::classify(&word));
                 }
             }
         }
@@ -507,6 +511,18 @@ mod tests {
             TokenType::Pattern(PatternType::Or),
             TokenType::Identifier("abc".into()),
         ]
+    );
+
+    gen_space_tests!(
+        paren_separator,
+        "(244 2333)",
+        vec![
+            TokenType::LParen,
+            TokenType::Number(244),
+            TokenType::Number(2333),
+            TokenType::RParen,
+        ],
+        disable
     );
 
     gen_space_tests!(
