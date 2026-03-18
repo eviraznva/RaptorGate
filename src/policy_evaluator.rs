@@ -61,17 +61,6 @@ impl PolicyEvaluator {
 
             (Pattern::Equal(field_value), value) => *field_value == value,
 
-            (Pattern::Glob(FieldValue::Ip(pat_ip)), FieldValue::Ip(ip)) => *pat_ip == ip,
-            (Pattern::Glob(_), _) => false,
-
-            (Pattern::Range(FieldValue::Port(lo), FieldValue::Port(hi)), FieldValue::Port(v)) => {
-                v >= *lo && v <= *hi
-            }
-            (Pattern::Range(FieldValue::Hour(lo), FieldValue::Hour(hi)), FieldValue::Hour(v)) => {
-                v >= *lo && v <= *hi
-            }
-            (Pattern::Range(_, _), _) => false, //TODO: fix this, should be a type level guarantee
-
             (Pattern::Comparison(op, FieldValue::Port(rhs)), FieldValue::Port(v)) => match op {
                 Operation::Greater => v > *rhs,
                 Operation::Lesser => v < *rhs,
@@ -472,7 +461,7 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
-                Pattern::Glob(FieldValue::Ip(pat_ip)),
+                Pattern::Equal(FieldValue::Ip(pat_ip)),
                 ArmEnd::Verdict(Verdict::Allow),
             )
             .build()
@@ -489,7 +478,7 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
-                Pattern::Glob(FieldValue::Ip(pat_ip)),
+                Pattern::Equal(FieldValue::Ip(pat_ip)),
                 ArmEnd::Verdict(Verdict::Allow),
             )
             .build()
@@ -506,7 +495,7 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstIp,
-                Pattern::Glob(FieldValue::Ip(pat_ip)),
+                Pattern::Equal(FieldValue::Ip(pat_ip)),
                 ArmEnd::Verdict(Verdict::Drop),
             )
             .build()
@@ -515,27 +504,6 @@ mod tests {
         assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
-    // ── Range: Port ───────────────────────────────────────────
-
-    #[test]
-    fn range_dst_port_inclusive_match() {
-        let tree = RuleTree::new(
-            "range_port".into(),
-            "".into(),
-            MatchBuilder::with_arm(
-                MatchKind::DstPort,
-                Pattern::Range(
-                    FieldValue::Port(Port::from(70)),
-                    FieldValue::Port(Port::from(90)),
-                ),
-                ArmEnd::Verdict(Verdict::Allow),
-            )
-            .build()
-            .unwrap(),
-        );
-        // dst_port = 80, in [70, 90]
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
-    }
 
     #[test]
     fn range_dst_port_below() {
@@ -544,10 +512,10 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
-                Pattern::Range(
-                    FieldValue::Port(Port::from(81)),
-                    FieldValue::Port(Port::from(443)),
-                ),
+                Pattern::And(vec![
+                    Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Port(Port::from(81))),
+                    Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(443))),
+                ]),
                 ArmEnd::Verdict(Verdict::Allow),
             )
             .build()
@@ -564,10 +532,10 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
-                Pattern::Range(
-                    FieldValue::Port(Port::from(80)),
-                    FieldValue::Port(Port::from(80)),
-                ),
+                Pattern::And(vec![
+                    Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Port(Port::from(80))),
+                    Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(80))),
+                ]),
                 ArmEnd::Verdict(Verdict::Allow),
             )
             .build()
@@ -583,10 +551,13 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
-                Pattern::Range(
-                    FieldValue::Port(Port::from(10000)),
-                    FieldValue::Port(Port::from(20000)),
-                ),
+                Pattern::And(vec![
+                    Pattern::Comparison(
+                        Operation::GreaterOrEqual,
+                        FieldValue::Port(Port::from(10000)),
+                    ),
+                    Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(20000))),
+                ]),
                 ArmEnd::Verdict(Verdict::Allow),
             )
             .build()
@@ -605,10 +576,16 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Hour,
-                Pattern::Range(
-                    FieldValue::Hour(Hour::try_from(9).unwrap()),
-                    FieldValue::Hour(Hour::try_from(17).unwrap()),
-                ),
+                Pattern::And(vec![
+                    Pattern::Comparison(
+                        Operation::GreaterOrEqual,
+                        FieldValue::Hour(Hour::try_from(9).unwrap()),
+                    ),
+                    Pattern::Comparison(
+                        Operation::LesserOrEqual,
+                        FieldValue::Hour(Hour::try_from(17).unwrap()),
+                    ),
+                ]),
                 ArmEnd::Verdict(Verdict::Allow),
             )
             .build()
@@ -625,10 +602,16 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Hour,
-                Pattern::Range(
-                    FieldValue::Hour(Hour::try_from(15).unwrap()),
-                    FieldValue::Hour(Hour::try_from(23).unwrap()),
-                ),
+                Pattern::And(vec![
+                    Pattern::Comparison(
+                        Operation::GreaterOrEqual,
+                        FieldValue::Hour(Hour::try_from(15).unwrap()),
+                    ),
+                    Pattern::Comparison(
+                        Operation::LesserOrEqual,
+                        FieldValue::Hour(Hour::try_from(23).unwrap()),
+                    ),
+                ]),
                 ArmEnd::Verdict(Verdict::Allow),
             )
             .build()
@@ -1126,10 +1109,16 @@ mod tests {
                         ArmEnd::Match(
                             MatchBuilder::with_arm(
                                 MatchKind::DstPort,
-                                Pattern::Range(
-                                    FieldValue::Port(Port::from(0)),
-                                    FieldValue::Port(Port::from(1024)),
-                                ),
+                                Pattern::And(vec![
+                                    Pattern::Comparison(
+                                        Operation::GreaterOrEqual,
+                                        FieldValue::Port(Port::from(0)),
+                                    ),
+                                    Pattern::Comparison(
+                                        Operation::LesserOrEqual,
+                                        FieldValue::Port(Port::from(1024)),
+                                    ),
+                                ]),
                                 ArmEnd::Verdict(Verdict::Allow),
                             )
                             .arm(
@@ -1177,10 +1166,16 @@ mod tests {
                         ArmEnd::Match(
                             MatchBuilder::with_arm(
                                 MatchKind::DstPort,
-                                Pattern::Range(
-                                    FieldValue::Port(Port::from(0)),
-                                    FieldValue::Port(Port::from(1024)),
-                                ),
+                                Pattern::And(vec![
+                                    Pattern::Comparison(
+                                        Operation::GreaterOrEqual,
+                                        FieldValue::Port(Port::from(0)),
+                                    ),
+                                    Pattern::Comparison(
+                                        Operation::LesserOrEqual,
+                                        FieldValue::Port(Port::from(1024)),
+                                    ),
+                                ]),
                                 ArmEnd::Verdict(Verdict::Allow),
                             )
                             .arm(
@@ -1276,7 +1271,7 @@ mod tests {
             "glob+hour+day".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
-                Pattern::Glob(FieldValue::Ip(IP::new([
+                Pattern::Equal(FieldValue::Ip(IP::new([
                     Octet::Value(192),
                     Octet::Value(168),
                     Octet::Any,
@@ -1285,10 +1280,16 @@ mod tests {
                 ArmEnd::Match(
                     MatchBuilder::with_arm(
                         MatchKind::Hour,
-                        Pattern::Range(
-                            FieldValue::Hour(Hour::try_from(8).unwrap()),
-                            FieldValue::Hour(Hour::try_from(18).unwrap()),
-                        ),
+                        Pattern::And(vec![
+                            Pattern::Comparison(
+                                Operation::GreaterOrEqual,
+                                FieldValue::Hour(Hour::try_from(8).unwrap()),
+                            ),
+                            Pattern::Comparison(
+                                Operation::LesserOrEqual,
+                                FieldValue::Hour(Hour::try_from(18).unwrap()),
+                            ),
+                        ]),
                         ArmEnd::Match(
                             MatchBuilder::with_arm(
                                 MatchKind::DayOfWeek,
@@ -1323,7 +1324,7 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
-                Pattern::Glob(FieldValue::Ip(IP::new([
+                Pattern::Equal(FieldValue::Ip(IP::new([
                     Octet::Value(192),
                     Octet::Value(168),
                     Octet::Any,
@@ -1332,10 +1333,16 @@ mod tests {
                 ArmEnd::Match(
                     MatchBuilder::with_arm(
                         MatchKind::Hour,
-                        Pattern::Range(
-                            FieldValue::Hour(Hour::try_from(8).unwrap()),
-                            FieldValue::Hour(Hour::try_from(18).unwrap()),
-                        ),
+                        Pattern::And(vec![
+                            Pattern::Comparison(
+                                Operation::GreaterOrEqual,
+                                FieldValue::Hour(Hour::try_from(8).unwrap()),
+                            ),
+                            Pattern::Comparison(
+                                Operation::LesserOrEqual,
+                                FieldValue::Hour(Hour::try_from(18).unwrap()),
+                            ),
+                        ]),
                         ArmEnd::Match(
                             MatchBuilder::with_arm(
                                 MatchKind::DayOfWeek,
@@ -1366,7 +1373,7 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
-                Pattern::Glob(FieldValue::Ip(IP::new([
+                Pattern::Equal(FieldValue::Ip(IP::new([
                     Octet::Value(192),
                     Octet::Value(168),
                     Octet::Any,
@@ -1375,10 +1382,16 @@ mod tests {
                 ArmEnd::Match(
                     MatchBuilder::with_arm(
                         MatchKind::Hour,
-                        Pattern::Range(
-                            FieldValue::Hour(Hour::try_from(8).unwrap()),
-                            FieldValue::Hour(Hour::try_from(12).unwrap()),
-                        ),
+                        Pattern::And(vec![
+                            Pattern::Comparison(
+                                Operation::GreaterOrEqual,
+                                FieldValue::Hour(Hour::try_from(8).unwrap()),
+                            ),
+                            Pattern::Comparison(
+                                Operation::LesserOrEqual,
+                                FieldValue::Hour(Hour::try_from(12).unwrap()),
+                            ),
+                        ]),
                         ArmEnd::Verdict(Verdict::Allow),
                     )
                     .arm(

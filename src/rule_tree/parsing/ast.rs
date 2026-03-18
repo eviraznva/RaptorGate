@@ -57,7 +57,6 @@ pub(super) enum AstPattern {
     LesserOrEqual(Spanned<AstValue>),
     Lesser(Spanned<AstValue>),
     GreaterOrEqual(Spanned<AstValue>),
-    Range(Spanned<AstValue>, Spanned<AstValue>),
     Or(Spanned<Vec<AstPattern>>),
     And(Spanned<Vec<AstPattern>>),
     Wildcard,

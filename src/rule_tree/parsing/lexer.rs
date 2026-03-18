@@ -101,7 +101,6 @@ pub(super) enum PatternType {
     GreaterOrEqual,
     Or,
     And,
-    Range,
     Wildcard,
 }
 
@@ -170,18 +169,12 @@ impl WordBuilder {
                 return Some(self.exchange(c, pos));
             }
 
-            if matches!(self.current_word.as_str(), "<=" | ">=" | "<>") {
+            if matches!(self.current_word.as_str(), "<=" | ">=") {
                 return Some(self.exchange(c, pos));
             }
 
             if self.current_word.starts_with('<') || self.current_word.starts_with('>') {
-                let expected = if self.current_word.starts_with('>') {
-                    '<'
-                } else {
-                    '>'
-                };
-
-                if c == '=' || c == expected {
+                if c == '=' {
                     self.current_word.push(c);
                     return Some(self.exchange(' ', pos));
                 }
@@ -265,7 +258,6 @@ impl Lexer {
             "_" => word.into_token(TokenType::Pattern(PatternType::Wildcard)),
             "|" => word.into_token(TokenType::Pattern(PatternType::Or)),
             "&" => word.into_token(TokenType::Pattern(PatternType::And)),
-            "<>" => word.into_token(TokenType::Pattern(PatternType::Range)),
             "{" => word.into_token(TokenType::LBrace),
             "}" => word.into_token(TokenType::RBrace),
             ":" => word.into_token(TokenType::Colon),
@@ -466,15 +458,6 @@ mod tests {
         ]
     );
 
-    gen_space_tests!(
-        rng_operator,
-        "5 <> abc",
-        vec![
-            TokenType::Number(5),
-            TokenType::Pattern(PatternType::Range),
-            TokenType::Identifier("abc".into()),
-        ]
-    );
     gen_space_tests!(
         ge_operator,
         "5 > abc",

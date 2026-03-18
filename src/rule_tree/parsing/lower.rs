@@ -164,10 +164,6 @@ fn lower_pattern(kind: MatchKind, p: Spanned<AstPattern>) -> Result<Pattern, Low
                 Operation::LesserOrEqual,
                 lower_value(kind, v)?,
         )),
-        AstPattern::Range(from, to) => Ok(Pattern::Range(
-                lower_value(kind, from)?,
-                lower_value(kind, to)?,
-        )),
         AstPattern::Or(patterns) => {
             let lowered = patterns
                 .val
