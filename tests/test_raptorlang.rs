@@ -1,6 +1,8 @@
 // ── Equal: IpVer ──────────────────────────────────────────
 // Mirrors: equal_ip_ver_match / equal_ip_ver_no_match
 
+use std::vec;
+
 use ngfw::{frame::{Hour, IP, IpVer, Octet, Port, Protocol, Weekday}, rule_tree::{ArmEnd, FieldValue, MatchKind, Operation, Pattern, Verdict, matcher::{Match, MatchBuilder}, parsing::parse_rule_tree}};
 
 fn assert_lower_eq(source: &str, expected: Match) {
@@ -574,6 +576,48 @@ fn lower_nested_hour_wrong_day_drops() {
         ).build().unwrap(),
         );
 }
+
+// AND
+#[test]
+fn src_port_and() {
+    assert_lower_eq(
+        "match src_port { &( > 80 < 90 ) : verdict allow }",
+        MatchBuilder::with_arm(
+            MatchKind::SrcPort,
+            Pattern::And(
+                vec![
+                    Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
+                    Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
+                ],
+            ),
+            ArmEnd::Verdict(Verdict::Allow),
+        ).build().unwrap(),
+    );
+}
+
+
+#[test]
+fn src_port_and_or() {
+    assert_lower_eq(
+        "match src_port { |(&( > 80 < 90 ) =100) : verdict allow }",
+        MatchBuilder::with_arm(
+            MatchKind::SrcPort,
+            Pattern::Or(
+                vec![
+                    Pattern::And(
+                        vec![
+                        Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
+                        Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
+                        ],
+                    ),
+                    Pattern::Equal(FieldValue::Port(Port::from(100))),
+                ],
+            ),
+            ArmEnd::Verdict(Verdict::Allow),
+        ).build().unwrap(),
+    );
+}
+
 
 // ── Nested ORs ───────────────────────────────────────────
 // User-requested: an Or pattern as input to a nested match, plus an Or

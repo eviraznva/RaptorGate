@@ -6,7 +6,7 @@ use thiserror::Error;
 
 macro_rules! separating_chars {
     () => {
-        '{' | '}' | '|' | '<' | '>' | '=' | ':' | '(' | ')'
+        '{' | '}' | '|' | '<' | '>' | '=' | ':' | '(' | ')' | '&'
     };
 }
 
@@ -100,6 +100,7 @@ pub(super) enum PatternType {
     LesserOrEqual,
     GreaterOrEqual,
     Or,
+    And,
     Range,
     Wildcard,
 }
@@ -263,6 +264,7 @@ impl Lexer {
             ">=" => word.into_token(TokenType::Pattern(PatternType::GreaterOrEqual)),
             "_" => word.into_token(TokenType::Pattern(PatternType::Wildcard)),
             "|" => word.into_token(TokenType::Pattern(PatternType::Or)),
+            "&" => word.into_token(TokenType::Pattern(PatternType::And)),
             "<>" => word.into_token(TokenType::Pattern(PatternType::Range)),
             "{" => word.into_token(TokenType::LBrace),
             "}" => word.into_token(TokenType::RBrace),
@@ -509,6 +511,16 @@ mod tests {
         vec![
             TokenType::Number(5),
             TokenType::Pattern(PatternType::Or),
+            TokenType::Identifier("abc".into()),
+        ]
+    );
+
+    gen_space_tests!(
+        and_operator,
+        "5 & abc",
+        vec![
+            TokenType::Number(5),
+            TokenType::Pattern(PatternType::And),
             TokenType::Identifier("abc".into()),
         ]
     );

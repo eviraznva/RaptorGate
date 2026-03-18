@@ -59,14 +59,20 @@ pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies
 // Ocena polityki dla zlozonego lub niesfragmentowanego pakietu i przekazuje go do TUN.
 async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore) {
     let compiled_policy = policies.load();
-    let verdict = RealFrame::from_sliced(&packet)
-        .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));
+    // let Some(verdict) = RealFrame::from_sliced(&packet)
+    //     .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));
+    let Some(frame) = RealFrame::from_sliced(packet) else {
+        eprintln!("[{iface}] DROP (failed to convert to RealFrame)");
+        return;
+    };
 
-    let allow = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
+    let verdict = compiled_policy.evaluator().evaluate(&frame);
+
+    let allow = matches!(verdict, Verdict::Allow | Verdict::AllowWarn(_));
 
     match &verdict {
-        Some(Verdict::AllowWarn(msg)) => eprintln!("[{iface}] WARN (allow): {msg}"),
-        Some(Verdict::DropWarn(msg)) => eprintln!("[{iface}] WARN (drop): {msg}"),
+        Verdict::AllowWarn(msg) => eprintln!("[{iface}] WARN (allow): {msg}"),
+        Verdict::DropWarn(msg) => eprintln!("[{iface}] WARN (drop): {msg}"),
         _ => {}
     }
 

@@ -1,6 +1,7 @@
 pub mod matcher;
 pub mod parsing;
 
+use arc_swap::docs::patterns;
 use derive_more::{Debug, Display, Error, PartialEq};
 
 use crate::{frame::{Hour, IP, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
@@ -53,6 +54,8 @@ pub enum Pattern {
     Range(FieldValue, FieldValue),
     #[display("Patterns, count: {}", _0.len())]
     Or(Vec<Pattern>),
+    #[display("Patterns, count: {}", _0.len())]
+    And(Vec<Pattern>),
 
     #[display("Comparing with {}, to {}", _0, _1)]
     Comparison(Operation, FieldValue),
@@ -111,13 +114,13 @@ impl Pattern {
             ) => Ok(()),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Or(patterns), MatchKind::Protocol | MatchKind::DayOfWeek | MatchKind::IpVer | MatchKind::Hour | MatchKind::SrcIp | MatchKind::DstIp) => {
+            (Pattern::Or(patterns) | Pattern::And(patterns), _) => {
                 for pattern in patterns {
                     pattern.validate_for(kind)?;
                 }
                 Ok(())
             }
-            (Pattern::Or(_), _) => Err(RuleError::InvalidPattern(self.clone())),
+            // (Pattern::Or(_), _) => Err(RuleError::InvalidPattern(self.clone())),
         }
     }
 }

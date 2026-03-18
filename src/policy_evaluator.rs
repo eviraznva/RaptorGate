@@ -1,3 +1,5 @@
+use arc_swap::docs::patterns;
+
 use crate::{
     frame::Frame,
     rule_tree::{FieldValue, MatchKind, Operation, Pattern, RuleTree, Step, TreeWalker, Verdict},
@@ -16,7 +18,7 @@ impl PolicyEvaluator {
         }
     }
 
-    pub(crate) fn evaluate<T: Frame>(&self, frame: &T) -> Option<Verdict> {
+    pub(crate) fn evaluate<T: Frame>(&self, frame: &T) -> Verdict {
         let context = PolicyContext {
             frame,
             allowed: false,
@@ -27,14 +29,14 @@ impl PolicyEvaluator {
         loop {
             match walker.current_step() {
                 Step::NeedsMatch { kind, pattern } => {
-                    let value = Self::extract(*kind, &context)?;
+                    let Some(value) = Self::extract(*kind, &context) else {walker.advance(false); continue};
                     let matched = Self::pattern_matches(pattern, value);
                     if let Step::Verdict(v) = walker.advance(matched) {
-                        return Some(v.clone());
+                        return v.clone();
                     }
                 }
-                Step::Verdict(v) => return Some(v.clone()),
-                Step::NoMatch => return None,
+                Step::Verdict(v) => return v.clone(),
+                Step::NoMatch => return self.orphaned_verdict.clone(),
             }
         }
     }
@@ -68,7 +70,7 @@ impl PolicyEvaluator {
             (Pattern::Range(FieldValue::Hour(lo), FieldValue::Hour(hi)), FieldValue::Hour(v)) => {
                 v >= *lo && v <= *hi
             }
-            (Pattern::Range(_, _), _) => false,
+            (Pattern::Range(_, _), _) => false, //TODO: fix this, should be a type level guarantee
 
             (Pattern::Comparison(op, FieldValue::Port(rhs)), FieldValue::Port(v)) => match op {
                 Operation::Greater => v > *rhs,
@@ -93,6 +95,7 @@ impl PolicyEvaluator {
             (Pattern::Comparison(_, _), _) => false,
 
             (Pattern::Or(patterns), _) => patterns.iter().any(|p| Self::pattern_matches(p, value)),
+            (Pattern::And(patterns), _) => patterns.iter().all(|p| Self::pattern_matches(p, value)),
         }
     }
 }
@@ -177,7 +180,7 @@ mod tests {
         }
     }
 
-    fn eval(tree: RuleTree, frame: &DummyFrame) -> Option<Verdict> {
+    fn eval(tree: RuleTree, frame: &DummyFrame) -> Verdict {
         let evaluator = PolicyEvaluator::new(tree, Verdict::Drop);
         evaluator.evaluate(frame)
     }
@@ -195,7 +198,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     // ── Equal: IP version ─────────────────────────────────────
@@ -213,7 +216,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -229,7 +232,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Equal: Protocol ───────────────────────────────────────
@@ -247,7 +250,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Drop));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     #[test]
@@ -263,7 +266,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Equal: Src IP ─────────────────────────────────────────
@@ -287,7 +290,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -309,7 +312,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Equal: Dst IP ─────────────────────────────────────────
@@ -333,7 +336,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     // ── Equal: Src Port ───────────────────────────────────────
@@ -351,7 +354,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -367,7 +370,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Equal: Dst Port ───────────────────────────────────────
@@ -387,7 +390,7 @@ mod tests {
         );
         assert_eq!(
             eval(tree, &DummyFrame::default_v4()),
-            Some(Verdict::AllowWarn("dst port is 80".into()))
+            Verdict::AllowWarn("dst port is 80".into())
         );
     }
 
@@ -406,7 +409,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -422,7 +425,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Equal: DayOfWeek ──────────────────────────────────────
@@ -440,7 +443,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Drop));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     #[test]
@@ -456,7 +459,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Glob: IP with wildcards ───────────────────────────────
@@ -475,7 +478,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -492,7 +495,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     #[test]
@@ -509,7 +512,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Drop));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Range: Port ───────────────────────────────────────────
@@ -531,7 +534,7 @@ mod tests {
             .unwrap(),
         );
         // dst_port = 80, in [70, 90]
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -551,7 +554,7 @@ mod tests {
             .unwrap(),
         );
         // dst_port = 80, not in [81, 443]
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     #[test]
@@ -570,7 +573,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -590,7 +593,7 @@ mod tests {
             .unwrap(),
         );
         // src_port = 12345
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     // ── Range: Hour ───────────────────────────────────────────
@@ -612,7 +615,7 @@ mod tests {
             .unwrap(),
         );
         // hour = 14, in [9, 17]
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -632,7 +635,7 @@ mod tests {
             .unwrap(),
         );
         // hour = 14, not in [15, 23]
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Comparison: Port ──────────────────────────────────────
@@ -651,7 +654,7 @@ mod tests {
             .unwrap(),
         );
         // dst_port = 80 > 79
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -668,7 +671,7 @@ mod tests {
             .unwrap(),
         );
         // dst_port = 80, not > 80
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     #[test]
@@ -684,7 +687,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -701,7 +704,7 @@ mod tests {
             .unwrap(),
         );
         // dst_port = 80 < 81
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -717,7 +720,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     // ── Comparison: Hour ──────────────────────────────────────
@@ -739,7 +742,7 @@ mod tests {
             .unwrap(),
         );
         // hour = 14 > 10
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -759,7 +762,7 @@ mod tests {
             .unwrap(),
         );
         // hour = 14, not < 10
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Comparison: DayOfWeek ─────────────────────────────────
@@ -781,7 +784,7 @@ mod tests {
             .unwrap(),
         );
         // Wed >= Mon
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -798,7 +801,7 @@ mod tests {
             .unwrap(),
         );
         // Wed < Fri
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -815,7 +818,7 @@ mod tests {
             .unwrap(),
         );
         // Wed not < Mon
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Or ────────────────────────────────────────────────────
@@ -836,7 +839,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -857,7 +860,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &frame), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &frame), Verdict::Allow);
     }
 
     #[test]
@@ -877,7 +880,7 @@ mod tests {
             .unwrap(),
         );
         // frame is Tcp
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     #[test]
@@ -897,7 +900,120 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+    }
+
+    #[test]
+    fn combined_and_or_allow() {
+        let tree = RuleTree::new(
+            "or_dow".into(),
+            "".into(),
+            MatchBuilder::with_arm(
+                MatchKind::SrcPort,
+                Pattern::Or(
+                    vec![
+                    Pattern::And(
+                        vec![
+                        Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
+                        Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
+                        ],
+                    ),
+                    Pattern::Equal(FieldValue::Port(Port::from(12345))),
+                    ],
+                ),
+                ArmEnd::Verdict(Verdict::Allow),
+            ).build().unwrap()
+        );
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+    }
+
+    #[test]
+    fn combined_and_or_allow_in_nested() {
+        let mut frame = DummyFrame::default_v4();
+        frame.src_port = Some(Port::from(81));
+        let tree = RuleTree::new(
+            "or_dow".into(),
+            "".into(),
+            MatchBuilder::with_arm(
+                MatchKind::SrcPort,
+                Pattern::Or(
+                    vec![
+                    Pattern::And(
+                        vec![
+                        Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
+                        Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
+                        ],
+                    ),
+                    Pattern::Equal(FieldValue::Port(Port::from(12345))),
+                    ],
+                ),
+                ArmEnd::Verdict(Verdict::Allow),
+            ).build().unwrap()
+        );
+        assert_eq!(eval(tree, &frame), Verdict::Allow);
+    }
+
+    #[test]
+    fn combined_and_or_deny() {
+        let tree = RuleTree::new(
+            "or_dow".into(),
+            "".into(),
+            MatchBuilder::with_arm(
+                MatchKind::SrcPort,
+                Pattern::Or(
+                    vec![
+                    Pattern::And(
+                        vec![
+                        Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
+                        Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
+                        ],
+                    ),
+                    Pattern::Equal(FieldValue::Port(Port::from(100))),
+                    ],
+                ),
+                ArmEnd::Verdict(Verdict::Allow),
+            ).build().unwrap()
+        );
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+    }
+
+    #[test]
+    fn and_day_of_week() {
+        let tree = RuleTree::new(
+            "or_dow".into(),
+            "".into(),
+            MatchBuilder::with_arm(
+                MatchKind::DayOfWeek,
+                Pattern::And(vec![
+                    Pattern::Comparison(Operation::Greater, FieldValue::DayOfWeek(Weekday::Tue)),
+                    Pattern::Comparison(Operation::Lesser, FieldValue::DayOfWeek(Weekday::Thu)),
+                ]),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+    }
+
+    #[test]
+    fn and_day_of_week_invalid() {
+        let tree = RuleTree::new(
+            "or_dow".into(),
+            "".into(),
+            MatchBuilder::with_arm(
+                MatchKind::DayOfWeek,
+                Pattern::And(vec![
+                    Pattern::Comparison(Operation::Greater, FieldValue::DayOfWeek(Weekday::Tue)),
+                    Pattern::Comparison(Operation::Lesser, FieldValue::DayOfWeek(Weekday::Thu)),
+                    Pattern::Equal(FieldValue::DayOfWeek(Weekday::Fri)),
+                ]),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Multiple arms (fallthrough to second arm) ─────────────
@@ -919,7 +1035,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -941,7 +1057,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &frame), Some(Verdict::Drop));
+        assert_eq!(eval(tree, &frame), Verdict::Drop);
     }
 
     #[test]
@@ -962,7 +1078,7 @@ mod tests {
             .unwrap(),
         );
         // frame is Tcp
-        assert!(eval(tree, &DummyFrame::default_v4()).is_none());
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     // ── Port-less protocol returns None for port extraction ───
@@ -985,8 +1101,8 @@ mod tests {
             .build()
             .unwrap(),
         );
-        // extract returns None → evaluate returns None
-        assert!(eval(tree, &frame).is_none());
+        // extract returns None → evaluate returns Drop
+        assert_eq!(eval(tree, &frame), Verdict::Drop);
     }
 
     // ── Nested tree (larger integration-style test) ───────────
@@ -1043,7 +1159,7 @@ mod tests {
             .unwrap(),
         );
 
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -1090,7 +1206,7 @@ mod tests {
         frame.dst_port = Some(Port::from(8080));
         assert_eq!(
             eval(tree, &frame),
-            Some(Verdict::AllowWarn("high dst port".into()))
+            Verdict::AllowWarn("high dst port".into())
         );
     }
 
@@ -1122,7 +1238,7 @@ mod tests {
 
         let mut frame = DummyFrame::default_v4();
         frame.protocol = Protocol::Udp;
-        assert_eq!(eval(tree, &frame), Some(Verdict::Drop));
+        assert_eq!(eval(tree, &frame), Verdict::Drop);
     }
 
     #[test]
@@ -1145,7 +1261,7 @@ mod tests {
 
         let mut frame = DummyFrame::default_v4();
         frame.ip_ver = IpVer::V6;
-        assert_eq!(eval(tree, &frame), Some(Verdict::Drop));
+        assert_eq!(eval(tree, &frame), Verdict::Drop);
     }
 
     // ── Nested: IP glob + hour range + day check ──────────────
@@ -1197,7 +1313,7 @@ mod tests {
         );
 
         // Default: src=192.168.1.10, hour=14 (in [8,18]), day=Wed → Allow
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Allow));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
     }
 
     #[test]
@@ -1240,7 +1356,7 @@ mod tests {
         );
 
         // day=Wed, but arm only allows Mon → falls to wildcard → Drop
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Some(Verdict::Drop));
+        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
     }
 
     #[test]
@@ -1280,7 +1396,7 @@ mod tests {
         // hour=14, not in [8,12] → falls to wildcard → AllowWarn
         assert_eq!(
             eval(tree, &DummyFrame::default_v4()),
-            Some(Verdict::DropWarn("hour outside range".into()))
+            Verdict::DropWarn("hour outside range".into())
         );
     }
 }

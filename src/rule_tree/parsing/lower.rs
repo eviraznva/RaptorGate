@@ -156,6 +156,10 @@ fn lower_pattern(kind: MatchKind, p: Spanned<AstPattern>) -> Result<Pattern, Low
                 Operation::Greater,
                 lower_value(kind, v)?,
         )),
+        AstPattern::Lesser(v) => Ok(Pattern::Comparison(
+                Operation::Lesser,
+                lower_value(kind, v)?,
+        )),
         AstPattern::LesserOrEqual(v) => Ok(Pattern::Comparison(
                 Operation::LesserOrEqual,
                 lower_value(kind, v)?,
@@ -179,6 +183,23 @@ fn lower_pattern(kind: MatchKind, p: Spanned<AstPattern>) -> Result<Pattern, Low
                 })
             .collect::<Result<Vec<_>, _>>()?;
             Ok(Pattern::Or(lowered))
+        }
+
+        AstPattern::And(patterns) => {
+            let lowered = patterns
+                .val
+                .into_iter()
+                .map(|inner| {
+                    lower_pattern(
+                        kind,
+                        Spanned {
+                            val: inner,
+                            pos: patterns.pos,
+                        },
+                    )
+                })
+            .collect::<Result<Vec<_>, _>>()?;
+            Ok(Pattern::And(lowered))
         }
         AstPattern::GreaterOrEqual(v) => Ok(Pattern::Comparison(
                 Operation::GreaterOrEqual,
