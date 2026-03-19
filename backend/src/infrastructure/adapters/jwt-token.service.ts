@@ -40,8 +40,8 @@ export class TokenService implements ITokenService {
     ignoreExpiration: boolean = false,
   ): Promise<TokenPayload | null> {
     return await this.jwtService.verifyAsync<TokenPayload>(token, {
-      secret: this.configService.get('JWT_SECRET'),
       ignoreExpiration,
+      secret: this.configService.get('JWT_SECRET'),
     });
   }
 

@@ -1,44 +1,21 @@
-import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import { rulesTable } from './rules.schema';
-import { usersTable } from './users.schema';
-import { defineRelations } from 'drizzle-orm';
+import { z } from 'zod';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
 
-export const ruleChangeHistoryTable = pgTable('rule_change_history', {
-  id: uuid('id').primaryKey(),
-  ruleId: uuid('rule_id')
-    .notNull()
-    .references(() => rulesTable.id, { onDelete: 'no action' }),
-  changedBy: uuid('changed_by')
-    .notNull()
-    .references(() => usersTable.id, { onDelete: 'no action' }),
-  modifiedAt: timestamp('modified_at').notNull(),
-  content: text('content').notNull(),
-});
+export const RuleChangeHistoryRecordSchema = z
+  .object({
+    id: uuidSchema,
+    ruleId: uuidSchema,
+    changedBy: uuidSchema,
+    modifiedAt: isoDateTimeSchema,
+    content: z.string().min(1),
+  })
+  .strict();
 
-export const ruleChangeHistoryRelations = defineRelations(
-  {
-    rulesTable,
-    usersTable,
-    ruleChangeHistoryTable,
-  },
-  (r) => ({
-    ruleChangeHistoryTable: {
-      author: r.one.usersTable({
-        from: r.ruleChangeHistoryTable.changedBy,
-        to: r.usersTable.id,
-      }),
-      rule: r.one.rulesTable({
-        from: r.ruleChangeHistoryTable.ruleId,
-        to: r.rulesTable.id,
-      }),
-    },
-
-    usersTable: {
-      ruleChangeHistory: r.many.ruleChangeHistoryTable(),
-    },
-
-    rulesTable: {
-      ruleChangeHistory: r.many.ruleChangeHistoryTable(),
-    },
-  }),
+export const RuleChangeHistoryFileSchema = tableFileSchema(
+  RuleChangeHistoryRecordSchema,
 );
+
+export type RuleChangeHistoryRecord = z.infer<
+  typeof RuleChangeHistoryRecordSchema
+>;
+export type RuleChangeHistoryFile = z.infer<typeof RuleChangeHistoryFileSchema>;
