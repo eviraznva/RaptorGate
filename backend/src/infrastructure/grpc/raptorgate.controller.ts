@@ -9,9 +9,11 @@ import {
 import {
   FirewallEvent,
   HeartbeatEvent,
+  CaReadyEvent,
 } from './generated/events/firewall_events';
 import { GetActiveConfigUseCase } from 'src/application/use-cases/get-active-config.use-case';
 import { BackendEvent, HeartbeatAck } from './generated/events/backend_events';
+import { CaCertStore } from '../stores/ca-cert.store';
 import { Controller, Inject, Logger } from '@nestjs/common';
 import { Observable } from 'rxjs';
 
@@ -21,6 +23,7 @@ export class RaptorGateController implements RaptorGateServiceController {
   private readonly logger = new Logger(RaptorGateController.name);
   constructor(
     @Inject() private readonly getActiveConfigUseCase: GetActiveConfigUseCase,
+    private readonly caCertStore: CaCertStore,
   ) {}
 
   async getActiveConfig(request: GetConfigRequest): Promise<ConfigResponse> {
@@ -41,7 +44,7 @@ export class RaptorGateController implements RaptorGateServiceController {
     return new Observable<BackendEvent>((subscriber) => {
       this.logger.log('[EventStream] Firewall connected');
       const sub = request.subscribe({
-        next: (envelope) => {
+        next: async (envelope) => {
           this.logger.debug(`[EventStream] Received event type=${envelope.type}`);
 
           switch (envelope.type) {
@@ -64,6 +67,18 @@ export class RaptorGateController implements RaptorGateServiceController {
                 eventId: crypto.randomUUID(),
                 type: 'be.heartbeat_ack',
                 payload: Buffer.from(ackPayload),
+              });
+              break;
+            }
+            case 'fw.ca_ready': {
+              const event = CaReadyEvent.decode(envelope.payload);
+              const expiresAt = event.expiresAt
+                ? new Date(Number(event.expiresAt.seconds) * 1000).toISOString()
+                : '';
+              await this.caCertStore.upsert({
+                certPem: event.caCertPem,
+                fingerprint: event.fingerprint,
+                expiresAt,
               });
               break;
             }
