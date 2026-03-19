@@ -7,11 +7,13 @@ mod ip_defrag;
 mod packet_validator;
 mod policy_evaluator;
 mod rule_tree;
+mod tls;
 
 use crate::config::AppConfig;
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::runtime as data_plane_runtime;
+use crate::tls::CaManager;
 
 #[tokio::main]
 async fn main() {
@@ -30,7 +32,23 @@ async fn main() {
         }
     };
 
-    let control_plane = match ControlPlane::start(ControlPlaneConfig::from(&config)).await {
+    let ca_info = match CaManager::init(&config.pki_dir) {
+        Ok(ca) => {
+            tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
+            Some(ca.ca_info())
+        }
+        Err(err) => {
+            eprintln!("Warning: CA initialization failed: {err}");
+            None
+        }
+    };
+
+    let cp_config = ControlPlaneConfig {
+        ca_info,
+        ..ControlPlaneConfig::from(&config)
+    };
+
+    let control_plane = match ControlPlane::start(cp_config).await {
         Ok(control_plane) => control_plane,
         Err(err) => {
             eprintln!("Failed to start control plane: {err}");

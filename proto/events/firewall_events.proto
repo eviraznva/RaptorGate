@@ -15,6 +15,7 @@ import "google/protobuf/timestamp.proto";
 //   "fw.policy_activated" — PolicyActivatedEvent
 //   "fw.policy_failed"    — PolicyFailedEvent
 //   "fw.resync_confirmed" — ResyncConfirmedEvent
+//   "fw.ca_ready"         — CaReadyEvent
 // ─────────────────────────────────────────────────────────────────────────────
 message FirewallEvent {
   // UUID v7 — monotoniczny, używany do deduplikacji po stronie backendu.
@@ -97,6 +98,19 @@ message PolicyFailedEvent {
   repeated string          validation_errors = 6;
 
   google.protobuf.Timestamp failed_at = 7;
+}
+
+// Typ: "fw.ca_ready"
+//
+// Wysyłany po każdym nawiązaniu EventStream z zainicjowanym CA.
+// Backend przechowuje certyfikat CA do dystrybucji do klientów.
+// Klucz prywatny nigdy nie opuszcza firewalla.
+message CaReadyEvent {
+  // Certyfikat CA w formacie PEM (klucz publiczny).
+  string ca_cert_pem = 1;
+  // Odcisk palca SHA-256 certyfikatu w formacie AA:BB:CC:...
+  string fingerprint = 2;
+  google.protobuf.Timestamp expires_at = 3;
 }
 
 // Typ: "fw.resync_confirmed"
