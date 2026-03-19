@@ -59,7 +59,7 @@ pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies
 // Ocena polityki dla zlozonego lub niesfragmentowanego pakietu i przekazuje go do TUN.
 async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore) {
     let compiled_policy = policies.load();
-    let verdict = RealFrame::from_sliced(&packet)
+    let verdict = RealFrame::from_sliced(packet)
         .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));
 
     let allow = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));

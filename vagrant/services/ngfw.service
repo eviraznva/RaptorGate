@@ -14,6 +14,7 @@ StandardError=journal
 User=root
 AmbientCapabilities=CAP_NET_RAW
 Environment="CAPTURE_INTERFACES=eth1,eth2"
+EnvironmentFile=ngfw.env
 
 [Install]
 WantedBy=multi-user.target

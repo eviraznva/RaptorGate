@@ -21,7 +21,14 @@ pub struct AppConfig {
 
     // Redb snapshot
     pub redb_snapshot_path: String,
+
+    pub dev_config: Option<DevConfig>,
 }
+
+pub struct DevConfig {
+    pub policy_override: Option<String>,
+}
+
 
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
@@ -70,6 +77,14 @@ impl AppConfig {
 
             redb_snapshot_path: std::env::var("REDB_SNAPSHOT_PATH")
                 .unwrap_or_else(|_| "./.data/snapshot.redb".into()),
-        })
-    }
+
+            dev_config: (std::env::var("DEV_MODE")
+                .unwrap_or_else(|_| "false".into())
+                .to_lowercase()
+                == "true")
+                .then(|| DevConfig {
+                    policy_override: std::env::var("DEV_POLICY_OVERRIDE").ok(),
+                }),
+        }
+        )}
 }

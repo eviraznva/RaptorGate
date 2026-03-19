@@ -12,6 +12,7 @@ use crate::config::AppConfig;
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::runtime as data_plane_runtime;
+use crate::policy::runtime::CompiledPolicy;
 
 #[tokio::main]
 async fn main() {
