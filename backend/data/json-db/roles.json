@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-000000000064",
+      "name": "super_admin",
+      "description": "System role super_admin"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000065",
+      "name": "admin",
+      "description": "System role admin"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000066",
+      "name": "operator",
+      "description": "System role operator"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000067",
+      "name": "viewer",
+      "description": "System role viewer"
+    }
+  ]
+}

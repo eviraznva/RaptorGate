@@ -1,5 +1,4 @@
 import { RolesPermissionsGuard } from './infrastructure/adapters/roles-permissions.guard';
-import { DatabaseModule } from './infrastructure/persistence/database/database.module';
 import { PkiController } from './presentation/controllers/pki.controller';
 import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
@@ -25,7 +24,6 @@ import { Module } from '@nestjs/common';
         limit: 100, // 100 requestów globalnie
       },
     ]),
-    DatabaseModule,
     PassportModule,
     AuthModule,
     GrpcModule,
