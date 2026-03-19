@@ -920,6 +920,7 @@ dependencies = [
  "dotenvy",
  "etherparse",
  "hyper-util",
+ "ipnet",
  "nonempty",
  "paste",
  "pcap",
