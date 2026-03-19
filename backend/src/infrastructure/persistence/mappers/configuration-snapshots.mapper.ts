@@ -1,15 +1,10 @@
 import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
-import { Checksum } from 'src/domain/value-objects/checksum.vo';
+import { ConfigurationSnapshotRecord } from '../schemas/configuration-snapshots.schema';
 import { SnapshotType } from 'src/domain/value-objects/snapshot-type.vo';
-import { configurationSnapshotsTable } from '../schemas/configuration-snapshots.schema';
-import { InferSelectModel } from 'drizzle-orm';
+import { Checksum } from 'src/domain/value-objects/checksum.vo';
 
-type ConfigurationSnapshotRecord = InferSelectModel<
-  typeof configurationSnapshotsTable
->;
-
-export class ConfigurationSnapshotMapper {
-  static toDomain(record: ConfigurationSnapshotRecord) {
+export class ConfigurationSnapshotJsonMapper {
+  static toDomain(record: ConfigurationSnapshotRecord): ConfigurationSnapshot {
     return ConfigurationSnapshot.create(
       record.id,
       record.versionNumber,
@@ -17,12 +12,15 @@ export class ConfigurationSnapshotMapper {
       Checksum.create(record.checksum),
       record.isActive,
       record.payloadJson,
-      record.changeSummary ?? null,
-      record.createdAt,
+      record.changeSummary || null,
+      new Date(record.createdAt),
+      record.createdBy,
     );
   }
 
-  static toPersistence(snapshot: ConfigurationSnapshot) {
+  static toRecord(
+    snapshot: ConfigurationSnapshot,
+  ): ConfigurationSnapshotRecord {
     return {
       id: snapshot.getId(),
       versionNumber: snapshot.getVersionNumber(),
@@ -30,8 +28,9 @@ export class ConfigurationSnapshotMapper {
       checksum: snapshot.getChecksum().getValue(),
       isActive: snapshot.getIsActive(),
       payloadJson: snapshot.getPayloadJson(),
-      changeSummary: snapshot.getChangesSummary() ?? undefined,
-      createdAt: snapshot.getCreatedAt(),
+      createdAt: snapshot.getCreatedAt().toISOString(),
+      createdBy: snapshot.getCreatedBy(),
+      changeSummary: snapshot.getChangesSummary() ?? null,
     };
   }
 }

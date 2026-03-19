@@ -1,40 +1,25 @@
+import { z } from 'zod';
 import {
-  boolean,
-  pgTable,
-  timestamp,
-  uuid,
-  varchar,
-} from 'drizzle-orm/pg-core';
-import { usersTable } from './users.schema';
-import { defineRelations } from 'drizzle-orm';
+  isoDateTimeSchema,
+  nullableIsoDateTimeSchema,
+  tableFileSchema,
+  uuidSchema,
+} from './_common';
 
-export const sessionsTable = pgTable('sessions', {
-  id: uuid('id').primaryKey(),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => usersTable.id, { onDelete: 'cascade' }),
-  ipAddress: varchar('ip_address', { length: 45 }).notNull(),
-  userAgent: varchar('user_agent', { length: 255 }).notNull(),
-  isActive: boolean('is_active').notNull().default(true),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  expiresAt: timestamp('expires_at').notNull(),
-  revokedAt: timestamp('revoked_at'),
-});
+export const SessionRecordSchema = z
+  .object({
+    id: uuidSchema,
+    userId: uuidSchema,
+    ipAddress: z.string().min(1).max(45),
+    userAgent: z.string().min(1).max(255),
+    isActive: z.boolean(),
+    createdAt: isoDateTimeSchema,
+    expiresAt: isoDateTimeSchema,
+    revokedAt: nullableIsoDateTimeSchema.optional(),
+  })
+  .strict();
 
-export const sessionsRelations = defineRelations(
-  {
-    usersTable,
-    sessionsTable,
-  },
-  (r) => ({
-    sessionsTable: {
-      author: r.one.usersTable({
-        from: r.sessionsTable.userId,
-        to: r.usersTable.id,
-      }),
-    },
-    usersTable: {
-      sessions: r.many.sessionsTable(),
-    },
-  }),
-);
+export const SessionsFileSchema = tableFileSchema(SessionRecordSchema);
+
+export type SessionRecord = z.infer<typeof SessionRecordSchema>;
+export type SessionsFile = z.infer<typeof SessionsFileSchema>;

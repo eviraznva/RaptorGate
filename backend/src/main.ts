@@ -39,15 +39,19 @@ async function bootstrap() {
   const absoluteSocketPath = join(process.cwd(), grpcSocketPath);
   if (existsSync(absoluteSocketPath)) {
     logger.log('Cleaning up stale socket file...');
+
     try {
       unlinkSync(absoluteSocketPath);
+
       logger.log(`Socket cleaned: ${absoluteSocketPath}`);
     } catch (err) {
       const error = err as Error;
+
       logger.error(
         `✗ Could not remove socket file: ${error.message}`,
         error.stack,
       );
+
       throw error;
     }
   }
@@ -81,6 +85,11 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle('RaptorGateApi')
+    .addBearerAuth(
+      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+      'bearer', // <- nazwa schematu
+    )
+    .addSecurityRequirements('bearer')
     .setDescription('The RaptorGateApi API')
     .setVersion('1.0')
     .addTag('RaptorGateApi')
@@ -111,7 +120,7 @@ async function bootstrap() {
         preferredSecurityScheme: 'bearer',
         securitySchemes: {
           bearer: {
-            token: '',
+            token: process.env.DOCS_BEARER_TOKEN ?? '', // <- auto podstawi token
           },
         },
       },

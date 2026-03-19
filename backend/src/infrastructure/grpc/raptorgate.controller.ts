@@ -27,13 +27,17 @@ export class RaptorGateController implements RaptorGateServiceController {
   ) {}
 
   async getActiveConfig(request: GetConfigRequest): Promise<ConfigResponse> {
-    this.logger.log(`[GetActiveConfig] correlationId=${request.correlationId} reason=${request.reason}`);
+    this.logger.log(
+      `[GetActiveConfig] correlationId=${request.correlationId} reason=${request.reason}`,
+    );
     const activeConfig = await this.getActiveConfigUseCase.execute(
       request.correlationId,
       request.knownVersions,
     );
 
-    this.logger.log(`[GetActiveConfig] sending version=${activeConfig.configVersion}`);
+    this.logger.log(
+      `[GetActiveConfig] sending version=${activeConfig.configVersion}`,
+    );
 
     return {
       ...activeConfig,
