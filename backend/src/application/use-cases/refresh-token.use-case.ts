@@ -44,8 +44,6 @@ export class RefreshTokenUseCase {
     const THRESHOLD_MS = 45 * 60 * 1000;
 
     if (timeSinceExpiry > GRACE_PERIOD_MS) {
-      // TODO: logout user from all devices, invalidate all tokens, etc.
-
       user.setRefreshToken(null);
 
       await this.userRepository.setRefreshToken(user.getId(), null, null);

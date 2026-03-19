@@ -12,6 +12,7 @@ export class ConfigurationSnapshot {
     private payloadJson: unknown,
     private changesSummary: string | null,
     private readonly createdAt: Date,
+    private readonly createdBy: string,
   ) {}
 
   public static create(
@@ -23,6 +24,7 @@ export class ConfigurationSnapshot {
     payloadJson: unknown,
     changesSummary: string | null,
     createdAt: Date,
+    createdBy: string,
   ): ConfigurationSnapshot {
     return new ConfigurationSnapshot(
       id,
@@ -33,6 +35,7 @@ export class ConfigurationSnapshot {
       payloadJson,
       changesSummary,
       createdAt,
+      createdBy,
     );
   }
 
@@ -74,6 +77,10 @@ export class ConfigurationSnapshot {
 
   public setChangesSummary(changesSummary: string): void {
     this.changesSummary = changesSummary;
+  }
+
+  public getCreatedBy(): string {
+    return this.createdBy;
   }
 
   public deserializePayload(): ConfigSnapshotPayload {

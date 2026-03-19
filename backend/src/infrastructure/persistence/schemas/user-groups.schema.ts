@@ -1,32 +1,18 @@
-import { pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
-import { usersTable } from './users.schema';
-import { defineRelations } from 'drizzle-orm';
+import { z } from 'zod';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
 
-export const userGroupsTable = pgTable('user_groups', {
-  id: uuid('id').primaryKey(),
-  name: varchar('name', { length: 64 }).notNull(),
-  description: text('description'),
-  source: varchar('source', { length: 16 }).notNull(),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  createdBy: uuid('created_by')
-    .notNull()
-    .references(() => usersTable.id, { onDelete: 'no action' }),
-});
+export const UserGroupRecordSchema = z
+  .object({
+    id: uuidSchema,
+    name: z.string().min(1).max(64),
+    description: z.string().nullable().optional(),
+    source: z.string().min(1).max(16),
+    createdAt: isoDateTimeSchema,
+    createdBy: uuidSchema,
+  })
+  .strict();
 
-export const userGroupsRelations = defineRelations(
-  {
-    usersTable,
-    userGroupsTable,
-  },
-  (r) => ({
-    userGroupsTable: {
-      author: r.one.usersTable({
-        from: r.userGroupsTable.createdBy,
-        to: r.usersTable.id,
-      }),
-    },
-    usersTable: {
-      userGroups: r.many.userGroupsTable(),
-    },
-  }),
-);
+export const UserGroupsFileSchema = tableFileSchema(UserGroupRecordSchema);
+
+export type UserGroupRecord = z.infer<typeof UserGroupRecordSchema>;
+export type UserGroupsFile = z.infer<typeof UserGroupsFileSchema>;

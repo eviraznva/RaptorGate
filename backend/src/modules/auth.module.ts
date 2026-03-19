@@ -1,6 +1,6 @@
-import { DrizzlePermissionRepository } from 'src/infrastructure/persistence/repositories/drizzle-permission.repository';
-import { DrizzleUserRepository } from 'src/infrastructure/persistence/repositories/drizzle-user.repository';
-import { DrizzleRoleRepository } from 'src/infrastructure/persistence/repositories/drizzle-role.repository';
+import { JsonPermissionRepository } from 'src/infrastructure/persistence/repositories/json-permission.repository';
+import { JsonRoleRepository } from 'src/infrastructure/persistence/repositories/json-role.repository';
+import { JsonUserRepository } from 'src/infrastructure/persistence/repositories/json-user.repository';
 import { PERMISSION_REPOSITORY_TOKEN } from 'src/domain/repositories/permission.repository';
 import { RolesPermissionsGuard } from 'src/infrastructure/adapters/roles-permissions.guard';
 import { BcryptPasswordHasher } from 'src/infrastructure/adapters/bcrypt-password-hasher';
@@ -13,6 +13,8 @@ import { ROLE_REPOSITORY_TOKEN } from 'src/domain/repositories/role.repository';
 import { USER_REPOSITORY_TOKEN } from 'src/domain/repositories/user.repository';
 import { AuthController } from 'src/presentation/controllers/auth.controller';
 import { TokenService } from 'src/infrastructure/adapters/jwt-token.service';
+import { FileStore } from 'src/infrastructure/persistence/json/file-store';
+import { Mutex } from 'src/infrastructure/persistence/json/file-mutex';
 import { JwtService } from '@nestjs/jwt';
 import { Module } from '@nestjs/common';
 
@@ -23,12 +25,14 @@ import { Module } from '@nestjs/common';
     LoginUserUseCase,
     RefreshTokenUseCase,
     LogoutUserUseCase,
+    FileStore,
+    Mutex,
     { provide: PASSWORD_HASHER_TOKEN, useClass: BcryptPasswordHasher },
-    { provide: USER_REPOSITORY_TOKEN, useClass: DrizzleUserRepository },
-    { provide: ROLE_REPOSITORY_TOKEN, useClass: DrizzleRoleRepository },
+    { provide: USER_REPOSITORY_TOKEN, useClass: JsonUserRepository },
+    { provide: ROLE_REPOSITORY_TOKEN, useClass: JsonRoleRepository },
     {
       provide: PERMISSION_REPOSITORY_TOKEN,
-      useClass: DrizzlePermissionRepository,
+      useClass: JsonPermissionRepository,
     },
     { provide: TOKEN_SERVICE_TOKEN, useClass: TokenService },
     JwtService,

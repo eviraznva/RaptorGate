@@ -1,44 +1,18 @@
-import { pgTable, timestamp, uuid } from 'drizzle-orm/pg-core';
-import { identityUsersTable } from './identity-users.schema';
-import { userGroupsTable } from './user-groups.schema';
-import { defineRelations } from 'drizzle-orm';
+import { z } from 'zod';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
 
-export const userGroupMembersTable = pgTable('user_group_members', {
-  id: uuid('id').primaryKey(),
-  groupId: uuid('group_id')
-    .notNull()
-    .references(() => userGroupsTable.id, { onDelete: 'cascade' }),
-  identityUserId: uuid('identity_user_id')
-    .notNull()
-    .references(() => identityUsersTable.id, { onDelete: 'no action' }),
-  joinedAt: timestamp('joined_at').notNull(),
-});
+export const UserGroupMemberRecordSchema = z
+  .object({
+    id: uuidSchema,
+    groupId: uuidSchema,
+    identityUserId: uuidSchema,
+    joinedAt: isoDateTimeSchema,
+  })
+  .strict();
 
-export const userGroupMembersRelations = defineRelations(
-  {
-    identityUsersTable,
-    userGroupsTable,
-    userGroupMembersTable,
-  },
-  (r) => ({
-    userGroupMembersTable: {
-      identityUser: r.one.identityUsersTable({
-        from: r.userGroupMembersTable.identityUserId,
-        to: r.identityUsersTable.id,
-      }),
-
-      userGroup: r.one.userGroupsTable({
-        from: r.userGroupMembersTable.groupId,
-        to: r.userGroupsTable.id,
-      }),
-    },
-
-    identityUsersTable: {
-      userGroupMembers: r.many.userGroupMembersTable(),
-    },
-
-    userGroupsTable: {
-      userGroupMembers: r.many.userGroupMembersTable(),
-    },
-  }),
+export const UserGroupMembersFileSchema = tableFileSchema(
+  UserGroupMemberRecordSchema,
 );
+
+export type UserGroupMemberRecord = z.infer<typeof UserGroupMemberRecordSchema>;
+export type UserGroupMembersFile = z.infer<typeof UserGroupMembersFileSchema>;

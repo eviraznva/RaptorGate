@@ -4,6 +4,7 @@ export class Permission {
     private readonly name: string,
     private readonly description: string | null,
   ) {}
+
   public static create(
     id: string,
     name: string,
@@ -11,12 +12,15 @@ export class Permission {
   ): Permission {
     return new Permission(id, name, description);
   }
+
   public getId(): string {
     return this.id;
   }
+
   public getName(): string {
     return this.name;
   }
+
   public getDescription(): string | null {
     return this.description;
   }
