@@ -1,39 +1,18 @@
-import {
-  boolean,
-  pgTable,
-  text,
-  timestamp,
-  uuid,
-  varchar,
-} from 'drizzle-orm/pg-core';
-import { usersTable } from './users.schema';
-import { defineRelations } from 'drizzle-orm';
+import { z } from 'zod';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
 
-export const sslBypassListTable = pgTable('ssl_bypass_list', {
-  id: uuid('id').primaryKey(),
-  domain: varchar('domain', { length: 255 }).notNull(),
-  reason: text().notNull(),
-  isActive: boolean('is_active').notNull().default(true),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  createdBy: uuid('created_by')
-    .notNull()
-    .references(() => usersTable.id, { onDelete: 'no action' }),
-});
+export const SslBypassRecordSchema = z
+  .object({
+    id: uuidSchema,
+    domain: z.string().min(1).max(255),
+    reason: z.string().min(1),
+    isActive: z.boolean(),
+    createdAt: isoDateTimeSchema,
+    createdBy: uuidSchema,
+  })
+  .strict();
 
-export const sslBypassListRelations = defineRelations(
-  {
-    usersTable,
-    sslBypassListTable,
-  },
-  (r) => ({
-    sslBypassListTable: {
-      author: r.one.usersTable({
-        from: r.sslBypassListTable.createdBy,
-        to: r.usersTable.id,
-      }),
-    },
-    usersTable: {
-      sslBypassList: r.many.sslBypassListTable(),
-    },
-  }),
-);
+export const SslBypassListFileSchema = tableFileSchema(SslBypassRecordSchema);
+
+export type SslBypassRecord = z.infer<typeof SslBypassRecordSchema>;
+export type SslBypassListFile = z.infer<typeof SslBypassListFileSchema>;
