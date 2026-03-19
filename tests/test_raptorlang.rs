@@ -1,10 +1,10 @@
 // ── Equal: IpVer ──────────────────────────────────────────
 // Mirrors: equal_ip_ver_match / equal_ip_ver_no_match
 
-use ngfw::{frame::{Hour, IP, IpVer, Octet, Port, Protocol, Weekday}, rule_tree::{ArmEnd, FieldValue, MatchKind, Operation, Pattern, Verdict, matcher::{Match, MatchBuilder}, parsing::parse_match}};
+use ngfw::{frame::{Hour, IP, IpVer, Octet, Port, Protocol, Weekday}, rule_tree::{ArmEnd, FieldValue, MatchKind, Operation, Pattern, Verdict, matcher::{Match, MatchBuilder}, parsing::parse_rule_tree}};
 
 fn assert_lower_eq(source: &str, expected: Match) {
-    let actual = parse_match(source).unwrap();
+    let actual = parse_rule_tree(source).unwrap();
     assert_eq!(actual, expected);
 }
 
