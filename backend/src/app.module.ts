@@ -5,6 +5,7 @@ import { GrpcModule } from './infrastructure/grpc/grpc.module';
 import { validate } from './shared/config/env.validation';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './modules/auth.module';
+import { ZoneModule } from './modules/zone.module';
 import { PassportModule } from '@nestjs/passport';
 import { AppController } from './app.controller';
 import { ConfigModule } from '@nestjs/config';
@@ -25,6 +26,7 @@ import { Module } from '@nestjs/common';
     ]),
     PassportModule,
     AuthModule,
+    ZoneModule,
     GrpcModule,
   ],
   controllers: [AppController],
