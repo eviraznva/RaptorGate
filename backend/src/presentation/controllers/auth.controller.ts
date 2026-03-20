@@ -37,7 +37,6 @@ import { Throttle } from '@nestjs/throttler';
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
-  private readonly logger = new Logger(AuthController.name);
   constructor(
     @Inject() private readonly refreshTokenUseCase: RefreshTokenUseCase,
     @Inject() private readonly configService: ConfigService<Env, true>,
@@ -88,7 +87,9 @@ export class AuthController {
 
     res.cookie('refresh_token', refreshToken, {
       httpOnly: true,
-      secure: this.configService.get('NODE_ENV') === 'development',
+      secure:
+        this.configService.get('NODE_ENV') === 'development' ||
+        this.configService.get('NODE_ENV') === 'production',
       sameSite: 'strict',
       maxAge: 60 * 60 * 1000,
       path: '/auth/refresh',
@@ -115,6 +116,7 @@ export class AuthController {
     status: 500,
     description: 'Internal server error',
   })
+  @IsPublic()
   @Post('refresh')
   async refresh(
     @ExtractToken() accessToken: string,
@@ -129,7 +131,9 @@ export class AuthController {
     if (useCase.refreshToken) {
       res.cookie('refresh_token', useCase.refreshToken, {
         httpOnly: true,
-        secure: this.configService.get('NODE_ENV') === 'development',
+        secure:
+          this.configService.get('NODE_ENV') === 'development' ||
+          this.configService.get('NODE_ENV') === 'production',
         sameSite: 'strict',
         maxAge: 60 * 60 * 1000,
         path: '/auth/refresh',
@@ -167,7 +171,9 @@ export class AuthController {
 
     res.clearCookie('refresh_token', {
       httpOnly: true,
-      secure: this.configService.get('NODE_ENV') === 'development',
+      secure:
+        this.configService.get('NODE_ENV') === 'development' ||
+        this.configService.get('NODE_ENV') === 'production',
       sameSite: 'strict',
       maxAge: 60 * 60 * 1000,
       path: '/auth/refresh',
@@ -175,7 +181,7 @@ export class AuthController {
   }
 
   @Post('users')
-  @Roles(Role.Viewer)
+  @Roles(Role.SuperAdmin)
   @RequirePermissions(Permission.USERS_READ, Permission.USERS_CREATE)
   createUser() {
     return 'user created';

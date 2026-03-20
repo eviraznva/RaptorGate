@@ -1,19 +1,20 @@
-import {
-  boolean,
-  pgTable,
-  text,
-  timestamp,
-  uuid,
-  varchar,
-} from 'drizzle-orm/pg-core';
+import { z } from 'zod';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
 
-export const ipsSignaturesTable = pgTable('ips_signatures', {
-  id: uuid('id').primaryKey(),
-  name: varchar('name', { length: 128 }).notNull(),
-  category: varchar('category', { length: 32 }).notNull(),
-  pattern: text('pattern').notNull(),
-  severity: varchar('severity', { length: 16 }).notNull(),
-  isActive: boolean('is_active').notNull().default(true),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
+export const IpsSignatureRecordSchema = z
+  .object({
+    id: uuidSchema,
+    name: z.string().min(1).max(128),
+    category: z.string().min(1).max(32),
+    pattern: z.string().min(1),
+    severity: z.string().min(1).max(16),
+    isActive: z.boolean(),
+    createdAt: isoDateTimeSchema,
+    updatedAt: isoDateTimeSchema,
+  })
+  .strict();
+
+export const IpsSignaturesFileSchema = tableFileSchema(IpsSignatureRecordSchema);
+
+export type IpsSignatureRecord = z.infer<typeof IpsSignatureRecordSchema>;
+export type IpsSignaturesFile = z.infer<typeof IpsSignaturesFileSchema>;

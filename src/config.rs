@@ -23,6 +23,9 @@ pub struct AppConfig {
 
     // Redb snapshot
     pub redb_snapshot_path: String,
+
+    // PKI — przechowywanie certyfikatu CA i zaszyfrowanego klucza prywatnego
+    pub pki_dir: String,
 }
 
 impl AppConfig {
@@ -82,6 +85,9 @@ impl AppConfig {
 
             redb_snapshot_path: std::env::var("REDB_SNAPSHOT_PATH")
                 .unwrap_or_else(|_| "./.data/snapshot.redb".into()),
+
+            pki_dir: std::env::var("RAPTORGATE_PKI_DIR")
+                .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
         })
     }
 }
