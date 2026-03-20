@@ -1,24 +1,21 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use crate::grpc_client::proto_types::raptorgate::common::FirewallMode;
 
 #[derive(Clone)]
-pub struct FirewallModeState {
-    mode: Arc<AtomicU8>,
-    config_version: Arc<AtomicU64>,
-}
+pub struct FirewallModeState(Arc<AtomicU8>);
 
 impl FirewallModeState {
     pub fn new(initial: FirewallMode) -> Self {
-        Self {
-            mode: Arc::new(AtomicU8::new(initial as u8)),
-            config_version: Arc::new(AtomicU64::new(0)),
-        }
+        Self(Arc::new(AtomicU8::new(initial as u8)))
     }
 
-    pub fn get(&self) -> FirewallMode { self.mode.load(Ordering::Relaxed).try_into().unwrap_or(FirewallMode::Unspecified) }
-    pub fn set(&self, mode: FirewallMode) { self.mode.store(mode as u8, Ordering::Relaxed); }
+    pub fn get(&self) -> FirewallMode {
+        FirewallMode::try_from(self.0.load(Ordering::Relaxed) as i32)
+            .unwrap_or(FirewallMode::Unspecified)
+    }
 
-    pub fn get_config_version(&self) -> u64 { self.config_version.load(Ordering::Relaxed) }
-    pub fn set_config_version(&self, v: u64) { self.config_version.store(v, Ordering::Relaxed); }
+    pub fn set(&self, mode: FirewallMode) {
+        self.0.store(mode as u8, Ordering::Relaxed);
+    }
 }

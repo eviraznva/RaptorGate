@@ -2,6 +2,7 @@ import { RolesPermissionsGuard } from './infrastructure/adapters/roles-permissio
 import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
 import { GrpcModule } from './infrastructure/grpc/grpc.module';
+import { ZonePairsModule } from './modules/zone-pairs.module';
 import { validate } from './shared/config/env.validation';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './modules/auth.module';
@@ -27,6 +28,7 @@ import { Module } from '@nestjs/common';
     PassportModule,
     AuthModule,
     ZoneModule,
+    ZonePairsModule,
     GrpcModule,
   ],
   controllers: [AppController],

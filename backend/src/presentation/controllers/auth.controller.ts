@@ -23,10 +23,10 @@ import { IsPublic } from 'src/infrastructure/decorators/public.decorator';
 import { Cookie } from 'src/infrastructure/decorators/cookie.decorator';
 import { LoginResponseDto } from '../dtos/login-response.dto';
 import { Env } from 'src/shared/config/env.validation';
-import type { Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from '../dtos/login.dto';
 import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
 
 @UseFilters(DomainExceptionFilter)
 @ApiTags('Authentication')

@@ -11,6 +11,7 @@ import {
 import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
 import { GetAllZonesUseCase } from 'src/application/use-cases/get-all-zones.use-case';
 import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
+import { DeleteZoneUseCase } from 'src/application/use-cases/delete-zone.use-case';
 import { CreateZoneUseCase } from 'src/application/use-cases/create-zone.use-case';
 import { EditZoneUseCase } from 'src/application/use-cases/edit-zone.use-case';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
@@ -20,7 +21,6 @@ import { Zone } from 'src/domain/entities/zone.entity';
 import { EditZoneDto } from '../dtos/edit-zone.dto';
 import { Role } from 'src/domain/enums/role.enum';
 import { ApiOperation } from '@nestjs/swagger';
-import { DeleteZoneUseCase } from 'src/application/use-cases/delete-zone.use-case';
 
 @Controller('zones')
 export class ZoneController {

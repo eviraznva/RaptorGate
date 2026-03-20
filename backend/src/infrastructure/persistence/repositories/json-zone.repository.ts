@@ -2,13 +2,14 @@ import { IZoneRepository } from 'src/domain/repositories/zone.repository';
 import { ZonesFile, ZonesFileSchema } from '../schemas/zones.schema';
 import { ZoneJsonMapper } from '../mappers/zone-json.mapper';
 import { Zone } from 'src/domain/entities/zone.entity';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { FileStore } from '../json/file-store';
 import { Mutex } from '../json/file-mutex';
 import { join } from 'node:path';
 
 @Injectable()
 export class JsonZoneRepository implements IZoneRepository {
+  private readonly logger = new Logger(JsonZoneRepository.name);
   private readonly filePath = join(process.cwd(), 'data/json-db/zones.json');
 
   constructor(
@@ -74,10 +75,10 @@ export class JsonZoneRepository implements IZoneRepository {
   async delete(id: string): Promise<void> {
     const zones = await this.readPayload();
 
-    const updatedZones = zones.items.filter((z) => z.id !== id);
+    zones.items = zones.items.filter((z) => z.id !== id);
 
     await this.mutex.runExclusive(async () => {
-      await this.fileStore.writeJsonAtomic(this.filePath, updatedZones);
+      await this.fileStore.writeJsonAtomic(this.filePath, zones);
     });
   }
 }
