@@ -1,4 +1,5 @@
 import { RolesPermissionsGuard } from './infrastructure/adapters/roles-permissions.guard';
+import { PkiController } from './presentation/controllers/pki.controller';
 import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
 import { GrpcModule } from './infrastructure/grpc/grpc.module';
@@ -27,7 +28,7 @@ import { Module } from '@nestjs/common';
     AuthModule,
     GrpcModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, PkiController],
   providers: [
     JwtStrategy,
     { provide: APP_GUARD, useClass: JwtAuthGuard },

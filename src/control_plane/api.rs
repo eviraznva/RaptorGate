@@ -11,6 +11,7 @@ use crate::control_plane::runtime::state::StatusPublisher;
 use crate::control_plane::service;
 use crate::policy::compiler;
 use crate::policy::runtime::CompiledPolicy;
+use crate::tls::CaInfo;
 
 pub struct ControlPlaneConfig {
     pub grpc_socket_path: String,
@@ -21,6 +22,8 @@ pub struct ControlPlaneConfig {
     pub reconnect_initial_backoff_ms: u64,
     pub reconnect_max_backoff_ms: u64,
     pub fallback_block_icmp: bool,
+    // Informacje o CA - brak info jeżeli update CA się nie powiódł
+    pub ca_info: Option<CaInfo>,
 }
 
 impl From<&AppConfig> for ControlPlaneConfig {
@@ -34,6 +37,7 @@ impl From<&AppConfig> for ControlPlaneConfig {
             reconnect_initial_backoff_ms: 500,
             reconnect_max_backoff_ms: 5_000,
             fallback_block_icmp: config.block_icmp,
+            ca_info: None,
         }
     }
 }
