@@ -34,6 +34,21 @@ impl AppConfig {
     pub fn from_env() -> Result<Self> {
         let _ = dotenvy::dotenv();
 
+        let dev_mode_raw = std::env::var("DEV_MODE").unwrap_or_else(|_| "false".into());
+        let dev_mode = dev_mode_raw.to_lowercase() == "true";
+        let dev_policy = match std::env::var("DEV_OVERRIDE_POLICY") {
+            Ok(p) => Some(p),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(e) => {
+                eprintln!("WARNING: Failed to read DEV_OVERRIDE_POLICY: {}", e);
+                None
+            }
+        };
+
+        if dev_mode && dev_policy.is_none() {
+            eprintln!("WARNING: DEV_MODE is enabled but DEV_OVERRIDE_POLICY is not set. Using default policy.");
+        }
+
         Ok(Self {
             capture_interfaces: std::env::var("CAPTURE_INTERFACES")
                 .unwrap_or_else(|_| "enp0s8,enp0s9".into())
@@ -78,13 +93,9 @@ impl AppConfig {
             redb_snapshot_path: std::env::var("REDB_SNAPSHOT_PATH")
                 .unwrap_or_else(|_| "./.data/snapshot.redb".into()),
 
-            dev_config: (std::env::var("DEV_MODE")
-                .unwrap_or_else(|_| "false".into())
-                .to_lowercase()
-                == "true")
-                .then(|| DevConfig {
-                    policy_override: std::env::var("DEV_POLICY_OVERRIDE").ok(),
-                }),
+            dev_config: dev_mode.then_some(DevConfig {
+                policy_override: dev_policy,
+            }),
         }
         )}
 }

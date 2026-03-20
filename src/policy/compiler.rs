@@ -13,6 +13,24 @@ pub fn compile_fallback(block_icmp: bool) -> Result<CompiledPolicy, PolicyCompil
     build_compiled_policy(None, None, 0, PolicySource::LocalFallback, block_icmp)
 }
 
+pub fn compile_override(dsl: &str) -> Result<CompiledPolicy, PolicyCompileError> {
+    let tree = RuleTree::new(
+        "dev-override".into(),
+        "Dev mode policy override".into(),
+        parse_rule_tree(dsl).map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
+    );
+
+    Ok(CompiledPolicy::new(
+        PolicyMetadata {
+            config_version: None,
+            bundle_checksum: None,
+            source: PolicySource::LocalFallback,
+            rule_count: 0,
+        },
+        PolicyEvaluator::new(tree, Verdict::Drop),
+    ))
+}
+
 pub fn compile_safe_deny() -> Result<CompiledPolicy, PolicyCompileError> {
     let tree = RuleTree::new(
         "safe-deny".into(),

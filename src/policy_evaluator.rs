@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::{
     frame::Frame,
     rule_tree::{FieldValue, MatchKind, Operation, Pattern, RuleTree, Step, TreeWalker, Verdict},
@@ -94,6 +96,12 @@ impl PolicyEvaluator {
 
             (Pattern::Or(patterns), _) => patterns.iter().any(|p| Self::pattern_matches(p, value)),
         }
+    }
+}
+
+impl Display for PolicyEvaluator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PolicyEvaluator {{ rules: {}, orphaned_verdict: {} }}", self.rules, self.orphaned_verdict)
     }
 }
 

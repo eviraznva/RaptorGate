@@ -1,4 +1,5 @@
 use std::cmp::min;
+use std::panic;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -38,6 +39,22 @@ pub async fn run(
     policy_tx: watch::Sender<Arc<CompiledPolicy>>,
     shutdown: CancellationToken,
 ) -> Result<(), ControlPlaneError> {
+    if let Some(ref dsl) = config.dev_policy_override {
+        panic!("DEV MODE: Control plane is running with a policy override. This should only be used for testing and development purposes, and not in production environments.");
+        tracing::info!("DEV MODE: Applying policy override and skipping control plane syncing.");
+
+        let override_policy = compiler::compile_override(dsl)
+            .map_err(|err| ControlPlaneError::PolicyCompile(err.to_string()))?;
+
+        // let override_policy = compiler::compile_override(dsl).expect("ERROR: couldnt compile override policy");
+
+        let _ = policy_tx.send(Arc::new(override_policy));
+        status.set_phase(LifecyclePhase::Normal);
+
+        shutdown.cancelled().await;
+        return Ok(());
+    }
+
     let snapshot_store = open_snapshot_store(&config)?;
     let mut active_config = load_snapshot(snapshot_store.as_ref(), &config, &status, &policy_tx)?;
     let mut reconnect_backoff_ms = config.reconnect_initial_backoff_ms;

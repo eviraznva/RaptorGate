@@ -81,6 +81,7 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
             MatchKind::Protocol => match s.val.as_str() {
                 "tcp" => Ok(FieldValue::Protocol(Protocol::Tcp)),
                 "udp" => Ok(FieldValue::Protocol(Protocol::Udp)),
+                "icmp" => Ok(FieldValue::Protocol(Protocol::Icmp)),
                 other => Err(LowerError::UnknownValue {
                     kind,
                     value: other.to_string(),

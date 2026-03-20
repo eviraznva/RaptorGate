@@ -23,6 +23,12 @@ impl RuleTree {
 
 }
 
+impl std::fmt::Display for RuleTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RuleTree: {}, description: {}", self.name, self.description)
+    }
+}
+
 #[derive(PartialEq, Debug)]
 struct Arm {
     pattern: Pattern,
@@ -35,7 +41,7 @@ pub enum ArmEnd {
     Match(Match),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Display)]
 pub enum Verdict {
     Allow,
     Drop,
