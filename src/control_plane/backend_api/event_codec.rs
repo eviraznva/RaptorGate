@@ -1,7 +1,8 @@
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::control_plane::backend_api::proto::raptorgate::events::{
-    BackendEvent, FirewallEvent, PolicyActivatedEvent, PolicyFailedEvent, ResyncConfirmedEvent,
+    BackendEvent, CaReadyEvent, FirewallEvent, PolicyActivatedEvent, PolicyFailedEvent,
+    ResyncConfirmedEvent,
 };
 
 pub const FW_HEARTBEAT: &str = "fw.heartbeat";
@@ -9,6 +10,7 @@ pub const FW_METRICS: &str = "fw.metrics";
 pub const FW_POLICY_ACTIVATED: &str = "fw.policy_activated";
 pub const FW_POLICY_FAILED: &str = "fw.policy_failed";
 pub const FW_RESYNC_CONFIRMED: &str = "fw.resync_confirmed";
+pub const FW_CA_READY: &str = "fw.ca_ready";
 pub const BE_HEARTBEAT_ACK: &str = "be.heartbeat_ack";
 pub const BE_CONFIG_CHANGED: &str = "be.config_changed";
 pub const BE_RESYNC_REQUESTED: &str = "be.resync_requested";
@@ -38,6 +40,11 @@ pub fn encode_policy_failed(payload: PolicyFailedEvent) -> FirewallEvent {
 
 pub fn encode_resync_confirmed(payload: ResyncConfirmedEvent) -> FirewallEvent {
     encode_firewall_event(FW_RESYNC_CONFIRMED, payload)
+}
+
+// Koduje zdarzenie CaReadyEvent do koperty FirewallEvent.
+pub fn encode_ca_ready(payload: CaReadyEvent) -> FirewallEvent {
+    encode_firewall_event(FW_CA_READY, payload)
 }
 
 pub fn decode_backend_payload<T: prost::Message + Default>(

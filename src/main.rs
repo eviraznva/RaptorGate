@@ -12,9 +12,13 @@ use crate::{frame::RealFrame, policy_evaluator::PolicyEvaluator, rule_tree::{Arm
 
 mod frame;
 mod rule_tree;
-mod app_config;
-mod grpc_client;
-mod policy_evaluator;
+mod tls;
+
+use crate::config::AppConfig;
+use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+use crate::data_plane::policy_store::PolicyStore;
+use crate::data_plane::runtime as data_plane_runtime;
+use crate::tls::CaManager;
 
 #[tokio::main]
 async fn main() {
@@ -61,84 +65,24 @@ async fn main() {
         }
     };
 
-    let evaluator = Arc::new(build_policy(config.block_icmp));
-
-    let pcap_timeout_ms = config.pcap_timeout_ms;
-    let mut handles = Vec::new();
-
-    for device in devices {
-        let tun = Arc::clone(&tun);
-        let evaluator = Arc::clone(&evaluator);
-        let name = device.name.clone();
-        let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
-
-        let capture_name = name.clone();
-        task::spawn_blocking(move || {
-            let mut cap = match pcap::Capture::from_device(device)
-                .map(|c| c.immediate_mode(true).promisc(true).timeout(pcap_timeout_ms))
-                .and_then(pcap::Capture::open)
-            {
-                Ok(c) => c,
-                Err(err) => {
-                    eprintln!("[{capture_name}] Failed to open capture: {err:?}");
-                    return;
-                }
-            };
-
-            // FIX: Only capture INCOMING packets.
-            // Without this, packets that the kernel forwards out of tun0 back onto
-            // enp0s8/enp0s9 are re-captured by pcap, creating an infinite loop.
-            // Direction::In uses pcap_setdirection(PCAP_D_IN), which on Linux
-            // AF_PACKET sockets excludes packets with sll_pkttype == PACKET_OUTGOING.
-            if let Err(e) = cap.direction(Direction::In) {
-                eprintln!("[{capture_name}] Warning: could not set direction: {e:?}");
-            }
-
-            loop {
-                match cap.next_packet() {
-                    Ok(packet) => {
-                        if tx.blocking_send(packet.data.to_vec()).is_err() {
-                            eprintln!("[{capture_name}] Receiver dropped, stopping capture");
-                            break;
-                        }
-                    }
-                    Err(pcap::Error::TimeoutExpired) => {
-                        // No packet within timeout window — just keep waiting.
-                        continue;
-                    }
-                    Err(err) => {
-                        eprintln!("[{capture_name}] Capture error (fatal): {err:?}");
-                        break;
-                    }
-                }
-            }
-            eprintln!("[{capture_name}] Capture thread exiting");
-        });
-
-        let handler_name = name;
-        let handle = tokio::spawn(async move {
-            let mut rx = rx;
-            while let Some(data) = rx.recv().await {
-                handle_packet(&handler_name, &data, &tun, &evaluator).await;
-            }
-            eprintln!("[{handler_name}] Handler task exiting (sender dropped)");
-        });
-
-        handles.push(handle);
-    }
-
-    for handle in handles {
-        if let Err(e) = handle.await {
-            eprintln!("Task panicked: {e:?}");
+    let ca_info = match CaManager::init(&config.pki_dir) {
+        Ok(ca) => {
+            tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
+            Some(ca.ca_info())
         }
-    }
-}
+        Err(err) => {
+            eprintln!("Warning: CA initialization failed: {err}");
+            None
+        }
+    };
 
-/// Inspect a raw Ethernet frame, evaluate it against the firewall policy,
-/// and forward it through the TUN device or drop it based on the verdict.
-async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, evaluator: &PolicyEvaluator) {
-    let packet = match SlicedPacket::from_ethernet(data) {
-        Ok(packet) => packet,
+    let cp_config = ControlPlaneConfig {
+        ca_info,
+        ..ControlPlaneConfig::from(&config)
+    };
+
+    let control_plane = match ControlPlane::start(cp_config).await {
+        Ok(control_plane) => control_plane,
         Err(err) => {
             eprintln!("[{iface}] SlicedPacket parse error: {err:?}");
             return;
