@@ -1,19 +1,18 @@
 mod config;
 mod control_plane;
 mod data_plane;
-mod policy;
 mod frame;
 mod ip_defrag;
 mod packet_validator;
+mod policy;
 mod policy_evaluator;
 mod rule_tree;
 mod tls;
 
 use crate::config::AppConfig;
-use crate::control_plane::{ControlPlane, ControlPlaneConfig};
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::runtime as data_plane_runtime;
-use crate::tls::CaManager;
+use control_plane::firewall_communication::{FirewallIpcConfig, FirewallIpcRuntime};
 
 #[tokio::main]
 async fn main() {
@@ -32,38 +31,26 @@ async fn main() {
         }
     };
 
-    let ca_info = match CaManager::init(&config.pki_dir) {
-        Ok(ca) => {
-            tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
-            Some(ca.ca_info())
-        }
+    let firewall_runtime = match FirewallIpcRuntime::start(
+        FirewallIpcConfig::from(&config),
+        config.block_icmp,
+    ).await {
+        Ok(runtime) => runtime,
         Err(err) => {
-            eprintln!("Warning: CA initialization failed: {err}");
-            None
-        }
-    };
-
-    let cp_config = ControlPlaneConfig {
-        ca_info,
-        ..ControlPlaneConfig::from(&config)
-    };
-
-    let control_plane = match ControlPlane::start(cp_config).await {
-        Ok(control_plane) => control_plane,
-        Err(err) => {
-            eprintln!("Failed to start control plane: {err}");
+            eprintln!("Failed to start firewall IPC runtime: {err}");
             return;
         }
     };
 
-    let handle = control_plane.handle();
+    let handle = firewall_runtime.handle();
+    
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
 
     if let Err(err) = data_plane_runtime::run(&config, policy_store).await {
         eprintln!("Data plane error: {err}");
     }
 
-    if let Err(err) = control_plane.shutdown().await {
-        eprintln!("Control plane shutdown error: {err}");
+    if let Err(err) = firewall_runtime.shutdown().await {
+        eprintln!("Firewall IPC runtime shutdown error: {err}");
     }
 }

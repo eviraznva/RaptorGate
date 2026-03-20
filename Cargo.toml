@@ -11,30 +11,19 @@ pcap = "2.4.0"
 thiserror = "2.0.18"
 tokio = { version = "1.50.0", features = ["full"] }
 tun = {version = "0.8.5", features = ["async"] }
-serde = { version = "1.0.228", features = ["derive"] }
 time = { version = "0.3.47", features = ["serde"] }
-prost = "0.14.3"
-tonic-prost = "0.14.5"
 prost-types = "0.14.3"
 uuid = { version = "1.22.0", features = ["v7"] }
-tower = "0.5"
 tracing = "0.1"
-tokio-stream = "0.1"
-hyper-util = { version = "0.1", features = ["tokio"] }
-tonic = "0.14.5"
 anyhow = "1.0.102"
-redb = "3.1.1"
 dotenvy = "0.15"
 serde_json = "1.0.149"
 arc-swap = "1.8.2"
 tokio-util = "0.7"
-redis = { version = "1.0.5", features = ["aio", "tokio-comp"] }
 paste = "1.0.15"
 visibility = "0.1.1"
 tracing-subscriber = "0.3.23"
 rcgen = { version = "0.13", features = ["pem"] }
 ring = "0.17"
-
-[build-dependencies]
-protoc-bin-vendored = "3.2.0"
-tonic-prost-build = "0.14.5"
+bytes = "1.11.1"
+nix = { version = "0.31.2", features = ["net"] }
