@@ -20,6 +20,7 @@ pub struct AppConfig {
     pub async_ipc_socket_path: String,
     pub firewall_version: String,
     pub heartbeat_interval_secs: u64,
+    pub event_queue_capacity: usize,
 
     // Redb snapshot
     pub redb_snapshot_path: String,
@@ -78,6 +79,11 @@ impl AppConfig {
                 .unwrap_or_else(|_| "10".into())
                 .parse()
                 .context("HEARTBEAT_INTERVAL_SECS must be an integer")?,
+
+            event_queue_capacity: std::env::var("EVENT_QUEUE_CAPACITY")
+                .unwrap_or_else(|_| "256".into())
+                .parse()
+                .context("EVENT_QUEUE_CAPACITY must be an integer")?,
 
             redb_snapshot_path: std::env::var("REDB_SNAPSHOT_PATH")
                 .unwrap_or_else(|_| "./.data/snapshot.redb".into()),

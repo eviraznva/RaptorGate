@@ -43,7 +43,7 @@ async fn main() {
     };
 
     let handle = firewall_runtime.handle();
-    
+
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
 
     if let Err(err) = data_plane_runtime::run(&config, policy_store).await {

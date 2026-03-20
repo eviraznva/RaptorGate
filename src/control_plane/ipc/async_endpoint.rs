@@ -7,6 +7,7 @@ use crate::control_plane::ipc::ipc_counters::IpcCounters;
 use crate::control_plane::ipc::ipc_message::IpcEventMessage;
 use crate::control_plane::types::ipc_frame_kind::IpcFrameKind;
 use crate::control_plane::types::ipc_frame_flags::IpcFrameFlags;
+use crate::control_plane::types::ipc_opcode::IpcOpcode;
 use crate::control_plane::ipc::ipc_frame::{IpcFrame, RGIPC_MAGIC, RGIPC_VERSION};
 use crate::control_plane::errors::async_ipc_endpoint_error::AsyncIpcEndpointError;
 
@@ -42,16 +43,26 @@ impl<S> AsyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin
     pub async fn send_event<E>(&mut self, event: &E, flags: IpcFrameFlags) -> Result<(), AsyncIpcEndpointError>
         where E: IpcEventMessage 
     {
+        self.send_encoded_event(E::OPCODE, flags, event.encode_payload()?).await
+    }
+
+    /// Wysyła już zakodowany event do zdalnej strony.
+    pub async fn send_encoded_event(
+        &mut self,
+        opcode: IpcOpcode,
+        flags: IpcFrameFlags,
+        payload: bytes::Bytes,
+    ) -> Result<(), AsyncIpcEndpointError> {
         let frame = IpcFrame::new(
             RGIPC_MAGIC,
             RGIPC_VERSION,
-            E::KIND,
+            IpcFrameKind::Event,
             flags,
-            E::OPCODE,
+            opcode,
             IpcStatus::Ok,
             0,
             self.counters.next_sequence_no(),
-            event.encode_payload()?,
+            payload,
         )?;
 
         self.client.send_frame(&frame).await?;

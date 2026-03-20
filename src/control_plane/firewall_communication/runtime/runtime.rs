@@ -9,6 +9,7 @@ use crate::policy::runtime::CompiledPolicy;
 use crate::control_plane::firewall_communication::sync::listener;
 use crate::control_plane::firewall_communication::publish::async_publisher;
 use crate::control_plane::firewall_communication::config::FirewallIpcConfig;
+use crate::control_plane::firewall_communication::publish::event_ring::{EventRingHandle, channel};
 use crate::control_plane::firewall_communication::runtime::state::{FirewallIpcStatus, FirewallState};
 
 /// Handle do obserwacji stanu i polityki firewalla.
@@ -16,6 +17,7 @@ use crate::control_plane::firewall_communication::runtime::state::{FirewallIpcSt
 pub struct FirewallIpcHandle {
     status_rx: watch::Receiver<FirewallIpcStatus>,
     policy_rx: watch::Receiver<Arc<CompiledPolicy>>,
+    event_ring: EventRingHandle,
 }
 
 impl FirewallIpcHandle {
@@ -25,6 +27,10 @@ impl FirewallIpcHandle {
 
     pub fn policy(&self) -> watch::Receiver<Arc<CompiledPolicy>> {
         self.policy_rx.clone()
+    }
+
+    pub fn event_ring(&self) -> EventRingHandle {
+        self.event_ring.clone()
     }
 }
 
@@ -47,6 +53,8 @@ impl FirewallIpcRuntime {
         
         let (status_tx, status_rx) = 
             watch::channel(FirewallIpcStatus::default());
+        
+        let (event_ring, event_rx) = channel(config.event_queue_capacity);
 
         let state = FirewallState::new(policy_rx.clone());
         
@@ -74,9 +82,10 @@ impl FirewallIpcRuntime {
             let shutdown = shutdown.clone();
             
             let config = config.clone();
+            let event_rx = event_rx;
             
             async move {
-                async_publisher::run(config, state, shutdown).await;
+                async_publisher::run(config, state, event_rx, shutdown).await;
             }
         });
 
@@ -111,6 +120,7 @@ impl FirewallIpcRuntime {
             handle: FirewallIpcHandle {
                 status_rx,
                 policy_rx,
+                event_ring,
             },
             shutdown,
             joins: vec![sync_join, async_join, status_join],
