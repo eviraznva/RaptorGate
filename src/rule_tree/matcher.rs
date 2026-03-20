@@ -1,9 +1,7 @@
-use derive_more::Debug;
 use nonempty::NonEmpty;
+use crate::{frame::{IP, IpVer, Octet}, rule_tree::{Arm, ArmEnd, FieldValue, MatchKind, Pattern, RuleError, RuleTree, Verdict}};
 
-use crate::{frame::{Hour, Octet, Weekday}, rule_tree::{Arm, ArmEnd, FieldValue, IpVer, MatchKind, Operation, Pattern, RuleError, RuleTree, Verdict}};
-
-#[derive(PartialEq, Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Match {
     kind: MatchKind,
     arms: NonEmpty<Box<Arm>>,
@@ -49,24 +47,16 @@ impl MatchBuilder {
 }
 
 fn test() -> Result<RuleTree, RuleError> {
-    Ok(RuleTree::new(
-        "test".into(),
-        "testdesc".into(),
+    Ok(RuleTree::new("test".into(), "testdesc".into(),
         MatchBuilder::with_arm(
             MatchKind::IpVer,
             Pattern::Equal(FieldValue::IpVer(super::IpVer::V4)),
             ArmEnd::Match(
                 MatchBuilder::with_arm(
                     MatchKind::SrcIp,
-                    Pattern::Glob(FieldValue::Ip(super::IP::new([Octet::Value(192), Octet::Value(168), Octet::Any, Octet::Any]))), ArmEnd::Verdict(Verdict::Allow)
+                    Pattern::Glob(FieldValue::Ip(IP::new([Octet::Value(192), Octet::Value(168), Octet::Any, Octet::Any]))), ArmEnd::Verdict(Verdict::Allow)
                 ).build()?
             )
-        ).arm(Pattern::Equal(FieldValue::IpVer(IpVer::V6)), ArmEnd::Verdict(Verdict::Drop)
-        ).arm(
-            Pattern::Or(vec![
-                Pattern::Comparison(Operation::Greater, FieldValue::DayOfWeek(Weekday::Wed)),
-                Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
-            ]), ArmEnd::Verdict(Verdict::Drop)
-        ).build()?)
+        ).arm(Pattern::Equal(FieldValue::IpVer(IpVer::V6)), ArmEnd::Verdict(Verdict::Drop)).build()?)
     )
 }

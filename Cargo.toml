@@ -19,6 +19,8 @@ anyhow = "1.0.102"
 dotenvy = "0.15"
 serde_json = "1.0.149"
 tokio-util = "0.7"
+arc-swap = "1.8.2"
+redis = { version = "1.0.5", features = ["aio", "tokio-comp"] }
 paste = "1.0.15"
 visibility = "0.1.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

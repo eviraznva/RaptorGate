@@ -4,12 +4,16 @@ import { GetActiveConfigUseCase } from 'src/application/use-cases/get-active-con
 import { RaptorGateController } from './raptorgate.controller';
 import { CaCertStore } from '../stores/ca-cert.store';
 import { Module } from '@nestjs/common';
+import { Mutex } from '../persistence/json/file-mutex';
+import { FileStore } from '../persistence/json/file-store';
 
 @Module({
   imports: [],
   controllers: [RaptorGateController],
   providers: [
     GetActiveConfigUseCase,
+    Mutex,
+    FileStore,
     CaCertStore,
     {
       provide: CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
