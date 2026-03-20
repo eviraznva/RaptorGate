@@ -1,9 +1,9 @@
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UnixStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::control_plane::errors::ipc_client_error::IpcClientError;
-use crate::control_plane::errors::ipc_frame_error::IpcFrameError;
 use crate::control_plane::ipc::ipc_frame::IpcFrame;
+use crate::control_plane::errors::ipc_frame_error::IpcFrameError;
+use crate::control_plane::errors::ipc_client_error::IpcClientError;
 
 /// Niskopoziomowy klient IPC obsługujący dokładnie jedno połączenie.
 pub struct IpcClient<S = UnixStream> {
@@ -13,18 +13,13 @@ pub struct IpcClient<S = UnixStream> {
 impl IpcClient<UnixStream> {
     /// Otwiera połączenie z pojedynczym gniazdem UDS wykorzystywanym przez IPC.
     pub async fn connect(socket_path: &str) -> Result<Self, IpcClientError> {
-        let stream = UnixStream::connect(socket_path)
-            .await
-            .map_err(IpcClientError::Connect)?;
+        let stream = UnixStream::connect(socket_path).await.map_err(IpcClientError::Connect)?;
 
         Ok(Self { stream })
     }
 }
 
-impl<S> IpcClient<S>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
+impl<S> IpcClient<S> where S: AsyncRead + AsyncWrite + Unpin {
     /// Tworzy klienta na bazie już przygotowanego strumienia.
     pub(crate) fn from_stream(stream: S) -> Self {
         Self { stream }
@@ -32,17 +27,12 @@ where
 
     /// Wysyła jedną ramkę do zdalnej strony.
     pub async fn send_frame(&mut self, frame: &IpcFrame) -> Result<(), IpcClientError> {
-        frame
-            .write_to(&mut self.stream)
-            .await
-            .map_err(IpcClientError::Io)
+        frame.write_to(&mut self.stream).await.map_err(IpcClientError::Io)
     }
 
     /// Odbiera jedną kompletną ramkę z połączenia.
     pub async fn receive_frame(&mut self) -> Result<IpcFrame, IpcClientError> {
-        IpcFrame::read_from(&mut self.stream)
-            .await
-            .map_err(Self::map_frame_error)
+        IpcFrame::read_from(&mut self.stream).await.map_err(Self::map_frame_error)
     }
 
     /// Wysyła ramkę i od razu oczekuje na następną ramkę odpowiedzi.
@@ -56,10 +46,13 @@ where
     fn map_frame_error(err: IpcFrameError) -> IpcClientError {
         match err {
             IpcFrameError::TruncatedField { field } => IpcClientError::EndOfStream { field },
+            
             IpcFrameError::IncompletePayload { .. } => {
                 IpcClientError::EndOfStream { field: "payload" }
             }
+            
             IpcFrameError::Io { kind } => IpcClientError::Io(std::io::Error::from(kind)),
+            
             other => IpcClientError::Frame(other),
         }
     }
@@ -71,10 +64,12 @@ mod ipc_client_tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
     use super::IpcClient;
+    use crate::control_plane::types::ipc_opcode::IpcOpcode;
+    use crate::control_plane::types::ipc_status::IpcStatus;
+    use crate::control_plane::types::ipc_frame_kind::IpcFrameKind;
+    use crate::control_plane::types::ipc_frame_flags::IpcFrameFlags;
     use crate::control_plane::errors::ipc_client_error::IpcClientError;
     use crate::control_plane::ipc::ipc_frame::{IpcFrame, RGIPC_MAGIC, RGIPC_VERSION};
-    use crate::control_plane::types::ipc_frame_flags::IpcFrameFlags;
-    use crate::control_plane::types::ipc_frame_kind::IpcFrameKind;
 
     #[tokio::test]
     async fn send_frame_writes_encoded_frame() {
@@ -85,24 +80,26 @@ mod ipc_client_tests {
             RGIPC_VERSION,
             IpcFrameKind::Request,
             IpcFrameFlags::ACK_REQUIRED,
-            1,
-            0,
+            IpcOpcode::Ping,
+            IpcStatus::Ok,
             9,
             10,
             Bytes::from_static(b"abc"),
-        )
-        .unwrap();
+        ).unwrap();
 
         let expected_bytes = expected.encode();
         let expected_len = expected_bytes.len();
 
         let server = tokio::spawn(async move {
             let mut raw = vec![0u8; expected_len];
+            
             server_stream.read_exact(&mut raw).await.unwrap();
+            
             raw
         });
 
         let mut client = IpcClient::from_stream(client_stream);
+        
         client.send_frame(&expected).await.unwrap();
 
         let raw = server.await.unwrap();
@@ -119,13 +116,12 @@ mod ipc_client_tests {
             RGIPC_VERSION,
             IpcFrameKind::Response,
             IpcFrameFlags::NONE,
-            2,
-            0,
+            IpcOpcode::GetStatus,
+            IpcStatus::Ok,
             15,
             16,
             Bytes::from_static(b"ok"),
-        )
-        .unwrap();
+        ).unwrap();
 
         let response_bytes = response.encode();
 
@@ -150,26 +146,24 @@ mod ipc_client_tests {
             RGIPC_VERSION,
             IpcFrameKind::Request,
             IpcFrameFlags::NONE,
-            3,
-            0,
+            IpcOpcode::GetNetworkInterfaces,
+            IpcStatus::Ok,
             99,
             1,
             Bytes::from_static(b"ping"),
-        )
-        .unwrap();
+        ).unwrap();
 
         let response = IpcFrame::new(
             RGIPC_MAGIC,
             RGIPC_VERSION,
             IpcFrameKind::Response,
             IpcFrameFlags::NONE,
-            3,
-            0,
+            IpcOpcode::GetNetworkInterfaces,
+            IpcStatus::Ok,
             99,
             2,
             Bytes::from_static(b"pong"),
-        )
-        .unwrap();
+        ).unwrap();
 
         let request_bytes = request.encode();
         let request_bytes_for_server = request_bytes.clone();
@@ -183,6 +177,7 @@ mod ipc_client_tests {
         });
 
         let mut client = IpcClient::from_stream(client_stream);
+        
         let received = client.request(&request).await.unwrap();
 
         let raw_request = server.await.unwrap();

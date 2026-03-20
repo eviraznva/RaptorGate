@@ -1,4 +1,5 @@
-#[macro_export] macro_rules! impl_varnum {
+#[macro_export]
+macro_rules! impl_varnum {
     ($name:ident, $primitive:ty, $max_len:expr) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name($primitive);

@@ -7,6 +7,7 @@ pub mod types;
 pub mod config;
 pub mod errors;
 pub mod runtime;
+pub mod messages;
 pub mod snapshot;
 pub mod backend_api;
 

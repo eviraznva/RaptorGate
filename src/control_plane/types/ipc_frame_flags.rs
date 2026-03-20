@@ -1,4 +1,4 @@
-use crate::control_plane::ipc::ipc_frame::IpcFrameError;
+use crate::control_plane::errors::ipc_frame_error::IpcFrameError;
 
 /// Zestaw flag sterujących zachowaniem pojedynczej ramki IPC.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

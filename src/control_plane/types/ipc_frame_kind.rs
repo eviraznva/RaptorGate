@@ -1,4 +1,4 @@
-use crate::control_plane::ipc::ipc_frame::IpcFrameError;
+use crate::control_plane::errors::ipc_frame_error::IpcFrameError;
 
 /// Rodzaj ramki przesyłanej przez lokalny protokół IPC.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
