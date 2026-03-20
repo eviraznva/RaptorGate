@@ -47,6 +47,19 @@ impl SyncIpcEndpoint<UnixStream> {
     }
 }
 
+impl RequestMeta {
+    /// Buduje metadane żądania na podstawie odebranej ramki.
+    pub fn from_frame(frame: &IpcFrame) -> Self {
+        Self {
+            magic: frame.magic(),
+            version: frame.version(),
+            opcode: frame.opcode(),
+            request_id: frame.request_id(),
+            sequence_no: frame.sequence_no(),
+        }
+    }
+}
+
 impl<S> SyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin {
     /// Tworzy endpoint z już przygotowanego strumienia.
     pub(crate) fn from_stream(stream: S) -> Self {
@@ -126,12 +139,18 @@ impl<S> SyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin {
         Resp::decode_payload(response.payload()).map_err(Into::into)
     }
 
+    /// Odbiera jedną surową ramkę z kanału synchronicznego.
+    pub async fn receive_frame(&mut self) -> Result<IpcFrame, SyncIpcEndpointError> {
+        let frame = self.client.receive_frame().await?;
+        self.validate_common(&frame)?;
+        Ok(frame)
+    }
+
     /// Odbiera typowane żądanie od drugiej strony połączenia.
     pub async fn receive_request<Req>(&mut self) -> Result<InboundRequest<Req>, SyncIpcEndpointError> where
         Req: IpcRequestMessage 
     {
-        let frame = self.client.receive_frame().await?;
-        self.validate_common(&frame)?;
+        let frame = self.receive_frame().await?;
 
         if frame.kind() != IpcFrameKind::Request {
             return Err(SyncIpcEndpointError::UnexpectedKind {
@@ -157,13 +176,7 @@ impl<S> SyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin {
 
         let message = Req::decode_payload(frame.payload())?;
 
-        let meta = RequestMeta {
-            magic: frame.magic(),
-            version: frame.version(),
-            opcode: frame.opcode(),
-            request_id: frame.request_id(),
-            sequence_no: frame.sequence_no(),
-        };
+        let meta = RequestMeta::from_frame(&frame);
 
         Ok(InboundRequest { meta, message })
     }

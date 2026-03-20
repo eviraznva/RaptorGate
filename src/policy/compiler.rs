@@ -1,4 +1,3 @@
-use crate::control_plane::config::active_config::ActiveConfig;
 use crate::policy::runtime::{CompiledPolicy, PolicyMetadata, PolicySource};
 use crate::policy_evaluator::PolicyEvaluator;
 use crate::rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
@@ -35,20 +34,6 @@ pub fn compile_safe_deny() -> Result<CompiledPolicy, PolicyCompileError> {
         },
         PolicyEvaluator::new(tree, Verdict::Drop),
     ))
-}
-
-pub fn compile_from_active_config(
-    active_config: &ActiveConfig,
-    block_icmp: bool,
-    source: PolicySource,
-) -> Result<CompiledPolicy, PolicyCompileError> {
-    build_compiled_policy(
-        Some(active_config.version),
-        Some(active_config.bundle_checksum.clone()),
-        active_config.rules.len(),
-        source,
-        block_icmp,
-    )
 }
 
 fn build_compiled_policy(

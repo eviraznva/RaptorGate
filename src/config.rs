@@ -1,5 +1,5 @@
-use anyhow::{Context, Result};
 use std::net::Ipv4Addr;
+use anyhow::{Context, Result};
 
 pub struct AppConfig {
     // Packet capture
@@ -16,6 +16,8 @@ pub struct AppConfig {
 
     // gRPC / backend
     pub grpc_socket_path: String,
+    pub sync_ipc_socket_path: String,
+    pub async_ipc_socket_path: String,
     pub firewall_version: String,
     pub heartbeat_interval_secs: u64,
 
@@ -62,6 +64,12 @@ impl AppConfig {
 
             grpc_socket_path: std::env::var("GRPC_SOCKET_PATH")
                 .unwrap_or_else(|_| "./sockets/firewall.sock".into()),
+
+            sync_ipc_socket_path: std::env::var("SYNC_IPC_SOCKET_PATH")
+                .unwrap_or_else(|_| "./sockets/rg-synchronous.sock".into()),
+
+            async_ipc_socket_path: std::env::var("ASYNC_IPC_SOCKET_PATH")
+                .unwrap_or_else(|_| "./sockets/rg-asynchronous.sock".into()),
 
             firewall_version: std::env::var("FIREWALL_VERSION")
                 .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into()),
