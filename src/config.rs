@@ -100,6 +100,6 @@ impl AppConfig {
             }),
             pki_dir: std::env::var("RAPTORGATE_PKI_DIR")
                 .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
-        })
-    }
+        }
+        )}
 }
