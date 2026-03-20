@@ -11,8 +11,8 @@ use crate::control_plane::api::{ControlPlaneConfig, LifecyclePhase};
 use crate::control_plane::backend_api::client::BackendApiClient;
 use crate::control_plane::backend_api::event_codec::{
     BE_CONFIG_CHANGED, BE_HEARTBEAT_ACK, BE_RESYNC_REQUESTED, FW_HEARTBEAT, FW_METRICS,
-    current_timestamp, decode_backend_payload, encode_firewall_event, encode_policy_activated,
-    encode_policy_failed, encode_resync_confirmed,
+    current_timestamp, decode_backend_payload, encode_ca_ready, encode_firewall_event,
+    encode_policy_activated, encode_policy_failed, encode_resync_confirmed,
 };
 use crate::control_plane::backend_api::proto::raptorgate::common::{
     FirewallMode, PolicyFailureCode,
@@ -21,8 +21,8 @@ use crate::control_plane::backend_api::proto::raptorgate::config::{
     ConfigRequestReason, ConfigResponse, GetConfigRequest,
 };
 use crate::control_plane::backend_api::proto::raptorgate::events::{
-    ConfigChangedEvent, HeartbeatAck, HeartbeatEvent, PolicyActivatedEvent, PolicyFailedEvent,
-    ResyncConfirmedEvent, ResyncRequestedEvent,
+    CaReadyEvent, ConfigChangedEvent, HeartbeatAck, HeartbeatEvent, PolicyActivatedEvent,
+    PolicyFailedEvent, ResyncConfirmedEvent, ResyncRequestedEvent,
 };
 use crate::control_plane::backend_api::proto::raptorgate::telemetry::MetricsBatch;
 use crate::control_plane::config::active_config::ActiveConfig;
@@ -262,6 +262,17 @@ async fn run_event_session(
         Ok(Ok(())) => {}
         Ok(Err(err)) => return Err(ControlPlaneError::ConfigFetch(err)),
         Err(err) => return Err(ControlPlaneError::Join(err.to_string())),
+    }
+
+    if let Some(ca) = &config.ca_info {
+        let _ = stream_channels
+            .outbound
+            .send(encode_ca_ready(CaReadyEvent {
+                ca_cert_pem: ca.cert_pem.clone(),
+                fingerprint: ca.fingerprint.clone(),
+                expires_at: Some(ca.expires_at.clone()),
+            }))
+            .await;
     }
 
     let mut interval = tokio::time::interval(Duration::from_secs(config.heartbeat_interval_secs));

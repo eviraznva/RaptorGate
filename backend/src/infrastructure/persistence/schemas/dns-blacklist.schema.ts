@@ -1,39 +1,18 @@
-import {
-  boolean,
-  pgTable,
-  text,
-  timestamp,
-  uuid,
-  varchar,
-} from 'drizzle-orm/pg-core';
-import { usersTable } from './users.schema';
-import { defineRelations } from 'drizzle-orm';
+import { z } from 'zod';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
 
-export const dnsBlacklistTable = pgTable('dns_blacklist', {
-  id: uuid('id').primaryKey(),
-  domain: varchar('domain', { length: 255 }).notNull(),
-  reason: text('reason').notNull(),
-  isActive: boolean('is_active').notNull().default(true),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  createdBy: uuid('created_by')
-    .notNull()
-    .references(() => usersTable.id, { onDelete: 'no action' }),
-});
+export const DnsBlacklistRecordSchema = z
+  .object({
+    id: uuidSchema,
+    domain: z.string().min(1).max(255),
+    reason: z.string().min(1),
+    isActive: z.boolean(),
+    createdAt: isoDateTimeSchema,
+    createdBy: uuidSchema,
+  })
+  .strict();
 
-export const dnsBlacklistRelations = defineRelations(
-  {
-    usersTable,
-    dnsBlacklistTable,
-  },
-  (r) => ({
-    dnsBlacklistTable: {
-      author: r.one.usersTable({
-        from: r.dnsBlacklistTable.createdBy,
-        to: r.usersTable.id,
-      }),
-    },
-    usersTable: {
-      dnsBlacklist: r.many.dnsBlacklistTable(),
-    },
-  }),
-);
+export const DnsBlacklistFileSchema = tableFileSchema(DnsBlacklistRecordSchema);
+
+export type DnsBlacklistRecord = z.infer<typeof DnsBlacklistRecordSchema>;
+export type DnsBlacklistFile = z.infer<typeof DnsBlacklistFileSchema>;

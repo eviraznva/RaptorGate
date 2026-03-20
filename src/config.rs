@@ -23,6 +23,8 @@ pub struct AppConfig {
     pub redb_snapshot_path: String,
 
     pub dev_config: Option<DevConfig>,
+    // PKI — przechowywanie certyfikatu CA i zaszyfrowanego klucza prywatnego
+    pub pki_dir: String,
 }
 
 pub struct DevConfig {
@@ -96,6 +98,8 @@ impl AppConfig {
             dev_config: dev_mode.then_some(DevConfig {
                 policy_override: dev_policy,
             }),
-        }
-        )}
+            pki_dir: std::env::var("RAPTORGATE_PKI_DIR")
+                .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
+        })
+    }
 }

@@ -1,35 +1,15 @@
-import { pgTable, uuid, varchar, primaryKey } from 'drizzle-orm/pg-core';
-import { permissionsTable } from './permissions.schema';
-import { usersTable } from './users.schema';
+import { z } from 'zod';
+import { tableFileSchema, uuidSchema } from './_common';
 
-export const rolesTable = pgTable('roles', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: varchar('name', { length: 64 }).notNull().unique(),
-  description: varchar('description', { length: 255 }),
-});
+export const RoleRecordSchema = z
+  .object({
+    id: uuidSchema,
+    name: z.string().min(1).max(64),
+    description: z.string().max(255).nullable().optional(),
+  })
+  .strict();
 
-export const rolePermissionsTable = pgTable(
-  'role_permissions',
-  {
-    roleId: uuid('role_id')
-      .notNull()
-      .references(() => rolesTable.id, { onDelete: 'cascade' }),
-    permissionId: uuid('permission_id')
-      .notNull()
-      .references(() => permissionsTable.id, { onDelete: 'cascade' }),
-  },
-  (table) => [primaryKey({ columns: [table.roleId, table.permissionId] })],
-);
+export const RolesFileSchema = tableFileSchema(RoleRecordSchema);
 
-export const userRolesTable = pgTable(
-  'user_roles',
-  {
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => usersTable.id, { onDelete: 'cascade' }),
-    roleId: uuid('role_id')
-      .notNull()
-      .references(() => rolesTable.id, { onDelete: 'cascade' }),
-  },
-  (table) => [primaryKey({ columns: [table.userId, table.roleId] })],
-);
+export type RoleRecord = z.infer<typeof RoleRecordSchema>;
+export type RolesFile = z.infer<typeof RolesFileSchema>;

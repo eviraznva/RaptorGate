@@ -1,34 +1,17 @@
-import { timestamp } from 'drizzle-orm/pg-core';
-import { integer, varchar } from 'drizzle-orm/pg-core';
-import { pgTable, uuid } from 'drizzle-orm/pg-core';
-import { zonesTable } from './zones.schema';
-import { defineRelations } from 'drizzle-orm';
+import { z } from 'zod';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
 
-export const zoneInterfacesTable = pgTable('zone_interfaces', {
-  id: uuid('id').primaryKey(),
-  zoneId: uuid('zone_id')
-    .notNull()
-    .references(() => zonesTable.id, { onDelete: 'no action' }),
-  interfaceName: varchar('interface_name', { length: 64 }).notNull(),
-  vlanId: integer().notNull(),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-});
+export const ZoneInterfaceRecordSchema = z
+  .object({
+    id: uuidSchema,
+    zoneId: uuidSchema,
+    interfaceName: z.string().min(1).max(64),
+    vlanId: z.number().int(),
+    createdAt: isoDateTimeSchema,
+  })
+  .strict();
 
-export const zoneInterfacesRelations = defineRelations(
-  {
-    zonesTable,
-    zoneInterfacesTable,
-  },
-  (r) => ({
-    zoneInterfacesTable: {
-      author: r.one.zonesTable({
-        from: r.zoneInterfacesTable.zoneId,
-        to: r.zonesTable.id,
-      }),
-    },
+export const ZoneInterfacesFileSchema = tableFileSchema(ZoneInterfaceRecordSchema);
 
-    zonesTable: {
-      zoneInterfaces: r.many.zoneInterfacesTable(),
-    },
-  }),
-);
+export type ZoneInterfaceRecord = z.infer<typeof ZoneInterfaceRecordSchema>;
+export type ZoneInterfacesFile = z.infer<typeof ZoneInterfacesFileSchema>;
