@@ -13,7 +13,7 @@ pub(crate) trait Frame {
     fn day_of_week(&self) -> Weekday;
 }
 
-#[derive(Debug, Clone, Copy, From, Display, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, From, Display, PartialEq, PartialOrd, Hash, Eq)]
 pub struct Port(u16);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -102,6 +102,7 @@ pub enum Protocol { Tcp, Udp, Icmp }
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
 pub enum Weekday { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
 
+// TODO: encode arrival time as `Instant`
 pub struct RealFrame {
     ip_ver: IpVer,
     src_ip: IP,
