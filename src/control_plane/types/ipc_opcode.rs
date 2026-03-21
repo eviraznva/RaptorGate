@@ -6,6 +6,7 @@ pub enum IpcOpcode {
     Ping = 0x01,
     GetStatus = 0x02,
     GetNetworkInterfaces = 0x03,
+    ActivateRevision = 0x04,
     Heartbeat = 0x100,
 }
 
@@ -17,6 +18,7 @@ impl TryFrom<u32> for IpcOpcode {
             0x01 => Ok(Self::Ping),
             0x02 => Ok(Self::GetStatus),
             0x03 => Ok(Self::GetNetworkInterfaces),
+            0x04 => Ok(Self::ActivateRevision),
             0x100 => Ok(Self::Heartbeat),
             _ => Err(IpcFrameError::InvalidOpcode(value)),
         }
@@ -42,6 +44,7 @@ mod ipc_opcode_tests {
             IpcOpcode::try_from(0x03),
             Ok(IpcOpcode::GetNetworkInterfaces)
         );
+        assert_eq!(IpcOpcode::try_from(0x04), Ok(IpcOpcode::ActivateRevision));
         assert_eq!(IpcOpcode::try_from(0x100), Ok(IpcOpcode::Heartbeat));
     }
 

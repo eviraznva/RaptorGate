@@ -14,19 +14,11 @@ pub struct AppConfig {
     // Policy
     pub block_icmp: bool,
 
-    // gRPC / backend
-    pub grpc_socket_path: String,
     pub sync_ipc_socket_path: String,
     pub async_ipc_socket_path: String,
-    pub firewall_version: String,
     pub heartbeat_interval_secs: u64,
     pub event_queue_capacity: usize,
-
-    // Redb snapshot
-    pub redb_snapshot_path: String,
-
-    // PKI — przechowywanie certyfikatu CA i zaszyfrowanego klucza prywatnego
-    pub pki_dir: String,
+    pub config_store_path: String,
 }
 
 impl AppConfig {
@@ -63,17 +55,11 @@ impl AppConfig {
                 .to_lowercase()
                 == "true",
 
-            grpc_socket_path: std::env::var("GRPC_SOCKET_PATH")
-                .unwrap_or_else(|_| "./sockets/firewall.sock".into()),
-
             sync_ipc_socket_path: std::env::var("SYNC_IPC_SOCKET_PATH")
                 .unwrap_or_else(|_| "./sockets/rg-synchronous.sock".into()),
 
             async_ipc_socket_path: std::env::var("ASYNC_IPC_SOCKET_PATH")
                 .unwrap_or_else(|_| "./sockets/rg-asynchronous.sock".into()),
-
-            firewall_version: std::env::var("FIREWALL_VERSION")
-                .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into()),
 
             heartbeat_interval_secs: std::env::var("HEARTBEAT_INTERVAL_SECS")
                 .unwrap_or_else(|_| "10".into())
@@ -85,11 +71,8 @@ impl AppConfig {
                 .parse()
                 .context("EVENT_QUEUE_CAPACITY must be an integer")?,
 
-            redb_snapshot_path: std::env::var("REDB_SNAPSHOT_PATH")
-                .unwrap_or_else(|_| "./.data/snapshot.redb".into()),
-
-            pki_dir: std::env::var("RAPTORGATE_PKI_DIR")
-                .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
+            config_store_path: std::env::var("CONFIG_STORE_PATH")
+                .unwrap_or_else(|_| "/etc/raptorgate/config/runtime".into()),
         })
     }
 }

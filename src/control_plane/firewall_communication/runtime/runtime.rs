@@ -1,32 +1,30 @@
 use std::sync::Arc;
-
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::policy::compiler;
-use crate::policy::runtime::CompiledPolicy;
+use crate::control_plane::types::firewall_mode::FirewallMode;
 use crate::control_plane::firewall_communication::sync::listener;
 use crate::control_plane::firewall_communication::publish::async_publisher;
 use crate::control_plane::firewall_communication::config::FirewallIpcConfig;
+use crate::control_plane::firewall_communication::runtime::revision_store::RevisionStore;
 use crate::control_plane::firewall_communication::publish::event_ring::{EventRingHandle, channel};
-use crate::control_plane::firewall_communication::runtime::state::{FirewallIpcStatus, FirewallState};
+
+use crate::control_plane::firewall_communication::runtime::state::{
+    ActiveRevision, FirewallState, FirewallRuntimeState
+};
 
 /// Handle do obserwacji stanu i polityki firewalla.
 #[derive(Clone)]
 pub struct FirewallIpcHandle {
-    status_rx: watch::Receiver<FirewallIpcStatus>,
-    policy_rx: watch::Receiver<Arc<CompiledPolicy>>,
-    event_ring: EventRingHandle,
+    state_rx: watch::Receiver<Arc<FirewallRuntimeState>>,
+    event_ring: EventRingHandle
 }
 
 impl FirewallIpcHandle {
-    pub fn status(&self) -> watch::Receiver<FirewallIpcStatus> {
-        self.status_rx.clone()
-    }
-
-    pub fn policy(&self) -> watch::Receiver<Arc<CompiledPolicy>> {
-        self.policy_rx.clone()
+    pub fn state(&self) -> watch::Receiver<Arc<FirewallRuntimeState>> {
+        self.state_rx.clone()
     }
 
     pub fn event_ring(&self) -> EventRingHandle {
@@ -47,18 +45,24 @@ impl FirewallIpcRuntime {
         -> Result<Self, Box<dyn std::error::Error + Send + Sync>> 
     {
         let initial_policy = Arc::new(compiler::compile_fallback(block_icmp)?);
-        
-        let (policy_tx, policy_rx) = 
-            watch::channel(initial_policy.clone());
-        
-        let (status_tx, status_rx) = 
-            watch::channel(FirewallIpcStatus::default());
+
+        let initial_revision = Arc::new(ActiveRevision::fallback(initial_policy.clone()));
+
+        let initial_state = Arc::new(FirewallRuntimeState {
+            mode: FirewallMode::Normal,
+            active_revision: initial_revision.clone(),
+            last_error_code: 0,
+        });
+
+        let (state_tx, state_rx) =
+            watch::channel(initial_state);
         
         let (event_ring, event_rx) = channel(config.event_queue_capacity);
 
-        let state = FirewallState::new(policy_rx.clone());
-        
-        let status_state = state.clone();
+        let state = FirewallState::new(
+            RevisionStore::new(config.config_store_path.clone()),
+            state_tx,
+        );
 
         let shutdown = CancellationToken::new();
 
@@ -89,41 +93,13 @@ impl FirewallIpcRuntime {
             }
         });
 
-        let status_join = tokio::spawn({
-            let shutdown = shutdown.clone();
-            
-            async move {
-                loop {
-                    let snapshot = status_state.build_status_response().await;
-                    
-                    let next = FirewallIpcStatus {
-                        mode: snapshot.mode,
-                        loaded_revision_id: snapshot.loaded_revision_id,
-                        last_error_code: snapshot.last_error_code,
-                    };
-
-                    if status_tx.send(next).is_err() {
-                        return;
-                    }
-
-                    tokio::select! {
-                        _ = shutdown.cancelled() => return,
-                        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
-                    }
-                }
-            }
-        });
-
-        let _ = policy_tx;
-
         Ok(Self {
             handle: FirewallIpcHandle {
-                status_rx,
-                policy_rx,
+                state_rx,
                 event_ring,
             },
             shutdown,
-            joins: vec![sync_join, async_join, status_join],
+            joins: vec![sync_join, async_join],
         })
     }
 

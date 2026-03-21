@@ -7,6 +7,7 @@ use crate::config::AppConfig;
 pub struct FirewallIpcConfig {
     pub sync_socket_path: String,
     pub async_socket_path: String,
+    pub config_store_path: String,
     pub heartbeat_interval: Duration,
     pub async_reconnect_interval: Duration,
     pub event_queue_capacity: usize,
@@ -17,6 +18,7 @@ impl From<&AppConfig> for FirewallIpcConfig {
         Self {
             sync_socket_path: config.sync_ipc_socket_path.clone(),
             async_socket_path: config.async_ipc_socket_path.clone(),
+            config_store_path: config.config_store_path.clone(),
             heartbeat_interval: Duration::from_secs(config.heartbeat_interval_secs),
             async_reconnect_interval: Duration::from_secs(2),
             event_queue_capacity: config.event_queue_capacity,

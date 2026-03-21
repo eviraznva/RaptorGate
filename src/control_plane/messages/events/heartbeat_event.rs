@@ -1,11 +1,12 @@
 use bytes::{Bytes, BytesMut};
 
 use crate::control_plane::types::ipc_opcode::IpcOpcode;
+use crate::control_plane::types::firewall_mode::FirewallMode;
 use crate::control_plane::errors::payload_error::PayloadError;
 use crate::control_plane::types::ipc_frame_kind::IpcFrameKind;
 
 use crate::control_plane::ipc::ipc_message::{
-    FirewallMode, IpcEventMessage, IpcMessage,
+    IpcEventMessage, IpcMessage,
     ensure_consumed, put_varint, put_varlong, read_varint, read_varlong
 };
 
