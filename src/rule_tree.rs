@@ -1,10 +1,12 @@
-mod matcher;
+pub mod matcher;
+pub mod parsing;
 
 use derive_more::{Display, Error, PartialEq};
 
 use crate::{frame::{Hour, IP, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
-pub(crate) use matcher::MatchBuilder;
+pub use matcher::MatchBuilder;
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RuleTree {
     name: String,
     description: String,
@@ -18,18 +20,20 @@ impl RuleTree {
     
 }
 
+#[derive(Debug, Clone, PartialEq)]
 struct Arm {
     pattern: Pattern,
     into: ArmEnd,
 }
 
-pub(crate) enum ArmEnd {
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArmEnd {
     Verdict(Verdict),
     Match(Match),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Verdict {
+pub enum Verdict {
     Allow,
     Drop,
     AllowWarn(String),
@@ -37,7 +41,7 @@ pub(crate) enum Verdict {
 }
 
 #[derive(Debug, Display, Clone, PartialEq)]
-pub(crate) enum Pattern {
+pub enum Pattern {
     Equal(FieldValue),
     // TODO: remove `Glob`
     Glob(FieldValue),
@@ -51,8 +55,8 @@ pub(crate) enum Pattern {
     Wildcard,
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq)]
-pub(crate) enum FieldValue {
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
+pub enum FieldValue {
     Ip(IP),
     IpVer(IpVer),
     DayOfWeek(Weekday),
@@ -61,8 +65,8 @@ pub(crate) enum FieldValue {
     Port(Port),
 }
 
-#[derive(Debug, Display, Clone, Copy)]
-pub(crate) enum MatchKind {
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
+pub enum MatchKind {
     SrcIp,
     DstIp,
     IpVer,
@@ -74,7 +78,7 @@ pub(crate) enum MatchKind {
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Operation {
+pub enum Operation {
     Greater,
     Lesser,
     GreaterOrEqual,
@@ -150,7 +154,7 @@ impl<'a> TreeWalker<'a> {
 }
 
 #[derive(Debug, Display, Error)]
-pub(crate) enum RuleError {
+pub enum RuleError {
     #[display("Invalid Pattern Error, pattern: {}", _0)]
     InvalidPattern(#[error(not(source))] Pattern),
 }
@@ -230,4 +234,3 @@ mod tests {
         }
     }
 }
-

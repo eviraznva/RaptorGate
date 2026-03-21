@@ -1,22 +1,22 @@
 use std::sync::Arc;
-
 use tun::AsyncDevice;
+use tokio::sync::watch;
 
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use crate::data_plane::nat::dummy_lab::NatLabRuntime;
 use crate::data_plane::nat::types::nat_outcome::NatOutcome;
 use crate::data_plane::nat::types::nat_stage::NatStage;
-use crate::data_plane::policy_store::PolicyStore;
 use crate::frame::RealFrame;
-use crate::ip_defrag::{DefragResult, IpDefragEngine};
 use crate::rule_tree::Verdict;
+use crate::ip_defrag::{DefragResult, IpDefragEngine};
+use crate::control_plane::firewall_communication::FirewallRuntimeState;
 
 pub async fn handle_packet(
     iface: &str,
     data: &[u8],
     tun: &AsyncDevice,
-    policies: &PolicyStore,
+    state_rx: &watch::Receiver<Arc<FirewallRuntimeState>>,
     defrag: &Arc<IpDefragEngine>,
     nat: &Arc<NatLabRuntime>,
 ) {
@@ -44,7 +44,7 @@ pub async fn handle_packet(
             DefragResult::Complete(eth_frame) => {
                 // Skladanie zakonczone - ponowne parsowanie i przekazanie.
                 match SlicedPacket::from_ethernet(&eth_frame) {
-                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, policies, nat).await,
+                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, state_rx, nat).await,
                     Err(err) => eprintln!("[{iface}] DROP (reassembled packet parse error: {err:?})"),
                 }
             }
@@ -52,7 +52,7 @@ pub async fn handle_packet(
                 // Skladanie zakonczone mimo anomalii - logowanie i przekazanie.
                 eprintln!("[{iface}] WARN (defrag anomalies: {})", anomalies.join("; "));
                 match SlicedPacket::from_ethernet(&eth_frame) {
-                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, policies, nat).await,
+                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, state_rx, nat).await,
                     Err(err) => eprintln!("[{iface}] DROP (reassembled packet parse error: {err:?})"),
                 }
             }
@@ -63,7 +63,7 @@ pub async fn handle_packet(
         return;
     }
 
-    forward_packet(iface, &packet, tun, policies, nat).await;
+    forward_packet(iface, &packet, tun, state_rx, nat).await;
 }
 
 // Ocena polityki dla zlozonego lub niesfragmentowanego pakietu i przekazuje go do TUN.
@@ -71,11 +71,12 @@ async fn forward_packet(
     iface: &str,
     packet: &SlicedPacket<'_>,
     tun: &AsyncDevice,
-    policies: &PolicyStore,
+    state_rx: &watch::Receiver<Arc<FirewallRuntimeState>>,
     nat: &Arc<NatLabRuntime>,
 ) {
+    let state = state_rx.borrow().clone();
+    let compiled_policy = state.compiled_policy().clone();
     let nat_outcome = apply_nat(iface, packet, nat);
-    let compiled_policy = policies.load();
     let verdict = RealFrame::from_sliced(&packet)
         .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));
 
@@ -164,7 +165,7 @@ fn apply_nat(iface: &str, packet: &SlicedPacket<'_>, nat: &Arc<NatLabRuntime>) -
         packet,
         NatStage::Prerouting,
         true,
-        nat.resolver.as_ref(),
+        &nat.resolver,
         Some(iface),
         out_interface,
         in_zone,

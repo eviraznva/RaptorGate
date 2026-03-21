@@ -1,8 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use derive_more::{Display, Eq, From};
+use derive_more::{Display, From};
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
-pub(crate) trait Frame {
+pub trait Frame {
     fn ip_ver(&self) -> IpVer;
     fn src_ip(&self) -> IP;
     fn dst_ip(&self) -> IP;
@@ -13,20 +13,50 @@ pub(crate) trait Frame {
     fn day_of_week(&self) -> Weekday;
 }
 
-#[derive(Debug, Clone, Copy, From, Display, PartialEq, PartialOrd)]
-pub(crate) struct Port(u16);
+#[derive(Debug, Clone, Copy, From, Display, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Port(u16);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct IP {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IP {
     octets: [Octet; 4],
 }
 
 impl IP {
-    pub(crate) fn new(octets: [Octet; 4]) -> Self {
+    pub fn new(octets: [Octet; 4]) -> Self {
         Self { octets }
     }
 }
 
+impl TryFrom<String> for IP {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::try_from(value.as_str())
+    }
+}
+
+impl TryFrom<&str> for IP {
+    type Error = &'static str;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let mut octets = [Octet::Value(0); 4];
+        let mut parts = value.split('.');
+
+        for octet in &mut octets {
+            let part = parts.next().ok_or("invalid IPv4 address")?;
+            *octet = match part {
+                "*" => Octet::Any,
+                _ => Octet::Value(part.parse::<u8>().map_err(|_| "invalid IPv4 octet")?),
+            };
+        }
+
+        if parts.next().is_some() {
+            return Err("invalid IPv4 address");
+        }
+
+        Ok(Self::new(octets))
+    }
+}
 impl std::fmt::Display for IP {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -41,7 +71,7 @@ impl std::fmt::Display for IP {
 }
 
 #[derive(Debug, Clone, Copy, Display)]
-pub(crate) enum Octet {
+pub enum Octet {
     Any,
     Value(u8),
 }
@@ -56,14 +86,16 @@ impl PartialEq for Octet {
     }
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq)]
-pub(crate) enum IpVer {
+impl Eq for Octet {}
+
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
+pub enum IpVer {
     V4,
     V6,
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
-pub(crate) struct Hour(u8);
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Hour(u8);
 
 impl TryFrom<u8> for Hour {
     type Error = &'static str;
@@ -76,12 +108,10 @@ impl TryFrom<u8> for Hour {
     }
 }
 
-
-#[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
-pub(crate) enum Protocol { Tcp, Udp, Icmp }
-#[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
-pub(crate) enum Weekday { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
-
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Protocol { Tcp, Udp, Icmp }
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Weekday { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
 pub(crate) struct RealFrame {
     ip_ver: IpVer,
     src_ip: IP,
