@@ -2,19 +2,23 @@
 
 ## Status dokumentu
 
-Ten dokument opisuje **docelowy** protokół IPC i **docelowy** binarny format polityki dla RaptorGate.
+Ten dokument opisuje **aktualnie zaimplementowany** protokół IPC i **aktualnie zaimplementowany** binarny format polityki dla RaptorGate.
 
-Nie jest to opis aktualnej implementacji repozytorium. Obecny kod nadal używa:
+Dokument został dopasowany do bieżącego stanu repozytorium. Na dziś w kodzie znajdują się:
 
-- `gRPC over Unix Domain Socket` po stronie komunikacji z backendem,
-- protobuf `ConfigResponse` jako formatu lokalnej migawki,
-- pojedynczego `RuleTree` w evaluatorze polityki.
+- działające `RGIPC/1` nad `AF_UNIX/SOCK_STREAM`,
+- typowane wiadomości IPC oparte o `IpcMessage`, `IpcRequestMessage`, `IpcResponseMessage` i `IpcEventMessage`,
+- endpoint synchroniczny `SyncIpcEndpoint` i endpoint asynchroniczny `AsyncIpcEndpoint`,
+- runtime po stronie firewalla używający lokalnych gniazd synchronicznego i asynchronicznego IPC,
+- parser `RGPF/1` typu zero-copy oparty o `zerocopy`,
+- loader `RGPF/1 -> CompiledPolicy`, który obecnie obsługuje dokładnie jedno drzewo reguł filtrowania,
+- parser i walidator sekcji `NAT_RULE_TABLE`, ale bez pełnego załadowania NAT do aktywnego runtime.
 
-Dokument należy traktować jako specyfikację przebudowy, na podstawie której można wdrożyć nową warstwę IPC oraz `policy.bin`.
+Dokument należy traktować jako opis obowiązującego kontraktu oraz jego bieżących ograniczeń implementacyjnych.
 
 ## 1. Cel
 
-Docelowa architektura rozdziela odpowiedzialności w prosty sposób:
+Kontrakt systemowy rozdziela odpowiedzialności w prosty sposób:
 
 - backend waliduje konfigurację źródłową i publikuje rewizję,
 - firewall ładuje lokalną migawkę `active/policy.bin`,
@@ -33,7 +37,8 @@ Poza zakresem dokumentu pozostają:
 
 - transport inny niż UDS,
 - serializacja pełnego backendowego modelu konfiguracji,
-- NAT, QoS, DPI, identity, VLAN, app-id i inne funkcje spoza obecnego evaluatora polityki.
+- aktywny runtime NAT po stronie loadera `RGPF/1`,
+- QoS, DPI, identity, VLAN, app-id i inne funkcje spoza obecnego evaluatora polityki.
 
 ## 3. Architektura IPC
 
@@ -73,7 +78,7 @@ Protokół wspiera dwa modele wymiany:
 - żądanie-odpowiedź: `REQUEST -> RESPONSE | ERROR`
 - komunikacja zdarzeniowa: `EVENT` bez wymaganej odpowiedzi
 
-W MVP jedynym zdarzeniem jest `HEARTBEAT`.
+W aktualnej implementacji jedynym zdefiniowanym zdarzeniem jest `HEARTBEAT`.
 
 ### 4.1. Typy pól
 
@@ -155,7 +160,7 @@ payload      : [payload_len bytes]
 - `0x00 = NONE`
 - `0x01 = ACK_REQUIRED`
 - `0x02 = CRITICAL`
-- `0x04 = NOREPLY`
+- `0x04 = NO_REPLY`
 
 `opcode`
 
@@ -362,18 +367,32 @@ Rekomendowany interwał:
 
 ### 8.1. Kanał synchroniczny
 
-Klient:
+Kanał synchroniczny w aktualnej implementacji jest modelowany jako **dwukierunkowy endpoint** request-response. Oznacza to, że każda strona połączenia może:
 
 1. otwiera połączenie,
-2. wysyła `REQUEST`,
-3. odbiera `RESPONSE` albo `ERROR`,
-4. może utrzymać połączenie dla kolejnych żądań albo je zamknąć.
+2. wysyłać `REQUEST`,
+3. odbierać `REQUEST`,
+4. odsyłać `RESPONSE` albo `ERROR`,
+5. utrzymywać połączenie dla kolejnych wiadomości albo je zamknąć.
+
+W repo odpowiada za to typ `SyncIpcEndpoint`, który:
+
+- buduje `REQUEST` z typowanego requestu,
+- waliduje `magic`, `version`, `kind`, `opcode`, `request_id` i `status`,
+- potrafi odbierać typowane requesty od drugiej strony,
+- potrafi odsyłać typowane `RESPONSE` i surowe `ERROR`.
 
 W `RGIPC/1` nie ma osobnego komunikatu `HELLO`.
 
 ### 8.2. Kanał asynchroniczny
 
-Firewall:
+Kanał asynchroniczny w aktualnej implementacji jest modelowany jako endpoint zdarzeń. Po stronie repo odpowiada za to `AsyncIpcEndpoint`, który:
+
+- wysyła typowane `EVENT`,
+- automatycznie ustawia `kind = EVENT`, `request_id = 0` i kolejny `sequence_no`,
+- potrafi odbierać typowane eventy i walidować `magic`, `version`, `opcode`, `request_id` i `status`.
+
+W aktualnym runtime firewalla:
 
 1. otwiera połączenie,
 2. utrzymuje je przez cały czas działania sesji,
@@ -407,6 +426,18 @@ Wszystkie wartości wielobajtowe są zapisane jako:
 Struktury pokazane w dokumencie opisują układ bajtów w pliku, a nie układ pamięci kompilatora. Serializacja odbywa się pole po polu, bez ukrytego paddingu.
 
 Wszystkie offsety zapisane wewnątrz sekcji są liczone od początku danej sekcji, chyba że przy polu zapisano inaczej.
+
+### 9.2.1. Stan implementacji parsera
+
+Aktualna implementacja repozytorium używa parsera typu zero-copy.
+
+Oznacza to, że:
+
+- plik `policy.bin` jest parsowany na widoki oparte o `&[u8]`,
+- rekordy stałej szerokości są mapowane bezpośrednio z bufora wejściowego,
+- rekordy zmiennej długości i wszystkie offsety są sprawdzane jawnie pod kątem granic bufora,
+- parser korzysta z biblioteki `zerocopy` do bezpiecznego mapowania struktur fixed-size,
+- alokacje są dopuszczalne dopiero na etapie loadera do aktualnego runtime.
 
 ### 9.3. Zakres `v1`
 
@@ -455,6 +486,14 @@ pub struct NatRule {
 ```
 
 W obecnym kodzie repozytorium pełna wersja tego modelu nie jest jeszcze zaimplementowana. Istnieje jedynie uproszczona reprezentacja runtime `NatRuleDummy`, która zawiera podzbiór pól potrzebnych do obecnego silnika NAT.
+
+Aktualny parser `RGPF/1` potrafi już:
+
+- parsować sekcję `NAT_RULE_TABLE`,
+- walidować jej nagłówek, rekordy i referencje,
+- udostępniać widoki zero-copy na dane NAT.
+
+Aktualny loader runtime **nie** materializuje jeszcze tej sekcji do aktywnego runtime NAT.
 
 Poza zakresem `v1`:
 
@@ -880,7 +919,7 @@ Jest to domyślny werdykt używany wtedy, gdy żadna reguła nie zakończy ewalu
 
 ## 18.1. Sekcja `NAT_RULE_TABLE`
 
-Format `RGPF/1` przewiduje możliwość przechowywania również reguł NAT. Sekcja ta jest opcjonalna i może nie występować w pierwszej iteracji wdrożenia.
+Format `RGPF/1` przewiduje możliwość przechowywania również reguł NAT. Sekcja ta jest opcjonalna na poziomie pliku, ale jest już obsługiwana przez aktualny parser i walidator repozytorium.
 
 Celem tej sekcji jest zapis reguł NAT w formie skompilowanej, ale nadal bliskiej modelowi domenowemu:
 
@@ -903,6 +942,12 @@ Stan obecny repozytorium:
 - aktualny silnik NAT używa uproszczonej struktury `NatRuleDummy`,
 - uproszczona wersja zawiera obecnie pola: `id`, `priority`, `match_criteria`, `kind`, `timeouts`,
 - `NatStage` istnieje już w kodzie i wspiera wartości `Prerouting` oraz `Postrouting`.
+
+Stan implementacji `RGPF/1`:
+
+- sekcja `NAT_RULE_TABLE` jest parsowana,
+- sekcja `NAT_RULE_TABLE` jest walidowana,
+- brak jeszcze adaptera, który ładuje te dane do aktywnego runtime NAT.
 
 Wymagania dla formatu binarnego:
 
@@ -1219,7 +1264,7 @@ Zasada ogólna:
 - `0x00 = NONE`
 - `0x01 = ACK_REQUIRED`
 - `0x02 = CRITICAL`
-- `0x04 = NOREPLY`
+- `0x04 = NO_REPLY`
 
 Flagi mogą być łączone bitowo.
 
@@ -1457,7 +1502,16 @@ Przykłady błędów walidacji:
 - offset wychodzący poza granice sekcji,
 - `root_node_index >= node_count`.
 
+W aktualnej implementacji walidacja obejmuje również:
+
+- CRC32C całego pliku przy wyzerowanym polu `file_crc32c`,
+- brak duplikatów wymaganych sekcji,
+- pełną walidację `RULE_TREE_TABLE`,
+- walidację `NAT_RULE_TABLE`, jeśli sekcja występuje.
+
 ## 21. Publikacja rewizji
+
+Ta sekcja opisuje docelowy kontrakt współpracy backendu i firewalla wokół `policy.bin`. Na bieżącej gałęzi zaimplementowane są przede wszystkim firewall-side IPC oraz parser, walidator i loader `RGPF/1`.
 
 ### 21.1. Backend
 
@@ -1481,6 +1535,8 @@ Firewall:
 
 ## 22. MVP
 
+Ta sekcja opisuje stan zaimplementowany na dziś, a nie planowaną pierwszą iterację.
+
 ### 22.1. IPC
 
 Gniazda:
@@ -1494,6 +1550,15 @@ Wiadomości:
 - `GET_STATUS`
 - `GET_NETWORK_INTERFACES`
 - `HEARTBEAT`
+
+Aktualna implementacja IPC zawiera dodatkowo:
+
+- typowane requesty: `PingRequest`, `GetStatusRequest`, `GetNetworkInterfacesRequest`,
+- typowane response: `PingResponse`, `GetStatusResponse`, `GetNetworkInterfacesResponse`,
+- typowany event: `HeartbeatEvent`,
+- wspólne trait-y wiadomości: `IpcMessage`, `IpcRequestMessage`, `IpcResponseMessage`, `IpcEventMessage`,
+- `SyncIpcEndpoint` jako dwukierunkowy endpoint request-response,
+- `AsyncIpcEndpoint` jako endpoint eventów.
 
 ### 22.2. `policy.bin`
 
@@ -1509,7 +1574,9 @@ Obsługiwany model wykonywania:
 - obecny `MatchKind`,
 - obecny `Pattern`,
 - obecny `Verdict`,
-- oraz docelowo reguły NAT, przy czym na dziś implementacja runtime odpowiada tylko zakresowi `NatRuleDummy`.
+- parser i walidator `NAT_RULE_TABLE`,
+- loader do obecnego `CompiledPolicy`, który obsługuje dokładnie jedno drzewo reguł filtrowania,
+- brak aktywnego załadowania NAT do runtime, mimo że sekcja NAT jest już parsowana i walidowana.
 
 ## 23. Najważniejsze decyzje projektowe
 
@@ -1530,9 +1597,16 @@ IPC:
 
 ## 24. Podsumowanie
 
-Docelowa architektura opiera się na dwóch spójnych elementach:
+Aktualna implementacja repozytorium opiera się na dwóch spójnych elementach:
 
 - `RGIPC/1` jako lekkim lokalnym protokole komunikacji sterującej,
 - `RGPF/1` jako binarnej migawce polityki wykonywanej przez firewall.
 
-Backend pozostaje odpowiedzialny za walidację i publikację rewizji. Firewall ładuje lokalne `policy.bin`, działa niezależnie od bazy danych i traktuje aktywną rewizję jako źródło prawdy po stronie wykonawczej.
+Po stronie IPC w repo istnieją już działające typowane endpointy synchroniczne i asynchroniczne oraz runtime firewalla korzystający z tych kanałów.
+
+Po stronie `RGPF/1` istnieje już parser zero-copy z walidacją sekcji, loader do aktualnego `CompiledPolicy` oraz obsługa opcjonalnej sekcji `NAT_RULE_TABLE`.
+
+Najważniejsze bieżące ograniczenia implementacyjne są dwa:
+
+- loader filtrowania obsługuje obecnie dokładnie jedno drzewo reguł,
+- sekcja NAT jest parsowana i walidowana, ale nie jest jeszcze ładowana do aktywnego runtime NAT.
