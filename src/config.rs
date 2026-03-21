@@ -13,6 +13,8 @@ pub struct AppConfig {
 
     // Policy
     pub block_icmp: bool,
+    pub dummy_nat_enabled: bool,
+    pub dummy_nat_allow_all: bool,
 
     pub sync_ipc_socket_path: String,
     pub async_ipc_socket_path: String,
@@ -51,6 +53,16 @@ impl AppConfig {
                 .context("TUN_NETMASK must be a valid IPv4 address")?,
 
             block_icmp: std::env::var("BLOCK_ICMP")
+                .unwrap_or_else(|_| "false".into())
+                .to_lowercase()
+                == "true",
+
+            dummy_nat_enabled: std::env::var("DUMMY_NAT_ENABLED")
+                .unwrap_or_else(|_| "false".into())
+                .to_lowercase()
+                == "true",
+
+            dummy_nat_allow_all: std::env::var("DUMMY_NAT_ALLOW_ALL")
                 .unwrap_or_else(|_| "false".into())
                 .to_lowercase()
                 == "true",

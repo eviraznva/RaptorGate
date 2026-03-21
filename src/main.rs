@@ -10,16 +10,14 @@ mod rule_tree;
 mod tls;
 
 use crate::config::AppConfig;
-use tracing_subscriber::fmt::format::FmtSpan;
 use crate::data_plane::runtime as data_plane_runtime;
 use control_plane::firewall_communication::{FirewallIpcConfig, FirewallIpcRuntime};
+use tracing_subscriber::fmt::format::FmtSpan;
 
 #[tokio::main]
 async fn main() {
     let verbose_log_format = control_plane::logging::env_flag("RAPTORGATE_LOG_VERBOSE_FORMAT");
-    
     let log_level = std::env::var("RAPTORGATE_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
-    
     let env_filter = tracing_subscriber::EnvFilter::try_new(log_level.as_str())
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
@@ -34,7 +32,8 @@ async fn main() {
             FmtSpan::NEW | FmtSpan::CLOSE
         } else {
             FmtSpan::NONE
-        }).init();
+        })
+        .init();
 
     tracing::info!(
         log_level = %log_level,
@@ -53,7 +52,9 @@ async fn main() {
     let firewall_runtime = match FirewallIpcRuntime::start(
         FirewallIpcConfig::from(&config),
         config.block_icmp,
-    ).await {
+    )
+    .await
+    {
         Ok(runtime) => runtime,
         Err(err) => {
             eprintln!("Failed to start firewall IPC runtime: {err}");
@@ -61,11 +62,11 @@ async fn main() {
         }
     };
 
-    let handle = firewall_runtime.handle();
+    let state_rx = firewall_runtime.handle().state();
 
     tracing::info!("Starting data plane runtime");
 
-    if let Err(err) = data_plane_runtime::run(&config, handle.state()).await {
+    if let Err(err) = data_plane_runtime::run(&config, state_rx).await {
         eprintln!("Data plane error: {err}");
     }
 

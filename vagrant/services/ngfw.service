@@ -14,6 +14,8 @@ StandardError=journal
 User=root
 AmbientCapabilities=CAP_NET_RAW
 Environment="CAPTURE_INTERFACES=eth1,eth2"
+Environment="DUMMY_NAT_ENABLED=true"
+Environment="DUMMY_NAT_ALLOW_ALL=true"
 
 [Install]
 WantedBy=multi-user.target
