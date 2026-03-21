@@ -123,13 +123,35 @@ impl FirewallState {
         let mut next = (*self.snapshot()).clone();
 
         next.active_revision = active_revision;
+        next.mode = FirewallMode::Normal;
         next.last_error_code = 0;
+
+        self.publish_snapshot(Arc::new(next));
+    }
+
+    pub fn mark_policy_error(&self, last_error_code: u32) {
+        let mut next = (*self.snapshot()).clone();
+
+        next.mode = FirewallMode::Degraded;
+        next.last_error_code = last_error_code;
 
         self.publish_snapshot(Arc::new(next));
     }
 
     pub fn set_last_error_code(&self, last_error_code: u32) {
         let mut next = (*self.snapshot()).clone();
+
+        next.last_error_code = last_error_code;
+
+        self.publish_snapshot(Arc::new(next));
+    }
+
+    pub fn set_transient_error_code(&self, last_error_code: u32) {
+        let mut next = (*self.snapshot()).clone();
+
+        if next.mode == FirewallMode::Degraded {
+            return;
+        }
 
         next.last_error_code = last_error_code;
 
@@ -185,8 +207,8 @@ mod state_tests {
 
     use crate::policy::compiler;
     use crate::control_plane::types::firewall_mode::FirewallMode;
-    use crate::control_plane::firewall_communication::runtime::revision_store::RevisionStore;
     use super::{ActiveRevision, FirewallRuntimeState, FirewallState};
+    use crate::control_plane::firewall_communication::runtime::revision_store::RevisionStore;
 
     fn build_state() -> FirewallState {
         let policy = Arc::new(compiler::compile_fallback(false).unwrap());
@@ -229,5 +251,55 @@ mod state_tests {
         assert_eq!(snapshot.last_error_code, 203);
         assert_eq!(snapshot.mode, FirewallMode::Normal);
         assert_eq!(snapshot.active_revision.revision_id(), 0);
+    }
+
+    #[test]
+    fn policy_error_sets_degraded_mode_without_changing_revision() {
+        let state = build_state();
+
+        state.mark_policy_error(203);
+
+        let snapshot = state.snapshot();
+
+        assert_eq!(snapshot.last_error_code, 203);
+        assert_eq!(snapshot.mode, FirewallMode::Degraded);
+        assert_eq!(snapshot.active_revision.revision_id(), 0);
+    }
+
+    #[test]
+    fn activating_revision_clears_error_and_restores_normal_mode() {
+        let state = build_state();
+        
+        let policy = Arc::new(compiler::compile_fallback(false).unwrap());
+        
+        let active_revision = Arc::new(ActiveRevision::from_rgpf(
+            Arc::<[u8]>::from(Vec::<u8>::new().into_boxed_slice()),
+            policy,
+            320,
+            0xABCD,
+            1,
+        ));
+
+        state.mark_policy_error(203);
+        state.activate_revision(active_revision);
+
+        let snapshot = state.snapshot();
+
+        assert_eq!(snapshot.mode, FirewallMode::Normal);
+        assert_eq!(snapshot.last_error_code, 0);
+        assert_eq!(snapshot.active_revision.revision_id(), 320);
+    }
+
+    #[test]
+    fn transient_error_does_not_override_policy_degraded_state() {
+        let state = build_state();
+
+        state.mark_policy_error(203);
+        state.set_transient_error_code(200);
+
+        let snapshot = state.snapshot();
+
+        assert_eq!(snapshot.mode, FirewallMode::Degraded);
+        assert_eq!(snapshot.last_error_code, 203);
     }
 }

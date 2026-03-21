@@ -98,7 +98,7 @@ pub async fn dispatch_request(state: &FirewallState, meta: RequestMeta, frame: &
                     let active_revision = state.active_revision();
 
                     if active_revision.revision_id() == request.revision_id {
-                        state.set_last_error_code(0);
+                        state.activate_revision(active_revision.clone());
 
                         DispatchOutcome::Success {
                             meta,
@@ -128,7 +128,7 @@ pub async fn dispatch_request(state: &FirewallState, meta: RequestMeta, frame: &
                                 let status = map_revision_store_error(&err);
                                 let code = u32::from(status);
 
-                                state.set_last_error_code(code);
+                                state.mark_policy_error(code);
 
                                 DispatchOutcome::Error {
                                     meta,
@@ -189,6 +189,7 @@ mod sync_dispatch_tests {
     use crate::control_plane::ipc::ipc_frame::{IpcFrame, RGIPC_MAGIC, RGIPC_VERSION};
     use crate::control_plane::messages::requests::get_status_request::GetStatusRequest;
     use crate::control_plane::firewall_communication::runtime::revision_store::RevisionStore;
+    use crate::control_plane::messages::requests::activate_revision_request::ActivateRevisionRequest;
     
     use crate::control_plane::firewall_communication::runtime::state::{
         ActiveRevision, FirewallState, FirewallRuntimeState
@@ -274,5 +275,77 @@ mod sync_dispatch_tests {
             }
             other => panic!("unexpected dispatch outcome: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn dispatch_activate_revision_for_current_revision_clears_degraded_mode() {
+        let state = test_state();
+
+        state.mark_policy_error(u32::from(IpcStatus::ErrPolicyLoadFailed));
+
+        let frame = IpcFrame::new(
+            RGIPC_MAGIC,
+            RGIPC_VERSION,
+            IpcFrameKind::Request,
+            IpcFrameFlags::NONE,
+            IpcOpcode::ActivateRevision,
+            IpcStatus::Ok,
+            6,
+            10,
+            ActivateRevisionRequest { revision_id: 0 }.encode_payload().unwrap(),
+        ).unwrap();
+
+        let outcome =
+            dispatch_request(&state, RequestMeta::from_frame(&frame), &frame).await;
+
+        match outcome {
+            DispatchOutcome::Success {
+                payload: ResponsePayload::ActivateRevision(response),
+                ..
+            } => {
+                assert_eq!(response.loaded_revision_id, 0);
+                assert_eq!(response.policy_hash, 0);
+            }
+            other => panic!("unexpected dispatch outcome: {other:?}"),
+        }
+
+        let snapshot = state.snapshot();
+
+        assert_eq!(snapshot.mode, FirewallMode::Normal);
+        assert_eq!(snapshot.last_error_code, 0);
+        assert_eq!(snapshot.active_revision.revision_id(), 0);
+    }
+
+    #[tokio::test]
+    async fn dispatch_activate_revision_error_keeps_previous_revision_and_sets_degraded_mode() {
+        let state = test_state();
+
+        let frame = IpcFrame::new(
+            RGIPC_MAGIC,
+            RGIPC_VERSION,
+            IpcFrameKind::Request,
+            IpcFrameFlags::NONE,
+            IpcOpcode::ActivateRevision,
+            IpcStatus::Ok,
+            8,
+            12,
+            ActivateRevisionRequest { revision_id: 320 }.encode_payload().unwrap(),
+        ).unwrap();
+
+        let outcome =
+            dispatch_request(&state, RequestMeta::from_frame(&frame), &frame).await;
+
+        match outcome {
+            DispatchOutcome::Error { status, .. } => {
+                assert_eq!(status, IpcStatus::ErrPolicyLoadFailed);
+            }
+            other => panic!("unexpected dispatch outcome: {other:?}"),
+        }
+
+        let snapshot = state.snapshot();
+
+        assert_eq!(snapshot.mode, FirewallMode::Degraded);
+        assert_eq!(snapshot.last_error_code, u32::from(IpcStatus::ErrPolicyLoadFailed));
+        assert_eq!(snapshot.active_revision.revision_id(), 0);
     }
 }

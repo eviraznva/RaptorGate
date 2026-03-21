@@ -18,12 +18,7 @@ impl RevisionStore {
     }
 
     pub async fn load_active_revision(&self, expected_revision_id: u64) -> Result<Arc<ActiveRevision>, RevisionStoreError> {
-        let active_link = self.root.join("active");
-
-        let active_target = tokio::fs::read_link(&active_link).await
-            .map_err(RevisionStoreError::ReadActiveLink)?;
-
-        let revision_id_from_target = parse_active_revision_target(&active_target)?;
+        let (revision_id_from_target, active_target) = self.resolve_active_target().await?;
 
         if revision_id_from_target != expected_revision_id {
             return Err(RevisionStoreError::RevisionMismatch {
@@ -32,6 +27,31 @@ impl RevisionStore {
             });
         }
 
+        self.load_revision_from_target(active_target, expected_revision_id).await
+    }
+
+    pub async fn load_current_active_revision(&self) -> Result<Arc<ActiveRevision>, RevisionStoreError> {
+        let (revision_id_from_target, active_target) = self.resolve_active_target().await?;
+
+        self.load_revision_from_target(active_target, revision_id_from_target).await
+    }
+
+    async fn resolve_active_target(&self) -> Result<(u64, PathBuf), RevisionStoreError> {
+        let active_link = self.root.join("active");
+
+        let active_target = tokio::fs::read_link(&active_link).await
+            .map_err(RevisionStoreError::ReadActiveLink)?;
+
+        let revision_id_from_target = parse_active_revision_target(&active_target)?;
+
+        Ok((revision_id_from_target, active_target))
+    }
+
+    async fn load_revision_from_target(
+        &self,
+        active_target: PathBuf,
+        expected_revision_id: u64,
+    ) -> Result<Arc<ActiveRevision>, RevisionStoreError> {
         let revision_dir = if active_target.is_absolute() {
             active_target
         } else {
@@ -44,7 +64,7 @@ impl RevisionStore {
             .map_err(RevisionStoreError::ReadPolicy)?;
 
         let bytes: Arc<[u8]> = Arc::from(bytes.into_boxed_slice());
-        
+
         let file = RgpfFile::parse(bytes.as_ref())?;
 
         let actual_revision_id = file.header().revision_id.get();
@@ -110,29 +130,29 @@ fn parse_active_revision_target(target: &Path) -> Result<u64, RevisionStoreError
 
 #[cfg(test)]
 mod revision_store_tests {
+    use tokio::fs;
     use std::mem::size_of;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use tokio::fs;
+    use super::{parse_active_revision_target, RevisionStore};
 
+    use crate::policy::rgpf::sections::rgpf_header::RgpfHeader;
+    use crate::policy::rgpf::sections::section_table::SectionEntry;
     use crate::control_plane::errors::revision_store_error::RevisionStoreError;
+    use crate::policy::rgpf::sections::rule_tree::entries::{RuleEntry, RuleNode, RuleTreeSectionHeader};
+    
     use crate::policy::rgpf::constants::{
         NO_INDEX,
+        VERDICT_DROP,
         NODE_KIND_MATCH,
         NODE_KIND_VERDICT,
+        VERDICT_ALLOW_WARN,
+        SECTION_STRING_TABLE,
         PATTERN_KIND_WILDCARD,
         SECTION_DEFAULT_VERDICT,
         SECTION_RULE_TREE_TABLE,
-        SECTION_STRING_TABLE,
-        VERDICT_ALLOW_WARN,
-        VERDICT_DROP,
     };
-    use crate::policy::rgpf::sections::rgpf_header::RgpfHeader;
-    use crate::policy::rgpf::sections::rule_tree::entries::{RuleEntry, RuleNode, RuleTreeSectionHeader};
-    use crate::policy::rgpf::sections::section_table::SectionEntry;
-
-    use super::{parse_active_revision_target, RevisionStore};
 
     static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -167,12 +187,16 @@ mod revision_store_tests {
     #[tokio::test]
     async fn load_active_revision_reads_versions_symlink_and_policy() {
         let root = create_test_dir();
+        
         let versions_dir = root.join("versions");
+        
         let revision_dir = versions_dir.join("320");
+        
         let active_link = root.join("active");
 
         fs::create_dir_all(&revision_dir).await.unwrap();
         fs::write(revision_dir.join("policy.bin"), build_policy_bin(320)).await.unwrap();
+        
         #[cfg(unix)]
         std::os::unix::fs::symlink("versions/320", &active_link).unwrap();
 
@@ -187,14 +211,44 @@ mod revision_store_tests {
     }
 
     #[tokio::test]
-    async fn load_active_revision_rejects_target_revision_mismatch() {
+    async fn load_current_active_revision_reads_revision_from_target() {
         let root = create_test_dir();
+        
         let versions_dir = root.join("versions");
+        
         let revision_dir = versions_dir.join("320");
+        
         let active_link = root.join("active");
 
         fs::create_dir_all(&revision_dir).await.unwrap();
+        
         fs::write(revision_dir.join("policy.bin"), build_policy_bin(320)).await.unwrap();
+        
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("versions/320", &active_link).unwrap();
+
+        let store = RevisionStore::new(&root);
+
+        let revision = store.load_current_active_revision().await.unwrap();
+
+        assert_eq!(revision.revision_id(), 320);
+        assert_eq!(revision.policy_hash(), 0xABCD_EF12_3456_7890);
+    }
+
+    #[tokio::test]
+    async fn load_active_revision_rejects_target_revision_mismatch() {
+        let root = create_test_dir();
+        
+        let versions_dir = root.join("versions");
+        
+        let revision_dir = versions_dir.join("320");
+        
+        let active_link = root.join("active");
+
+        fs::create_dir_all(&revision_dir).await.unwrap();
+        
+        fs::write(revision_dir.join("policy.bin"), build_policy_bin(320)).await.unwrap();
+        
         #[cfg(unix)]
         std::os::unix::fs::symlink("versions/320", &active_link).unwrap();
 
@@ -208,11 +262,15 @@ mod revision_store_tests {
     #[tokio::test]
     async fn load_active_revision_rejects_invalid_active_target() {
         let root = create_test_dir();
+        
         let current_dir = root.join("current").join("320");
+        
         let active_link = root.join("active");
 
         fs::create_dir_all(&current_dir).await.unwrap();
+        
         fs::write(current_dir.join("policy.bin"), build_policy_bin(320)).await.unwrap();
+        
         #[cfg(unix)]
         std::os::unix::fs::symlink("current/320", &active_link).unwrap();
 
@@ -225,14 +283,17 @@ mod revision_store_tests {
 
     fn create_test_dir() -> PathBuf {
         let id = NEXT_TEST_DIR_ID.fetch_add(1, Ordering::Relaxed);
+        
         let path = std::env::temp_dir().join(format!("rg-revision-store-tests-{id}"));
 
         let _ = std::fs::remove_dir_all(&path);
+        
         std::fs::create_dir_all(&path).unwrap();
 
         path
     }
 
+    //noinspection DuplicatedCode
     fn build_policy_bin(revision_id: u64) -> Vec<u8> {
         let strings = build_string_table(&["default", "Loaded from RGPF", "allow-from-rgpf"]);
 
@@ -289,6 +350,7 @@ mod revision_store_tests {
 
         let crc = crc32c_with_zeroed_field(&bytes, file_crc32c_offset());
         let crc_offset = file_crc32c_offset();
+        
         bytes[crc_offset..crc_offset + 4].copy_from_slice(&crc.to_le_bytes());
 
         bytes
@@ -305,6 +367,7 @@ mod revision_store_tests {
         bytes
     }
 
+    //noinspection DuplicatedCode
     fn build_rule_tree_section(name_off: u32, desc_off: u32, msg_off: u32) -> Vec<u8> {
         let header_len = size_of::<RuleTreeSectionHeader>();
         let rules_offset = header_len as u64;
@@ -393,6 +456,7 @@ mod revision_store_tests {
         bytes
     }
 
+    //noinspection DuplicatedCode
     fn write_header(
         bytes: &mut [u8],
         revision_id: u64,
@@ -440,9 +504,11 @@ mod revision_store_tests {
 
     fn crc32c_with_zeroed_field(bytes: &[u8], field_offset: usize) -> u32 {
         let prefix = &bytes[..field_offset];
+        
         let suffix = &bytes[field_offset + 4..];
 
         let mut crc = crc32c_update(!0u32, prefix);
+        
         crc = crc32c_update(crc, &[0, 0, 0, 0]);
         crc = crc32c_update(crc, suffix);
 
