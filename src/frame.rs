@@ -11,6 +11,8 @@ pub(crate) trait Frame {
     fn dst_port(&self) -> Option<Port>;
     fn hour(&self) -> Hour;
     fn day_of_week(&self) -> Weekday;
+    //TODO: temporary hack
+    fn transport_data(&'_ self) -> Option<&'_ TransportSlice<'_>>;
 }
 
 #[derive(Debug, Clone, Copy, From, Display, PartialEq, PartialOrd, Hash, Eq, Ord)]
@@ -120,7 +122,7 @@ pub enum Protocol { Tcp, Udp, Icmp }
 pub enum Weekday { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
 
 // TODO: encode arrival time as `Instant`
-pub struct RealFrame {
+pub struct RealFrame<'a> {
     ip_ver: IpVer,
     src_ip: IpAddr,
     dst_ip: IpAddr,
@@ -129,10 +131,12 @@ pub struct RealFrame {
     dst_port: Option<Port>,
     hour: Hour,
     day_of_week: Weekday,
+    // TODO: temporary
+    transport_data: Option<TransportSlice<'a>>
 }
 
-impl RealFrame {
-    pub fn from_sliced(packet: &SlicedPacket) -> Option<Self> {
+impl<'a> RealFrame<'a> {
+    pub fn from_sliced(packet: &SlicedPacket<'a>) -> Option<Self> {
         let (ip_ver, src_ip, dst_ip) = match &packet.net {
             Some(NetSlice::Ipv4(ipv4)) => {
                 let h = ipv4.header();
@@ -146,7 +150,8 @@ impl RealFrame {
             _ => return None,
         };
 
-        let (protocol, src_port, dst_port) = match &packet.transport {
+        let transport = &packet.transport;
+        let (protocol, src_port, dst_port) = match transport {
             Some(TransportSlice::Tcp(tcp)) => (
                 Protocol::Tcp,
                 Some(Port::from(tcp.source_port())),
@@ -189,11 +194,12 @@ impl RealFrame {
             dst_port,
             hour,
             day_of_week,
+            transport_data: transport.clone(),
         })
     }
 }
 
-impl Frame for RealFrame {
+impl Frame for RealFrame<'_> {
     fn ip_ver(&self) -> IpVer {
         self.ip_ver
     }
@@ -217,5 +223,9 @@ impl Frame for RealFrame {
     }
     fn day_of_week(&self) -> Weekday {
         self.day_of_week
+    }
+
+    fn transport_data(&'_ self) -> Option<&'_ TransportSlice<'_>> {
+        self.transport_data.as_ref()
     }
 }

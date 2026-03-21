@@ -1,16 +1,42 @@
-use std::{net::IpAddr, sync::Arc, time::{Duration, Instant}};
+use std::{marker::PhantomData, net::IpAddr, sync::Arc, time::{Duration, Instant}};
 
+use bitflags::{bitflags, bitflags_match};
 use dashmap::{DashMap, Entry};
-use derive_more::{Display, Error};
+use derive_more::{Display};
+use etherparse::{TcpSlice, TransportSlice, err::tcp::HeaderSliceError};
 use ngfw::frame::RealFrame;
 use ringbuffer::{AllocRingBuffer, RingBuffer};
+use thiserror::Error;
 use unordered_pair::UnorderedPair;
 
 use crate::frame::{Frame, Port};
 
 pub struct TcpSessionTracker<T> {
-    sessions: DashMap<TcpIdentifier, TcpSessionState>,
+    sessions: DashMap<TcpIdentifier, TcpSession>,
     buffer: Arc<PacketBuffer<T>>,
+    marker: PhantomData<T>,
+}
+
+#[derive(Debug, Clone)]
+struct TcpPacketInfo {
+    flags: TcpFlags,
+    sequence_number: u32,
+    window_size: u16,
+    src: EndpointIdentifier,
+    dst: EndpointIdentifier,
+}
+
+impl TcpPacketInfo {
+    fn new(tcp: &TcpSlice, src: EndpointIdentifier, dst: EndpointIdentifier) -> Result<Self, TcpSessionError> {
+        let Some(flags) = TcpFlags::from_bits(tcp.header_slice()[TcpOffsets::FLAGS]) else { return Err(TcpSessionError::ZeroFlagPacket); /*FIXME: placeholder*/ };
+        Ok(Self {
+            flags,
+            sequence_number: tcp.sequence_number(),
+            window_size: tcp.window_size(),
+            src,
+            dst,
+        })
+    }
 }
 
 impl<T> TcpSessionTracker<T> where T: Frame + Send + Sync + 'static {
@@ -18,57 +44,129 @@ impl<T> TcpSessionTracker<T> where T: Frame + Send + Sync + 'static {
         Arc::new(Self {
             sessions: DashMap::new(),
             buffer: PacketBuffer::new(),
+            marker: PhantomData,
         })
     }
 
-    pub fn process_packet(&self, frame: T) {
+    pub fn process_packet(&self, packet: TcpPacketInfo) -> Result<Option<TcpSessionState>, TcpSessionError> {
+        let endpoints = (
+            packet.src.clone(),
+            packet.dst.clone(),
+        );
+
         let id = TcpIdentifier {
-            endpoints: UnorderedPair::from(
-               (Endpoint {
-                   ip: frame.src_ip().into(),
-                   port: frame.src_port().unwrap_or(Port::from(0)),
-               },
-               Endpoint {
-                   ip: frame.dst_ip().into(),
-                   port: frame.dst_port().unwrap_or(Port::from(0)),
-               })
-           )
+            endpoints: UnorderedPair::from(endpoints.clone()),
         };
+
+
+                // let Some(flags) = TcpFlags::from_bits(data.header_slice()[TcpOffsets::FLAGS]) else {
+                //     return Err(TcpSessionError::ZeroFlagPacket);
+                // };
+
+        let entry = self.sessions.entry(id.clone());
+
+        match entry {
+            Entry::Occupied(e) => {
+                // match e.get().state {
+                //     // TcpSessionState::Handshake => { bitflags_match!( },
+                //     // TcpSessionState::Established => { bitflags_match!( },
+                //     // TcpSessionState::Closed => { bitflags_match!( },
+                //     // TcpSessionState::ActiveTeardown => { bitflags_match!( },
+                //     // TcpSessionState::PassiveTeardown => { bitflags_match!( },
+                // }
+            }
+
+            Entry::Vacant(e) => {
+                return bitflags_match!(&packet.flags, {
+                    &TcpFlags::SYN => { 
+                        e.insert(TcpSession { 
+                            state: TcpSessionState::Handshake,
+                            initiator: Endpoint { next_expected_seq: packet.sequence_number.wrapping_add(1), max_window_size: packet.window_size.into()},
+                            receiver: Endpoint { next_expected_seq: 0, max_window_size: 0 } //TODO: is there a better way to express this? 
+                        });
+
+                        // if let Some(session) = self.buffer.get_session(&id) {
+                        //     if let Some(syn_ack) = session.packets.iter().find_map(|tcp| {
+                        //         if tcp.flags.contains(TcpFlags::SYN | TcpFlags::ACK) && tcp.src == packet.dst {
+                        //             Some(tcp.clone())
+                        //         } else {
+                        //             None
+                        //         }
+                        //
+                        //     }) {
+                        //         self.process_packet(*syn_ack)?;
+                        //     }
+                        // }
+
+
+                        if let Some(session) = self.buffer.get_session(&id) {
+                            for p in session.value().iter() {
+                                self.process_packet(p.clone())?;
+                            }
+                        }
+
+                        Ok(Some(TcpSessionState::Handshake))
+                    },
+
+                    _ => { 
+                        self.buffer.add_packet(id.clone(), packet.clone())?;
+                        Ok(None)
+                    },
+                });
+            }
+        }
+
+        todo!()
     }
 }
+#[derive(Error, Debug)]
+pub enum TcpSessionError {
+    #[error("Packet with no flags")]
+    ZeroFlagPacket,
 
-#[derive(Clone, Hash, PartialEq, Eq)]
-struct TcpIdentifier {
-    endpoints: UnorderedPair<Endpoint>
+    #[error("Buffer error: {0}")]
+    BufferError(#[from] PacketBufferError),
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct TcpIdentifier {
+    endpoints: UnorderedPair<EndpointIdentifier>
+}
 
-#[derive(Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
-struct Endpoint {
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
+struct EndpointIdentifier {
     ip: IpAddr,
     port: Port,
 }
 
-struct PacketBuffer<T> {
-    waiting: DashMap<TcpIdentifier, SessionPackets<T>>
+#[derive(Debug)]
+struct Endpoint {
+    next_expected_seq: u32,
+    max_window_size: u32,
 }
 
-const MAX_PENDING_PACKETS: usize = 4096;
-const PENDING_TIMEOUT: Duration = Duration::from_millis(250);
-const PENDING_PACKETS_PER_SESSION: usize = 16;
+struct PacketBuffer<T> {
+    waiting: DashMap<TcpIdentifier, SessionPackets>,
+    marker: PhantomData<T>,
+}
 
 impl<T> PacketBuffer<T> where T: Frame + Send + Sync + 'static {
     pub fn new() -> Arc<Self> {
         let buffer = Arc::new(Self {
             waiting: DashMap::new(),
+            marker: PhantomData,
         });
 
-        let sweeper = Arc::clone(&buffer);
+        let sweeper: std::sync::Weak<Self> = Arc::downgrade(&buffer);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(PENDING_TIMEOUT);
             loop {
                 interval.tick().await;
-                sweeper.sweep();
+                if let Some(target) = sweeper.upgrade() {
+                    target.sweep();
+                } else {
+                    break;
+                }
             }
         });
 
@@ -81,7 +179,7 @@ impl<T> PacketBuffer<T> where T: Frame + Send + Sync + 'static {
         });
     }
 
-    fn add_packet(&self, id: TcpIdentifier, frame: T) -> Result<(), PacketBufferError>  {
+    fn add_packet(&self, id: TcpIdentifier, tcp: TcpPacketInfo) -> Result<(), PacketBufferError>  {
         // we preallocate the buffers for each session so we can perform a simple check like this
         let is_full = self.waiting.len() * PENDING_PACKETS_PER_SESSION >= MAX_PENDING_PACKETS;
 
@@ -91,7 +189,8 @@ impl<T> PacketBuffer<T> where T: Frame + Send + Sync + 'static {
                     occupied.remove_entry();
                     return Err(PacketBufferError::SessionExpired);
                 }
-                occupied.get_mut().packets.enqueue(frame);
+
+                occupied.get_mut().packets.enqueue(tcp);
                 Ok(())
             }
 
@@ -101,44 +200,80 @@ impl<T> PacketBuffer<T> where T: Frame + Send + Sync + 'static {
                 }
 
                 let mut session_packets = SessionPackets::new(Instant::now());
-                session_packets.packets.enqueue(frame);
+
+                session_packets.packets.enqueue(tcp);
                 vacant.insert(session_packets);
                 Ok(())
             }
         }
     }
+
+    fn get_session(&self, id: &TcpIdentifier) -> Option<dashmap::mapref::one::Ref<'_, TcpIdentifier, SessionPackets>> {
+        self.waiting.get(id)
+    }
 }
 
-struct SessionPackets<T> {
-    // TODO: store only l3+ info here instead of l2
-    packets: AllocRingBuffer<T>,
+bitflags! {
+    #[derive(Debug, PartialEq, Clone)]
+    struct TcpFlags: u8 {
+        const SYN = 0b0001;
+        const ACK = 0b0010;
+        const RST = 0b0100;
+        const FIN = 0b1000;
+    }
+}
+
+
+const MAX_PENDING_PACKETS: usize = 4096;
+const PENDING_TIMEOUT: Duration = Duration::from_millis(250);
+const PENDING_PACKETS_PER_SESSION: usize = 16;
+
+
+struct SessionPackets {
+    packets: AllocRingBuffer<TcpPacketInfo>,
     first_packet_arrival: Instant,
 }
 
-impl<T> SessionPackets<T> where T: Frame {
+impl SessionPackets {
     fn new(arrival_time: Instant) -> Self {
         Self {
             packets: AllocRingBuffer::new(PENDING_PACKETS_PER_SESSION),
             first_packet_arrival: arrival_time,
         }
     }
+
+    fn iter(&self) -> impl Iterator<Item = &TcpPacketInfo> {
+        self.packets.iter()
+    }
 }
 
+
+enum TcpOffsets {}
+
+impl TcpOffsets {
+    pub const FLAGS: usize = 13;
+}
+
+
 struct TcpSession {
-    start_time: Instant,
     state: TcpSessionState,
+    initiator: Endpoint,
+    receiver: Endpoint,
 }
 
 enum TcpSessionState {
+    Handshake,
     Established,
     Closed,
+    ActiveTeardown,
+    PassiveTeardown,
 }
 
-#[derive(Error, Debug, Display)]
+#[derive(Error, Debug)]
 pub enum PacketBufferError {
-    #[display("TCP session expired")]
+    #[error("TCP session expired")]
     SessionExpired,
-    #[display("Packet buffer full")]
+    #[error("Packet buffer full")]
     BufferFull,
 }
 
@@ -192,6 +327,10 @@ mod tests {
         fn day_of_week(&self) -> Weekday {
             self.day_of_week
         }
+
+        fn transport_data(&'_ self) -> Option<&'_ etherparse::TransportSlice<'_>> {
+            None
+        }
     }
 
     fn mk_id(i: usize) -> TcpIdentifier {
@@ -202,9 +341,9 @@ mod tests {
 
         TcpIdentifier {
             endpoints: UnorderedPair::from((
-                Endpoint { ip: src_ip, port: src_port },
-                Endpoint { ip: dst_ip, port: dst_port },
-            )),
+                               EndpointIdentifier { ip: src_ip, port: src_port },
+                               EndpointIdentifier { ip: dst_ip, port: dst_port },
+                       )),
         }
     }
 

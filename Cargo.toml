@@ -37,6 +37,7 @@ ring = "0.17"
 dashmap = "6.1.0"
 ringbuffer = "0.16.0"
 unordered-pair = "0.2.5"
+bitflags = "2.11.0"
 
 [build-dependencies]
 protoc-bin-vendored = "3.2.0"
