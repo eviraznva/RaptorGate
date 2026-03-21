@@ -10,7 +10,6 @@ mod rule_tree;
 mod tls;
 
 use crate::config::AppConfig;
-use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::runtime as data_plane_runtime;
 use control_plane::firewall_communication::{FirewallIpcConfig, FirewallIpcRuntime};
 
@@ -44,9 +43,7 @@ async fn main() {
 
     let handle = firewall_runtime.handle();
 
-    let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
-
-    if let Err(err) = data_plane_runtime::run(&config, policy_store).await {
+    if let Err(err) = data_plane_runtime::run(&config, handle.state()).await {
         eprintln!("Data plane error: {err}");
     }
 

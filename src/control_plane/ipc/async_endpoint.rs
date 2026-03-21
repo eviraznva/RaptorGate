@@ -2,12 +2,12 @@ use tokio::net::UnixStream;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::control_plane::ipc::ipc_client::IpcClient;
+use crate::control_plane::types::ipc_opcode::IpcOpcode;
 use crate::control_plane::types::ipc_status::IpcStatus;
 use crate::control_plane::ipc::ipc_counters::IpcCounters;
 use crate::control_plane::ipc::ipc_message::IpcEventMessage;
 use crate::control_plane::types::ipc_frame_kind::IpcFrameKind;
 use crate::control_plane::types::ipc_frame_flags::IpcFrameFlags;
-use crate::control_plane::types::ipc_opcode::IpcOpcode;
 use crate::control_plane::ipc::ipc_frame::{IpcFrame, RGIPC_MAGIC, RGIPC_VERSION};
 use crate::control_plane::errors::async_ipc_endpoint_error::AsyncIpcEndpointError;
 
@@ -127,9 +127,10 @@ mod async_endpoint_tests {
     use super::AsyncIpcEndpoint;
     use crate::control_plane::types::ipc_status::IpcStatus;
     use crate::control_plane::types::ipc_opcode::IpcOpcode;
+    use crate::control_plane::ipc::ipc_message::{IpcMessage};
+    use crate::control_plane::types::firewall_mode::FirewallMode;
     use crate::control_plane::types::ipc_frame_kind::IpcFrameKind;
     use crate::control_plane::types::ipc_frame_flags::IpcFrameFlags;
-    use crate::control_plane::ipc::ipc_message::{FirewallMode, IpcMessage};
     use crate::control_plane::messages::events::heartbeat_event::HeartbeatEvent;
     use crate::control_plane::ipc::ipc_frame::{IpcFrame, RGIPC_MAGIC, RGIPC_VERSION};
     use crate::control_plane::errors::async_ipc_endpoint_error::AsyncIpcEndpointError;

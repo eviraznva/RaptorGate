@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use tokio::sync::mpsc;
+
 use crate::control_plane::types::ipc_opcode::IpcOpcode;
 use crate::control_plane::ipc::ipc_message::IpcEventMessage;
 use crate::control_plane::errors::payload_error::PayloadError;
@@ -76,12 +77,11 @@ pub fn channel(capacity: usize) -> (EventRingHandle, mpsc::Receiver<QueuedEvent>
 
 #[cfg(test)]
 mod event_ring_tests {
-    use crate::control_plane::ipc::ipc_message::FirewallMode;
-    use crate::control_plane::messages::events::heartbeat_event::HeartbeatEvent;
-
     use super::{EventRingError, channel};
     use crate::control_plane::types::ipc_opcode::IpcOpcode;
+    use crate::control_plane::types::firewall_mode::FirewallMode;
     use crate::control_plane::types::ipc_frame_flags::IpcFrameFlags;
+    use crate::control_plane::messages::events::heartbeat_event::HeartbeatEvent;
 
     #[tokio::test]
     async fn push_enqueues_encoded_event() {

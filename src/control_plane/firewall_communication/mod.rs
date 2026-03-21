@@ -6,3 +6,4 @@ mod publish;
 
 pub use config::FirewallIpcConfig;
 pub use runtime::runtime::FirewallIpcRuntime;
+pub use runtime::state::FirewallRuntimeState;

@@ -9,11 +9,11 @@ use crate::control_plane::ipc::sync_endpoint::{RequestMeta, SyncIpcEndpoint};
 use crate::control_plane::errors::sync_ipc_endpoint_error::SyncIpcEndpointError;
 use crate::control_plane::firewall_communication::runtime::state::FirewallState;
 use crate::control_plane::messages::responses::get_status_response::GetStatusResponse;
+use crate::control_plane::messages::responses::activate_revision_response::ActivateRevisionResponse;
 use crate::control_plane::messages::responses::get_network_interfaces_response::GetNetworkInterfacesResponse;
 
 use crate::control_plane::firewall_communication::sync::dispatch::{
-    dispatch_request,
-    DispatchOutcome, ResponsePayload
+    dispatch_request, DispatchOutcome, ResponsePayload
 };
 
 /// Obsługuje jedno połączenie synchroniczne UDS.
@@ -69,6 +69,9 @@ pub async fn run(stream: UnixStream, state: FirewallState, shutdown: Cancellatio
                             }
                             ResponsePayload::NetworkInterfaces(response) => {
                                 let _ = endpoint.send_response::<GetNetworkInterfacesResponse>(&meta, &response).await;
+                            }
+                            ResponsePayload::ActivateRevision(response) => {
+                                let _ = endpoint.send_response::<ActivateRevisionResponse>(&meta, &response).await;
                             }
                         }
                     }

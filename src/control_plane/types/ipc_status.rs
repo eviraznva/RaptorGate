@@ -14,6 +14,8 @@ pub enum IpcStatus {
     ErrInternal = 200,
     ErrPolicyNotLoaded = 201,
     ErrInterfaceEnumFailed = 202,
+    ErrPolicyLoadFailed = 203,
+    ErrPolicyRevisionMismatch = 204,
 }
 
 impl IpcStatus {
@@ -39,6 +41,8 @@ impl TryFrom<u32> for IpcStatus {
             200 => Ok(Self::ErrInternal),
             201 => Ok(Self::ErrPolicyNotLoaded),
             202 => Ok(Self::ErrInterfaceEnumFailed),
+            203 => Ok(Self::ErrPolicyLoadFailed),
+            204 => Ok(Self::ErrPolicyRevisionMismatch),
             _ => Err(IpcFrameError::InvalidStatus(value)),
         }
     }
@@ -66,6 +70,14 @@ mod ipc_status_tests {
         assert_eq!(
             IpcStatus::try_from(202),
             Ok(IpcStatus::ErrInterfaceEnumFailed)
+        );
+        assert_eq!(
+            IpcStatus::try_from(203),
+            Ok(IpcStatus::ErrPolicyLoadFailed)
+        );
+        assert_eq!(
+            IpcStatus::try_from(204),
+            Ok(IpcStatus::ErrPolicyRevisionMismatch)
         );
     }
 

@@ -2,15 +2,19 @@ use std::sync::Arc;
 
 use pcap::Direction;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio::task;
 use tun::AsyncDevice;
 
 use crate::config::AppConfig;
 use crate::data_plane::packet_handler::handle_packet;
-use crate::data_plane::policy_store::PolicyStore;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
+use crate::control_plane::firewall_communication::FirewallRuntimeState;
 
-pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Result<()> {
+pub async fn run(
+    config: &AppConfig,
+    state_rx: watch::Receiver<Arc<FirewallRuntimeState>>,
+) -> anyhow::Result<()> {
     let all_devices = pcap::Device::list()?;
 
     let devices: Vec<pcap::Device> = all_devices
@@ -49,8 +53,8 @@ pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Resu
 
     for device in devices {
         let tun = Arc::clone(&tun);
-        let policies = Arc::clone(&policies);
         let defrag = Arc::clone(&defrag);
+        let state_rx = state_rx.clone();
         let name = device.name.clone();
         let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
 
@@ -97,8 +101,9 @@ pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Resu
         let handler_name = name;
         let handle = tokio::spawn(async move {
             let mut rx = rx;
+            let state_rx = state_rx;
             while let Some(data) = rx.recv().await {
-                handle_packet(&handler_name, &data, &tun, &policies, &defrag).await;
+                handle_packet(&handler_name, &data, &tun, &state_rx, &defrag).await;
             }
             eprintln!("[{handler_name}] Handler task exiting (sender dropped)");
         });

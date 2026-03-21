@@ -36,12 +36,12 @@ pub async fn run(
                                         .await
                                     {
                                         tracing::warn!(error = %err, "Async IPC queued event send failed; reconnecting");
-                                        
-                                        state.update_status(|status| status.last_error_code = 200).await;
-                                        
+
+                                        state.set_last_error_code(200);
+
                                         break;
                                     } else {
-                                        state.update_status(|status| status.last_error_code = 0).await;
+                                        state.set_last_error_code(0);
                                     }
                                 }
                                 None => return,
@@ -53,12 +53,12 @@ pub async fn run(
 
                             if let Err(err) = endpoint.send_event(&event, IpcFrameFlags::NONE).await {
                                 tracing::warn!(error = %err, "Async IPC heartbeat send failed; reconnecting");
-                                
-                                state.update_status(|status| status.last_error_code = 200).await;
-                                
+
+                                state.set_last_error_code(200);
+
                                 break;
                             } else {
-                                state.update_status(|status| status.last_error_code = 0).await;
+                                state.set_last_error_code(0);
                             }
                         }
                     }
@@ -66,9 +66,9 @@ pub async fn run(
             }
             Err(err) => {
                 tracing::warn!(error = %err, socket = %config.async_socket_path, "Async IPC connect failed");
-                
-                state.update_status(|status| status.last_error_code = 200).await;
-                
+
+                state.set_last_error_code(200);
+
                 tokio::select! {
                     _ = shutdown.cancelled() => return,
                     _ = tokio::time::sleep(config.async_reconnect_interval) => {}
