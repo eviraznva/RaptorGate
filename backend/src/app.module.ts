@@ -1,8 +1,6 @@
 import { RolesPermissionsGuard } from './infrastructure/adapters/roles-permissions.guard';
-import { PkiController } from './presentation/controllers/pki.controller';
 import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
-import { GrpcModule } from './infrastructure/grpc/grpc.module';
 import { ZonePairsModule } from './modules/zone-pairs.module';
 import { validate } from './shared/config/env.validation';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -10,6 +8,7 @@ import { AuthModule } from './modules/auth.module';
 import { ZoneModule } from './modules/zone.module';
 import { PassportModule } from '@nestjs/passport';
 import { AppController } from './app.controller';
+import { NatModule } from './modules/nat.module';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { Module } from '@nestjs/common';
@@ -30,9 +29,9 @@ import { Module } from '@nestjs/common';
     AuthModule,
     ZoneModule,
     ZonePairsModule,
-    GrpcModule,
+    NatModule,
   ],
-  controllers: [AppController, PkiController],
+  controllers: [AppController],
   providers: [
     JwtStrategy,
     { provide: APP_GUARD, useClass: JwtAuthGuard },

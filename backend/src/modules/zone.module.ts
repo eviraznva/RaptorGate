@@ -1,4 +1,6 @@
+import { JsonZonePairRepository } from 'src/infrastructure/persistence/repositories/json-zone-pair.repository';
 import { JsonZoneRepository } from 'src/infrastructure/persistence/repositories/json-zone.repository';
+import { ZONE_PAIR_REPOSITORY_TOKEN } from 'src/domain/repositories/zone-pair.repository';
 import { GetAllZonesUseCase } from 'src/application/use-cases/get-all-zones.use-case';
 import { TOKEN_SERVICE_TOKEN } from 'src/application/ports/token-service.interface';
 import { CreateZoneUseCase } from 'src/application/use-cases/create-zone.use-case';
@@ -25,6 +27,10 @@ import { JwtService } from '@nestjs/jwt';
     {
       provide: ZONE_REPOSITORY_TOKEN,
       useClass: JsonZoneRepository,
+    },
+    {
+      provide: ZONE_PAIR_REPOSITORY_TOKEN,
+      useClass: JsonZonePairRepository,
     },
     {
       provide: TOKEN_SERVICE_TOKEN,
