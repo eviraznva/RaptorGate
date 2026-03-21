@@ -7,6 +7,7 @@ use tokio::task;
 use tun::AsyncDevice;
 
 use crate::config::AppConfig;
+use crate::data_plane::nat::dummy_lab::NatLabRuntime;
 use crate::data_plane::packet_handler::handle_packet;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::control_plane::firewall_communication::FirewallRuntimeState;
@@ -47,6 +48,12 @@ pub async fn run(
     )?);
 
     let defrag = Arc::new(IpDefragEngine::new(DefragConfig::default()));
+    let nat = Arc::new(if config.dummy_nat_enabled {
+        println!("Dummy NAT lab enabled for Vagrant topology");
+        NatLabRuntime::dummy_vagrant(config.dummy_nat_allow_all)
+    } else {
+        NatLabRuntime::disabled()
+    });
 
     let pcap_timeout_ms = config.pcap_timeout_ms;
     let mut handles = Vec::new();
@@ -55,6 +62,7 @@ pub async fn run(
         let tun = Arc::clone(&tun);
         let defrag = Arc::clone(&defrag);
         let state_rx = state_rx.clone();
+        let nat = Arc::clone(&nat);
         let name = device.name.clone();
         let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
 
@@ -103,7 +111,7 @@ pub async fn run(
             let mut rx = rx;
             let state_rx = state_rx;
             while let Some(data) = rx.recv().await {
-                handle_packet(&handler_name, &data, &tun, &state_rx, &defrag).await;
+                handle_packet(&handler_name, &data, &tun, &state_rx, &defrag, &nat).await;
             }
             eprintln!("[{handler_name}] Handler task exiting (sender dropped)");
         });
