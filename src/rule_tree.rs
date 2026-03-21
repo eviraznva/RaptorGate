@@ -3,7 +3,7 @@ pub mod parsing;
 
 use derive_more::{Debug, Display, Error, PartialEq};
 
-use crate::{frame::{Hour, IP, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
+use crate::{frame::{Hour, IpGlobbable, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
 pub use matcher::MatchBuilder;
 
 pub struct RuleTree {
@@ -67,7 +67,7 @@ pub enum Pattern {
 
 #[derive(Debug, Display, Clone, Copy, PartialEq)]
 pub enum FieldValue {
-    Ip(IP),
+    Ip(IpGlobbable),
     IpVer(IpVer),
     DayOfWeek(Weekday),
     Hour(Hour),
@@ -187,8 +187,8 @@ mod tests {
 
     use super::*;
 
-    fn dummy_ip() -> IP {
-        IP::new([
+    fn dummy_ip() -> IpGlobbable {
+        IpGlobbable::new([
             Octet::Value(10),
             Octet::Value(0),
             Octet::Value(0),

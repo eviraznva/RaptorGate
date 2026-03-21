@@ -1,11 +1,11 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{net::IpAddr, time::{SystemTime, UNIX_EPOCH}};
 use derive_more::{Debug, Display, Eq, Error, From};
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 pub(crate) trait Frame {
     fn ip_ver(&self) -> IpVer;
-    fn src_ip(&self) -> IP;
-    fn dst_ip(&self) -> IP;
+    fn src_ip(&self) -> IpAddr;
+    fn dst_ip(&self) -> IpAddr;
     fn protocol(&self) -> Protocol;
     fn src_port(&self) -> Option<Port>;
     fn dst_port(&self) -> Option<Port>;
@@ -13,15 +13,15 @@ pub(crate) trait Frame {
     fn day_of_week(&self) -> Weekday;
 }
 
-#[derive(Debug, Clone, Copy, From, Display, PartialEq, PartialOrd, Hash, Eq)]
+#[derive(Debug, Clone, Copy, From, Display, PartialEq, PartialOrd, Hash, Eq, Ord)]
 pub struct Port(u16);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct IP {
+pub struct IpGlobbable {
     octets: [Octet; 4],
 }
 
-impl IP {
+impl IpGlobbable {
     pub fn new(octets: [Octet; 4]) -> Self {
         Self { octets }
     }
@@ -32,7 +32,7 @@ pub enum IPError {
     ParseFromStringError,
 }
 
-impl TryFrom<String> for IP {
+impl TryFrom<String> for IpGlobbable {
     type Error = IPError;
     fn try_from(value: String) -> Result<Self, Self::Error> {
         let parts: Vec<&str> = value.split('.').collect();
@@ -48,11 +48,28 @@ impl TryFrom<String> for IP {
             }
         }
 
-        Ok(IP::new(octets))
+        Ok(IpGlobbable::new(octets))
     }
 }
 
-impl std::fmt::Display for IP {
+impl From<IpAddr> for IpGlobbable {
+    fn from(ip: IpAddr) -> Self {
+        match ip {
+            IpAddr::V4(ipv4) => {
+                let octets = ipv4.octets();
+                IpGlobbable::new([
+                    Octet::Value(octets[0]),
+                    Octet::Value(octets[1]),
+                    Octet::Value(octets[2]),
+                    Octet::Value(octets[3]),
+                ])
+            }
+            _ => todo!("IPv6 not supported yet"),
+        }
+    }
+}
+
+impl std::fmt::Display for IpGlobbable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -105,8 +122,8 @@ pub enum Weekday { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
 // TODO: encode arrival time as `Instant`
 pub struct RealFrame {
     ip_ver: IpVer,
-    src_ip: IP,
-    dst_ip: IP,
+    src_ip: IpAddr,
+    dst_ip: IpAddr,
     protocol: Protocol,
     src_port: Option<Port>,
     dst_port: Option<Port>,
@@ -119,22 +136,10 @@ impl RealFrame {
         let (ip_ver, src_ip, dst_ip) = match &packet.net {
             Some(NetSlice::Ipv4(ipv4)) => {
                 let h = ipv4.header();
-                let s = h.source();
-                let d = h.destination();
                 (
                     IpVer::V4,
-                    IP::new([
-                        Octet::Value(s[0]),
-                        Octet::Value(s[1]),
-                        Octet::Value(s[2]),
-                        Octet::Value(s[3]),
-                    ]),
-                    IP::new([
-                        Octet::Value(d[0]),
-                        Octet::Value(d[1]),
-                        Octet::Value(d[2]),
-                        Octet::Value(d[3]),
-                    ]),
+                    IpAddr::V4(h.source_addr()),
+                    IpAddr::V4(h.destination_addr()),
                 )
             }
             // No IPv6 for now
@@ -192,10 +197,10 @@ impl Frame for RealFrame {
     fn ip_ver(&self) -> IpVer {
         self.ip_ver
     }
-    fn src_ip(&self) -> IP {
+    fn src_ip(&self) -> IpAddr {
         self.src_ip
     }
-    fn dst_ip(&self) -> IP {
+    fn dst_ip(&self) -> IpAddr {
         self.dst_ip
     }
     fn protocol(&self) -> Protocol {

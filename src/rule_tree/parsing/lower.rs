@@ -1,7 +1,7 @@
 use derive_more::Display;
 use thiserror::Error;
 
-use crate::frame::{Hour, IpVer, Port, Protocol, Weekday, IP};
+use crate::frame::{Hour, IpVer, Port, Protocol, Weekday, IpGlobbable};
 use crate::rule_tree::matcher::Match;
 use crate::rule_tree::parsing::ast::{
     AstBody, AstMatch, AstPattern, AstValue, Spanned, Verdict as AstVerdict,
@@ -110,7 +110,7 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
         },
         AstValue::StrLit(s) => match kind {
             MatchKind::SrcIp | MatchKind::DstIp => {
-                let ip = IP::try_from(s.val.clone()).map_err(|_| LowerError::TypeMismatch {
+                let ip = IpGlobbable::try_from(s.val.clone()).map_err(|_| LowerError::TypeMismatch {
                     kind,
                     value: AstValue::StrLit(s.clone()),
                     pos,
@@ -223,7 +223,7 @@ pub(super) fn lower(ast: Spanned<AstMatch>) -> Result<Match, LowerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::{Hour, IpVer, Octet, Port, Protocol, Weekday, IP};
+    use crate::frame::{Hour, IpVer, Octet, Port, Protocol, Weekday, IpGlobbable};
     use crate::rule_tree::parsing::ast::AstArm;
     use crate::rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Operation, Pattern, Verdict};
     use crate::rule_tree::parsing::lexer::Position;
@@ -442,7 +442,7 @@ mod tests {
             MatchKind::SrcIp,
             sp(AstValue::StrLit(sp("192.168.1.10".into()))),
         ).unwrap();
-        let expected = IP::new([Octet::Value(192), Octet::Value(168), Octet::Value(1), Octet::Value(10)]);
+        let expected = IpGlobbable::new([Octet::Value(192), Octet::Value(168), Octet::Value(1), Octet::Value(10)]);
         assert_eq!(fv, FieldValue::Ip(expected));
     }
  
@@ -452,7 +452,7 @@ mod tests {
             MatchKind::DstIp,
             sp(AstValue::StrLit(sp("10.0.0.1".into()))),
         ).unwrap();
-        let expected = IP::new([Octet::Value(10), Octet::Value(0), Octet::Value(0), Octet::Value(1)]);
+        let expected = IpGlobbable::new([Octet::Value(10), Octet::Value(0), Octet::Value(0), Octet::Value(1)]);
         assert_eq!(fv, FieldValue::Ip(expected));
     }
  
@@ -534,7 +534,7 @@ mod tests {
             MatchKind::SrcIp,
             sp(AstPattern::Equal(sp(AstValue::StrLit(sp("192.168.1.10".into()))))),
         ).unwrap();
-        let expected = IP::new([Octet::Value(192), Octet::Value(168), Octet::Value(1), Octet::Value(10)]);
+        let expected = IpGlobbable::new([Octet::Value(192), Octet::Value(168), Octet::Value(1), Octet::Value(10)]);
         assert_eq!(p, Pattern::Equal(FieldValue::Ip(expected)));
     }
  

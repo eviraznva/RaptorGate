@@ -4,6 +4,7 @@ use dashmap::{DashMap, Entry};
 use derive_more::{Display, Error};
 use ngfw::frame::RealFrame;
 use ringbuffer::{AllocRingBuffer, RingBuffer};
+use unordered_pair::UnorderedPair;
 
 use crate::frame::{Frame, Port};
 
@@ -19,14 +20,33 @@ impl<T> TcpSessionTracker<T> where T: Frame + Send + Sync + 'static {
             buffer: PacketBuffer::new(),
         })
     }
+
+    pub fn process_packet(&self, frame: T) {
+        let id = TcpIdentifier {
+            endpoints: UnorderedPair::from(
+               (Endpoint {
+                   ip: frame.src_ip().into(),
+                   port: frame.src_port().unwrap_or(Port::from(0)),
+               },
+               Endpoint {
+                   ip: frame.dst_ip().into(),
+                   port: frame.dst_port().unwrap_or(Port::from(0)),
+               })
+           )
+        };
+    }
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct TcpIdentifier {
-    src_ip: IpAddr,
-    dst_ip: IpAddr,
-    src_port: Port,
-    dst_port: Port,
+    endpoints: UnorderedPair<Endpoint>
+}
+
+
+#[derive(Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
+struct Endpoint {
+    ip: IpAddr,
+    port: Port,
 }
 
 struct PacketBuffer<T> {
@@ -60,6 +80,7 @@ impl<T> PacketBuffer<T> where T: Frame + Send + Sync + 'static {
             v.first_packet_arrival.elapsed() < PENDING_TIMEOUT
         });
     }
+
     fn add_packet(&self, id: TcpIdentifier, frame: T) -> Result<(), PacketBufferError>  {
         // we preallocate the buffers for each session so we can perform a simple check like this
         let is_full = self.waiting.len() * PENDING_PACKETS_PER_SESSION >= MAX_PENDING_PACKETS;
@@ -73,6 +94,7 @@ impl<T> PacketBuffer<T> where T: Frame + Send + Sync + 'static {
                 occupied.get_mut().packets.enqueue(frame);
                 Ok(())
             }
+
             Entry::Vacant(vacant) => {
                 if is_full {
                     return Err(PacketBufferError::BufferFull);
@@ -123,13 +145,13 @@ pub enum PacketBufferError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::{Frame, Hour, IP, IpVer, Octet, Port, Protocol, Weekday};
+    use crate::frame::{Frame, Hour, IpGlobbable, IpVer, Octet, Port, Protocol, Weekday};
     use std::net::{IpAddr, Ipv4Addr};
 
     #[derive(Clone)]
     struct DummyFrame {
-        src_ip: IP,
-        dst_ip: IP,
+        src_ip: IpAddr,
+        dst_ip: IpAddr,
         ip_ver: IpVer,
         protocol: Protocol,
         src_port: Option<Port>,
@@ -143,11 +165,11 @@ mod tests {
             self.ip_ver
         }
 
-        fn src_ip(&self) -> IP {
+        fn src_ip(&self) -> IpAddr {
             self.src_ip
         }
 
-        fn dst_ip(&self) -> IP {
+        fn dst_ip(&self) -> IpAddr {
             self.dst_ip
         }
 
@@ -173,30 +195,22 @@ mod tests {
     }
 
     fn mk_id(i: usize) -> TcpIdentifier {
+        let src_ip = IpAddr::V4(Ipv4Addr::new(10, 0, (i / 256) as u8, (i % 256) as u8));
+        let dst_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
+        let src_port = Port::from((10_000 + (i % 50_000)) as u16);
+        let dst_port = Port::from(443);
+
         TcpIdentifier {
-            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, (i / 256) as u8, (i % 256) as u8)),
-            dst_ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            src_port: Port::from((10_000 + (i as u16 % 50_000)) as u16),
-            dst_port: Port::from(443),
+            endpoints: UnorderedPair::from((
+                Endpoint { ip: src_ip, port: src_port },
+                Endpoint { ip: dst_ip, port: dst_port },
+            )),
         }
     }
 
     fn mk_frame(i: usize) -> DummyFrame {
-        let src = Ipv4Addr::new(10, 0, (i / 256) as u8, (i % 256) as u8).octets();
-        let dst = Ipv4Addr::new(192, 168, 1, 10).octets();
-
-        let src_ip = IP::new([
-            Octet::Value(src[0]),
-            Octet::Value(src[1]),
-            Octet::Value(src[2]),
-            Octet::Value(src[3]),
-        ]);
-        let dst_ip = IP::new([
-            Octet::Value(dst[0]),
-            Octet::Value(dst[1]),
-            Octet::Value(dst[2]),
-            Octet::Value(dst[3]),
-        ]);
+        let src_ip = IpAddr::V4(Ipv4Addr::new(10, 0, (i / 256) as u8, (i % 256) as u8));
+        let dst_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
 
         DummyFrame {
             src_ip,

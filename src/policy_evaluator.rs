@@ -44,8 +44,8 @@ impl PolicyEvaluator {
     fn extract<T: Frame>(kind: MatchKind, context: &PolicyContext<T>) -> Option<FieldValue> {
         let frame = context.frame;
         match kind {
-            MatchKind::SrcIp => Some(FieldValue::Ip(frame.src_ip())),
-            MatchKind::DstIp => Some(FieldValue::Ip(frame.dst_ip())),
+            MatchKind::SrcIp => Some(FieldValue::Ip(frame.src_ip().into())),
+            MatchKind::DstIp => Some(FieldValue::Ip(frame.dst_ip().into())),
             MatchKind::IpVer => Some(FieldValue::IpVer(frame.ip_ver())),
             MatchKind::DayOfWeek => Some(FieldValue::DayOfWeek(frame.day_of_week())),
             MatchKind::Hour => Some(FieldValue::Hour(frame.hour())),
@@ -116,15 +116,19 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
     use super::*;
     use crate::{
-        frame::{Hour, IP, IpVer, Octet, Port, Protocol, Weekday},
+        frame::{Hour, IpGlobbable, IpVer, Octet, Port, Protocol, Weekday},
         rule_tree::{ArmEnd, MatchBuilder},
     };
 
+    type IP = IpGlobbable;
+
     struct DummyFrame {
-        src_ip: IP,
-        dst_ip: IP,
+        src_ip: IpAddr,
+        dst_ip: IpAddr,
         ip_ver: IpVer,
         protocol: Protocol,
         src_port: Option<Port>,
@@ -136,18 +140,8 @@ mod tests {
     impl DummyFrame {
         fn default_v4() -> Self {
             Self {
-                src_ip: IP::new([
-                    Octet::Value(192),
-                    Octet::Value(168),
-                    Octet::Value(1),
-                    Octet::Value(10),
-                ]),
-                dst_ip: IP::new([
-                    Octet::Value(10),
-                    Octet::Value(0),
-                    Octet::Value(0),
-                    Octet::Value(1),
-                ]),
+                src_ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
+                dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
                 ip_ver: IpVer::V4,
                 protocol: Protocol::Tcp,
                 src_port: Some(Port::from(12345)),
@@ -162,10 +156,10 @@ mod tests {
         fn ip_ver(&self) -> IpVer {
             self.ip_ver
         }
-        fn src_ip(&self) -> IP {
+        fn src_ip(&self) -> IpAddr {
             self.src_ip
         }
-        fn dst_ip(&self) -> IP {
+        fn dst_ip(&self) -> IpAddr {
             self.dst_ip
         }
         fn protocol(&self) -> Protocol {

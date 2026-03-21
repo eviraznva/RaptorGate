@@ -36,6 +36,7 @@ rcgen = { version = "0.13", features = ["pem"] }
 ring = "0.17"
 dashmap = "6.1.0"
 ringbuffer = "0.16.0"
+unordered-pair = "0.2.5"
 
 [build-dependencies]
 protoc-bin-vendored = "3.2.0"

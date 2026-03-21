@@ -977,6 +977,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tun",
+ "unordered-pair",
  "uuid",
  "visibility",
 ]
@@ -1989,6 +1990,12 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unordered-pair"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "756dde4e9a5b7260a5f9405027847ccc6ff7a624694bda0ca32ffa9091f3d829"
 
 [[package]]
 name = "untrusted"
