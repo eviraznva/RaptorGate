@@ -1,22 +1,25 @@
 use std::mem::size_of;
 use zerocopy::FromBytes;
 
+use crate::policy::rgpf::validators::nat_validator;
+use crate::policy::rgpf::validators::policy_validator;
 use crate::policy::rgpf::errors::rgpf_error::RgpfError;
+use crate::policy::rgpf::validators::rgpf_file_validator;
 use crate::policy::rgpf::sections::rgpf_header::RgpfHeader;
 use crate::policy::rgpf::sections::string_table::StringTable;
 use crate::policy::rgpf::sections::nat::sections::NatSection;
+use crate::policy::rgpf::sections::policy_table::PolicyEntryTable;
+use crate::policy::rgpf::sections::default_verdict::DefaultVerdictSection;
 use crate::policy::rgpf::sections::section_table::{SectionEntry, SectionTable};
-use crate::policy::rgpf::validators::{rgpf_file_validator, nat_validator, rule_tree_validator};
-use crate::policy::rgpf::sections::rule_tree::sections::{DefaultVerdictSection, RuleTreeSection};
 
 use crate::policy::rgpf::constants::{
     RGPF_MAGIC,
     RGPF_MAJOR,
     RGPF_MINOR,
-    SECTION_STRING_TABLE,
     SECTION_NAT_RULE_TABLE,
     SECTION_DEFAULT_VERDICT,
-    SECTION_RULE_TREE_TABLE,
+    SECTION_POLICY_ENTRY_TABLE,
+    SECTION_POLICY_SOURCE_TABLE,
 };
 
 pub struct RgpfFile<'a> {
@@ -51,14 +54,15 @@ impl<'a> RgpfFile<'a> {
 
         rgpf_file_validator::validate_sections(&file)?;
 
-        file.string_table()?;
+        let policy_sources = file.policy_sources()?;
+        let policy_entries = file.policy_entries()?;
+        let default_verdict = file.default_verdict()?;
 
-        let rule_tree = file.rule_tree()?;
+        policy_validator::validate_policy_entries(&policy_sources, &policy_entries)?;
+        policy_validator::validate_default_verdict(&policy_sources, &default_verdict)?;
 
-        rule_tree_validator::validate_rule_tree(&file, &rule_tree)?;
-
-        if let Some(nat) = file.nat_rules()? {
-            nat_validator::validate_nat(&file, &nat)?;
+        if let Some(nat_rules) = file.nat_rules()? {
+            nat_validator::validate_nat(&file, &nat_rules)?;
         }
 
         Ok(file)
@@ -102,18 +106,22 @@ impl<'a> RgpfFile<'a> {
         Ok(found)
     }
 
-    pub fn string_table(&self) -> Result<StringTable<'a>, RgpfError> {
-        let section = self.section(SECTION_STRING_TABLE)?
-            .ok_or(RgpfError::MissingSection("STRING_TABLE"))?;
+    pub fn policy_entries(&self) -> Result<PolicyEntryTable<'a>, RgpfError> {
+        let section = self.section(SECTION_POLICY_ENTRY_TABLE)?
+            .ok_or(RgpfError::MissingSection("POLICY_ENTRY_TABLE"))?;
+
+        PolicyEntryTable::parse(section)
+    }
+
+    pub fn policy_sources(&self) -> Result<StringTable<'a>, RgpfError> {
+        let section = self.section(SECTION_POLICY_SOURCE_TABLE)?
+            .ok_or(RgpfError::MissingSection("POLICY_SOURCE_TABLE"))?;
 
         Ok(StringTable::new(section.bytes))
     }
 
-    pub fn rule_tree(&self) -> Result<RuleTreeSection<'a>, RgpfError> {
-        let section = self.section(SECTION_RULE_TREE_TABLE)?
-            .ok_or(RgpfError::MissingSection("RULE_TREE_TABLE"))?;
-
-        RuleTreeSection::parse(section)
+    pub fn string_table(&self) -> Result<StringTable<'a>, RgpfError> {
+        self.policy_sources()
     }
 
     pub fn default_verdict(&self) -> Result<DefaultVerdictSection<'a>, RgpfError> {

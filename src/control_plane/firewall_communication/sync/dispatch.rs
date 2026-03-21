@@ -186,7 +186,7 @@ pub async fn dispatch_request(state: &FirewallState, meta: RequestMeta, frame: &
                         info!(
                             revision_id = active_revision.revision_id(),
                             policy_hash = active_revision.policy_hash(),
-                            rule_count = active_revision.rule_count(),
+                            policy_count = active_revision.policy_count(),
                             "ActivateRevision requested for already active revision"
                         );
 
@@ -195,7 +195,7 @@ pub async fn dispatch_request(state: &FirewallState, meta: RequestMeta, frame: &
                             payload: ResponsePayload::ActivateRevision(ActivateRevisionResponse {
                                 loaded_revision_id: active_revision.revision_id(),
                                 policy_hash: active_revision.policy_hash(),
-                                rule_count: active_revision.rule_count() as u32,
+                                rule_count: active_revision.policy_count() as u32,
                             }),
                         }
                     } else {
@@ -204,7 +204,7 @@ pub async fn dispatch_request(state: &FirewallState, meta: RequestMeta, frame: &
                                 let response = ActivateRevisionResponse {
                                     loaded_revision_id: active_revision.revision_id(),
                                     policy_hash: active_revision.policy_hash(),
-                                    rule_count: active_revision.rule_count() as u32,
+                                    rule_count: active_revision.policy_count() as u32,
                                 };
 
                                 state.activate_revision(active_revision);

@@ -6,10 +6,10 @@ use crate::policy::rgpf::sections::rgpf_header::RgpfHeader;
 use crate::policy::rgpf::sections::rgpf_file::{ensure_magic, ensure_version, RgpfFile};
 
 use crate::policy::rgpf::constants::{
-    SECTION_STRING_TABLE,
     SECTION_NAT_RULE_TABLE,
     SECTION_DEFAULT_VERDICT,
-    SECTION_RULE_TREE_TABLE,
+    SECTION_POLICY_ENTRY_TABLE,
+    SECTION_POLICY_SOURCE_TABLE,
 };
 
 pub fn validate_header(bytes: &[u8], header: &RgpfHeader) -> Result<(), RgpfError> {
@@ -64,12 +64,12 @@ pub fn validate_sections(file: &RgpfFile<'_>) -> Result<(), RgpfError> {
         }
     }
 
-    if !kinds.contains(&SECTION_STRING_TABLE) {
-        return Err(RgpfError::MissingSection("STRING_TABLE"));
+    if !kinds.contains(&SECTION_POLICY_ENTRY_TABLE) {
+        return Err(RgpfError::MissingSection("POLICY_ENTRY_TABLE"));
     }
 
-    if !kinds.contains(&SECTION_RULE_TREE_TABLE) {
-        return Err(RgpfError::MissingSection("RULE_TREE_TABLE"));
+    if !kinds.contains(&SECTION_POLICY_SOURCE_TABLE) {
+        return Err(RgpfError::MissingSection("POLICY_SOURCE_TABLE"));
     }
 
     if !kinds.contains(&SECTION_DEFAULT_VERDICT) {
@@ -79,7 +79,10 @@ pub fn validate_sections(file: &RgpfFile<'_>) -> Result<(), RgpfError> {
     for kind in kinds {
         if !matches!(
             kind,
-            SECTION_STRING_TABLE | SECTION_RULE_TREE_TABLE | SECTION_DEFAULT_VERDICT | SECTION_NAT_RULE_TABLE
+            SECTION_DEFAULT_VERDICT
+                | SECTION_NAT_RULE_TABLE
+                | SECTION_POLICY_ENTRY_TABLE
+                | SECTION_POLICY_SOURCE_TABLE
         ) {
             return Err(RgpfError::InvalidSection("unknown section kind"));
         }

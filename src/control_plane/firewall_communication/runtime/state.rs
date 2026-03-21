@@ -3,7 +3,7 @@ use std::time::Instant;
 use tokio::sync::watch;
 use tracing::{debug, trace, warn};
 
-use crate::policy::runtime::CompiledPolicy;
+use crate::policy::runtime::CompiledPolicyBundle;
 use crate::policy::rgpf::errors::rgpf_error::RgpfError;
 use crate::policy::rgpf::sections::rgpf_file::RgpfFile;
 use crate::control_plane::types::firewall_mode::FirewallMode;
@@ -15,47 +15,47 @@ use crate::control_plane::firewall_communication::runtime::revision_store::Revis
 #[derive(Clone)]
 pub struct ActiveRevision {
     bytes: Option<Arc<[u8]>>,
-    compiled_policy: Arc<CompiledPolicy>,
+    compiled_policy_bundle: Arc<CompiledPolicyBundle>,
     revision_id: u64,
     policy_hash: u64,
-    rule_count: usize,
+    policy_count: usize,
 }
 
 impl ActiveRevision {
-    pub fn fallback(compiled_policy: Arc<CompiledPolicy>) -> Self {
-        let metadata = compiled_policy.metadata();
+    pub fn fallback(compiled_policy_bundle: Arc<CompiledPolicyBundle>) -> Self {
+        let metadata = compiled_policy_bundle.metadata();
         
-        let revision_id = metadata.config_version.unwrap_or(0);
+        let revision_id = metadata.revision_id.unwrap_or(0);
         
-        let rule_count = metadata.rule_count;
+        let policy_count = metadata.policy_count;
 
         Self {
             bytes: None,
-            compiled_policy,
+            compiled_policy_bundle,
             revision_id,
             policy_hash: 0,
-            rule_count,
+            policy_count,
         }
     }
 
     pub fn from_rgpf(
         bytes: Arc<[u8]>,
-        compiled_policy: Arc<CompiledPolicy>,
+        compiled_policy_bundle: Arc<CompiledPolicyBundle>,
         revision_id: u64,
         policy_hash: u64,
-        rule_count: usize,
+        policy_count: usize,
     ) -> Self {
         Self {
             bytes: Some(bytes),
-            compiled_policy,
+            compiled_policy_bundle,
             revision_id,
             policy_hash,
-            rule_count,
+            policy_count,
         }
     }
 
-    pub fn compiled_policy(&self) -> &Arc<CompiledPolicy> {
-        &self.compiled_policy
+    pub fn compiled_policy_bundle(&self) -> &Arc<CompiledPolicyBundle> {
+        &self.compiled_policy_bundle
     }
 
     pub fn revision_id(&self) -> u64 {
@@ -66,8 +66,8 @@ impl ActiveRevision {
         self.policy_hash
     }
 
-    pub fn rule_count(&self) -> usize {
-        self.rule_count
+    pub fn policy_count(&self) -> usize {
+        self.policy_count
     }
 
     pub fn rgpf(&self) -> Result<Option<RgpfFile<'_>>, RgpfError> {
@@ -83,6 +83,7 @@ impl ActiveRevision {
             None => Ok(None),
         }
     }
+
 }
 
 /// Pełny snapshot stanu runtime dostępny dla innych warstw.
@@ -94,8 +95,8 @@ pub struct FirewallRuntimeState {
 }
 
 impl FirewallRuntimeState {
-    pub fn compiled_policy(&self) -> &Arc<CompiledPolicy> {
-        self.active_revision.compiled_policy()
+    pub fn compiled_policy_bundle(&self) -> &Arc<CompiledPolicyBundle> {
+        self.active_revision.compiled_policy_bundle()
     }
 }
 
@@ -142,7 +143,7 @@ impl FirewallState {
             next_mode = ?next.mode,
             next_revision_id = next.active_revision.revision_id(),
             next_policy_hash = next.active_revision.policy_hash(),
-            next_rule_count = next.active_revision.rule_count(),
+            next_policy_count = next.active_revision.policy_count(),
             "Activated firewall policy revision"
         );
 

@@ -70,9 +70,9 @@ async fn forward_packet(
     state_rx: &watch::Receiver<Arc<FirewallRuntimeState>>,
 ) {
     let state = state_rx.borrow().clone();
-    let compiled_policy = state.compiled_policy().clone();
+    let compiled_policy_bundle = state.compiled_policy_bundle().clone();
     let verdict = RealFrame::from_sliced(&packet)
-        .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));
+        .map(|frame| compiled_policy_bundle.evaluate(&frame));
 
     let allow = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
 

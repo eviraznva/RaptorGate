@@ -33,7 +33,7 @@ pub enum RgpfError {
     #[error("integer overflow while validating layout")]
     IntegerOverflow,
 
-    #[error("invalid utf-8 in string table")]
+    #[error("invalid utf-8 in rgpf section")]
     InvalidUtf8,
 
     #[error("invalid enum value for {field}: {value}")]
@@ -47,4 +47,7 @@ pub enum RgpfError {
 
     #[error("unsupported layout: {0}")]
     UnsupportedLayout(&'static str),
+
+    #[error("failed to compile policy source: {0}")]
+    PolicyCompileFailed(String),
 }
