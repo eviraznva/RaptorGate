@@ -1,3 +1,4 @@
+pub(crate) mod logging;
 pub mod firewall_communication;
 
 mod ipc;

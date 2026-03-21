@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use tokio::sync::mpsc;
+use tracing::{debug, trace, warn};
 
 use crate::control_plane::types::ipc_opcode::IpcOpcode;
 use crate::control_plane::ipc::ipc_message::IpcEventMessage;
@@ -30,10 +31,19 @@ impl QueuedEvent {
     fn from_message<E>(event: E, flags: IpcFrameFlags) -> Result<Self, PayloadError> where 
         E: IpcEventMessage
     {
+        let payload = event.encode_payload()?;
+
+        trace!(
+            opcode = ?E::OPCODE,
+            flags = flags.bits(),
+            payload_len = payload.len(),
+            "Encoded event for event ring queue"
+        );
+
         Ok(Self {
             opcode: E::OPCODE,
             flags,
-            payload: event.encode_payload()?,
+            payload,
         })
     }
 }
@@ -62,9 +72,18 @@ impl EventRingHandle {
         let event = QueuedEvent::from_message(event, flags)?;
 
         match self.tx.try_send(event) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => Err(EventRingError::Full),
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(EventRingError::Closed),
+            Ok(()) => {
+                debug!("Enqueued event into firewall event ring");
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("Failed to enqueue event because event ring is full");
+                Err(EventRingError::Full)
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                warn!("Failed to enqueue event because event ring is closed");
+                Err(EventRingError::Closed)
+            }
         }
     }
 }

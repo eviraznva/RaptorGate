@@ -1,3 +1,4 @@
+use tracing::trace;
 use bytes::{Bytes, BytesMut};
 
 use crate::control_plane::types::varint::VarInt;
@@ -25,39 +26,57 @@ pub trait IpcResponseMessage: IpcMessage {}
 pub trait IpcEventMessage: IpcMessage {}
 
 pub fn put_varint(bytes: &mut BytesMut, value: u32) {
+    trace!(value, "Encoding IPC payload varint");
+    
     let mut buf = [0u8; VarInt::MAX_LEN];
     
     bytes.extend_from_slice(VarInt::new(value).encode_into(&mut buf));
 }
 
 pub fn put_varlong(bytes: &mut BytesMut, value: u64) {
+    trace!(value, "Encoding IPC payload varlong");
+    
     let mut buf = [0u8; VarLong::MAX_LEN];
     
     bytes.extend_from_slice(VarLong::new(value).encode_into(&mut buf));
 }
 
 pub fn put_bool(bytes: &mut BytesMut, value: bool) {
+    trace!(value, "Encoding IPC payload bool");
+    
     put_varint(bytes, u32::from(value));
 }
 
 pub fn put_string(bytes: &mut BytesMut, value: &str) {
+    trace!(len = value.len(), value = value, "Encoding IPC payload string");
+    
     put_varint(bytes, value.len() as u32);
     
     bytes.extend_from_slice(value.as_bytes());
 }
 
 pub fn put_bytes(bytes: &mut BytesMut, value: &[u8]) {
+    trace!(len = value.len(), "Encoding IPC payload bytes");
+    
     put_varint(bytes, value.len() as u32);
     
     bytes.extend_from_slice(value);
 }
 
 pub fn read_varint(cursor: &mut &[u8], field: &'static str) -> Result<u32, PayloadError> {
-    VarInt::decode_cursor(cursor).map(VarInt::get).ok_or(PayloadError::TruncatedField { field })
+    let value = VarInt::decode_cursor(cursor).map(VarInt::get).ok_or(PayloadError::TruncatedField { field })?;
+    
+    trace!(field, value, "Decoded IPC payload varint");
+    
+    Ok(value)
 }
 
 pub fn read_varlong(cursor: &mut &[u8], field: &'static str) -> Result<u64, PayloadError> {
-    VarLong::decode_cursor(cursor).map(VarLong::get).ok_or(PayloadError::TruncatedField { field })
+    let value = VarLong::decode_cursor(cursor).map(VarLong::get).ok_or(PayloadError::TruncatedField { field })?;
+    
+    trace!(field, value, "Decoded IPC payload varlong");
+    
+    Ok(value)
 }
 
 pub fn read_bool(cursor: &mut &[u8], field: &'static str) -> Result<bool, PayloadError> {
@@ -71,7 +90,11 @@ pub fn read_bool(cursor: &mut &[u8], field: &'static str) -> Result<bool, Payloa
 pub fn read_string(cursor: &mut &[u8], field: &'static str) -> Result<String, PayloadError> {
     let bytes = read_bytes(cursor, field)?;
     
-    String::from_utf8(bytes).map_err(|_| PayloadError::InvalidUtf8 { field })
+    let value = String::from_utf8(bytes).map_err(|_| PayloadError::InvalidUtf8 { field })?;
+    
+    trace!(field, len = value.len(), value = value.as_str(), "Decoded IPC payload string");
+    
+    Ok(value)
 }
 
 pub fn read_bytes(cursor: &mut &[u8], field: &'static str) -> Result<Vec<u8>, PayloadError> {
@@ -84,6 +107,8 @@ pub fn read_bytes(cursor: &mut &[u8], field: &'static str) -> Result<Vec<u8>, Pa
     let bytes = cursor[..len].to_vec();
     
     *cursor = &cursor[len..];
+
+    trace!(field, len, "Decoded IPC payload bytes");
     
     Ok(bytes)
 }

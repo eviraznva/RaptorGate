@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use tracing::{debug, info, trace, warn};
 
 use crate::control_plane::ipc::ipc_frame::IpcFrame;
 use crate::control_plane::ipc::ipc_message::IpcMessage;
@@ -41,64 +42,153 @@ pub enum ResponsePayload {
 }
 
 /// Dispatchuje pojedynczą ramkę request-response po stronie firewalla.
+#[tracing::instrument(skip(state, frame), fields(
+    opcode = ?frame.opcode(),
+    request_id = meta.request_id,
+    sequence_no = meta.sequence_no
+))]
 pub async fn dispatch_request(state: &FirewallState, meta: RequestMeta, frame: &IpcFrame) 
     -> DispatchOutcome 
 {
+    debug!(
+        opcode = ?frame.opcode(),
+        request_id = meta.request_id,
+        sequence_no = meta.sequence_no,
+        payload_len = frame.payload_length(),
+        "Dispatching sync IPC request"
+    );
+
     match frame.opcode() {
         IpcOpcode::Ping => match PingRequest::decode_payload(frame.payload()) {
-            Ok(request) => DispatchOutcome::Success {
-                meta,
-                payload: ResponsePayload::Ping(PingResponse {
-                    timestamp_ms: request.timestamp_ms,
-                    peer_timestamp_ms: current_timestamp_ms(),
-                }),
-            },
-            Err(err) => DispatchOutcome::Error {
-                meta,
-                status: IpcStatus::ErrMalformedPayload,
-                payload: Bytes::from(err.to_string()),
-            },
+            Ok(request) => {
+                trace!(
+                    request_id = meta.request_id,
+                    sequence_no = meta.sequence_no,
+                    timestamp_ms = request.timestamp_ms,
+                    "Decoded PING request payload"
+                );
+
+                DispatchOutcome::Success {
+                    meta,
+                    payload: ResponsePayload::Ping(PingResponse {
+                        timestamp_ms: request.timestamp_ms,
+                        peer_timestamp_ms: current_timestamp_ms(),
+                    }),
+                }
+            }
+            Err(err) => {
+                warn!(
+                    request_id = meta.request_id,
+                    sequence_no = meta.sequence_no,
+                    error = %err,
+                    "Failed to decode PING request payload"
+                );
+
+                DispatchOutcome::Error {
+                    meta,
+                    status: IpcStatus::ErrMalformedPayload,
+                    payload: Bytes::from(err.to_string()),
+                }
+            }
         },
         IpcOpcode::GetStatus => match GetStatusRequest::decode_payload(frame.payload()) {
-            Ok(_) => DispatchOutcome::Success {
-                meta,
-                payload: ResponsePayload::Status(state.build_status_response().await),
-            },
-            Err(err) => DispatchOutcome::Error {
-                meta,
-                status: IpcStatus::ErrMalformedPayload,
-                payload: Bytes::from(err.to_string()),
-            },
+            Ok(_) => {
+                trace!(
+                    request_id = meta.request_id,
+                    sequence_no = meta.sequence_no,
+                    "Decoded GET_STATUS request payload"
+                );
+
+                DispatchOutcome::Success {
+                    meta,
+                    payload: ResponsePayload::Status(state.build_status_response().await),
+                }
+            }
+            Err(err) => {
+                warn!(
+                    request_id = meta.request_id,
+                    sequence_no = meta.sequence_no,
+                    error = %err,
+                    "Failed to decode GET_STATUS request payload"
+                );
+
+                DispatchOutcome::Error {
+                    meta,
+                    status: IpcStatus::ErrMalformedPayload,
+                    payload: Bytes::from(err.to_string()),
+                }
+            }
         },
         IpcOpcode::GetNetworkInterfaces => {
             match GetNetworkInterfacesRequest::decode_payload(frame.payload()) {
                 Ok(_) => match interface_probe::collect_interfaces() {
-                    Ok(interfaces) => DispatchOutcome::Success {
+                    Ok(interfaces) => {
+                        debug!(
+                            request_id = meta.request_id,
+                            sequence_no = meta.sequence_no,
+                            interface_count = interfaces.len(),
+                            "Collected network interfaces for GET_NETWORK_INTERFACES"
+                        );
+
+                        DispatchOutcome::Success {
+                            meta,
+                            payload: ResponsePayload::NetworkInterfaces(GetNetworkInterfacesResponse {
+                                interfaces,
+                            }),
+                        }
+                    }
+                    Err(err) => {
+                        warn!(
+                            request_id = meta.request_id,
+                            sequence_no = meta.sequence_no,
+                            error = %err,
+                            "Failed to enumerate network interfaces"
+                        );
+
+                        DispatchOutcome::Error {
+                            meta,
+                            status: IpcStatus::ErrInterfaceEnumFailed,
+                            payload: Bytes::from(err.to_string()),
+                        }
+                    }
+                },
+                Err(err) => {
+                    warn!(
+                        request_id = meta.request_id,
+                        sequence_no = meta.sequence_no,
+                        error = %err,
+                        "Failed to decode GET_NETWORK_INTERFACES request payload"
+                    );
+
+                    DispatchOutcome::Error {
                         meta,
-                        payload: ResponsePayload::NetworkInterfaces(GetNetworkInterfacesResponse {
-                            interfaces,
-                        }),
-                    },
-                    Err(err) => DispatchOutcome::Error {
-                        meta,
-                        status: IpcStatus::ErrInterfaceEnumFailed,
+                        status: IpcStatus::ErrMalformedPayload,
                         payload: Bytes::from(err.to_string()),
-                    },
-                },
-                Err(err) => DispatchOutcome::Error {
-                    meta,
-                    status: IpcStatus::ErrMalformedPayload,
-                    payload: Bytes::from(err.to_string()),
-                },
+                    }
+                }
             }
         }
         IpcOpcode::ActivateRevision => {
             match ActivateRevisionRequest::decode_payload(frame.payload()) {
                 Ok(request) => {
+                    trace!(
+                        request_id = meta.request_id,
+                        sequence_no = meta.sequence_no,
+                        revision_id = request.revision_id,
+                        "Decoded ACTIVATE_REVISION request payload"
+                    );
+
                     let active_revision = state.active_revision();
 
                     if active_revision.revision_id() == request.revision_id {
                         state.activate_revision(active_revision.clone());
+
+                        info!(
+                            revision_id = active_revision.revision_id(),
+                            policy_hash = active_revision.policy_hash(),
+                            rule_count = active_revision.rule_count(),
+                            "ActivateRevision requested for already active revision"
+                        );
 
                         DispatchOutcome::Success {
                             meta,
@@ -119,6 +209,13 @@ pub async fn dispatch_request(state: &FirewallState, meta: RequestMeta, frame: &
 
                                 state.activate_revision(active_revision);
 
+                                info!(
+                                    revision_id = response.loaded_revision_id,
+                                    policy_hash = response.policy_hash,
+                                    rule_count = response.rule_count,
+                                    "Activated new firewall policy revision"
+                                );
+
                                 DispatchOutcome::Success {
                                     meta,
                                     payload: ResponsePayload::ActivateRevision(response),
@@ -130,6 +227,13 @@ pub async fn dispatch_request(state: &FirewallState, meta: RequestMeta, frame: &
 
                                 state.mark_policy_error(code);
 
+                                warn!(
+                                    revision_id = request.revision_id,
+                                    status = ?status,
+                                    error = %err,
+                                    "Failed to activate firewall policy revision"
+                                );
+
                                 DispatchOutcome::Error {
                                     meta,
                                     status,
@@ -139,18 +243,36 @@ pub async fn dispatch_request(state: &FirewallState, meta: RequestMeta, frame: &
                         }
                     }
                 }
-                Err(err) => DispatchOutcome::Error {
-                    meta,
-                    status: IpcStatus::ErrMalformedPayload,
-                    payload: Bytes::from(err.to_string()),
-                },
+                Err(err) => {
+                    warn!(
+                        request_id = meta.request_id,
+                        sequence_no = meta.sequence_no,
+                        error = %err,
+                        "Failed to decode ACTIVATE_REVISION request payload"
+                    );
+
+                    DispatchOutcome::Error {
+                        meta,
+                        status: IpcStatus::ErrMalformedPayload,
+                        payload: Bytes::from(err.to_string()),
+                    }
+                }
             }
         }
-        _ => DispatchOutcome::Error {
-            meta,
-            status: IpcStatus::ErrUnsupportedOpcode,
-            payload: Bytes::new(),
-        },
+        _ => {
+            warn!(
+                opcode = ?frame.opcode(),
+                request_id = meta.request_id,
+                sequence_no = meta.sequence_no,
+                "Received unsupported sync IPC opcode"
+            );
+
+            DispatchOutcome::Error {
+                meta,
+                status: IpcStatus::ErrUnsupportedOpcode,
+                payload: Bytes::new(),
+            }
+        }
     }
 }
 

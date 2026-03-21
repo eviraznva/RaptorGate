@@ -1,5 +1,6 @@
 use std::io;
 use std::fs;
+use tracing::{debug, trace};
 use std::collections::BTreeMap;
 
 use nix::ifaddrs::getifaddrs;
@@ -9,6 +10,8 @@ use crate::control_plane::messages::responses::get_network_interfaces_response::
 
 /// Zwraca listę interfejsów widocznych dla procesu firewalla.
 pub fn collect_interfaces() -> io::Result<Vec<NetworkInterfaceEntry>> {
+    trace!("Collecting network interfaces for IPC response");
+    
     let mut interfaces = BTreeMap::new();
 
     for address in getifaddrs().map_err(to_io_error)? {
@@ -43,15 +46,23 @@ pub fn collect_interfaces() -> io::Result<Vec<NetworkInterfaceEntry>> {
         }
     }
 
-    Ok(interfaces.into_values().collect())
+    let interfaces: Vec<_> = interfaces.into_values().collect();
+
+    debug!(interface_count = interfaces.len(), "Collected network interfaces");
+
+    Ok(interfaces)
 }
 
 fn interface_index(name: &str) -> io::Result<u32> {
+    trace!(interface = name, "Resolving interface index");
+    
     if_nametoindex(name).map(|value| value as u32).map_err(to_io_error)
 }
 
 fn interface_mtu(name: &str) -> io::Result<u32> {
     let path = format!("/sys/class/net/{name}/mtu");
+
+    trace!(interface = name, mtu_path = %path, "Resolving interface MTU");
     
     let raw = fs::read_to_string(path)?;
     

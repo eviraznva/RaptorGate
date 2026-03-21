@@ -1,5 +1,6 @@
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, trace, warn};
 
 use crate::control_plane::ipc::async_endpoint::AsyncIpcEndpoint;
 use crate::control_plane::types::ipc_frame_flags::IpcFrameFlags;
@@ -9,42 +10,77 @@ use crate::control_plane::firewall_communication::runtime::state::FirewallState;
 use crate::control_plane::firewall_communication::publish::event_ring::QueuedEvent;
 
 /// Utrzymuje połączenie asynchroniczne i cyklicznie publikuje heartbeat.
+#[tracing::instrument(skip(config, state, event_rx, shutdown), fields(
+    socket = %config.async_socket_path,
+    heartbeat_interval_ms = config.heartbeat_interval.as_millis()
+))]
 pub async fn run(
     config: FirewallIpcConfig,
     state: FirewallState,
     mut event_rx: mpsc::Receiver<QueuedEvent>,
     shutdown: CancellationToken,
 ) {
+    info!(
+        socket = %config.async_socket_path,
+        heartbeat_interval_ms = config.heartbeat_interval.as_millis(),
+        async_reconnect_interval_ms = config.async_reconnect_interval.as_millis(),
+        "Starting async IPC publisher"
+    );
+
     loop {
         if shutdown.is_cancelled() {
+            info!("Stopping async IPC publisher because shutdown was requested");
             return;
         }
 
         match AsyncIpcEndpoint::connect(&config.async_socket_path).await {
             Ok(mut endpoint) => {
-                tracing::info!(socket = %config.async_socket_path, "Connected async IPC publisher");
+                info!(socket = %config.async_socket_path, "Connected async IPC publisher");
 
                 loop {
                     tokio::select! {
-                        _ = shutdown.cancelled() => return,
+                        _ = shutdown.cancelled() => {
+                            info!("Stopping async IPC publisher session because shutdown was requested");
+                            return;
+                        },
 
                         event = event_rx.recv() => {
                             match event {
                                 Some(event) => {
+                                    trace!(
+                                        opcode = ?event.opcode(),
+                                        flags = event.flags().bits(),
+                                        payload_len = event.payload().len(),
+                                        "Dequeued event from event ring"
+                                    );
+
                                     if let Err(err) = endpoint
                                         .send_encoded_event(event.opcode(), event.flags(), event.payload().clone())
                                         .await
                                     {
-                                        tracing::warn!(error = %err, "Async IPC queued event send failed; reconnecting");
+                                        warn!(
+                                            error = %err,
+                                            opcode = ?event.opcode(),
+                                            payload_len = event.payload().len(),
+                                            "Async IPC queued event send failed; reconnecting"
+                                        );
 
                                         state.set_transient_error_code(200);
 
                                         break;
                                     } else {
+                                        debug!(
+                                            opcode = ?event.opcode(),
+                                            payload_len = event.payload().len(),
+                                            "Sent queued async IPC event"
+                                        );
                                         state.set_transient_error_code(0);
                                     }
                                 }
-                                None => return,
+                                None => {
+                                    info!("Stopping async IPC publisher because event ring receiver was closed");
+                                    return;
+                                }
                             }
                         }
 
@@ -52,12 +88,24 @@ pub async fn run(
                             let event: HeartbeatEvent = state.build_heartbeat_event().await;
 
                             if let Err(err) = endpoint.send_event(&event, IpcFrameFlags::NONE).await {
-                                tracing::warn!(error = %err, "Async IPC heartbeat send failed; reconnecting");
+                                warn!(
+                                    error = %err,
+                                    revision_id = event.loaded_revision_id,
+                                    mode = ?event.mode,
+                                    "Async IPC heartbeat send failed; reconnecting"
+                                );
 
                                 state.set_transient_error_code(200);
 
                                 break;
                             } else {
+                                debug!(
+                                    revision_id = event.loaded_revision_id,
+                                    policy_hash = event.policy_hash,
+                                    mode = ?event.mode,
+                                    uptime_sec = event.uptime_sec,
+                                    "Sent async IPC heartbeat event"
+                                );
                                 state.set_transient_error_code(0);
                             }
                         }
@@ -65,9 +113,15 @@ pub async fn run(
                 }
             }
             Err(err) => {
-                tracing::warn!(error = %err, socket = %config.async_socket_path, "Async IPC connect failed");
+                warn!(error = %err, socket = %config.async_socket_path, "Async IPC connect failed");
 
                 state.set_transient_error_code(200);
+
+                debug!(
+                    socket = %config.async_socket_path,
+                    reconnect_after_ms = config.async_reconnect_interval.as_millis(),
+                    "Scheduling async IPC reconnect"
+                );
 
                 tokio::select! {
                     _ = shutdown.cancelled() => return,

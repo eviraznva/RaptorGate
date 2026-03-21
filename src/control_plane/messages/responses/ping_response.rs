@@ -1,9 +1,14 @@
+use tracing::trace;
 use bytes::{Bytes, BytesMut};
 
 use crate::control_plane::types::ipc_opcode::IpcOpcode;
 use crate::control_plane::errors::payload_error::PayloadError;
 use crate::control_plane::types::ipc_frame_kind::IpcFrameKind;
-use crate::control_plane::ipc::ipc_message::{ensure_consumed, put_varlong, read_varlong, IpcMessage, IpcResponseMessage};
+
+use crate::control_plane::ipc::ipc_message::{
+    IpcMessage, IpcResponseMessage,
+    ensure_consumed, put_varlong, read_varlong
+};
 
 /// Payload odpowiedzi `PING`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +22,12 @@ impl IpcMessage for PingResponse {
     const KIND: IpcFrameKind = IpcFrameKind::Response;
 
     fn encode_payload(&self) -> Result<Bytes, PayloadError> {
+        trace!(
+            timestamp_ms = self.timestamp_ms,
+            peer_timestamp_ms = self.peer_timestamp_ms,
+            "Encoding PING response payload"
+        );
+        
         let mut bytes = BytesMut::new();
         
         put_varlong(&mut bytes, self.timestamp_ms);
@@ -26,6 +37,8 @@ impl IpcMessage for PingResponse {
     }
 
     fn decode_payload(payload: &[u8]) -> Result<Self, PayloadError> {
+        trace!(payload_len = payload.len(), "Decoding PING response payload");
+        
         let mut cursor = payload;
         
         let timestamp_ms = read_varlong(&mut cursor, "timestamp_ms")?;
@@ -33,10 +46,18 @@ impl IpcMessage for PingResponse {
         
         ensure_consumed(cursor)?;
         
-        Ok(Self {
+        let response = Self {
             timestamp_ms,
             peer_timestamp_ms,
-        })
+        };
+
+        trace!(
+            timestamp_ms = response.timestamp_ms,
+            peer_timestamp_ms = response.peer_timestamp_ms,
+            "Decoded PING response payload"
+        );
+
+        Ok(response)
     }
 }
 

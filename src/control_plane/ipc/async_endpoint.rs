@@ -1,4 +1,5 @@
 use tokio::net::UnixStream;
+use tracing::{debug, trace};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::control_plane::ipc::ipc_client::IpcClient;
@@ -20,6 +21,8 @@ pub struct AsyncIpcEndpoint<S = UnixStream> {
 impl AsyncIpcEndpoint<UnixStream> {
     /// Otwiera połączenie z kanałem asynchronicznym IPC.
     pub async fn connect(socket_path: &str) -> Result<Self, AsyncIpcEndpointError> {
+        debug!(socket = socket_path, "Connecting async IPC endpoint");
+        
         let client = IpcClient::connect(socket_path).await?;
 
         Ok(Self {
@@ -43,6 +46,8 @@ impl<S> AsyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin
     pub async fn send_event<E>(&mut self, event: &E, flags: IpcFrameFlags) -> Result<(), AsyncIpcEndpointError>
         where E: IpcEventMessage 
     {
+        trace!(opcode = ?E::OPCODE, flags = flags.bits(), "Encoding typed async IPC event");
+        
         self.send_encoded_event(E::OPCODE, flags, event.encode_payload()?).await
     }
 
@@ -53,6 +58,8 @@ impl<S> AsyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin
         flags: IpcFrameFlags,
         payload: bytes::Bytes,
     ) -> Result<(), AsyncIpcEndpointError> {
+        let sequence_no = self.counters.next_sequence_no();
+
         let frame = IpcFrame::new(
             RGIPC_MAGIC,
             RGIPC_VERSION,
@@ -61,9 +68,18 @@ impl<S> AsyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin
             opcode,
             IpcStatus::Ok,
             0,
-            self.counters.next_sequence_no(),
+            sequence_no,
             payload,
         )?;
+
+        debug!(
+            opcode = ?opcode,
+            flags = flags.bits(),
+            request_id = frame.request_id(),
+            sequence_no = frame.sequence_no(),
+            payload_len = frame.payload_length(),
+            "Sending async IPC event frame"
+        );
 
         self.client.send_frame(&frame).await?;
 
@@ -75,6 +91,16 @@ impl<S> AsyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin
         let frame = self.client.receive_frame().await?;
         
         self.validate_common(&frame)?;
+
+        debug!(
+            opcode = ?frame.opcode(),
+            kind = ?frame.kind(),
+            request_id = frame.request_id(),
+            sequence_no = frame.sequence_no(),
+            status = ?frame.status(),
+            payload_len = frame.payload_length(),
+            "Received async IPC event frame"
+        );
 
         if frame.kind() != IpcFrameKind::Event {
             return Err(AsyncIpcEndpointError::UnexpectedKind {
@@ -102,6 +128,16 @@ impl<S> AsyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin
     }
 
     fn validate_common(&self, frame: &IpcFrame) -> Result<(), AsyncIpcEndpointError> {
+        trace!(
+            opcode = ?frame.opcode(),
+            kind = ?frame.kind(),
+            request_id = frame.request_id(),
+            sequence_no = frame.sequence_no(),
+            magic = frame.magic(),
+            version = frame.version(),
+            "Validating common async IPC frame fields"
+        );
+
         if frame.magic() != RGIPC_MAGIC {
             return Err(AsyncIpcEndpointError::InvalidMagic {
                 expected: RGIPC_MAGIC,

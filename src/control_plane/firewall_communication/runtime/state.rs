@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::watch;
+use tracing::{debug, trace, warn};
 
 use crate::policy::runtime::CompiledPolicy;
 use crate::policy::rgpf::errors::rgpf_error::RgpfError;
@@ -70,6 +71,13 @@ impl ActiveRevision {
     }
 
     pub fn rgpf(&self) -> Result<Option<RgpfFile<'_>>, RgpfError> {
+        trace!(
+            revision_id = self.revision_id,
+            policy_hash = self.policy_hash,
+            has_rgpf_bytes = self.bytes.is_some(),
+            "Creating RGPF view for active revision"
+        );
+
         match self.bytes.as_deref() {
             Some(bytes) => Ok(Some(RgpfFile::parse(bytes)?)),
             None => Ok(None),
@@ -120,40 +128,86 @@ impl FirewallState {
     }
 
     pub fn activate_revision(&self, active_revision: Arc<ActiveRevision>) {
+        let previous = self.snapshot();
         let mut next = (*self.snapshot()).clone();
 
         next.active_revision = active_revision;
         next.mode = FirewallMode::Normal;
         next.last_error_code = 0;
 
+        debug!(
+            previous_mode = ?previous.mode,
+            previous_revision_id = previous.active_revision.revision_id(),
+            previous_last_error_code = previous.last_error_code,
+            next_mode = ?next.mode,
+            next_revision_id = next.active_revision.revision_id(),
+            next_policy_hash = next.active_revision.policy_hash(),
+            next_rule_count = next.active_revision.rule_count(),
+            "Activated firewall policy revision"
+        );
+
         self.publish_snapshot(Arc::new(next));
     }
 
     pub fn mark_policy_error(&self, last_error_code: u32) {
+        let previous = self.snapshot();
         let mut next = (*self.snapshot()).clone();
 
         next.mode = FirewallMode::Degraded;
         next.last_error_code = last_error_code;
 
+        warn!(
+            previous_mode = ?previous.mode,
+            revision_id = previous.active_revision.revision_id(),
+            previous_last_error_code = previous.last_error_code,
+            next_mode = ?next.mode,
+            next_last_error_code = next.last_error_code,
+            "Marked firewall runtime as degraded due to policy error"
+        );
+
         self.publish_snapshot(Arc::new(next));
     }
 
     pub fn set_last_error_code(&self, last_error_code: u32) {
+        let previous = self.snapshot();
         let mut next = (*self.snapshot()).clone();
 
         next.last_error_code = last_error_code;
+
+        debug!(
+            mode = ?next.mode,
+            revision_id = next.active_revision.revision_id(),
+            previous_last_error_code = previous.last_error_code,
+            next_last_error_code = next.last_error_code,
+            "Updated firewall runtime error code"
+        );
 
         self.publish_snapshot(Arc::new(next));
     }
 
     pub fn set_transient_error_code(&self, last_error_code: u32) {
+        let previous = self.snapshot();
         let mut next = (*self.snapshot()).clone();
 
         if next.mode == FirewallMode::Degraded {
+            trace!(
+                revision_id = next.active_revision.revision_id(),
+                current_last_error_code = next.last_error_code,
+                ignored_error_code = last_error_code,
+                "Ignoring transient error code update because runtime is already degraded"
+            );
             return;
         }
 
         next.last_error_code = last_error_code;
+
+        debug!(
+            mode = ?next.mode,
+            revision_id = next.active_revision.revision_id(),
+            previous_last_error_code = previous.last_error_code,
+            next_last_error_code = next.last_error_code,
+            "Updated transient firewall runtime error code"
+        );
 
         self.publish_snapshot(Arc::new(next));
     }
@@ -165,6 +219,15 @@ impl FirewallState {
     /// Buduje payload odpowiedzi `GET_STATUS`.
     pub async fn build_status_response(&self) -> GetStatusResponse {
         let state = self.snapshot();
+
+        trace!(
+            mode = ?state.mode,
+            revision_id = state.active_revision.revision_id(),
+            policy_hash = state.active_revision.policy_hash(),
+            last_error_code = state.last_error_code,
+            uptime_sec = self.started_at.elapsed().as_secs(),
+            "Building GET_STATUS response from firewall runtime state"
+        );
 
         GetStatusResponse {
             mode: state.mode,
@@ -179,6 +242,15 @@ impl FirewallState {
     pub async fn build_heartbeat_event(&self) -> HeartbeatEvent {
         let state = self.snapshot();
 
+        trace!(
+            mode = ?state.mode,
+            revision_id = state.active_revision.revision_id(),
+            policy_hash = state.active_revision.policy_hash(),
+            last_error_code = state.last_error_code,
+            uptime_sec = self.started_at.elapsed().as_secs(),
+            "Building HEARTBEAT event from firewall runtime state"
+        );
+
         HeartbeatEvent {
             timestamp_ms: current_timestamp_ms(),
             mode: state.mode,
@@ -190,6 +262,14 @@ impl FirewallState {
     }
 
     fn publish_snapshot(&self, state: Arc<FirewallRuntimeState>) {
+        trace!(
+            mode = ?state.mode,
+            revision_id = state.active_revision.revision_id(),
+            policy_hash = state.active_revision.policy_hash(),
+            last_error_code = state.last_error_code,
+            "Publishing new firewall runtime state snapshot"
+        );
+        
         self.runtime_tx.send_replace(state);
     }
 }

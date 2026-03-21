@@ -1,7 +1,9 @@
 use tokio::net::UnixStream;
+use tracing::{debug, trace, warn};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::control_plane::ipc::ipc_frame::IpcFrame;
+use crate::control_plane::logging::payload_preview_hex;
 use crate::control_plane::errors::ipc_frame_error::IpcFrameError;
 use crate::control_plane::errors::ipc_client_error::IpcClientError;
 
@@ -13,7 +15,11 @@ pub struct IpcClient<S = UnixStream> {
 impl IpcClient<UnixStream> {
     /// Otwiera połączenie z pojedynczym gniazdem UDS wykorzystywanym przez IPC.
     pub async fn connect(socket_path: &str) -> Result<Self, IpcClientError> {
+        debug!(socket = socket_path, "Opening low-level IPC client connection");
+        
         let stream = UnixStream::connect(socket_path).await.map_err(IpcClientError::Connect)?;
+
+        debug!(socket = socket_path, "Opened low-level IPC client connection");
 
         Ok(Self { stream })
     }
@@ -27,16 +33,65 @@ impl<S> IpcClient<S> where S: AsyncRead + AsyncWrite + Unpin {
 
     /// Wysyła jedną ramkę do zdalnej strony.
     pub async fn send_frame(&mut self, frame: &IpcFrame) -> Result<(), IpcClientError> {
+        debug!(
+            kind = ?frame.kind(),
+            opcode = ?frame.opcode(),
+            request_id = frame.request_id(),
+            sequence_no = frame.sequence_no(),
+            payload_len = frame.payload_length(),
+            "Sending IPC frame"
+        );
+        
+        trace!(
+            kind = ?frame.kind(),
+            opcode = ?frame.opcode(),
+            status = ?frame.status(),
+            request_id = frame.request_id(),
+            sequence_no = frame.sequence_no(),
+            payload_len = frame.payload_length(),
+            payload_preview_hex = %payload_preview_hex(frame.payload(), 32),
+            "Sending IPC frame details"
+        );
+        
         frame.write_to(&mut self.stream).await.map_err(IpcClientError::Io)
     }
 
     /// Odbiera jedną kompletną ramkę z połączenia.
     pub async fn receive_frame(&mut self) -> Result<IpcFrame, IpcClientError> {
-        IpcFrame::read_from(&mut self.stream).await.map_err(Self::map_frame_error)
+        let frame = IpcFrame::read_from(&mut self.stream).await.map_err(Self::map_frame_error)?;
+
+        debug!(
+            kind = ?frame.kind(),
+            opcode = ?frame.opcode(),
+            request_id = frame.request_id(),
+            sequence_no = frame.sequence_no(),
+            payload_len = frame.payload_length(),
+            "Received IPC frame"
+        );
+        
+        trace!(
+            kind = ?frame.kind(),
+            opcode = ?frame.opcode(),
+            status = ?frame.status(),
+            request_id = frame.request_id(),
+            sequence_no = frame.sequence_no(),
+            payload_len = frame.payload_length(),
+            payload_preview_hex = %payload_preview_hex(frame.payload(), 32),
+            "Received IPC frame details"
+        );
+
+        Ok(frame)
     }
 
     /// Wysyła ramkę i od razu oczekuje na następną ramkę odpowiedzi.
     pub async fn request(&mut self, frame: &IpcFrame) -> Result<IpcFrame, IpcClientError> {
+        debug!(
+            opcode = ?frame.opcode(),
+            request_id = frame.request_id(),
+            sequence_no = frame.sequence_no(),
+            "Executing IPC request roundtrip"
+        );
+        
         self.send_frame(frame).await?;
 
         self.receive_frame().await
@@ -45,13 +100,20 @@ impl<S> IpcClient<S> where S: AsyncRead + AsyncWrite + Unpin {
     /// Mapuje błędy warstwy ramki na błędy klienta transportowego.
     fn map_frame_error(err: IpcFrameError) -> IpcClientError {
         match err {
-            IpcFrameError::TruncatedField { field } => IpcClientError::EndOfStream { field },
+            IpcFrameError::TruncatedField { field } => {
+                warn!(field, "Reached end of stream while decoding IPC frame field");
+                IpcClientError::EndOfStream { field }
+            }
             
             IpcFrameError::IncompletePayload { .. } => {
+                warn!("Reached end of stream while reading IPC frame payload");
                 IpcClientError::EndOfStream { field: "payload" }
             }
             
-            IpcFrameError::Io { kind } => IpcClientError::Io(std::io::Error::from(kind)),
+            IpcFrameError::Io { kind } => {
+                warn!(io_kind = ?kind, "IPC client I/O error while decoding frame");
+                IpcClientError::Io(std::io::Error::from(kind))
+            }
             
             other => IpcClientError::Frame(other),
         }

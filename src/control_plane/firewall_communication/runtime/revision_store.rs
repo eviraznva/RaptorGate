@@ -1,7 +1,9 @@
 use std::sync::Arc;
+use tracing::{debug, info, trace, warn};
 use std::path::{Component, Path, PathBuf};
 
 use crate::policy::rgpf::sections::rgpf_file::RgpfFile;
+use crate::control_plane::logging::payload_preview_hex;
 use crate::policy::rgpf::load::compiled_policy::load_compiled_policy;
 use crate::control_plane::errors::revision_store_error::RevisionStoreError;
 use crate::control_plane::firewall_communication::runtime::state::ActiveRevision;
@@ -14,13 +16,31 @@ pub struct RevisionStore {
 
 impl RevisionStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        let root = root.into();
+
+        debug!(config_store_path = %root.display(), "Created revision store reader");
+
+        Self { root }
     }
 
+    #[tracing::instrument(skip(self), fields(config_store_path = %self.root.display(), expected_revision_id))]
     pub async fn load_active_revision(&self, expected_revision_id: u64) -> Result<Arc<ActiveRevision>, RevisionStoreError> {
+        debug!(
+            config_store_path = %self.root.display(),
+            expected_revision_id,
+            "Loading active revision from config store"
+        );
+
         let (revision_id_from_target, active_target) = self.resolve_active_target().await?;
 
         if revision_id_from_target != expected_revision_id {
+            warn!(
+                config_store_path = %self.root.display(),
+                expected_revision_id,
+                revision_id_from_target,
+                active_target = %active_target.display(),
+                "Revision id from active symlink target does not match requested revision"
+            );
             return Err(RevisionStoreError::RevisionMismatch {
                 expected: expected_revision_id,
                 found: revision_id_from_target,
@@ -30,23 +50,40 @@ impl RevisionStore {
         self.load_revision_from_target(active_target, expected_revision_id).await
     }
 
+    #[tracing::instrument(skip(self), fields(config_store_path = %self.root.display()))]
     pub async fn load_current_active_revision(&self) -> Result<Arc<ActiveRevision>, RevisionStoreError> {
+        debug!(
+            config_store_path = %self.root.display(),
+            "Loading current active revision from config store"
+        );
+
         let (revision_id_from_target, active_target) = self.resolve_active_target().await?;
 
         self.load_revision_from_target(active_target, revision_id_from_target).await
     }
 
+    #[tracing::instrument(skip(self), fields(config_store_path = %self.root.display()))]
     async fn resolve_active_target(&self) -> Result<(u64, PathBuf), RevisionStoreError> {
         let active_link = self.root.join("active");
+
+        trace!(active_link = %active_link.display(), "Resolving active revision symlink");
 
         let active_target = tokio::fs::read_link(&active_link).await
             .map_err(RevisionStoreError::ReadActiveLink)?;
 
         let revision_id_from_target = parse_active_revision_target(&active_target)?;
 
+        debug!(
+            active_link = %active_link.display(),
+            active_target = %active_target.display(),
+            revision_id = revision_id_from_target,
+            "Resolved active revision symlink"
+        );
+
         Ok((revision_id_from_target, active_target))
     }
 
+    #[tracing::instrument(skip(self), fields(expected_revision_id))]
     async fn load_revision_from_target(
         &self,
         active_target: PathBuf,
@@ -60,8 +97,22 @@ impl RevisionStore {
 
         let policy_path = revision_dir.join("policy.bin");
 
+        trace!(
+            revision_dir = %revision_dir.display(),
+            policy_path = %policy_path.display(),
+            expected_revision_id,
+            "Loading policy.bin for active revision"
+        );
+
         let bytes = tokio::fs::read(&policy_path).await
             .map_err(RevisionStoreError::ReadPolicy)?;
+
+        trace!(
+            policy_path = %policy_path.display(),
+            file_len = bytes.len(),
+            payload_preview_hex = %payload_preview_hex(&bytes, 32),
+            "Read policy.bin bytes from config store"
+        );
 
         let bytes: Arc<[u8]> = Arc::from(bytes.into_boxed_slice());
 
@@ -70,6 +121,13 @@ impl RevisionStore {
         let actual_revision_id = file.header().revision_id.get();
 
         if actual_revision_id != expected_revision_id {
+            warn!(
+                policy_path = %policy_path.display(),
+                expected_revision_id,
+                actual_revision_id,
+                "RGPF header revision id does not match expected revision"
+            );
+            
             return Err(RevisionStoreError::RevisionMismatch {
                 expected: expected_revision_id,
                 found: actual_revision_id,
@@ -82,6 +140,14 @@ impl RevisionStore {
         
         let rule_count = compiled_policy.metadata().rule_count;
 
+        info!(
+            revision_id = actual_revision_id,
+            policy_hash,
+            rule_count,
+            policy_path = %policy_path.display(),
+            "Loaded active policy revision from config store"
+        );
+
         Ok(Arc::new(ActiveRevision::from_rgpf(
             bytes,
             compiled_policy,
@@ -93,6 +159,8 @@ impl RevisionStore {
 }
 
 fn parse_active_revision_target(target: &Path) -> Result<u64, RevisionStoreError> {
+    trace!(active_target = %target.display(), "Parsing active revision symlink target");
+
     let mut components = target.components().rev();
 
     let revision_component = components.next()

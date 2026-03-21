@@ -1,3 +1,4 @@
+use tracing::trace;
 use bytes::{Bytes, BytesMut};
 
 use crate::control_plane::types::ipc_opcode::IpcOpcode;
@@ -32,6 +33,8 @@ impl IpcMessage for GetNetworkInterfacesResponse {
     const KIND: IpcFrameKind = IpcFrameKind::Response;
 
     fn encode_payload(&self) -> Result<Bytes, PayloadError> {
+        trace!(interface_count = self.interfaces.len(), "Encoding GET_NETWORK_INTERFACES response payload");
+        
         let mut bytes = BytesMut::new();
 
         put_varint(&mut bytes, self.interfaces.len() as u32);
@@ -53,6 +56,8 @@ impl IpcMessage for GetNetworkInterfacesResponse {
     }
 
     fn decode_payload(payload: &[u8]) -> Result<Self, PayloadError> {
+        trace!(payload_len = payload.len(), "Decoding GET_NETWORK_INTERFACES response payload");
+        
         let mut cursor = payload;
         
         let count = read_varint(&mut cursor, "interfaces_count")? as usize;
@@ -84,7 +89,11 @@ impl IpcMessage for GetNetworkInterfacesResponse {
 
         ensure_consumed(cursor)?;
         
-        Ok(Self { interfaces })
+        let response = Self { interfaces };
+
+        trace!(interface_count = response.interfaces.len(), "Decoded GET_NETWORK_INTERFACES response payload");
+
+        Ok(response)
     }
 }
 

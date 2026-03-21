@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+use tracing::{debug, info, warn};
 use tokio_util::sync::CancellationToken;
 
 use crate::policy::compiler;
@@ -43,11 +44,35 @@ pub struct FirewallIpcRuntime {
 
 impl FirewallIpcRuntime {
     /// Uruchamia nowy runtime IPC firewalla.
+    #[tracing::instrument(skip(config), fields(
+        sync_socket = %config.sync_socket_path,
+        async_socket = %config.async_socket_path,
+        config_store_path = %config.config_store_path
+    ))]
     pub async fn start(config: FirewallIpcConfig, block_icmp: bool) 
         -> Result<Self, Box<dyn std::error::Error + Send + Sync>> 
     {
+        info!(
+            sync_socket = %config.sync_socket_path,
+            async_socket = %config.async_socket_path,
+            config_store_path = %config.config_store_path,
+            heartbeat_interval_ms = config.heartbeat_interval.as_millis(),
+            async_reconnect_interval_ms = config.async_reconnect_interval.as_millis(),
+            event_queue_capacity = config.event_queue_capacity,
+            block_icmp,
+            "Starting firewall IPC runtime"
+        );
+
         let initial_state =
             build_initial_runtime_state(&config.config_store_path, block_icmp).await?;
+
+        debug!(
+            mode = ?initial_state.mode,
+            revision_id = initial_state.active_revision.revision_id(),
+            policy_hash = initial_state.active_revision.policy_hash(),
+            last_error_code = initial_state.last_error_code,
+            "Built initial firewall runtime state"
+        );
 
         let (state_tx, state_rx) =
             watch::channel(initial_state);
@@ -103,16 +128,21 @@ impl FirewallIpcRuntime {
     }
 
     pub async fn shutdown(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Stopping firewall IPC runtime");
+        
         self.shutdown.cancel();
         
         for join in self.joins {
             let _ = join.await;
         }
+
+        info!("Firewall IPC runtime stopped");
         
         Ok(())
     }
 }
 
+#[tracing::instrument(fields(config_store_path = config_store_path))]
 async fn build_initial_runtime_state(
     config_store_path: &str,
     block_icmp: bool,
@@ -123,18 +153,35 @@ async fn build_initial_runtime_state(
 
     let revision_store = RevisionStore::new(config_store_path.to_string());
 
+    debug!(
+        config_store_path,
+        block_icmp,
+        "Attempting startup bootstrap from active policy revision"
+    );
+
     match revision_store.load_current_active_revision().await {
-        Ok(active_revision) => Ok(Arc::new(FirewallRuntimeState {
-            mode: FirewallMode::Normal,
-            active_revision,
-            last_error_code: 0,
-        })),
+        Ok(active_revision) => {
+            info!(
+                revision_id = active_revision.revision_id(),
+                policy_hash = active_revision.policy_hash(),
+                rule_count = active_revision.rule_count(),
+                config_store_path,
+                "Bootstrapped firewall runtime from active policy revision"
+            );
+
+            Ok(Arc::new(FirewallRuntimeState {
+                mode: FirewallMode::Normal,
+                active_revision,
+                last_error_code: 0,
+            }))
+        }
         Err(err) => {
             let code = u32::from(map_revision_store_error(&err));
 
-            tracing::warn!(
+            warn!(
                 error = %err,
                 config_store_path = config_store_path,
+                fallback_revision_id = fallback_revision.revision_id(),
                 "Failed to load active policy.bin during startup, falling back to compiled defaults"
             );
 

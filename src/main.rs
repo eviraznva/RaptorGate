@@ -10,17 +10,37 @@ mod rule_tree;
 mod tls;
 
 use crate::config::AppConfig;
+use tracing_subscriber::fmt::format::FmtSpan;
 use crate::data_plane::runtime as data_plane_runtime;
 use control_plane::firewall_communication::{FirewallIpcConfig, FirewallIpcRuntime};
 
 #[tokio::main]
 async fn main() {
+    let verbose_log_format = control_plane::logging::env_flag("RAPTORGATE_LOG_VERBOSE_FORMAT");
+    
+    let log_level = std::env::var("RAPTORGATE_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+    
+    let env_filter = tracing_subscriber::EnvFilter::try_new(log_level.as_str())
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_thread_names(false)
-        .init();
+        .with_env_filter(env_filter)
+        .with_target(verbose_log_format)
+        .with_thread_ids(verbose_log_format)
+        .with_thread_names(verbose_log_format)
+        .with_file(verbose_log_format)
+        .with_line_number(verbose_log_format)
+        .with_span_events(if verbose_log_format {
+            FmtSpan::NEW | FmtSpan::CLOSE
+        } else {
+            FmtSpan::NONE
+        }).init();
+
+    tracing::info!(
+        log_level = %log_level,
+        verbose_log_format,
+        "Initialized application logging"
+    );
 
     let config = match AppConfig::from_env() {
         Ok(config) => config,
@@ -43,9 +63,13 @@ async fn main() {
 
     let handle = firewall_runtime.handle();
 
+    tracing::info!("Starting data plane runtime");
+
     if let Err(err) = data_plane_runtime::run(&config, handle.state()).await {
         eprintln!("Data plane error: {err}");
     }
+
+    tracing::info!("Shutting down firewall IPC runtime");
 
     if let Err(err) = firewall_runtime.shutdown().await {
         eprintln!("Firewall IPC runtime shutdown error: {err}");

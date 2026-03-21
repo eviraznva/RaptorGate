@@ -1,3 +1,4 @@
+use tracing::trace;
 use bytes::{Bytes, BytesMut};
 
 use crate::control_plane::types::ipc_opcode::IpcOpcode;
@@ -20,6 +21,8 @@ impl IpcMessage for ActivateRevisionRequest {
     const KIND: IpcFrameKind = IpcFrameKind::Request;
 
     fn encode_payload(&self) -> Result<Bytes, PayloadError> {
+        trace!(revision_id = self.revision_id, "Encoding ACTIVATE_REVISION request payload");
+        
         let mut bytes = BytesMut::new();
 
         put_varlong(&mut bytes, self.revision_id);
@@ -28,13 +31,19 @@ impl IpcMessage for ActivateRevisionRequest {
     }
 
     fn decode_payload(payload: &[u8]) -> Result<Self, PayloadError> {
+        trace!(payload_len = payload.len(), "Decoding ACTIVATE_REVISION request payload");
+        
         let mut cursor = payload;
 
         let revision_id = read_varlong(&mut cursor, "revision_id")?;
 
         ensure_consumed(cursor)?;
 
-        Ok(Self { revision_id })
+        let request = Self { revision_id };
+
+        trace!(revision_id = request.revision_id, "Decoded ACTIVATE_REVISION request payload");
+
+        Ok(request)
     }
 }
 

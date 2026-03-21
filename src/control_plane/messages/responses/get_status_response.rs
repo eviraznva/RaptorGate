@@ -1,3 +1,4 @@
+use tracing::trace;
 use bytes::{Bytes, BytesMut};
 
 use crate::control_plane::types::ipc_opcode::IpcOpcode;
@@ -25,6 +26,15 @@ impl IpcMessage for GetStatusResponse {
     const KIND: IpcFrameKind = IpcFrameKind::Response;
 
     fn encode_payload(&self) -> Result<Bytes, PayloadError> {
+        trace!(
+            mode = ?self.mode,
+            loaded_revision_id = self.loaded_revision_id,
+            policy_hash = self.policy_hash,
+            uptime_sec = self.uptime_sec,
+            last_error_code = self.last_error_code,
+            "Encoding GET_STATUS response payload"
+        );
+        
         let mut bytes = BytesMut::new();
         
         self.mode.encode_into(&mut bytes);
@@ -38,6 +48,8 @@ impl IpcMessage for GetStatusResponse {
     }
 
     fn decode_payload(payload: &[u8]) -> Result<Self, PayloadError> {
+        trace!(payload_len = payload.len(), "Decoding GET_STATUS response payload");
+        
         let mut cursor = payload;
         
         let mode = FirewallMode::decode(&mut cursor, "mode")?;
@@ -48,13 +60,24 @@ impl IpcMessage for GetStatusResponse {
         
         ensure_consumed(cursor)?;
         
-        Ok(Self {
+        let response = Self {
             mode,
             loaded_revision_id,
             policy_hash,
             uptime_sec,
             last_error_code,
-        })
+        };
+
+        trace!(
+            mode = ?response.mode,
+            loaded_revision_id = response.loaded_revision_id,
+            policy_hash = response.policy_hash,
+            uptime_sec = response.uptime_sec,
+            last_error_code = response.last_error_code,
+            "Decoded GET_STATUS response payload"
+        );
+
+        Ok(response)
     }
 }
 

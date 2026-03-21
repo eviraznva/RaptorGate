@@ -26,6 +26,14 @@ macro_rules! impl_varnum {
                 }
 
                 buf[i] = value as u8;
+                
+                tracing::trace!(
+                    type_name = stringify!($name),
+                    value = self.0 as u64,
+                    encoded_len = i + 1,
+                    "Encoded variable-length integer"
+                );
+                
                 &buf[..=i]
             }
 
@@ -50,6 +58,13 @@ macro_rules! impl_varnum {
                     shift += 7;
 
                     if byte & 0x80 == 0 {
+                        tracing::trace!(
+                            type_name = stringify!($name),
+                            value = value as u64,
+                            encoded_len = i + 1,
+                            "Decoded variable-length integer"
+                        );
+                        
                         return Some((Self(value), i + 1));
                     }
                 }

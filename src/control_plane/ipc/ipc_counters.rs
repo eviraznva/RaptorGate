@@ -20,6 +20,8 @@ impl IpcCounters {
         let value = self.next_request_id;
         
         self.next_request_id = self.next_request_id.saturating_add(1);
+
+        tracing::trace!(request_id = value, next_request_id = self.next_request_id, "Allocated next IPC request id");
         
         value
     }
@@ -29,6 +31,8 @@ impl IpcCounters {
         let value = self.next_sequence_no;
         
         self.next_sequence_no = self.next_sequence_no.saturating_add(1);
+
+        tracing::trace!(sequence_no = value, next_sequence_no = self.next_sequence_no, "Allocated next IPC sequence number");
         
         value
     }

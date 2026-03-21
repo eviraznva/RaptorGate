@@ -1,3 +1,4 @@
+use tracing::{trace, warn};
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -5,6 +6,7 @@ use crate::control_plane::types::varint::VarInt;
 use crate::control_plane::types::varlong::VarLong;
 use crate::control_plane::types::ipc_status::IpcStatus;
 use crate::control_plane::types::ipc_opcode::IpcOpcode;
+use crate::control_plane::logging::payload_preview_hex;
 use crate::control_plane::types::ipc_frame_kind::IpcFrameKind;
 use crate::control_plane::types::ipc_frame_flags::IpcFrameFlags;
 
@@ -86,6 +88,20 @@ impl IpcFrame {
 
     /// Koduje ramkę do jednego bufora bajtów.
     pub fn encode(&self) -> Bytes {
+        trace!(
+            magic = self.magic.get(),
+            version = self.version.get(),
+            kind = ?self.kind,
+            flags = self.flags.bits(),
+            opcode = ?self.opcode,
+            status = ?self.status,
+            request_id = self.request_id.get(),
+            sequence_no = self.sequence_no.get(),
+            payload_len = self.payload.len(),
+            payload_preview_hex = %payload_preview_hex(&self.payload, 32),
+            "Encoding IPC frame"
+        );
+
         let mut bytes = BytesMut::with_capacity(self.encoded_len());
 
         Self::put_varint(&mut bytes, self.magic);
@@ -107,6 +123,14 @@ impl IpcFrame {
     pub async fn write_to<W>(&self, writer: &mut W) -> std::io::Result<()> where W: AsyncWrite + Unpin {
         let encoded = self.encode();
 
+        trace!(
+            opcode = ?self.opcode,
+            request_id = self.request_id.get(),
+            sequence_no = self.sequence_no.get(),
+            encoded_len = encoded.len(),
+            "Writing encoded IPC frame to stream"
+        );
+
         writer.write_all(&encoded).await
     }
 
@@ -122,6 +146,20 @@ impl IpcFrame {
         let sequence_no = Self::read_varlong_from(reader, "sequence_no").await?;
         let payload_length = Self::read_varint_from(reader, "payload_length").await?;
         let payload = Self::read_payload_from(reader, payload_length.get() as usize).await?;
+
+        trace!(
+            magic = magic.get(),
+            version = version.get(),
+            kind = ?kind,
+            flags = flags.bits(),
+            opcode = ?opcode,
+            status = ?status,
+            request_id = request_id.get(),
+            sequence_no = sequence_no.get(),
+            payload_len = payload.len(),
+            payload_preview_hex = %payload_preview_hex(&payload, 32),
+            "Read IPC frame from stream"
+        );
 
         Ok(Self {
             magic,
@@ -139,6 +177,8 @@ impl IpcFrame {
 
     /// Dekoduje ramkę z gotowego bufora i zwraca też liczbę zużytych bajtów.
     pub fn decode(buf: &[u8]) -> Result<(Self, usize), IpcFrameError> {
+        trace!(buffer_len = buf.len(), "Decoding IPC frame from buffer");
+        
         let mut cursor = buf;
 
         let start_len = cursor.len();
@@ -156,6 +196,12 @@ impl IpcFrame {
         let declared_payload_len = payload_length.get() as usize;
 
         if cursor.len() < declared_payload_len {
+            warn!(
+                declared_payload_len,
+                available_payload_len = cursor.len(),
+                "IPC frame payload shorter than declared length"
+            );
+            
             return Err(IpcFrameError::IncompletePayload {
                 declared: declared_payload_len,
                 available: cursor.len(),
@@ -165,6 +211,21 @@ impl IpcFrame {
         let payload = Bytes::copy_from_slice(&cursor[..declared_payload_len]);
 
         cursor = &cursor[declared_payload_len..];
+
+        trace!(
+            magic = magic.get(),
+            version = version.get(),
+            kind = ?kind,
+            flags = flags.bits(),
+            opcode = ?opcode,
+            status = ?status,
+            request_id = request_id.get(),
+            sequence_no = sequence_no.get(),
+            payload_len = payload.len(),
+            payload_preview_hex = %payload_preview_hex(&payload, 32),
+            consumed_len = start_len - cursor.len(),
+            "Decoded IPC frame from buffer"
+        );
 
         Ok((
             Self {
@@ -266,12 +327,15 @@ impl IpcFrame {
     async fn read_payload_from<R>(reader: &mut R, payload_len: usize) -> Result<Bytes, IpcFrameError>
         where R: AsyncRead + Unpin
     {
+        trace!(payload_len, "Reading IPC frame payload from stream");
+        
         let mut payload = vec![0u8; payload_len];
         let mut read = 0usize;
 
         while read < payload_len {
             match reader.read(&mut payload[read..]).await {
                 Ok(0) => {
+                    warn!(payload_len, available = read, "Unexpected end of stream while reading IPC payload");
                     return Err(IpcFrameError::IncompletePayload {
                         declared: payload_len,
                         available: read,
@@ -279,6 +343,7 @@ impl IpcFrame {
                 }
                 Ok(n) => read += n,
                 Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    warn!(payload_len, available = read, "Unexpected EOF while reading IPC payload");
                     return Err(IpcFrameError::IncompletePayload {
                         declared: payload_len,
                         available: read,
@@ -288,6 +353,12 @@ impl IpcFrame {
             }
         }
 
+        trace!(
+            payload_len,
+            payload_preview_hex = %payload_preview_hex(&payload, 32),
+            "Finished reading IPC frame payload"
+        );
+        
         Ok(Bytes::from(payload))
     }
 
@@ -301,9 +372,13 @@ impl IpcFrame {
             buf[i] = Self::read_byte_from(reader, field).await?;
 
             if buf[i] & 0x80 == 0 {
-                return VarInt::decode(&buf[..=i])
+                let decoded = VarInt::decode(&buf[..=i])
                     .map(|(value, _)| value)
-                    .ok_or(IpcFrameError::TruncatedField { field });
+                    .ok_or(IpcFrameError::TruncatedField { field })?;
+
+                trace!(field, value = decoded.get(), encoded_len = i + 1, "Decoded IPC varint field from stream");
+
+                return Ok(decoded);
             }
         }
 
@@ -320,9 +395,13 @@ impl IpcFrame {
             buf[i] = Self::read_byte_from(reader, field).await?;
 
             if buf[i] & 0x80 == 0 {
-                return VarLong::decode(&buf[..=i])
+                let decoded = VarLong::decode(&buf[..=i])
                     .map(|(value, _)| value)
-                    .ok_or(IpcFrameError::TruncatedField { field });
+                    .ok_or(IpcFrameError::TruncatedField { field })?;
+
+                trace!(field, value = decoded.get(), encoded_len = i + 1, "Decoded IPC varlong field from stream");
+
+                return Ok(decoded);
             }
         }
 
@@ -332,7 +411,10 @@ impl IpcFrame {
     /// Odczytuje pojedynczy bajt pomocniczy używany przy dekodowaniu pól zmiennej długości.
     async fn read_byte_from<R>(reader: &mut R, field: &'static str) -> Result<u8, IpcFrameError> where R: AsyncRead + Unpin {
         match reader.read_u8().await {
-            Ok(byte) => Ok(byte),
+            Ok(byte) => {
+                trace!(field, byte = format_args!("{byte:02X}"), "Read raw byte while decoding IPC field");
+                Ok(byte)
+            }
 
             Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
                 Err(IpcFrameError::TruncatedField { field })

@@ -1,3 +1,4 @@
+use tracing::trace;
 use bytes::{Bytes, BytesMut};
 
 use crate::control_plane::types::ipc_opcode::IpcOpcode;
@@ -26,6 +27,16 @@ impl IpcMessage for HeartbeatEvent {
     const KIND: IpcFrameKind = IpcFrameKind::Event;
 
     fn encode_payload(&self) -> Result<Bytes, PayloadError> {
+        trace!(
+            timestamp_ms = self.timestamp_ms,
+            mode = ?self.mode,
+            loaded_revision_id = self.loaded_revision_id,
+            policy_hash = self.policy_hash,
+            uptime_sec = self.uptime_sec,
+            last_error_code = self.last_error_code,
+            "Encoding HEARTBEAT event payload"
+        );
+
         let mut bytes = BytesMut::new();
         
         put_varlong(&mut bytes, self.timestamp_ms);
@@ -40,6 +51,8 @@ impl IpcMessage for HeartbeatEvent {
     }
 
     fn decode_payload(payload: &[u8]) -> Result<Self, PayloadError> {
+        trace!(payload_len = payload.len(), "Decoding HEARTBEAT event payload");
+        
         let mut cursor = payload;
         
         let timestamp_ms = read_varlong(&mut cursor, "timestamp_ms")?;
@@ -51,14 +64,26 @@ impl IpcMessage for HeartbeatEvent {
         
         ensure_consumed(cursor)?;
         
-        Ok(Self {
+        let event = Self {
             timestamp_ms,
             mode,
             loaded_revision_id,
             policy_hash,
             uptime_sec,
             last_error_code,
-        })
+        };
+
+        trace!(
+            timestamp_ms = event.timestamp_ms,
+            mode = ?event.mode,
+            loaded_revision_id = event.loaded_revision_id,
+            policy_hash = event.policy_hash,
+            uptime_sec = event.uptime_sec,
+            last_error_code = event.last_error_code,
+            "Decoded HEARTBEAT event payload"
+        );
+
+        Ok(event)
     }
 }
 

@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use tokio::net::UnixStream;
+use tracing::{debug, trace, warn};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::control_plane::ipc::ipc_client::IpcClient;
@@ -38,6 +39,8 @@ pub struct SyncIpcEndpoint<S = UnixStream> {
 impl SyncIpcEndpoint<UnixStream> {
     /// Otwiera połączenie z kanałem synchronicznym IPC.
     pub async fn connect(socket_path: &str) -> Result<Self, SyncIpcEndpointError> {
+        debug!(socket = socket_path, "Connecting sync IPC endpoint");
+        
         let client = IpcClient::connect(socket_path).await?;
 
         Ok(Self {
@@ -85,6 +88,14 @@ impl<S> SyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin {
         let sequence_no = self.counters.next_sequence_no();
         let payload = request.encode_payload()?;
 
+        debug!(
+            opcode = ?Req::OPCODE,
+            request_id,
+            sequence_no,
+            payload_len = payload.len(),
+            "Sending typed sync IPC request"
+        );
+
         let frame = IpcFrame::new(
             RGIPC_MAGIC,
             RGIPC_VERSION,
@@ -100,10 +111,27 @@ impl<S> SyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin {
         let response = self.client.request(&frame).await?;
         self.validate_common(&response)?;
 
+        debug!(
+            opcode = ?response.opcode(),
+            kind = ?response.kind(),
+            request_id = response.request_id(),
+            sequence_no = response.sequence_no(),
+            status = ?response.status(),
+            payload_len = response.payload_length(),
+            "Received typed sync IPC response frame"
+        );
+
         match response.kind() {
             IpcFrameKind::Response => {}
             
             IpcFrameKind::Error => {
+                warn!(
+                    opcode = ?response.opcode(),
+                    request_id = response.request_id(),
+                    status = ?response.status(),
+                    payload_len = response.payload_length(),
+                    "Remote side returned sync IPC error response"
+                );
                 return Err(SyncIpcEndpointError::RemoteError {
                     status: response.status(),
                     payload: response.payload().clone(),
@@ -142,7 +170,18 @@ impl<S> SyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin {
     /// Odbiera jedną surową ramkę z kanału synchronicznego.
     pub async fn receive_frame(&mut self) -> Result<IpcFrame, SyncIpcEndpointError> {
         let frame = self.client.receive_frame().await?;
+        
         self.validate_common(&frame)?;
+        
+        trace!(
+            opcode = ?frame.opcode(),
+            kind = ?frame.kind(),
+            request_id = frame.request_id(),
+            sequence_no = frame.sequence_no(),
+            payload_len = frame.payload_length(),
+            "Validated sync IPC frame"
+        );
+        
         Ok(frame)
     }
 
@@ -178,6 +217,13 @@ impl<S> SyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin {
 
         let meta = RequestMeta::from_frame(&frame);
 
+        debug!(
+            opcode = ?Req::OPCODE,
+            request_id = meta.request_id,
+            sequence_no = meta.sequence_no,
+            "Decoded inbound sync IPC request"
+        );
+
         Ok(InboundRequest { meta, message })
     }
 
@@ -204,6 +250,14 @@ impl<S> SyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin {
             response.encode_payload()?,
         )?;
 
+        debug!(
+            opcode = ?Resp::OPCODE,
+            request_id = request_meta.request_id,
+            sequence_no = frame.sequence_no(),
+            payload_len = frame.payload_length(),
+            "Sending sync IPC success response"
+        );
+
         self.client.send_frame(&frame).await?;
 
         Ok(())
@@ -225,12 +279,31 @@ impl<S> SyncIpcEndpoint<S> where S: AsyncRead + AsyncWrite + Unpin {
             payload,
         )?;
 
+        warn!(
+            opcode = ?request_meta.opcode,
+            request_id = request_meta.request_id,
+            status = ?status,
+            sequence_no = frame.sequence_no(),
+            payload_len = frame.payload_length(),
+            "Sending sync IPC error response"
+        );
+
         self.client.send_frame(&frame).await?;
 
         Ok(())
     }
 
     fn validate_common(&self, frame: &IpcFrame) -> Result<(), SyncIpcEndpointError> {
+        trace!(
+            opcode = ?frame.opcode(),
+            kind = ?frame.kind(),
+            request_id = frame.request_id(),
+            sequence_no = frame.sequence_no(),
+            magic = frame.magic(),
+            version = frame.version(),
+            "Validating common sync IPC frame fields"
+        );
+
         if frame.magic() != RGIPC_MAGIC {
             return Err(SyncIpcEndpointError::InvalidMagic {
                 expected: RGIPC_MAGIC,

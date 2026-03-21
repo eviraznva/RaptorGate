@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use tracing::trace;
 
 use crate::control_plane::types::ipc_opcode::IpcOpcode;
 use crate::control_plane::errors::payload_error::PayloadError;
@@ -14,10 +15,14 @@ impl IpcMessage for GetNetworkInterfacesRequest {
     const KIND: IpcFrameKind = IpcFrameKind::Request;
 
     fn encode_payload(&self) -> Result<Bytes, PayloadError> {
+        trace!("Encoding GET_NETWORK_INTERFACES request payload");
+        
         Ok(Bytes::new())
     }
 
     fn decode_payload(payload: &[u8]) -> Result<Self, PayloadError> {
+        trace!(payload_len = payload.len(), "Decoding GET_NETWORK_INTERFACES request payload");
+        
         ensure_consumed(payload)?;
         
         Ok(Self)
