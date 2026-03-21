@@ -57,7 +57,6 @@ impl TryFrom<&str> for IP {
         Ok(Self::new(octets))
     }
 }
-
 impl std::fmt::Display for IP {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -109,12 +108,10 @@ impl TryFrom<u8> for Hour {
     }
 }
 
-
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Protocol { Tcp, Udp, Icmp }
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Weekday { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
-
 pub(crate) struct RealFrame {
     ip_ver: IpVer,
     src_ip: IP,
