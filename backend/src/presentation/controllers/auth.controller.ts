@@ -6,7 +6,6 @@ import {
   Inject,
   Post,
   Res,
-  UseFilters,
 } from '@nestjs/common';
 import {
   ErrorResponseDto,
@@ -18,7 +17,6 @@ import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-cas
 import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto';
-import { DomainExceptionFilter } from '../filters/domain-exception.filter';
 import { IsPublic } from 'src/infrastructure/decorators/public.decorator';
 import { Cookie } from 'src/infrastructure/decorators/cookie.decorator';
 import { LoginResponseDto } from '../dtos/login-response.dto';
@@ -28,7 +26,6 @@ import { LoginDto } from '../dtos/login.dto';
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 
-@UseFilters(DomainExceptionFilter)
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {

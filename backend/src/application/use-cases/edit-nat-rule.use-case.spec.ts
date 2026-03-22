@@ -1,6 +1,6 @@
 import { NAT_RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/nat-rules.repository';
-import { Priority } from 'src/domain/value-objects/priority.vo';
 import { IpAddress } from 'src/domain/value-objects/ip-address.vo';
+import { Priority } from 'src/domain/value-objects/priority.vo';
 import { NatType } from 'src/domain/value-objects/nat-type.vo';
 import { EditNatRuleUseCase } from './edit-nat-rule.use-case';
 import { NatRule } from 'src/domain/entities/nat-rule.entity';

@@ -1,3 +1,5 @@
+import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
+import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
 import { ZONE_REPOSITORY_TOKEN } from 'src/domain/repositories/zone.repository';
 import type { IZoneRepository } from 'src/domain/repositories/zone.repository';
 import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface';
@@ -15,10 +17,11 @@ export class CreateZoneUseCase {
 
   async execute(dto: CreateZoneDto): Promise<void> {
     const findExisting = await this.zoneRepository.findByName(dto.name);
-    if (findExisting) throw new Error('Zone with the same name already exists');
+    if (findExisting)
+      throw new EntityAlreadyExistsException('zone', 'name', dto.name);
 
     const claims = this.tokenService.decodeAccessToken(dto.accessToken);
-    if (!claims) throw new Error('Invalid access token');
+    if (!claims) throw new AccessTokenIsInvalidException();
 
     const newZone = Zone.create(
       crypto.randomUUID(),
