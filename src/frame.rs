@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use derive_more::{Display, Eq, From};
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
-pub(crate) trait Frame {
+pub trait Frame {
     fn ip_ver(&self) -> IpVer;
     fn src_ip(&self) -> IP;
     fn dst_ip(&self) -> IP;
@@ -14,16 +14,36 @@ pub(crate) trait Frame {
 }
 
 #[derive(Debug, Clone, Copy, From, Display, PartialEq, PartialOrd)]
-pub(crate) struct Port(u16);
+pub struct Port(u16);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct IP {
+pub struct IP {
     octets: [Octet; 4],
 }
 
 impl IP {
-    pub(crate) fn new(octets: [Octet; 4]) -> Self {
+    pub fn new(octets: [Octet; 4]) -> Self {
         Self { octets }
+    }
+}
+
+impl TryFrom<String> for IP {
+    type Error = ();
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        let parts: Vec<&str> = s.split('.').collect();
+        if parts.len() != 4 {
+            return Err(());
+        }
+        let mut octets = [Octet::Any; 4];
+        for (i, part) in parts.iter().enumerate() {
+            octets[i] = if *part == "*" {
+                Octet::Any
+            } else {
+                Octet::Value(part.parse::<u8>().map_err(|_| ())?)
+            };
+        }
+        Ok(Self { octets })
     }
 }
 
@@ -41,7 +61,7 @@ impl std::fmt::Display for IP {
 }
 
 #[derive(Debug, Clone, Copy, Display)]
-pub(crate) enum Octet {
+pub enum Octet {
     Any,
     Value(u8),
 }
@@ -57,13 +77,13 @@ impl PartialEq for Octet {
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq)]
-pub(crate) enum IpVer {
+pub enum IpVer {
     V4,
     V6,
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
-pub(crate) struct Hour(u8);
+pub struct Hour(u8);
 
 impl TryFrom<u8> for Hour {
     type Error = &'static str;
@@ -78,11 +98,11 @@ impl TryFrom<u8> for Hour {
 
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
-pub(crate) enum Protocol { Tcp, Udp, Icmp }
+pub enum Protocol { Tcp, Udp, Icmp }
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
-pub(crate) enum Weekday { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
+pub enum Weekday { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
 
-pub(crate) struct RealFrame {
+pub struct RealFrame {
     ip_ver: IpVer,
     src_ip: IP,
     dst_ip: IP,
@@ -94,7 +114,7 @@ pub(crate) struct RealFrame {
 }
 
 impl RealFrame {
-    pub(crate) fn from_sliced(packet: &SlicedPacket) -> Option<Self> {
+    pub fn from_sliced(packet: &SlicedPacket) -> Option<Self> {
         let (ip_ver, src_ip, dst_ip) = match &packet.net {
             Some(NetSlice::Ipv4(ipv4)) => {
                 let h = ipv4.header();

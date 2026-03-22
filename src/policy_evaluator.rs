@@ -6,11 +6,11 @@ pub(crate) struct PolicyEvaluator {
 }
 
 impl PolicyEvaluator {
-    pub(crate) fn new(rules: RuleTree, orphaned_verdict: Verdict) -> Self {
+    pub fn new(rules: RuleTree, orphaned_verdict: Verdict) -> Self {
         Self { rules, orphaned_verdict }
     }
 
-    pub(crate) fn evaluate<T: Frame>(&self, frame: &T) -> Option<Verdict> {
+    pub fn evaluate<T: Frame>(&self, frame: &T) -> Option<Verdict> {
         let context = PolicyContext { frame, allowed: false, warned: false };
         let mut walker = TreeWalker::new(&self.rules);
 

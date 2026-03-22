@@ -3,7 +3,8 @@ use thiserror::Error;
 
 use crate::{frame::Octet, rule_tree::{Arm, ArmEnd, FieldValue, IpVer, MatchKind, Pattern, RuleError, RuleTree, Verdict}};
 
-pub(crate) struct Match {
+#[derive(Debug, PartialEq)]
+pub struct Match {
     kind: MatchKind,
     arms: NonEmpty<Box<Arm>>,
 }
@@ -26,22 +27,22 @@ impl Match {
     }
 }
 
-pub(crate) struct MatchBuilder {
+pub struct MatchBuilder {
     kind: MatchKind,
     arms: NonEmpty<Box<Arm>>,
 }
 
 impl MatchBuilder {
-    pub(crate) fn with_arm(kind: MatchKind, pattern: Pattern, into: ArmEnd) -> Self {
+    pub fn with_arm(kind: MatchKind, pattern: Pattern, into: ArmEnd) -> Self {
         Self { kind, arms: NonEmpty::new(Box::new(Arm { pattern, into })) }
     }  
        
-    pub(crate) fn arm(mut self, pattern: Pattern, into: ArmEnd) -> Self {
+    pub fn arm(mut self, pattern: Pattern, into: ArmEnd) -> Self {
         self.arms.push(Box::new(Arm { pattern, into }));
         self
     }  
        
-    pub(crate) fn build(self) -> Result<Match, RuleError> {
+    pub fn build(self) -> Result<Match, RuleError> {
         let m = Match::new(self.kind, self.arms)?;
         Ok(m)
     }

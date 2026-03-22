@@ -193,7 +193,6 @@ async fn connect_and_bootstrap(
             correlation_id,
             reason: request_reason,
             known_versions: existing.as_ref().map(|cfg| cfg.section_versions.clone()),
-            known_version: existing.as_ref().map(|cfg| cfg.version as i32),
         })
         .await?;
 
@@ -383,7 +382,6 @@ async fn reconcile_config_change(
             correlation_id,
             reason: reason as i32,
             known_versions: Some(active_config.section_versions.clone()),
-            known_version: Some(active_config.version as i32),
         })
         .await?;
 
