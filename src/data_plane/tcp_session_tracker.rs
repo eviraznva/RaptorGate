@@ -2,7 +2,7 @@ use std::{marker::PhantomData, net::IpAddr, sync::Arc, time::{Duration, Instant}
 
 use bitflags::{bitflags, bitflags_match};
 use dashmap::{DashMap, Entry};
-use derive_more::{Display};
+use derive_more::{Add, AddAssign, Display, From, Into};
 use etherparse::{TcpSlice, TransportSlice, err::tcp::HeaderSliceError};
 use ngfw::frame::RealFrame;
 use ringbuffer::{AllocRingBuffer, RingBuffer};
@@ -20,21 +20,67 @@ pub struct TcpSessionTracker<T> {
 #[derive(Debug, Clone)]
 struct TcpPacketInfo {
     flags: TcpFlags,
-    sequence_number: u32,
+    sequence_number: SeqNumber,
+    acknowledgment_number: AckNumber,
     window_size: u16,
+    payload_size: u16,
     src: EndpointIdentifier,
     dst: EndpointIdentifier,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, From, Add, AddAssign)]
+struct AckNumber(u32);
+
+impl AckNumber {
+    fn wrapping_add(self, rhs: u32) -> Self {
+        Self(self.0.wrapping_add(rhs))
+    }
+}
+
+impl From<SeqNumber> for AckNumber {
+    fn from(seq: SeqNumber) -> Self {
+        Self(seq.0)
+    }
+}
+
+impl PartialEq<SeqNumber> for AckNumber {
+    fn eq(&self, other: &SeqNumber) -> bool {
+        self.0 == other.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, From, Add, AddAssign)]
+struct SeqNumber(u32);
+
+impl SeqNumber {
+    fn wrapping_add(self, rhs: u32) -> Self {
+        Self(self.0.wrapping_add(rhs))
+    }
+}
+
+impl PartialEq<AckNumber> for SeqNumber {
+    fn eq(&self, other: &AckNumber) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl From<AckNumber> for SeqNumber {
+    fn from(ack: AckNumber) -> Self {
+        Self(ack.0)
+    }
+}
+
 impl TcpPacketInfo {
     fn new(tcp: &TcpSlice, src: EndpointIdentifier, dst: EndpointIdentifier) -> Result<Self, TcpSessionError> {
-        let Some(flags) = TcpFlags::from_bits(tcp.header_slice()[TcpOffsets::FLAGS]) else { return Err(TcpSessionError::ZeroFlagPacket); /*FIXME: placeholder*/ };
+        let Some(flags) = TcpFlags::from_bits(tcp.header_slice()[TcpOffsets::FLAGS]) else { return Err(TcpSessionError::ZeroFlagPacket); /*FIXME: placeholder error*/ };
         Ok(Self {
             flags,
-            sequence_number: tcp.sequence_number(),
+            sequence_number: tcp.sequence_number().into(),
+            acknowledgment_number: tcp.acknowledgment_number().into(),
             window_size: tcp.window_size(),
             src,
             dst,
+            payload_size: tcp.payload().len() as u16,
         })
     }
 }
@@ -58,65 +104,82 @@ impl<T> TcpSessionTracker<T> where T: Frame + Send + Sync + 'static {
             endpoints: UnorderedPair::from(endpoints.clone()),
         };
 
-
-                // let Some(flags) = TcpFlags::from_bits(data.header_slice()[TcpOffsets::FLAGS]) else {
-                //     return Err(TcpSessionError::ZeroFlagPacket);
-                // };
-
         let entry = self.sessions.entry(id.clone());
 
         match entry {
-            Entry::Occupied(e) => {
-                // match e.get().state {
-                //     // TcpSessionState::Handshake => { bitflags_match!( },
-                //     // TcpSessionState::Established => { bitflags_match!( },
-                //     // TcpSessionState::Closed => { bitflags_match!( },
-                //     // TcpSessionState::ActiveTeardown => { bitflags_match!( },
-                //     // TcpSessionState::PassiveTeardown => { bitflags_match!( },
-                // }
+            Entry::Occupied(mut e) => {
+                let session = e.get_mut();
+
+                match session.state {
+                    TcpSessionState::Handshake(s) => match s {
+                        TcpHandshakeState::SynSent => {
+                            if packet.flags.contains(TcpFlags::SYN | TcpFlags::ACK)
+                                && packet.src == session.receiver.id 
+                                && packet.acknowledgment_number == session.initiator.next_expected_seq {
+                                session.receiver.next_expected_seq = packet.sequence_number.wrapping_add(1);
+                                session.receiver.max_window_size = packet.window_size;
+                                session.state = TcpSessionState::Handshake(TcpHandshakeState::SynAckReceived);
+
+                                self.process_from_buffer(TcpFlags::ACK, &id, &session.initiator.id)?;
+                            }
+                        },
+
+                        TcpHandshakeState::SynAckReceived => {
+                            if packet.flags.contains(TcpFlags::ACK)
+                                && packet.src == session.initiator.id
+                                && packet.sequence_number == session.initiator.next_expected_seq
+                                && packet.acknowledgment_number == session.receiver.next_expected_seq {
+                                session.state = TcpSessionState::Established;
+                                session.initiator.next_expected_seq.wrapping_add(u32::from(packet.payload_size));
+                            }
+                        },
+
+                    },
+                    TcpSessionState::Established => todo!(),
+                    TcpSessionState::Closed => todo!(),
+                    TcpSessionState::ActiveTeardown => todo!(),
+                    TcpSessionState::PassiveTeardown => todo!(),
+                }
+
+                Ok(Some(e.get().state))
             }
 
             Entry::Vacant(e) => {
-                return bitflags_match!(&packet.flags, {
+                bitflags_match!(&packet.flags, {
                     &TcpFlags::SYN => { 
-                        e.insert(TcpSession { 
-                            state: TcpSessionState::Handshake,
-                            initiator: Endpoint { next_expected_seq: packet.sequence_number.wrapping_add(1), max_window_size: packet.window_size.into()},
-                            receiver: Endpoint { next_expected_seq: 0, max_window_size: 0 } //TODO: is there a better way to express this? 
+                        let inserted = e.insert(TcpSession { 
+                            state: TcpSessionState::Handshake(TcpHandshakeState::SynSent),
+                            initiator: Endpoint { id: packet.src.clone(), next_expected_seq: packet.sequence_number.wrapping_add(1), max_window_size: packet.window_size},
+                            receiver: Endpoint { id: packet.dst.clone(), next_expected_seq: 0.into(), max_window_size: 0 },
                         });
 
+                        self.process_from_buffer(TcpFlags::SYN | TcpFlags::ACK, inserted.key(), &packet.dst)?;
+
                         // if let Some(session) = self.buffer.get_session(&id) {
-                        //     if let Some(syn_ack) = session.packets.iter().find_map(|tcp| {
-                        //         if tcp.flags.contains(TcpFlags::SYN | TcpFlags::ACK) && tcp.src == packet.dst {
-                        //             Some(tcp.clone())
-                        //         } else {
-                        //             None
-                        //         }
-                        //
-                        //     }) {
-                        //         self.process_packet(*syn_ack)?;
+                        //     for p in session.value().iter() {
+                        //         self.process_packet(p.clone())?;
                         //     }
                         // }
 
-
-                        if let Some(session) = self.buffer.get_session(&id) {
-                            for p in session.value().iter() {
-                                self.process_packet(p.clone())?;
-                            }
-                        }
-
-                        Ok(Some(TcpSessionState::Handshake))
+                        Ok(Some(TcpSessionState::Handshake(TcpHandshakeState::SynSent)))
                     },
 
                     _ => { 
                         self.buffer.add_packet(id.clone(), packet.clone())?;
                         Ok(None)
                     },
-                });
+                })
             }
         }
+    }
 
-        todo!()
+    fn process_from_buffer(&self, flags: TcpFlags, session_id: &TcpIdentifier, from: &EndpointIdentifier) -> Result<Option<TcpSessionState>, TcpSessionError> {
+        let Some(packet) = self.buffer.get_session(session_id)
+            .and_then(|s| s.iter()
+                .find(|&p| p.flags == flags && &p.src == from).cloned())
+            else { return Ok(None) };
+
+        self.process_packet(packet)
     }
 }
 #[derive(Error, Debug)]
@@ -141,8 +204,9 @@ struct EndpointIdentifier {
 
 #[derive(Debug)]
 struct Endpoint {
-    next_expected_seq: u32,
-    max_window_size: u32,
+    id: EndpointIdentifier,
+    next_expected_seq: SeqNumber,
+    max_window_size: u16,
 }
 
 struct PacketBuffer<T> {
@@ -260,13 +324,19 @@ struct TcpSession {
     initiator: Endpoint,
     receiver: Endpoint,
 }
-
-enum TcpSessionState {
-    Handshake,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpSessionState {
+    Handshake(TcpHandshakeState),
     Established,
     Closed,
     ActiveTeardown,
     PassiveTeardown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpHandshakeState {
+    SynSent,
+    SynAckReceived,
 }
 
 #[derive(Error, Debug)]
