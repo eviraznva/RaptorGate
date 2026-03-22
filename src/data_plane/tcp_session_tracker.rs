@@ -13,7 +13,7 @@ use crate::frame::{Frame, Port};
 
 pub struct TcpSessionTracker<T> {
     sessions: Arc<DashMap<TcpIdentifier, TcpSession>>, //TODO: Transition away from using `Arc` since we want to avoid indirection, do something like in `PacketBuffer`.
-    buffer: Arc<PacketBuffer<T>>,
+    buffer: Arc<PacketBuffer>,
     marker: PhantomData<T>,
 }
 
@@ -381,16 +381,14 @@ struct Endpoint {
     max_window_size: u16,
 }
 
-struct PacketBuffer<T> {
+struct PacketBuffer {
     waiting: DashMap<TcpIdentifier, SessionPackets>,
-    marker: PhantomData<T>,
 }
 
-impl<T> PacketBuffer<T> where T: Frame + Send + Sync + 'static {
+impl PacketBuffer {
     pub fn new() -> Arc<Self> {
         let buffer = Arc::new(Self {
             waiting: DashMap::new(),
-            marker: PhantomData,
         });
 
         let sweeper: std::sync::Weak<Self> = Arc::downgrade(&buffer);
@@ -568,58 +566,8 @@ pub enum PacketBufferError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::{Frame, Hour, IpGlobbable, IpVer, Octet, Port, Protocol, Weekday};
     use std::net::{IpAddr, Ipv4Addr};
-
-    #[derive(Clone)]
-    struct DummyFrame {
-        src_ip: IpAddr,
-        dst_ip: IpAddr,
-        ip_ver: IpVer,
-        protocol: Protocol,
-        src_port: Option<Port>,
-        dst_port: Option<Port>,
-        hour: Hour,
-        day_of_week: Weekday,
-    }
-
-    impl Frame for DummyFrame {
-        fn ip_ver(&self) -> IpVer {
-            self.ip_ver
-        }
-
-        fn src_ip(&self) -> IpAddr {
-            self.src_ip
-        }
-
-        fn dst_ip(&self) -> IpAddr {
-            self.dst_ip
-        }
-
-        fn protocol(&self) -> Protocol {
-            self.protocol
-        }
-
-        fn src_port(&self) -> Option<Port> {
-            self.src_port
-        }
-
-        fn dst_port(&self) -> Option<Port> {
-            self.dst_port
-        }
-
-        fn hour(&self) -> Hour {
-            self.hour
-        }
-
-        fn day_of_week(&self) -> Weekday {
-            self.day_of_week
-        }
-
-        fn transport_data(&'_ self) -> Option<&'_ etherparse::TransportSlice<'_>> {
-            None
-        }
-    }
+    use std::time::Duration;
 
     fn mk_id(i: usize) -> TcpIdentifier {
         let src_ip = IpAddr::V4(Ipv4Addr::new(10, 0, (i / 256) as u8, (i % 256) as u8));
@@ -629,25 +577,24 @@ mod tests {
 
         TcpIdentifier {
             endpoints: UnorderedPair::from((
-                               EndpointIdentifier { ip: src_ip, port: src_port },
-                               EndpointIdentifier { ip: dst_ip, port: dst_port },
-                       )),
+                EndpointIdentifier { ip: src_ip, port: src_port },
+                EndpointIdentifier { ip: dst_ip, port: dst_port },
+            )),
         }
     }
 
-    fn mk_frame(i: usize) -> DummyFrame {
+    fn mk_tcp_info(i: usize) -> TcpPacketInfo {
         let src_ip = IpAddr::V4(Ipv4Addr::new(10, 0, (i / 256) as u8, (i % 256) as u8));
         let dst_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
 
-        DummyFrame {
-            src_ip,
-            dst_ip,
-            ip_ver: IpVer::V4,
-            protocol: Protocol::Tcp,
-            src_port: Some(Port::from(12_345)),
-            dst_port: Some(Port::from(443)),
-            hour: Hour::try_from(12).expect("valid test hour"),
-            day_of_week: Weekday::Mon,
+        TcpPacketInfo {
+            flags: TcpFlags::SYN,
+            sequence_number: SeqNumber(1),
+            acknowledgment_number: AckNumber(0),
+            window_size: 1024,
+            payload_size: 0,
+            src: EndpointIdentifier { ip: src_ip, port: Port::from(12_345) },
+            dst: EndpointIdentifier { ip: dst_ip, port: Port::from(443) },
         }
     }
 
@@ -657,7 +604,7 @@ mod tests {
         let id = mk_id(1);
 
         assert_eq!(buffer.waiting.len(), 0);
-        let res = buffer.add_packet(id.clone(), mk_frame(1));
+        let res = buffer.add_packet(id.clone(), mk_tcp_info(1));
         assert!(res.is_ok());
         assert_eq!(buffer.waiting.len(), 1);
         assert!(buffer.waiting.contains_key(&id));
@@ -668,7 +615,7 @@ mod tests {
         let buffer = PacketBuffer::new();
         let id = mk_id(2);
 
-        buffer.add_packet(id.clone(), mk_frame(2)).unwrap();
+        buffer.add_packet(id.clone(), mk_tcp_info(2)).unwrap();
         assert!(buffer.waiting.contains_key(&id));
 
         tokio::time::sleep(PENDING_TIMEOUT + Duration::from_millis(20)).await;
@@ -684,11 +631,11 @@ mod tests {
         let max_sessions = MAX_PENDING_PACKETS / PENDING_PACKETS_PER_SESSION;
 
         for i in 0..max_sessions {
-            let res = buffer.add_packet(mk_id(i), mk_frame(i));
+            let res = buffer.add_packet(mk_id(i), mk_tcp_info(i));
             assert!(res.is_ok(), "expected fill to succeed at {i}");
         }
 
-        let overflow = buffer.add_packet(mk_id(max_sessions + 1), mk_frame(max_sessions + 1));
+        let overflow = buffer.add_packet(mk_id(max_sessions + 1), mk_tcp_info(max_sessions + 1));
         match overflow {
             Err(PacketBufferError::BufferFull) => {}
             _ => panic!("expected PacketBufferError::BufferFull"),

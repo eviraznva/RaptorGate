@@ -177,6 +177,10 @@ mod tests {
         fn day_of_week(&self) -> Weekday {
             self.day_of_week
         }
+
+        fn transport_data(&'_ self) -> Option<&'_ etherparse::TransportSlice<'_>> {
+            None
+        }
     }
 
     fn eval(tree: RuleTree, frame: &DummyFrame) -> Option<Verdict> {
