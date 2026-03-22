@@ -1,14 +1,8 @@
 import { RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/rules-repository';
 import type { IRulesRepository } from 'src/domain/repositories/rules-repository';
-<<<<<<< HEAD
-import { Inject, Injectable } from '@nestjs/common';
-import { EditRuleDto } from '../dtos/edit-rule.dto';
-import { Priority } from 'src/domain/value-objects/priority.vo';
-=======
 import { Priority } from 'src/domain/value-objects/priority.vo';
 import { Inject, Injectable } from '@nestjs/common';
 import { EditRuleDto } from '../dtos/edit-rule.dto';
->>>>>>> 176de72 (feat(config): add firewall rule CRUD operations)
 
 @Injectable()
 export class EditRuleUseCase {
