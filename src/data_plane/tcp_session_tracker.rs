@@ -26,7 +26,7 @@ struct TcpPacketInfo {
     dst: EndpointIdentifier,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, From, Add, AddAssign, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, From, Add, AddAssign, Display, Into)]
 struct AckNumber(u32);
 
 impl AckNumber {
@@ -51,7 +51,7 @@ impl PartialEq<SeqNumber> for AckNumber {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, From, Add, AddAssign, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, From, Add, AddAssign, Display, Into)]
 struct SeqNumber(u32);
 
 impl SeqNumber {
@@ -211,7 +211,7 @@ impl TcpSessionTracker {
                     let hi = sender.next_expected_seq.wrapping_add(receiver.max_window_size.into());
 
                     if !packet.sequence_number.is_between_wrapped(lo, hi) {
-                        return Err(TcpSessionError::OutOfWindow { lo, hi, seq: packet.sequence_number });
+                        return Err(TcpSessionError::OutOfWindow { lo: lo.into(), hi: hi.into(), seq: packet.sequence_number.into() });
                     }
 
                     sender.next_expected_seq = sender.next_expected_seq
@@ -248,6 +248,10 @@ impl TcpSessionTracker {
                     .next_expected_seq
                     .wrapping_add(u32::from(packet.payload_size));
 
+                if packet.flags.contains(TcpFlags::FIN) {
+                    sender.next_expected_seq = sender.next_expected_seq.wrapping_add(1);
+                }
+
                 match closing_state {
                     TcpClosingState::FinSent => {
                         if packet.flags.contains(TcpFlags::FIN | TcpFlags::ACK)
@@ -274,6 +278,7 @@ impl TcpSessionTracker {
                             self.process_from_buffer(id, Some(TcpFlags::ACK), Some(&initiator.id))?;
                         }
                     }
+
                     TcpClosingState::AckFinSent => {
                         if packet.flags.contains(TcpFlags::ACK)
                             && packet.src == initiator.id
@@ -357,7 +362,7 @@ pub enum TcpSessionError {
     InvalidFlagOnSessionState { flags: TcpFlags, state: TcpSessionState },
 
     #[error("Packet sequence number {seq} out of window ({lo}, {hi})")]
-    OutOfWindow {lo: SeqNumber, hi: SeqNumber, seq: SeqNumber},
+    OutOfWindow {lo: u32, hi: u32, seq: u32},
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
