@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, net::IpAddr, sync::Arc, time::{Duration, Instant}};
+use std::{marker::PhantomData, net::IpAddr, pin::Pin, sync::Arc, time::{Duration, Instant}};
 
 use bitflags::{bitflags, bitflags_match};
 use dashmap::{DashMap, Entry};
@@ -12,7 +12,7 @@ use unordered_pair::UnorderedPair;
 use crate::frame::{Frame, Port};
 
 pub struct TcpSessionTracker<T> {
-    sessions: DashMap<TcpIdentifier, TcpSession>,
+    sessions: Arc<DashMap<TcpIdentifier, TcpSession>>, //TODO: Transition away from using `Arc` since we want to avoid indirection, do something like in `PacketBuffer`.
     buffer: Arc<PacketBuffer<T>>,
     marker: PhantomData<T>,
 }
@@ -28,12 +28,16 @@ struct TcpPacketInfo {
     dst: EndpointIdentifier,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, From, Add, AddAssign)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, From, Add, AddAssign, Display)]
 struct AckNumber(u32);
 
 impl AckNumber {
     fn wrapping_add(self, rhs: u32) -> Self {
         Self(self.0.wrapping_add(rhs))
+    }
+
+    fn wrapping_sub(self, rhs: u32) -> Self {
+        Self(self.0.wrapping_sub(rhs))
     }
 }
 
@@ -49,12 +53,24 @@ impl PartialEq<SeqNumber> for AckNumber {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, From, Add, AddAssign)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, From, Add, AddAssign, Display)]
 struct SeqNumber(u32);
 
 impl SeqNumber {
     fn wrapping_add(self, rhs: u32) -> Self {
         Self(self.0.wrapping_add(rhs))
+    }
+
+    fn wrapping_sub(self, rhs: u32) -> Self {
+        Self(self.0.wrapping_sub(rhs))
+    }
+
+    fn is_between_wrapped(self, lo: SeqNumber, hi: SeqNumber) -> bool {
+        if lo.0 <= hi.0 {
+            self.0 >= lo.0 && self.0 <= hi.0
+        } else {
+            self.0 >= lo.0 || self.0 <= hi.0
+        }
     }
 }
 
@@ -88,7 +104,7 @@ impl TcpPacketInfo {
 impl<T> TcpSessionTracker<T> where T: Frame + Send + Sync + 'static {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            sessions: DashMap::new(),
+            sessions: Arc::new(DashMap::new()),
             buffer: PacketBuffer::new(),
             marker: PhantomData,
         })
@@ -110,50 +126,19 @@ impl<T> TcpSessionTracker<T> where T: Frame + Send + Sync + 'static {
             Entry::Occupied(mut e) => {
                 let session = e.get_mut();
 
-                match session.state {
-                    TcpSessionState::Handshake(s) => match s {
-                        TcpHandshakeState::SynSent => {
-                            if packet.flags.contains(TcpFlags::SYN | TcpFlags::ACK)
-                                && packet.src == session.receiver.id 
-                                && packet.acknowledgment_number == session.initiator.next_expected_seq {
-                                session.receiver.next_expected_seq = packet.sequence_number.wrapping_add(1);
-                                session.receiver.max_window_size = packet.window_size;
-                                session.state = TcpSessionState::Handshake(TcpHandshakeState::SynAckReceived);
-
-                                self.process_from_buffer(TcpFlags::ACK, &id, &session.initiator.id)?;
-                            }
-                        },
-
-                        TcpHandshakeState::SynAckReceived => {
-                            if packet.flags.contains(TcpFlags::ACK)
-                                && packet.src == session.initiator.id
-                                && packet.sequence_number == session.initiator.next_expected_seq
-                                && packet.acknowledgment_number == session.receiver.next_expected_seq {
-                                session.state = TcpSessionState::Established;
-                                session.initiator.next_expected_seq.wrapping_add(u32::from(packet.payload_size));
-                            }
-                        },
-
-                    },
-                    TcpSessionState::Established => todo!(),
-                    TcpSessionState::Closed => todo!(),
-                    TcpSessionState::ActiveTeardown => todo!(),
-                    TcpSessionState::PassiveTeardown => todo!(),
-                }
-
-                Ok(Some(e.get().state))
+                self.process_session_state(session, packet, &id)
             }
 
             Entry::Vacant(e) => {
                 bitflags_match!(&packet.flags, {
                     &TcpFlags::SYN => { 
-                        let inserted = e.insert(TcpSession { 
-                            state: TcpSessionState::Handshake(TcpHandshakeState::SynSent),
-                            initiator: Endpoint { id: packet.src.clone(), next_expected_seq: packet.sequence_number.wrapping_add(1), max_window_size: packet.window_size},
-                            receiver: Endpoint { id: packet.dst.clone(), next_expected_seq: 0.into(), max_window_size: 0 },
-                        });
+                        let inserted = e.insert(TcpSession::new(
+                            TcpSessionState::Handshake(TcpHandshakeState::SynSent),
+                            Endpoint { id: packet.src.clone(), next_expected_seq: packet.sequence_number.wrapping_add(1), max_window_size: packet.window_size},
+                            Endpoint { id: packet.dst.clone(), next_expected_seq: 0.into(), max_window_size: 0 },
+                        ));
 
-                        self.process_from_buffer(TcpFlags::SYN | TcpFlags::ACK, inserted.key(), &packet.dst)?;
+                        self.process_from_buffer(inserted.key(), Some(TcpFlags::SYN | TcpFlags::ACK), Some(&packet.dst))?;
 
                         // if let Some(session) = self.buffer.get_session(&id) {
                         //     for p in session.value().iter() {
@@ -173,15 +158,196 @@ impl<T> TcpSessionTracker<T> where T: Frame + Send + Sync + 'static {
         }
     }
 
-    fn process_from_buffer(&self, flags: TcpFlags, session_id: &TcpIdentifier, from: &EndpointIdentifier) -> Result<Option<TcpSessionState>, TcpSessionError> {
-        let Some(packet) = self.buffer.get_session(session_id)
-            .and_then(|s| s.iter()
-                .find(|&p| p.flags == flags && &p.src == from).cloned())
-            else { return Ok(None) };
+    #[allow(clippy::too_many_lines)]
+    fn process_session_state(&self, session: &mut TcpSession, packet: TcpPacketInfo, id: &TcpIdentifier) -> Result<Option<TcpSessionState>, TcpSessionError> {
+        match session.state {
+            TcpSessionState::Handshake(s) => match s {
+                TcpHandshakeState::SynSent => {
+                    if packet.flags.contains(TcpFlags::SYN | TcpFlags::ACK)
+                        && packet.src == session.receiver.id 
+                            && packet.acknowledgment_number == session.initiator.next_expected_seq {
+                                session.receiver.next_expected_seq = packet.sequence_number.wrapping_add(1);
+                                session.receiver.max_window_size = packet.window_size;
+                                session.state = TcpSessionState::Handshake(TcpHandshakeState::SynAckReceived);
 
-        self.process_packet(packet)
+                                self.process_from_buffer(id, Some(TcpFlags::ACK), Some(&session.initiator.id))?;
+                    }
+                },
+
+                TcpHandshakeState::SynAckReceived => {
+                    if packet.flags.contains(TcpFlags::ACK)
+                        && packet.src == session.initiator.id
+                            && packet.sequence_number == session.initiator.next_expected_seq
+                            && packet.acknowledgment_number == session.receiver.next_expected_seq {
+                                session.initiator.next_expected_seq = session.initiator.next_expected_seq.wrapping_add(u32::from(packet.payload_size));
+                                session.state = TcpSessionState::Established;
+
+                                self.process_from_buffer(id, None, None)?;
+                    }
+                },
+
+            },
+            TcpSessionState::Established => {
+                if packet.flags.contains(TcpFlags::RST) {
+                    self.sessions.remove(id);
+                    return Ok(Some(TcpSessionState::Closed));
+                }
+
+                if packet.flags.contains(TcpFlags::SYN) {
+                    return Err(TcpSessionError::InvalidFlagOnSessionState { flags: TcpFlags::SYN, state: TcpSessionState::Established });
+                }
+
+                if !packet.flags.contains(TcpFlags::ACK) {
+                    return Err(TcpSessionError::InvalidFlagOnSessionState { flags: packet.flags, state: TcpSessionState::Established }); //TODO: this should probably be handled differently
+                }
+
+                let mut saw_fin = false;
+                // TODO: shit lang
+                {
+                    let (sender, receiver) = Self::get_endpoints_of_session_packet(
+                        &packet.src,
+                        &mut session.initiator,
+                        &mut session.receiver,
+                    );
+
+                    let lo = sender.next_expected_seq.wrapping_sub(REORDER_TOLERANCE);
+                    let hi = sender.next_expected_seq.wrapping_add(receiver.max_window_size.into());
+
+                    if !packet.sequence_number.is_between_wrapped(lo, hi) {
+                        return Err(TcpSessionError::OutOfWindow { lo, hi, seq: packet.sequence_number });
+                    }
+
+                    sender.next_expected_seq = sender.next_expected_seq
+                        .wrapping_add(u32::from(packet.payload_size));
+
+                    if packet.flags.contains(TcpFlags::FIN) {
+                        sender.next_expected_seq = sender.next_expected_seq.wrapping_add(1);
+                        saw_fin = true;
+                    }
+                }
+
+                if saw_fin {
+                    session.state = TcpSessionState::Closing(TcpClosingState::FinSent);
+                    session.set_closing_initiator(&packet.src);
+                    self.process_from_buffer(id, Some(TcpFlags::ACK), Some(&packet.src))?;
+                }
+            }
+
+            TcpSessionState::Closing(closing_state) => {
+                let closing_initiator = session.get_closing_initiator();
+                let (initiator, responder) = if closing_initiator.id == session.initiator.id {
+                    (&mut session.initiator, &mut session.receiver)
+                } else {
+                    (&mut session.receiver, &mut session.initiator)
+                };
+
+                let (sender, _receiver) = Self::get_endpoints_of_session_packet(
+                    &packet.src,
+                    initiator,
+                    responder,
+                );
+
+                sender.next_expected_seq = sender
+                    .next_expected_seq
+                    .wrapping_add(u32::from(packet.payload_size));
+
+                match closing_state {
+                    TcpClosingState::FinSent => {
+                        if packet.flags.contains(TcpFlags::FIN | TcpFlags::ACK)
+                            && packet.src == responder.id
+                            && packet.acknowledgment_number == initiator.next_expected_seq
+                        {
+                            session.state = TcpSessionState::Closing(TcpClosingState::AckFinSent);
+                            self.process_from_buffer(id, Some(TcpFlags::ACK), Some(&initiator.id))?;
+                        } else if packet.flags.contains(TcpFlags::ACK)
+                            && packet.src == responder.id
+                            && packet.acknowledgment_number == initiator.next_expected_seq
+                        {
+                            session.state = TcpSessionState::Closing(TcpClosingState::AckSent);
+                            self.process_from_buffer(id, Some(TcpFlags::FIN), Some(&responder.id))?;
+                        }
+                    }
+
+                    TcpClosingState::AckSent => {
+                        if packet.flags.contains(TcpFlags::FIN)
+                            && packet.src == responder.id
+                            && packet.acknowledgment_number == initiator.next_expected_seq
+                        {
+                            session.state = TcpSessionState::Closing(TcpClosingState::AckFinSent);
+                            self.process_from_buffer(id, Some(TcpFlags::ACK), Some(&initiator.id))?;
+                        }
+                    }
+                    TcpClosingState::AckFinSent => {
+                        if packet.flags.contains(TcpFlags::ACK)
+                            && packet.src == initiator.id
+                            && packet.acknowledgment_number == responder.next_expected_seq
+                        {
+                            session.state = TcpSessionState::TimeWait;
+                        }
+                    }
+                }
+            }
+
+            TcpSessionState::TimeWait => {
+                if packet.flags.contains(TcpFlags::RST) {
+                    self.sessions.remove(id);
+                    return Ok(Some(TcpSessionState::Closed));
+                }
+            }
+
+            TcpSessionState::Closed => unreachable!() //TODO: separate return type and the state that the session can actually be in
+        }
+
+        Ok(Some(session.state))
+    }
+
+    fn schedule_timewait_cleanup(&self, id: &TcpIdentifier) {
+        let sessions = self.sessions.clone();
+        let id = id.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(TIME_WAIT_TIMEOUT).await;
+            if let Some(entry) = sessions.get(&id) && entry.state == TcpSessionState::TimeWait {
+                drop(entry);
+                sessions.remove(&id);
+            }
+        });
+    }
+
+    fn get_endpoints_of_session_packet<'a>(
+        src: &EndpointIdentifier,
+        initiator: &'a mut Endpoint,
+        receiver: &'a mut Endpoint,
+    ) -> (&'a mut Endpoint, &'a mut Endpoint) {
+        if *src == initiator.id {
+            (initiator, receiver)
+        } else {
+            (receiver, initiator)
+        }
+    }
+
+    fn process_from_buffer(&self, session_id: &TcpIdentifier, flags: Option<TcpFlags>, from: Option<&EndpointIdentifier>) -> Result<(), TcpSessionError> {
+        let packets: Vec<TcpPacketInfo> = if let Some(session) = self.buffer.get_session(session_id) {
+            session.iter()
+                .filter(|&p| {
+                    let flag_match = flags.as_ref().is_none_or(|f| p.flags == *f);
+                    let from_match = from.is_none_or(|f| &p.src == f);
+                    flag_match && from_match
+                })
+            .cloned()
+                .collect()
+        } else {
+            return Ok(());
+        };
+
+        for packet in packets {
+            self.process_packet(packet)?;
+        }
+
+        Ok(())
     }
 }
+
 #[derive(Error, Debug)]
 pub enum TcpSessionError {
     #[error("Packet with no flags")]
@@ -189,6 +355,12 @@ pub enum TcpSessionError {
 
     #[error("Buffer error: {0}")]
     BufferError(#[from] PacketBufferError),
+
+    #[error("Invalid flags {flags:?} on state {state:?}")]
+    InvalidFlagOnSessionState { flags: TcpFlags, state: TcpSessionState },
+
+    #[error("Packet sequence number {seq} out of window ({lo}, {hi})")]
+    OutOfWindow {lo: SeqNumber, hi: SeqNumber, seq: SeqNumber},
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -279,7 +451,7 @@ impl<T> PacketBuffer<T> where T: Frame + Send + Sync + 'static {
 
 bitflags! {
     #[derive(Debug, PartialEq, Clone)]
-    struct TcpFlags: u8 {
+    pub struct TcpFlags: u8 {
         const SYN = 0b0001;
         const ACK = 0b0010;
         const RST = 0b0100;
@@ -291,6 +463,9 @@ bitflags! {
 const MAX_PENDING_PACKETS: usize = 4096;
 const PENDING_TIMEOUT: Duration = Duration::from_millis(250);
 const PENDING_PACKETS_PER_SESSION: usize = 16;
+const PAYLOAD_MAX_SIZE: u32 = 1460;
+const REORDER_TOLERANCE: u32 = 3 * PAYLOAD_MAX_SIZE;
+const TIME_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 
 
 struct SessionPackets {
@@ -323,20 +498,63 @@ struct TcpSession {
     state: TcpSessionState,
     initiator: Endpoint,
     receiver: Endpoint,
+    closing_initiator: Option<ClosingInitiator>,
 }
+
+impl TcpSession {
+    fn new(state: TcpSessionState, initiator: Endpoint, receiver: Endpoint) -> Self {
+        Self {
+            state,
+            initiator,
+            receiver,
+            closing_initiator: None,
+        }
+    }
+
+    fn get_closing_initiator(&self) -> &Endpoint {
+        let initiator = self.closing_initiator.as_ref().expect("calling `get_closing_initiator` on an invalid object. This should be refactored in the future");
+
+        match initiator {
+            ClosingInitiator::Initiator => &self.initiator,
+            ClosingInitiator::Receiver => &self.receiver,
+        }
+    }
+
+    fn set_closing_initiator(&mut self, src: &EndpointIdentifier) {
+        self.closing_initiator = Some(if *src == self.initiator.id {
+            ClosingInitiator::Initiator
+        } else {
+            ClosingInitiator::Receiver
+        });
+    }
+}
+
+enum ClosingInitiator {
+    Initiator,
+    Receiver,
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TcpSessionState {
     Handshake(TcpHandshakeState),
     Established,
     Closed,
-    ActiveTeardown,
-    PassiveTeardown,
+    Closing(TcpClosingState),
+    TimeWait,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TcpHandshakeState {
     SynSent,
     SynAckReceived,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpClosingState {
+    FinSent,
+    AckSent,
+    AckFinSent,
 }
 
 #[derive(Error, Debug)]
