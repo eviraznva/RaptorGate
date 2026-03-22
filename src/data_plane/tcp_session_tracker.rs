@@ -566,6 +566,46 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
+    fn client() -> EndpointIdentifier {
+        EndpointIdentifier {
+            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            port: Port::from(12345u16),
+        }
+    }
+
+    fn server() -> EndpointIdentifier {
+        EndpointIdentifier {
+            ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
+            port: Port::from(443u16),
+        }
+    }
+
+    fn make_packet(
+        src: EndpointIdentifier,
+        dst: EndpointIdentifier,
+        flags: TcpFlags,
+        seq: u32,
+        ack: u32,
+        window: u16,
+        payload: u16,
+    ) -> TcpPacketInfo {
+        TcpPacketInfo {
+            flags,
+            sequence_number: SeqNumber(seq),
+            acknowledgment_number: AckNumber(ack),
+            window_size: window,
+            payload_size: payload,
+            src,
+            dst,
+        }
+    }
+
+    fn session_id() -> TcpIdentifier {
+        TcpIdentifier {
+            endpoints: UnorderedPair::from((client(), server())),
+        }
+    }
+
     fn mk_id(i: usize) -> TcpIdentifier {
         let src_ip = IpAddr::V4(Ipv4Addr::new(10, 0, (i / 256) as u8, (i % 256) as u8));
         let dst_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
@@ -574,9 +614,9 @@ mod tests {
 
         TcpIdentifier {
             endpoints: UnorderedPair::from((
-                EndpointIdentifier { ip: src_ip, port: src_port },
-                EndpointIdentifier { ip: dst_ip, port: dst_port },
-            )),
+                               EndpointIdentifier { ip: src_ip, port: src_port },
+                               EndpointIdentifier { ip: dst_ip, port: dst_port },
+                       )),
         }
     }
 
@@ -637,5 +677,125 @@ mod tests {
             Err(PacketBufferError::BufferFull) => {}
             _ => panic!("expected PacketBufferError::BufferFull"),
         }
+    }
+
+    #[tokio::test]
+    async fn full_tcp_session_lifecycle() {
+        let tracker: Arc<TcpSessionTracker> = TcpSessionTracker::new();
+        let id = session_id();
+
+        // ── 1. SYN from client ───────────────────────────────────────────────
+        // Client ISN = 1000. Firewall stores next_expected_seq = 1001.
+        let result = tracker.process_packet(make_packet(
+                client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0,
+        ));
+        assert_eq!(
+            result.unwrap(),
+            Some(TcpSessionState::Handshake(TcpHandshakeState::SynSent))
+        );
+        {
+            let s = tracker.sessions.get(&id).unwrap();
+            assert_eq!(s.initiator.next_expected_seq, SeqNumber(1001), "initiator seq after SYN");
+            assert_eq!(s.receiver.next_expected_seq, SeqNumber(0),    "receiver seq unknown after SYN");
+        }
+
+        // ── 2. SYN-ACK from server ───────────────────────────────────────────
+        // Server ISN = 5000, ACK = 1001 (client ISN + 1).
+        // Firewall stores receiver.next_expected_seq = 5001.
+        let result = tracker.process_packet(make_packet(
+                server(), client(), TcpFlags::SYN | TcpFlags::ACK, 5000, 1001, 8192, 0,
+        ));
+        assert_eq!(
+            result.unwrap(),
+            Some(TcpSessionState::Handshake(TcpHandshakeState::SynAckReceived))
+        );
+        {
+            let s = tracker.sessions.get(&id).unwrap();
+            assert_eq!(s.initiator.next_expected_seq, SeqNumber(1001), "initiator seq unchanged after SYN-ACK");
+            assert_eq!(s.receiver.next_expected_seq,  SeqNumber(5001), "receiver seq after SYN-ACK");
+            assert_eq!(s.receiver.max_window_size,    8192,            "receiver window after SYN-ACK");
+        }
+
+        // ── 3. ACK from client (handshake complete) ──────────────────────────
+        // seq=1001, ack=5001. No payload, so initiator.next_expected_seq stays 1001.
+        let result = tracker.process_packet(make_packet(
+                client(), server(), TcpFlags::ACK, 1001, 5001, 8192, 0,
+        ));
+        assert_eq!(result.unwrap(), Some(TcpSessionState::Established));
+        {
+            let s = tracker.sessions.get(&id).unwrap();
+            assert_eq!(s.initiator.next_expected_seq, SeqNumber(1001), "initiator seq after final ACK");
+            assert_eq!(s.receiver.next_expected_seq,  SeqNumber(5001), "receiver seq after final ACK");
+        }
+
+        // ── 4. Data from client (100 bytes) ──────────────────────────────────
+        // seq=1001, payload=100. initiator.next_expected_seq advances to 1101.
+        let result = tracker.process_packet(make_packet(
+                client(), server(), TcpFlags::ACK, 1001, 5001, 8192, 100,
+        ));
+        assert_eq!(result.unwrap(), Some(TcpSessionState::Established));
+        {
+            let s = tracker.sessions.get(&id).unwrap();
+            assert_eq!(s.initiator.next_expected_seq, SeqNumber(1101), "initiator seq after 100 bytes");
+        }
+
+        // ── 5. Data from server (50 bytes) ───────────────────────────────────
+        // seq=5001, payload=50. receiver.next_expected_seq advances to 5051.
+        let result = tracker.process_packet(make_packet(
+                server(), client(), TcpFlags::ACK, 5001, 1101, 8192, 50,
+        ));
+        assert_eq!(result.unwrap(), Some(TcpSessionState::Established));
+        {
+            let s = tracker.sessions.get(&id).unwrap();
+            assert_eq!(s.receiver.next_expected_seq, SeqNumber(5051), "receiver seq after 50 bytes");
+        }
+
+        // ── 6. FIN|ACK from client ────────────────────────────────────────────
+        // FIN consumes one seq number → initiator.next_expected_seq = 1102.
+        let result = tracker.process_packet(make_packet(
+                client(), server(), TcpFlags::FIN | TcpFlags::ACK, 1101, 5051, 8192, 0,
+        ));
+        assert_eq!(
+            result.unwrap(),
+            Some(TcpSessionState::Closing(TcpClosingState::FinSent))
+        );
+        {
+            let s = tracker.sessions.get(&id).unwrap();
+            assert_eq!(s.initiator.next_expected_seq, SeqNumber(1102), "initiator seq after FIN");
+        }
+
+        // ── 7. ACK from server ────────────────────────────────────────────────
+        // Server ACKs client's FIN. ack=1102.
+        let result = tracker.process_packet(make_packet(
+                server(), client(), TcpFlags::ACK, 5051, 1102, 8192, 0,
+        ));
+        assert_eq!(
+            result.unwrap(),
+            Some(TcpSessionState::Closing(TcpClosingState::AckSent))
+        );
+
+        // ── 8. FIN|ACK from server ────────────────────────────────────────────
+        // Server sends its own FIN. FIN consumes a seq → receiver.next_expected_seq should be 5052.
+        // NOTE: the closing handler does not currently increment seq for FIN the way
+        // Established does — this test will fail here, exposing that bug.
+        let result = tracker.process_packet(make_packet(
+                server(), client(), TcpFlags::FIN | TcpFlags::ACK, 5051, 1102, 8192, 0,
+        ));
+        assert_eq!(
+            result.unwrap(),
+            Some(TcpSessionState::Closing(TcpClosingState::AckFinSent))
+        );
+        {
+            let s = tracker.sessions.get(&id).unwrap();
+            assert_eq!(s.receiver.next_expected_seq, SeqNumber(5052), "receiver seq after server FIN");
+        }
+
+        // ── 9. Final ACK from client → TimeWait ──────────────────────────────
+        // ack=5052 (server ISN + 1 data bytes + 1 for FIN).
+        let result = tracker.process_packet(make_packet(
+                client(), server(), TcpFlags::ACK, 1102, 5052, 8192, 0,
+        ));
+        assert_eq!(result.unwrap(), Some(TcpSessionState::TimeWait));
+        assert!(tracker.sessions.contains_key(&id), "session still present during TimeWait");
     }
 }
