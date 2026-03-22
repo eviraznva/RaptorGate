@@ -4,17 +4,15 @@ use bitflags::{bitflags, bitflags_match};
 use dashmap::{DashMap, Entry};
 use derive_more::{Add, AddAssign, Display, From, Into};
 use etherparse::{TcpSlice, TransportSlice, err::tcp::HeaderSliceError};
-use ngfw::frame::RealFrame;
 use ringbuffer::{AllocRingBuffer, RingBuffer};
 use thiserror::Error;
 use unordered_pair::UnorderedPair;
 
 use crate::frame::{Frame, Port};
 
-pub struct TcpSessionTracker<T> {
+pub struct TcpSessionTracker {
     sessions: Arc<DashMap<TcpIdentifier, TcpSession>>, //TODO: Transition away from using `Arc` since we want to avoid indirection, do something like in `PacketBuffer`.
     buffer: Arc<PacketBuffer>,
-    marker: PhantomData<T>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,12 +99,11 @@ impl TcpPacketInfo {
     }
 }
 
-impl<T> TcpSessionTracker<T> where T: Frame + Send + Sync + 'static {
+impl TcpSessionTracker {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             sessions: Arc::new(DashMap::new()),
             buffer: PacketBuffer::new(),
-            marker: PhantomData,
         })
     }
 
