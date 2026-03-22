@@ -1,5 +1,5 @@
-use std::net::Ipv4Addr;
 use anyhow::{Context, Result};
+use std::net::Ipv4Addr;
 
 pub struct AppConfig {
     // Packet capture
@@ -16,11 +16,16 @@ pub struct AppConfig {
     pub dummy_nat_enabled: bool,
     pub dummy_nat_allow_all: bool,
 
-    pub sync_ipc_socket_path: String,
-    pub async_ipc_socket_path: String,
+    // gRPC / backend
+    pub grpc_socket_path: String,
+    pub firewall_version: String,
     pub heartbeat_interval_secs: u64,
-    pub event_queue_capacity: usize,
-    pub config_store_path: String,
+
+    // Redb snapshot
+    pub redb_snapshot_path: String,
+
+    // PKI — przechowywanie certyfikatu CA i zaszyfrowanego klucza prywatnego
+    pub pki_dir: String,
 }
 
 impl AppConfig {
@@ -67,24 +72,22 @@ impl AppConfig {
                 .to_lowercase()
                 == "true",
 
-            sync_ipc_socket_path: std::env::var("SYNC_IPC_SOCKET_PATH")
-                .unwrap_or_else(|_| "./sockets/rg-synchronous.sock".into()),
+            grpc_socket_path: std::env::var("GRPC_SOCKET_PATH")
+                .unwrap_or_else(|_| "./sockets/firewall.sock".into()),
 
-            async_ipc_socket_path: std::env::var("ASYNC_IPC_SOCKET_PATH")
-                .unwrap_or_else(|_| "./sockets/rg-asynchronous.sock".into()),
+            firewall_version: std::env::var("FIREWALL_VERSION")
+                .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into()),
 
             heartbeat_interval_secs: std::env::var("HEARTBEAT_INTERVAL_SECS")
                 .unwrap_or_else(|_| "10".into())
                 .parse()
                 .context("HEARTBEAT_INTERVAL_SECS must be an integer")?,
 
-            event_queue_capacity: std::env::var("EVENT_QUEUE_CAPACITY")
-                .unwrap_or_else(|_| "256".into())
-                .parse()
-                .context("EVENT_QUEUE_CAPACITY must be an integer")?,
+            redb_snapshot_path: std::env::var("REDB_SNAPSHOT_PATH")
+                .unwrap_or_else(|_| "./.data/snapshot.redb".into()),
 
-            config_store_path: std::env::var("CONFIG_STORE_PATH")
-                .unwrap_or_else(|_| "/etc/raptorgate/config/runtime".into()),
+            pki_dir: std::env::var("RAPTORGATE_PKI_DIR")
+                .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
         })
     }
 }

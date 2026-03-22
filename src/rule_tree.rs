@@ -1,12 +1,10 @@
-pub mod matcher;
-pub mod parsing;
+mod matcher;
 
 use derive_more::{Display, Error, PartialEq};
 
 use crate::{frame::{Hour, IP, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
-pub use matcher::MatchBuilder;
+pub(crate) use matcher::MatchBuilder;
 
-#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RuleTree {
     name: String,
     description: String,
@@ -20,20 +18,18 @@ impl RuleTree {
     
 }
 
-#[derive(Debug, Clone, PartialEq)]
 struct Arm {
     pattern: Pattern,
     into: ArmEnd,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ArmEnd {
+pub(crate) enum ArmEnd {
     Verdict(Verdict),
     Match(Match),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Verdict {
+pub(crate) enum Verdict {
     Allow,
     Drop,
     AllowWarn(String),
@@ -41,7 +37,7 @@ pub enum Verdict {
 }
 
 #[derive(Debug, Display, Clone, PartialEq)]
-pub enum Pattern {
+pub(crate) enum Pattern {
     Equal(FieldValue),
     // TODO: remove `Glob`
     Glob(FieldValue),
@@ -55,8 +51,8 @@ pub enum Pattern {
     Wildcard,
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
-pub enum FieldValue {
+#[derive(Debug, Display, Clone, Copy, PartialEq)]
+pub(crate) enum FieldValue {
     Ip(IP),
     IpVer(IpVer),
     DayOfWeek(Weekday),
@@ -65,8 +61,8 @@ pub enum FieldValue {
     Port(Port),
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
-pub enum MatchKind {
+#[derive(Debug, Display, Clone, Copy)]
+pub(crate) enum MatchKind {
     SrcIp,
     DstIp,
     IpVer,
@@ -78,7 +74,7 @@ pub enum MatchKind {
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
-pub enum Operation {
+pub(crate) enum Operation {
     Greater,
     Lesser,
     GreaterOrEqual,
@@ -154,7 +150,7 @@ impl<'a> TreeWalker<'a> {
 }
 
 #[derive(Debug, Display, Error)]
-pub enum RuleError {
+pub(crate) enum RuleError {
     #[display("Invalid Pattern Error, pattern: {}", _0)]
     InvalidPattern(#[error(not(source))] Pattern),
 }
@@ -234,3 +230,4 @@ mod tests {
         }
     }
 }
+
