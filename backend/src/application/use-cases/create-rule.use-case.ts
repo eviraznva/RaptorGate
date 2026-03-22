@@ -1,3 +1,5 @@
+import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
+import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
 import { RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/rules-repository';
 import type { IRulesRepository } from 'src/domain/repositories/rules-repository';
 import { FirewallRule } from 'src/domain/entities/firewall-rule.entity';
@@ -17,11 +19,12 @@ export class CreateRuleUseCase {
 
   async execute(dto: CreateRuleDto): Promise<void> {
     const claims = this.tokenService.decodeAccessToken(dto.accessToken);
-    if (!claims) throw new Error('Invalid access token');
+    if (!claims) throw new AccessTokenIsInvalidException();
 
     const ruleByName = await this.rulesRepository.finfByName(dto.name);
 
-    if (ruleByName) throw new Error('Rule name already exists');
+    if (ruleByName)
+      throw new EntityAlreadyExistsException('rule', 'name', dto.name);
 
     const newRule = FirewallRule.create(
       crypto.randomUUID(),

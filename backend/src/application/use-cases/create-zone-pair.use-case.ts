@@ -7,6 +7,9 @@ import type { ITokenService } from '../ports/token-service.interface';
 import { CreateZonePairDto } from '../dtos/create-zone-pair.dto';
 import { ZonePair } from 'src/domain/entities/zone-pair.entity';
 import { Inject, Injectable } from '@nestjs/common';
+import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
+import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
+import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
 
 @Injectable()
 export class CreateZonePairUseCase {
@@ -27,15 +30,20 @@ export class CreateZonePairUseCase {
       dto.dstZoneId,
     );
 
-    if (!claims) throw new Error('Invalid access token');
+    if (!claims) throw new AccessTokenIsInvalidException();
 
     if (!srcZoneExists)
-      throw new Error(`Source zone with id ${dto.srcZoneId} not found`);
+      throw new EntityNotFoundException('zone', dto.srcZoneId);
 
     if (!dstZoneExists)
-      throw new Error(`Destination zone with id ${dto.dstZoneId} not found`);
+      throw new EntityNotFoundException('zone', dto.dstZoneId);
 
-    if (zonePair) throw new Error('Zone pair already exists');
+    if (zonePair)
+      throw new EntityAlreadyExistsException(
+        'Zone pair',
+        'source and destination zone ids',
+        `${dto.srcZoneId} and ${dto.dstZoneId}`,
+      );
 
     const newZonePair = ZonePair.create(
       crypto.randomUUID(),

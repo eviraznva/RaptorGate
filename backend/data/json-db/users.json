@@ -4,10 +4,10 @@
       "id": "00000000-0000-4000-8000-000000000001",
       "username": "admin",
       "passwordHash": "$2b$12$IvZ.EXRyRNI9y7iQFoV.8emVe9hYXwK8lF.lkj.aPLmnFVUaD5KjW",
-      "refreshToken": "89655006-de6c-4019-afab-6b7bb23f9a9a",
-      "refreshTokenExpiry": "2026-03-22T18:25:44.150Z",
+      "refreshToken": "e80a7603-e57f-4727-84d7-a1dcf59c342a",
+      "refreshTokenExpiry": "2026-03-22T22:52:44.720Z",
       "createdAt": "2026-03-18T21:30:42.644Z",
-      "updatedAt": "2026-03-22T17:25:44.151Z"
+      "updatedAt": "2026-03-22T21:52:44.720Z"
     }
   ]
 }

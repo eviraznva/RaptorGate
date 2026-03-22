@@ -1,3 +1,4 @@
+import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
 import { RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/rules-repository';
 import type { IRulesRepository } from 'src/domain/repositories/rules-repository';
 import { Inject, Injectable } from '@nestjs/common';
@@ -11,7 +12,7 @@ export class DeleteRuleUseCase {
 
   async execute(id: string): Promise<void> {
     const rule = await this.rulesRepository.findById(id);
-    if (!rule) throw new Error('Rule not found');
+    if (!rule) throw new EntityNotFoundException('rule', id);
 
     await this.rulesRepository.delete(id);
   }

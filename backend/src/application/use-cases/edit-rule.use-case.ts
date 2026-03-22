@@ -1,3 +1,6 @@
+import { AtLeastOneFieldRequiredException } from 'src/domain/exceptions/at-least-one-field-required.exception';
+import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
+import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
 import { RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/rules-repository';
 import type { IRulesRepository } from 'src/domain/repositories/rules-repository';
 import { Priority } from 'src/domain/value-objects/priority.vo';
@@ -13,7 +16,7 @@ export class EditRuleUseCase {
 
   async execute(dto: EditRuleDto): Promise<void> {
     const rule = await this.rulesRepository.findById(dto.id);
-    if (!rule) throw new Error('Rule not found');
+    if (!rule) throw new EntityNotFoundException('Nat rule', dto.id);
 
     if (
       dto.name === undefined &&
@@ -23,12 +26,12 @@ export class EditRuleUseCase {
       dto.priority === undefined &&
       dto.zonePairId === undefined
     )
-      throw new Error('At least one field must be provided for update');
+      throw new AtLeastOneFieldRequiredException();
 
     if (dto.name !== undefined) {
       const ruleByName = await this.rulesRepository.finfByName(dto.name);
       if (ruleByName && ruleByName.getId() !== dto.id)
-        throw new Error('Rule name already exists');
+        throw new EntityAlreadyExistsException('Nat rule', 'name', dto.name);
 
       rule.setName(dto.name);
     }
