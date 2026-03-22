@@ -9,10 +9,12 @@ mod policy_evaluator;
 mod rule_tree;
 mod tls;
 
+use std::sync::Arc;
+
 use crate::config::AppConfig;
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
 use crate::data_plane::policy_store::PolicyStore;
-use crate::data_plane::runtime as data_plane_runtime;
+use crate::data_plane::{runtime as data_plane_runtime, tcp_session_tracker};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::policy::runtime::CompiledPolicy;
 use crate::tls::CaManager;
@@ -60,8 +62,9 @@ async fn main() {
 
     let handle = control_plane.handle();
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
+    let tcp_session_tracker = TcpSessionTracker::new();
 
-    if let Err(err) = data_plane_runtime::run(&config, policy_store).await {
+    if let Err(err) = data_plane_runtime::run(&config, policy_store, tcp_session_tracker).await {
         eprintln!("Data plane error: {err}");
     }
 

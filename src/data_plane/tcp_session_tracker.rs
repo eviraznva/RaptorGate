@@ -3,7 +3,8 @@ use std::{marker::PhantomData, net::IpAddr, pin::Pin, sync::Arc, time::{Duration
 use bitflags::{bitflags, bitflags_match};
 use dashmap::{DashMap, Entry};
 use derive_more::{Add, AddAssign, Display, From, Into};
-use etherparse::{TcpSlice, TransportSlice, err::tcp::HeaderSliceError};
+use etherparse::{IpPayloadSlice, Ipv4Slice, NetSlice, SlicedPacket, TcpSlice, TransportSlice, err::tcp::HeaderSliceError};
+use ngfw::frame::RealFrame;
 use ringbuffer::{AllocRingBuffer, RingBuffer};
 use thiserror::Error;
 use unordered_pair::UnorderedPair;
@@ -107,7 +108,31 @@ impl TcpSessionTracker {
         })
     }
 
-    pub fn process_packet(&self, packet: TcpPacketInfo) -> Result<Option<TcpSessionState>, TcpSessionError> {
+    pub fn process_packet(&self, packet: &SlicedPacket) -> Result<Option<TcpSessionState>, TcpSessionError> {
+        match &packet.net {
+            Some(NetSlice::Ipv4(ipv4)) => {
+                let header = ipv4.header();
+                match &packet.transport {
+                    Some(TransportSlice::Tcp(tcp)) => {
+                        let src = EndpointIdentifier {
+                            ip: IpAddr::V4(header.source_addr()),
+                            port: Port::from(tcp.source_port()),
+                        };
+                        let dst = EndpointIdentifier {
+                            ip: IpAddr::V4(header.destination_addr()),
+                            port: Port::from(tcp.destination_port()),
+                        };
+                        let tcp_info = TcpPacketInfo::new(&tcp, src, dst)?;
+                        self.process_tcp(tcp_info)
+                    }
+                    _ => Ok(None),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn process_tcp(&self, packet: TcpPacketInfo) -> Result<Option<TcpSessionState>, TcpSessionError> {
         let endpoints = (
             packet.src.clone(),
             packet.dst.clone(),
@@ -343,7 +368,7 @@ impl TcpSessionTracker {
         };
 
         for packet in packets {
-            self.process_packet(packet)?;
+            self.process_tcp(packet)?;
         }
 
         Ok(())
@@ -691,7 +716,7 @@ mod tests {
 
         // ── 1. SYN from client ───────────────────────────────────────────────
         // Client ISN = 1000. Firewall stores next_expected_seq = 1001.
-        let result = tracker.process_packet(make_packet(
+        let result = tracker.process_tcp(make_packet(
                 client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0,
         ));
         assert_eq!(
@@ -707,7 +732,7 @@ mod tests {
         // ── 2. SYN-ACK from server ───────────────────────────────────────────
         // Server ISN = 5000, ACK = 1001 (client ISN + 1).
         // Firewall stores receiver.next_expected_seq = 5001.
-        let result = tracker.process_packet(make_packet(
+        let result = tracker.process_tcp(make_packet(
                 server(), client(), TcpFlags::SYN | TcpFlags::ACK, 5000, 1001, 8192, 0,
         ));
         assert_eq!(
@@ -723,7 +748,7 @@ mod tests {
 
         // ── 3. ACK from client (handshake complete) ──────────────────────────
         // seq=1001, ack=5001. No payload, so initiator.next_expected_seq stays 1001.
-        let result = tracker.process_packet(make_packet(
+        let result = tracker.process_tcp(make_packet(
                 client(), server(), TcpFlags::ACK, 1001, 5001, 8192, 0,
         ));
         assert_eq!(result.unwrap(), Some(TcpSessionState::Established));
@@ -735,7 +760,7 @@ mod tests {
 
         // ── 4. Data from client (100 bytes) ──────────────────────────────────
         // seq=1001, payload=100. initiator.next_expected_seq advances to 1101.
-        let result = tracker.process_packet(make_packet(
+        let result = tracker.process_tcp(make_packet(
                 client(), server(), TcpFlags::ACK, 1001, 5001, 8192, 100,
         ));
         assert_eq!(result.unwrap(), Some(TcpSessionState::Established));
@@ -746,7 +771,7 @@ mod tests {
 
         // ── 5. Data from server (50 bytes) ───────────────────────────────────
         // seq=5001, payload=50. receiver.next_expected_seq advances to 5051.
-        let result = tracker.process_packet(make_packet(
+        let result = tracker.process_tcp(make_packet(
                 server(), client(), TcpFlags::ACK, 5001, 1101, 8192, 50,
         ));
         assert_eq!(result.unwrap(), Some(TcpSessionState::Established));
@@ -757,7 +782,7 @@ mod tests {
 
         // ── 6. FIN|ACK from client ────────────────────────────────────────────
         // FIN consumes one seq number → initiator.next_expected_seq = 1102.
-        let result = tracker.process_packet(make_packet(
+        let result = tracker.process_tcp(make_packet(
                 client(), server(), TcpFlags::FIN | TcpFlags::ACK, 1101, 5051, 8192, 0,
         ));
         assert_eq!(
@@ -771,7 +796,7 @@ mod tests {
 
         // ── 7. ACK from server ────────────────────────────────────────────────
         // Server ACKs client's FIN. ack=1102.
-        let result = tracker.process_packet(make_packet(
+        let result = tracker.process_tcp(make_packet(
                 server(), client(), TcpFlags::ACK, 5051, 1102, 8192, 0,
         ));
         assert_eq!(
@@ -783,7 +808,7 @@ mod tests {
         // Server sends its own FIN. FIN consumes a seq → receiver.next_expected_seq should be 5052.
         // NOTE: the closing handler does not currently increment seq for FIN the way
         // Established does — this test will fail here, exposing that bug.
-        let result = tracker.process_packet(make_packet(
+        let result = tracker.process_tcp(make_packet(
                 server(), client(), TcpFlags::FIN | TcpFlags::ACK, 5051, 1102, 8192, 0,
         ));
         assert_eq!(
@@ -797,7 +822,7 @@ mod tests {
 
         // ── 9. Final ACK from client → TimeWait ──────────────────────────────
         // ack=5052 (server ISN + 1 data bytes + 1 for FIN).
-        let result = tracker.process_packet(make_packet(
+        let result = tracker.process_tcp(make_packet(
                 client(), server(), TcpFlags::ACK, 1102, 5052, 8192, 0,
         ));
         assert_eq!(result.unwrap(), Some(TcpSessionState::TimeWait));

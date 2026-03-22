@@ -5,11 +5,12 @@ use tun::AsyncDevice;
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use crate::data_plane::policy_store::PolicyStore;
+use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::frame::RealFrame;
 use crate::ip_defrag::{DefragResult, IpDefragEngine};
 use crate::rule_tree::Verdict;
 
-pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies: &PolicyStore, defrag: &Arc<IpDefragEngine>) {
+pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies: &PolicyStore, defrag: &Arc<IpDefragEngine>, tcp_sessions: &TcpSessionTracker) {
     let packet = match SlicedPacket::from_ethernet(data) {
         Ok(packet) => packet,
         Err(err) => {
@@ -34,7 +35,7 @@ pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies
             DefragResult::Complete(eth_frame) => {
                 // Skladanie zakonczone - ponowne parsowanie i przekazanie.
                 match SlicedPacket::from_ethernet(&eth_frame) {
-                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, policies).await,
+                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, policies, tcp_sessions).await,
                     Err(err) => eprintln!("[{iface}] DROP (reassembled packet parse error: {err:?})"),
                 }
             }
@@ -42,7 +43,7 @@ pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies
                 // Skladanie zakonczone mimo anomalii - logowanie i przekazanie.
                 eprintln!("[{iface}] WARN (defrag anomalies: {})", anomalies.join("; "));
                 match SlicedPacket::from_ethernet(&eth_frame) {
-                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, policies).await,
+                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, policies, tcp_sessions).await,
                     Err(err) => eprintln!("[{iface}] DROP (reassembled packet parse error: {err:?})"),
                 }
             }
@@ -53,16 +54,17 @@ pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies
         return;
     }
 
-    forward_packet(iface, &packet, tun, policies).await;
+    forward_packet(iface, &packet, tun, policies, tcp_sessions).await;
 }
 
 // Ocena polityki dla zlozonego lub niesfragmentowanego pakietu i przekazuje go do TUN.
-async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore) {
+async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore, tcp_sessions: &TcpSessionTracker) {
     let compiled_policy = policies.load();
     let verdict = RealFrame::from_sliced(packet)
         .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));
 
-    let allow = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
+    let allowed_tcp = tcp_sessions.process_packet(packet).is_ok();
+    let allowed_policy = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
 
     match &verdict {
         Some(Verdict::AllowWarn(msg)) => eprintln!("[{iface}] WARN (allow): {msg}"),
@@ -95,7 +97,7 @@ async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevic
         _ => "N/A".into(),
     };
 
-    if !allow {
+    if !allowed_policy || !allowed_tcp {
         println!("[{iface}] DROP {ip_info}");
         return;
     }
