@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use arc_swap::docs::patterns;
 
 use crate::{

@@ -83,8 +83,7 @@ pub async fn handle_packet(
 // Ocena polityki dla zlozonego lub niesfragmentowanego pakietu i przekazuje go do TUN.
 async fn forward_packet(iface: &str, raw: &[u8], packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore, tcp_sessions: &TcpSessionTracker, nat: &Arc<Mutex<NatEngine>>) {
     let compiled_policy = policies.load();
-    let verdict = RealFrame::from_sliced(packet)
-        .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));
+    let verdict = RealFrame::from_sliced(packet).map(|frame| compiled_policy.evaluator().evaluate(&frame));
 
     let allowed_tcp = match tcp_sessions.process_packet(packet) {
         Ok(state) => { 
@@ -104,8 +103,8 @@ async fn forward_packet(iface: &str, raw: &[u8], packet: &SlicedPacket<'_>, tun:
     let allowed_policy = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
 
     match &verdict {
-        Verdict::AllowWarn(msg) => eprintln!("[{iface}] WARN (allow): {msg}"),
-        Verdict::DropWarn(msg) => eprintln!("[{iface}] WARN (drop): {msg}"),
+        Some(Verdict::AllowWarn(msg)) => eprintln!("[{iface}] WARN (allow): {msg}"),
+        Some(Verdict::DropWarn(msg) )=> eprintln!("[{iface}] WARN (drop): {msg}"),
         _ => {}
     }
 
