@@ -3,10 +3,7 @@ pub mod parsing;
 
 use derive_more::{Debug, Display, Error, PartialEq};
 
-use crate::{
-    frame::{Hour, IP, IpVer, Port, Protocol, Weekday},
-    rule_tree::matcher::Match,
-};
+use crate::{frame::{Hour, IpGlobbable, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
 pub use matcher::MatchBuilder;
 
 pub struct RuleTree {
@@ -25,6 +22,12 @@ impl RuleTree {
     }
 }
 
+impl std::fmt::Display for RuleTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RuleTree: {}, description: {}", self.name, self.description)
+    }
+}
+
 #[derive(PartialEq, Debug)]
 struct Arm {
     pattern: Pattern,
@@ -37,7 +40,7 @@ pub enum ArmEnd {
     Match(Match),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Display)]
 pub enum Verdict {
     Allow,
     Drop,
@@ -63,7 +66,7 @@ pub enum Pattern {
 
 #[derive(Debug, Display, Clone, Copy, PartialEq)]
 pub enum FieldValue {
-    Ip(IP),
+    Ip(IpGlobbable),
     IpVer(IpVer),
     DayOfWeek(Weekday),
     Hour(Hour),
@@ -194,8 +197,8 @@ mod tests {
 
     use super::*;
 
-    fn dummy_ip() -> IP {
-        IP::new([
+    fn dummy_ip() -> IpGlobbable {
+        IpGlobbable::new([
             Octet::Value(10),
             Octet::Value(0),
             Octet::Value(0),

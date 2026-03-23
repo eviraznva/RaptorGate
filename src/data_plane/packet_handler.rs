@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::nat::types::nat_outcome::NatOutcome;
 use crate::data_plane::policy_store::PolicyStore;
+use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::frame::RealFrame;
 use crate::ip_defrag::{DefragResult, IpDefragEngine};
 use crate::rule_tree::Verdict;
@@ -20,6 +21,7 @@ pub async fn handle_packet(
     tun: &AsyncDevice,
     policies: &PolicyStore,
     defrag: &Arc<IpDefragEngine>,
+    tcp: &TcpSessionTracker,
     nat: &Arc<Mutex<NatEngine>>,
 ) {
     let packet = match SlicedPacket::from_ethernet(data) {
@@ -43,7 +45,7 @@ pub async fn handle_packet(
 
     let mut buf = data.to_vec();
     let pre_outcome = nat.lock().await.process_prerouting(&mut buf, iface, None);
-
+    
     log_nat_outcome("PREROUTING", iface, &pre_outcome);
 
     let packet = match SlicedPacket::from_ethernet(&buf) {
@@ -59,14 +61,14 @@ pub async fn handle_packet(
         match defrag.process(&SlicedPacket::from_ethernet(&buf).unwrap()) {
             DefragResult::Pending => {}
             DefragResult::Complete(eth_frame) => {
-                forward_packet(iface, &eth_frame, tun, policies, nat).await;
+                forward_packet(iface, &eth_frame, &SlicedPacket::from_ethernet(&eth_frame).expect("nwm co tu sie odjebalo"), tun, policies, tcp, nat).await;
             }
             DefragResult::CompleteWithAnomaly(eth_frame, anomalies) => {
                 eprintln!(
                     "[{iface}] WARN (defrag anomalies: {})",
                     anomalies.join("; ")
                 );
-                forward_packet(iface, &eth_frame, tun, policies, nat).await;
+                forward_packet(iface, &eth_frame, &SlicedPacket::from_ethernet(&eth_frame).expect("nwm co tu sie odjebalo"), tun, policies, tcp, nat).await;
             }
             DefragResult::Dropped(reason) => {
                 println!("[{iface}] DROP (defrag: {reason})");
@@ -75,32 +77,31 @@ pub async fn handle_packet(
         return;
     }
 
-    drop(packet);
-    forward_packet(iface, &buf, tun, policies, nat).await;
+    forward_packet(iface, &buf, &packet, tun, policies, tcp, nat).await;
 }
 
-async fn forward_packet(
-    iface: &str,
-    raw: &[u8],
-    tun: &AsyncDevice,
-    policies: &PolicyStore,
-    nat: &Arc<Mutex<NatEngine>>,
-) {
-    let packet = match SlicedPacket::from_ethernet(raw) {
-        Ok(p) => p,
+// Ocena polityki dla zlozonego lub niesfragmentowanego pakietu i przekazuje go do TUN.
+async fn forward_packet(iface: &str, raw: &[u8], packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore, tcp_sessions: &TcpSessionTracker, nat: &Arc<Mutex<NatEngine>>) {
+    let compiled_policy = policies.load();
+    let verdict = RealFrame::from_sliced(packet)
+        .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));
+
+    let allowed_tcp = match tcp_sessions.process_packet(packet) {
+        Ok(state) => { 
+            #[cfg(debug_assertions)]
+            if state.is_some() {
+                println!("sessions: {:?}", tcp_sessions.get_sessions_between([192, 168, 10], [192, 168, 20]));
+            }
+
+            true 
+        },
         Err(err) => {
-            eprintln!("[{iface}] SlicedPacket forward-parse error: {err:?}");
-            return;
+            eprintln!("Rejected tcp with {err}");
+            false
         }
     };
 
-    let compiled_policy = policies.load();
-    let frame = RealFrame::from_sliced(&packet);
-    let verdict = frame
-        .as_ref()
-        .and_then(|f| compiled_policy.evaluator().evaluate(f));
-
-    let allow = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
+    let allowed_policy = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
 
     match &verdict {
         Some(Verdict::AllowWarn(msg)) => eprintln!("[{iface}] WARN (allow): {msg}"),
@@ -132,8 +133,8 @@ async fn forward_packet(
         _ => "N/A".into(),
     };
 
-    if !allow {
-        tracing::debug!(iface, %ip_info, "DROP");
+    if !allowed_policy || !allowed_tcp {
+        println!("[{iface}] DROP {ip_info}");
         return;
     }
 
@@ -146,7 +147,7 @@ async fn forward_packet(
         .lock()
         .await
         .process_postrouting(&mut raw_mut, out_iface, None);
-
+    
     log_nat_outcome("POSTROUTING", iface, &outcome);
 
     tracing::debug!(iface, %ip_info, "PASS");

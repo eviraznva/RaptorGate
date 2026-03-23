@@ -66,22 +66,11 @@ fn test() -> Result<RuleTree, RuleError> {
             ArmEnd::Match(
                 MatchBuilder::with_arm(
                     MatchKind::SrcIp,
-                    Pattern::Glob(FieldValue::Ip(super::IP::new([
-                        Octet::Value(192),
-                        Octet::Value(168),
-                        Octet::Any,
-                        Octet::Any,
-                    ]))),
-                    ArmEnd::Verdict(Verdict::Allow),
-                )
-                .build()?,
-            ),
-        )
-        .arm(
-            Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
-            ArmEnd::Verdict(Verdict::Drop),
-        )
-        .arm(
+                    Pattern::Glob(FieldValue::Ip(super::IpGlobbable::new([Octet::Value(192), Octet::Value(168), Octet::Any, Octet::Any]))), ArmEnd::Verdict(Verdict::Allow)
+                ).build()?
+            )
+        ).arm(Pattern::Equal(FieldValue::IpVer(IpVer::V6)), ArmEnd::Verdict(Verdict::Drop)
+        ).arm(
             Pattern::Or(vec![
                 Pattern::Comparison(Operation::Greater, FieldValue::DayOfWeek(Weekday::Wed)),
                 Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),

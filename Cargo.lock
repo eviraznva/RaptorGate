@@ -246,6 +246,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -547,6 +561,12 @@ dependencies = [
  "tokio-util",
  "tracing",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
@@ -927,6 +947,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "bitflags 2.11.0",
+ "dashmap",
  "derive_more",
  "dotenvy",
  "etherparse",
@@ -943,6 +965,7 @@ dependencies = [
  "redb",
  "redis",
  "ring",
+ "ringbuffer",
  "serde",
  "serde_json",
  "thiserror",
@@ -957,6 +980,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tun",
+ "unordered-pair",
  "uuid",
  "visibility",
 ]
@@ -1437,6 +1461,12 @@ dependencies = [
  "untrusted",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "ringbuffer"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57b0b88a509053cbfd535726dcaaceee631313cef981266119527a1d110f6d2b"
 
 [[package]]
 name = "rustc_version"
@@ -1963,6 +1993,12 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unordered-pair"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "756dde4e9a5b7260a5f9405027847ccc6ff7a624694bda0ca32ffa9091f3d829"
 
 [[package]]
 name = "untrusted"

@@ -9,11 +9,13 @@ use crate::config::AppConfig;
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::packet_handler::handle_packet;
 use crate::data_plane::policy_store::PolicyStore;
+use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 
 pub async fn run(
     config: &AppConfig,
     policies: Arc<PolicyStore>,
+    tcp_sessions: Arc<TcpSessionTracker>,
     nat: Arc<Mutex<NatEngine>>,
 ) -> anyhow::Result<()> {
     let all_devices = pcap::Device::list()?;
@@ -101,10 +103,11 @@ pub async fn run(
         });
 
         let handler_name = name;
+        let tcp_sessions = Arc::clone(&tcp_sessions);
         let handle = tokio::spawn(async move {
             let mut rx = rx;
             while let Some(data) = rx.recv().await {
-                handle_packet(&handler_name, &data, &tun, &policies, &defrag, &nat).await;
+                handle_packet(&handler_name, &data, &tun, &policies, &defrag, &tcp_sessions, &nat).await;
             }
             eprintln!("[{handler_name}] Handler task exiting (sender dropped)");
         });

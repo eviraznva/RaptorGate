@@ -19,9 +19,11 @@ use crate::config::AppConfig;
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
-use crate::data_plane::runtime as data_plane_runtime;
+use crate::data_plane::{runtime as data_plane_runtime, tcp_session_tracker};
+use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
+use crate::policy::runtime::CompiledPolicy;
 use crate::tls::CaManager;
 
 #[tokio::main]
@@ -67,22 +69,9 @@ async fn main() {
 
     let handle = control_plane.handle();
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
+    let tcp_session_tracker = TcpSessionTracker::new();
 
-    if config.disable_data_plane {
-        tracing::info!("DISABLE_DATA_PLANE=true; running control plane only");
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            eprintln!("Signal handling error: {err}");
-        }
-
-        if let Err(err) = control_plane.shutdown().await {
-            eprintln!("Control plane shutdown error: {err}");
-        }
-        return;
-    }
-
-    let nat = build_test_nat();
-
-    if let Err(err) = data_plane_runtime::run(&config, policy_store, nat).await {
+    if let Err(err) = data_plane_runtime::run(&config, policy_store, tcp_session_tracker, build_test_nat()).await {
         eprintln!("Data plane error: {err}");
     }
 

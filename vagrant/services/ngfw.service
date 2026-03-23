@@ -15,6 +15,7 @@ StandardError=journal
 User=root
 AmbientCapabilities=CAP_NET_RAW
 Environment="CAPTURE_INTERFACES=eth1,eth2"
+EnvironmentFile=/etc/systemd/system/ngfw.env
 Environment="CONTROL_PLANE_GRPC_SOCKET_PATH=/resources/ngfw/sockets/control-plane.sock"
 Environment="DUMMY_NAT_ENABLED=true"
 Environment="DUMMY_NAT_ALLOW_ALL=true"

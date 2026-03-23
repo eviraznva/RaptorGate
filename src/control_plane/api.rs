@@ -25,6 +25,7 @@ pub struct ControlPlaneConfig {
     pub reconnect_initial_backoff_ms: u64,
     pub reconnect_max_backoff_ms: u64,
     pub fallback_block_icmp: bool,
+    pub dev_policy_override: Option<String>,
     // Informacje o CA - brak info jeżeli update CA się nie powiódł
     pub ca_info: Option<CaInfo>,
 }
@@ -41,6 +42,7 @@ impl From<&AppConfig> for ControlPlaneConfig {
             reconnect_initial_backoff_ms: 500,
             reconnect_max_backoff_ms: 5_000,
             fallback_block_icmp: config.block_icmp,
+            dev_policy_override: config.dev_config.as_ref().and_then(|d| d.policy_override.clone()),
             ca_info: None,
         }
     }
@@ -70,10 +72,13 @@ pub struct ControlPlane {
 
 impl ControlPlane {
     pub async fn start(config: ControlPlaneConfig) -> Result<Self, ControlPlaneError> {
-        let initial_policy = Arc::new(
-            compiler::compile_fallback(config.fallback_block_icmp)
-                .map_err(|err| ControlPlaneError::PolicyCompile(err.to_string()))?,
-        );
+        let initial_policy = if let Some(ref override_policy) = config.dev_policy_override {
+            Arc::new(compiler::compile_override(override_policy)
+                .map_err(|err| ControlPlaneError::PolicyCompile(err.to_string()))?)
+        } else {
+            Arc::new(compiler::compile_fallback(config.fallback_block_icmp)
+                .map_err(|err| ControlPlaneError::PolicyCompile(err.to_string()))?)
+        };
 
         let (status_tx, status_rx) = watch::channel(ControlPlaneStatus {
             phase: LifecyclePhase::Starting,
