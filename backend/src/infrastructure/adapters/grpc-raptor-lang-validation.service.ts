@@ -1,15 +1,15 @@
 import {
-  RAPTOR_LANG_VALIDATION_SERVICE_NAME,
-  RaptorLangValidationServiceClient,
-} from 'src/infrastructure/grpc/generated/control/validation_service';
-import { IRaptorLangValidationService } from 'src/application/ports/raptor-lang-validation-service.interface';
-import { RaptorLangValidationException } from 'src/domain/exceptions/raptor-lang-validation.exception';
-import {
   Inject,
   Injectable,
   OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import {
+  RAPTOR_LANG_VALIDATION_SERVICE_NAME,
+  RaptorLangValidationServiceClient,
+} from 'src/infrastructure/grpc/generated/control/validation_service';
+import { IRaptorLangValidationService } from 'src/application/ports/raptor-lang-validation-service.interface';
+import { RaptorLangValidationException } from 'src/domain/exceptions/raptor-lang-validation.exception';
 import type { ClientGrpc } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
 

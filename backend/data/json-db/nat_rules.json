@@ -14,6 +14,51 @@
       "createdAt": "2026-03-23T06:43:47.449Z",
       "updatedAt": "2026-03-23T06:51:19.805Z",
       "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "b29c1dda-9515-4f83-86cf-48aed6f661ae",
+      "type": "SNAT",
+      "isActive": true,
+      "srcIp": "192.168.1.10",
+      "dstIp": null,
+      "srcPort": null,
+      "dstPort": null,
+      "translatedIp": "172.16.0.20",
+      "translatedPort": null,
+      "priority": 10,
+      "createdAt": "2026-03-23T11:34:19.429Z",
+      "updatedAt": "2026-03-23T11:34:19.429Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "f877657b-687e-43a4-bb77-079e42167540",
+      "type": "DNAT",
+      "isActive": true,
+      "srcIp": null,
+      "dstIp": "10.0.0.5",
+      "srcPort": null,
+      "dstPort": null,
+      "translatedIp": "192.168.1.50",
+      "translatedPort": null,
+      "priority": 20,
+      "createdAt": "2026-03-23T11:34:29.174Z",
+      "updatedAt": "2026-03-23T11:34:29.174Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "3349d1c9-c725-474a-b4ce-77a2558f6298",
+      "type": "PAT",
+      "isActive": true,
+      "srcIp": null,
+      "dstIp": "10.0.0.5",
+      "srcPort": null,
+      "dstPort": 443,
+      "translatedIp": "192.168.1.50",
+      "translatedPort": 8443,
+      "priority": 30,
+      "createdAt": "2026-03-23T11:34:38.607Z",
+      "updatedAt": "2026-03-23T11:34:38.607Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
     }
   ]
 }

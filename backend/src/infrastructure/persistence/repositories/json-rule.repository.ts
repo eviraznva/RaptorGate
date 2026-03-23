@@ -54,6 +54,13 @@ export class JsonRuleRepository implements IRulesRepository {
     return rules.items.map((r) => RuleJsonMapper.toDomain(r));
   }
 
+  async findActive(): Promise<FirewallRule[]> {
+    const payload = await this.readPayload();
+    payload.items = payload.items.filter((r) => r.isActive);
+
+    return payload.items.map((r) => RuleJsonMapper.toDomain(r));
+  }
+
   async finfByName(name: string): Promise<FirewallRule | null> {
     const rules = await this.readPayload();
     rules.items = rules.items.filter((r) => r.name === name);

@@ -17,7 +17,7 @@ export class GetActiveConfigUseCase {
     correlationId: string,
     knownVersions: ConfigSectionVersions | undefined,
   ): Promise<ConfigResponse> {
-    const snapshot = await this.repository.getActiveSnapshot();
+    const snapshot = await this.repository.findActiveSnapshot();
 
     if (!snapshot) {
       throw new RpcException({
