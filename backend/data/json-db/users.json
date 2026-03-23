@@ -3,11 +3,11 @@
     {
       "id": "00000000-0000-4000-8000-000000000001",
       "username": "admin",
-      "passwordHash": "$2b$12$IvZ.EXRyRNI9y7iQFoV.8emVe9hYXwK8lF.lkj.aPLmnFVUaD5KjW",
-      "refreshToken": "d69493cb-34e1-4f49-a6e1-6c280a19d912",
-      "refreshTokenExpiry": "2026-03-19T14:24:42.592Z",
-      "createdAt": "2026-03-18T21:30:42.644Z",
-      "updatedAt": "2026-03-19T13:24:42.593Z"
+      "passwordHash": "$2b$12$xfx9z/dWim3vibm4TELmY.kpis8OAV9fywQ3.cMxo9sc7Lgdv2PO6",
+      "refreshToken": null,
+      "refreshTokenExpiry": null,
+      "createdAt": "2026-03-23T15:11:07.046Z",
+      "updatedAt": "2026-03-23T15:11:07.046Z"
     }
   ]
 }

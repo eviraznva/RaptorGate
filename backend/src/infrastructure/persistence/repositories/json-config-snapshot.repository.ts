@@ -10,7 +10,7 @@ import { join } from 'node:path';
 export class JsonConfigSnapshotRepository implements IConfigSnapshotRepository {
   private readonly filePath = join(
     process.cwd(),
-    'data/json-db/config-snapshots.json',
+    'data/json-db/configuration_snapshots.json',
   );
   constructor(
     @Inject(Mutex) private readonly mutex: Mutex,

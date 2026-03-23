@@ -1,13 +1,12 @@
 [Unit]
 Description=RaptorGate Backend API
-After=network.target postgresql.service redis-server.service
+After=network.target redis-server.service
 
 [Service]
 WorkingDirectory=/resources/backend
 ExecStartPre=/bin/mkdir -p /resources/ngfw/sockets
 ExecStartPre=/bin/mkdir -p /home/marek/RaptorGate/backend
 ExecStartPre=/bin/ln -sfn /resources/backend/devCerts /home/marek/RaptorGate/backend/devCerts
-ExecStartPre=/resources/backend/bun run db:migrate
 ExecStartPre=/resources/backend/bun /resources/backend/dist/scripts/seed-json-db.js
 ExecStart=/resources/backend/bun /resources/backend/dist/src/main.js
 Restart=on-failure
@@ -18,7 +17,6 @@ Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=GRPC_PORT=3001
 Environment=GRPC_SOCKET_PATH=../ngfw/sockets/firewall.sock
-Environment=DATABASE_URL=postgresql://raptorgate:raptorgate@localhost:5432/raptorgate
 Environment=JWT_SECRET=development-jwt-secret-change-me-1234567890
 Environment=REFRESH_TOKEN_SECRET=development-refresh-secret-change-me-1234567890
 Environment=COOKIE_SECRET=development-cookie-secret-change-me-1234567890

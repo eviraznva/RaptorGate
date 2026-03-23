@@ -1,3 +1,71 @@
 {
-  "items": []
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-0000000007d0",
+      "versionNumber": 1,
+      "snapshotType": "auto_save",
+      "checksum": "fcb7a405d15aa6cff098dc1ba65df2630d22a51f90e5aa178f015590bfd23a82",
+      "isActive": true,
+      "payloadJson": {
+        "section_versions": {
+          "rules": 1,
+          "zones": 1,
+          "zone_interfaces": 1,
+          "zone_pairs": 1,
+          "nat_rules": 1,
+          "dns_blacklist": 1,
+          "ssl_bypass_list": 1,
+          "ips_signatures": 1,
+          "ml_model": 1,
+          "certificates": 1,
+          "identity": 1
+        },
+        "bundle": {
+          "rules": {
+            "checksum": "empty",
+            "items": []
+          },
+          "zones": {
+            "items": []
+          },
+          "zone_interfaces": {
+            "items": []
+          },
+          "zone_pairs": {
+            "items": []
+          },
+          "nat_rules": {
+            "items": []
+          },
+          "dns_blacklist": {
+            "items": []
+          },
+          "ssl_bypass_list": {
+            "items": []
+          },
+          "ips_signatures": {
+            "items": []
+          },
+          "ml_model": {
+            "id": "",
+            "name": "",
+            "artifact_path": "",
+            "checksum": ""
+          },
+          "firewall_certificates": {
+            "items": []
+          },
+          "identity": {
+            "user_groups": [],
+            "identity_users": [],
+            "user_group_members": [],
+            "user_sessions": []
+          }
+        }
+      },
+      "changeSummary": "Initial seed configuration",
+      "createdAt": "2026-03-23T15:11:07.046Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    }
+  ]
 }

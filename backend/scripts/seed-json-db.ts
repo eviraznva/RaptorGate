@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import * as bcrypt from 'bcrypt';
 
@@ -128,8 +129,57 @@ async function main() {
     items: rolePermissions,
   });
 
+  const payloadJson = {
+    section_versions: {
+      rules: 1,
+      zones: 1,
+      zone_interfaces: 1,
+      zone_pairs: 1,
+      nat_rules: 1,
+      dns_blacklist: 1,
+      ssl_bypass_list: 1,
+      ips_signatures: 1,
+      ml_model: 1,
+      certificates: 1,
+      identity: 1,
+    },
+    bundle: {
+      rules: { checksum: 'empty', items: [] },
+      zones: { items: [] },
+      zone_interfaces: { items: [] },
+      zone_pairs: { items: [] },
+      nat_rules: { items: [] },
+      dns_blacklist: { items: [] },
+      ssl_bypass_list: { items: [] },
+      ips_signatures: { items: [] },
+      ml_model: { id: '', name: '', artifact_path: '', checksum: '' },
+      firewall_certificates: { items: [] },
+      identity: {
+        user_groups: [],
+        identity_users: [],
+        user_group_members: [],
+        user_sessions: [],
+      },
+    },
+  };
+
+  const defaultSnapshot = {
+    id: seqUuid(2000),
+    versionNumber: 1,
+    snapshotType: 'auto_save',
+    checksum: createHash('sha256').update(JSON.stringify(payloadJson)).digest('hex'),
+    isActive: true,
+    payloadJson,
+    changeSummary: 'Initial seed configuration',
+    createdAt: now,
+    createdBy: USER_ID,
+  };
+
+  await writeJson('configuration_snapshots.json', {
+    items: [defaultSnapshot],
+  });
+
   const emptyTables = [
-    'configuration_snapshots.json',
     'zones.json',
     'zone_pairs.json',
     'zone_interfaces.json',
