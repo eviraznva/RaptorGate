@@ -1,3 +1,20 @@
 {
-  "items": []
+  "items": [
+    {
+      "id": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4",
+      "name": "Bedroom",
+      "description": "The bedroom of the house",
+      "isActive": true,
+      "createdAt": "2026-03-19T18:36:47.226Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "a0db06f9-5063-4035-aadd-845248db19e4",
+      "name": "Office",
+      "description": "The office of the company",
+      "isActive": true,
+      "createdAt": "2026-03-19T18:37:00.315Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    }
+  ]
 }

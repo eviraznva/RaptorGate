@@ -11,6 +11,7 @@ export class FirewallRule {
     private priority: Priority,
     private readonly createdAt: Date,
     private updatedAt: Date,
+    private readonly createdBy: string,
   ) {}
 
   public static create(
@@ -23,6 +24,7 @@ export class FirewallRule {
     priority: Priority,
     createdAt: Date,
     updatedAt: Date,
+    createdBy: string,
   ): FirewallRule {
     return new FirewallRule(
       id,
@@ -34,6 +36,7 @@ export class FirewallRule {
       priority,
       createdAt,
       updatedAt,
+      createdBy,
     );
   }
 
@@ -71,5 +74,37 @@ export class FirewallRule {
 
   public getUpdatedAt(): Date {
     return this.updatedAt;
+  }
+
+  public getCreatedBy(): string {
+    return this.createdBy;
+  }
+
+  public setName(name: string): void {
+    this.name = name;
+  }
+
+  public setDescription(description: string | null): void {
+    this.description = description;
+  }
+
+  public setZonePairId(zonePairId: string): void {
+    this.zonePairId = zonePairId;
+  }
+
+  public setIsActive(isActive: boolean): void {
+    this.isActive = isActive;
+  }
+
+  public setContent(content: string): void {
+    this.content = content;
+  }
+
+  public setPriority(priority: Priority): void {
+    this.priority = priority;
+  }
+
+  public setUpdatedAt(updatedAt: Date): void {
+    this.updatedAt = updatedAt;
   }
 }

@@ -1,14 +1,11 @@
 import {
-  ConfigSnapshotPayload,
-  ConfigSectionVersions as PayloadSectionVersions,
-} from 'src/domain/value-objects/config-snapshot-payload.interface';
-import {
   DefaultPolicy,
   NatRuleType,
   Severity,
   CertificateType,
   IdentitySource,
 } from 'src/infrastructure/grpc/generated/common/common';
+import { ConfigSnapshotPayload } from 'src/domain/value-objects/config-snapshot-payload.interface';
 import { ConfigSectionVersions } from 'src/infrastructure/grpc/generated/config/config_models';
 import { ConfigResponse } from 'src/infrastructure/grpc/generated/config/config_service';
 
@@ -93,13 +90,12 @@ export function mapPayloadToConfigResponse(
   bundleChecksum: string,
   knownVersions: ConfigSectionVersions | undefined,
 ): ConfigResponse {
-  const sv = payload.section_versions; // PayloadSectionVersions — snake_case
+  const sv = payload.section_versions;
   const b = payload.bundle;
 
   const send = (sectionVersion: number, known: number | undefined): boolean =>
     known === undefined || sectionVersion > known;
 
-  // currentVersions musi być typem proto (camelCase) — to trafia do ConfigResponse
   const currentVersions: ConfigSectionVersions = {
     rules: sv.rules,
     zones: sv.zones,
@@ -114,7 +110,6 @@ export function mapPayloadToConfigResponse(
     identity: sv.identity,
   };
 
-  // knownVersions też jest typem proto (camelCase) — pola odczytujemy camelCase
   const configurationChanged =
     !knownVersions ||
     Object.keys(currentVersions).some(
@@ -130,63 +125,95 @@ export function mapPayloadToConfigResponse(
     configurationChanged,
     currentVersions,
     rules: send(sv.rules, knownVersions?.rules)
-      ? b.rules.items.map((r) => ({
-          id: r.id,
-          name: r.name,
-          zonePairId: r.zone_pair_id,
-          priority: r.priority,
-          content: r.content,
-        }))
-      : [],
+      ? {
+          version: sv.rules,
+          checksum: b.rules.checksum,
+          items: b.rules.items.map((r) => ({
+            id: r.id,
+            name: r.name,
+            zonePairId: r.zone_pair_id,
+            priority: r.priority,
+            content: r.content,
+          })),
+        }
+      : undefined,
     zones: send(sv.zones, knownVersions?.zones)
-      ? b.zones.items.map((z) => ({ id: z.id, name: z.name }))
-      : [],
+      ? {
+          version: sv.zones,
+          items: b.zones.items.map((z) => ({ id: z.id, name: z.name })),
+        }
+      : undefined,
     zoneInterfaces: send(sv.zone_interfaces, knownVersions?.zoneInterfaces)
-      ? b.zone_interfaces.items.map((zi) => ({
-          id: zi.id,
-          zoneId: zi.zone_id,
-          interfaceName: zi.interface_name,
-          vlanId: zi.vlan_id ?? undefined,
-        }))
-      : [],
+      ? {
+          version: sv.zone_interfaces,
+          items: b.zone_interfaces.items.map((zi) => ({
+            id: zi.id,
+            zoneId: zi.zone_id,
+            interfaceName: zi.interface_name,
+            vlanId: zi.vlan_id ?? undefined,
+          })),
+        }
+      : undefined,
     zonePairs: send(sv.zone_pairs, knownVersions?.zonePairs)
-      ? b.zone_pairs.items.map((zp) => ({
-          id: zp.id,
-          srcZoneId: zp.src_zone_id,
-          dstZoneId: zp.dst_zone_id,
-          defaultPolicy: mapDefaultPolicy(zp.default_policy),
-        }))
-      : [],
+      ? {
+          version: sv.zone_pairs,
+          items: b.zone_pairs.items.map((zp) => ({
+            id: zp.id,
+            srcZoneId: zp.src_zone_id,
+            dstZoneId: zp.dst_zone_id,
+            defaultPolicy: mapDefaultPolicy(zp.default_policy),
+          })),
+        }
+      : undefined,
     natRules: send(sv.nat_rules, knownVersions?.natRules)
-      ? b.nat_rules.items.map((n) => ({
-          id: n.id,
-          type: mapNatRuleType(n.type),
-          srcIp: n.src_ip,
-          dstIp: n.dst_ip,
-          srcPort: n.src_port ?? undefined,
-          dstPort: n.dst_port ?? undefined,
-          translatedIp: n.translated_ip,
-          translatedPort: n.translated_port ?? undefined,
-          priority: n.priority,
-        }))
-      : [],
+      ? {
+          version: sv.nat_rules,
+          items: b.nat_rules.items.map((n) => ({
+            id: n.id,
+            type: mapNatRuleType(n.type),
+            srcIp: n.src_ip,
+            dstIp: n.dst_ip,
+            srcPort: n.src_port ?? undefined,
+            dstPort: n.dst_port ?? undefined,
+            translatedIp: n.translated_ip,
+            translatedPort: n.translated_port ?? undefined,
+            priority: n.priority,
+          })),
+        }
+      : undefined,
     dnsBlacklist: send(sv.dns_blacklist, knownVersions?.dnsBlacklist)
-      ? b.dns_blacklist.items.map((d) => ({ id: d.id, domain: d.domain }))
-      : [],
+      ? {
+          version: sv.dns_blacklist,
+          items: b.dns_blacklist.items.map((d) => ({
+            id: d.id,
+            domain: d.domain,
+          })),
+        }
+      : undefined,
     sslBypassList: send(sv.ssl_bypass_list, knownVersions?.sslBypassList)
-      ? b.ssl_bypass_list.items.map((s) => ({ id: s.id, domain: s.domain }))
-      : [],
+      ? {
+          version: sv.ssl_bypass_list,
+          items: b.ssl_bypass_list.items.map((s) => ({
+            id: s.id,
+            domain: s.domain,
+          })),
+        }
+      : undefined,
     ipsSignatures: send(sv.ips_signatures, knownVersions?.ipsSignatures)
-      ? b.ips_signatures.items.map((i) => ({
-          id: i.id,
-          name: i.name,
-          category: i.category,
-          pattern: i.pattern,
-          severity: mapSeverity(i.severity),
-        }))
-      : [],
+      ? {
+          version: sv.ips_signatures,
+          items: b.ips_signatures.items.map((i) => ({
+            id: i.id,
+            name: i.name,
+            category: i.category,
+            pattern: i.pattern,
+            severity: mapSeverity(i.severity),
+          })),
+        }
+      : undefined,
     mlModel: send(sv.ml_model, knownVersions?.mlModel)
       ? {
+          version: sv.ml_model,
           id: b.ml_model.id,
           name: b.ml_model.name,
           artifactPath: b.ml_model.artifact_path,
@@ -194,18 +221,22 @@ export function mapPayloadToConfigResponse(
         }
       : undefined,
     firewallCertificates: send(sv.certificates, knownVersions?.certificates)
-      ? b.firewall_certificates.items.map((c) => ({
-          id: c.id,
-          certType: mapCertificateType(c.cert_type),
-          commonName: c.common_name,
-          fingerprint: c.fingerprint,
-          certificatePem: c.certificate_pem,
-          privateKeyRef: c.private_key_ref,
-          expiresAt: isoToTimestamp(c.expires_at),
-        }))
-      : [],
+      ? {
+          version: sv.certificates,
+          items: b.firewall_certificates.items.map((c) => ({
+            id: c.id,
+            certType: mapCertificateType(c.cert_type),
+            commonName: c.common_name,
+            fingerprint: c.fingerprint,
+            certificatePem: c.certificate_pem,
+            privateKeyRef: c.private_key_ref,
+            expiresAt: isoToTimestamp(c.expires_at),
+          })),
+        }
+      : undefined,
     identity: send(sv.identity, knownVersions?.identity)
       ? {
+          version: sv.identity,
           userGroups: b.identity.user_groups.map((g) => ({
             id: g.id,
             name: g.name,

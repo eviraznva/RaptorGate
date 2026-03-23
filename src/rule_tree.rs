@@ -3,13 +3,13 @@ pub mod parsing;
 
 use derive_more::{Debug, Display, Error, PartialEq};
 
-use crate::{frame::{Hour, IP, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
+use crate::{frame::{Hour, IpGlobbable, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
 pub use matcher::MatchBuilder;
 
 pub struct RuleTree {
     name: String,
     description: String,
-    pub head: Match
+    pub head: Match,
 }
 
 impl RuleTree {
@@ -20,7 +20,12 @@ impl RuleTree {
             head,
         }
     }
+}
 
+impl std::fmt::Display for RuleTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RuleTree: {}, description: {}", self.name, self.description)
+    }
 }
 
 impl std::fmt::Display for RuleTree {
@@ -67,7 +72,7 @@ pub enum Pattern {
 
 #[derive(Debug, Display, Clone, Copy, PartialEq)]
 pub enum FieldValue {
-    Ip(IP),
+    Ip(IpGlobbable),
     IpVer(IpVer),
     DayOfWeek(Weekday),
     Hour(Hour),
@@ -117,7 +122,15 @@ impl Pattern {
             ) => Ok(()),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Or(patterns), MatchKind::Protocol | MatchKind::DayOfWeek | MatchKind::IpVer | MatchKind::Hour | MatchKind::SrcIp | MatchKind::DstIp) => {
+            (
+                Pattern::Or(patterns),
+                MatchKind::Protocol
+                | MatchKind::DayOfWeek
+                | MatchKind::IpVer
+                | MatchKind::Hour
+                | MatchKind::SrcIp
+                | MatchKind::DstIp,
+            ) => {
                 for pattern in patterns {
                     pattern.validate_for(kind)?;
                 }
@@ -129,7 +142,10 @@ impl Pattern {
 }
 
 pub enum Step<'a> {
-    NeedsMatch { kind: &'a MatchKind, pattern: &'a Pattern },
+    NeedsMatch {
+        kind: &'a MatchKind,
+        pattern: &'a Pattern,
+    },
     Verdict(&'a Verdict),
     NoMatch,
 }
@@ -187,8 +203,8 @@ mod tests {
 
     use super::*;
 
-    fn dummy_ip() -> IP {
-        IP::new([
+    fn dummy_ip() -> IpGlobbable {
+        IpGlobbable::new([
             Octet::Value(10),
             Octet::Value(0),
             Octet::Value(0),
@@ -262,7 +278,7 @@ mod tests {
     //     }
     // }
 
-#[test]
+    #[test]
     fn or_accepts_all_valid_nested_patterns_for_kind() {
         let pat = Pattern::Or(vec![
             Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),

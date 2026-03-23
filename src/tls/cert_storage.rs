@@ -3,16 +3,15 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use anyhow::{Context, bail};
-use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
-use ring::hkdf::{Salt, HKDF_SHA256};
+use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
+use ring::hkdf::{HKDF_SHA256, Salt};
 use ring::rand::{SecureRandom, SystemRandom};
 
 const MACHINE_ID_PATH: &str = "/etc/machine-id";
 
 // Odczytuje machine-id z systemu operacyjnego.
 fn read_machine_id() -> anyhow::Result<Vec<u8>> {
-    let id = fs::read_to_string(MACHINE_ID_PATH)
-        .context("Failed to read /etc/machine-id")?;
+    let id = fs::read_to_string(MACHINE_ID_PATH).context("Failed to read /etc/machine-id")?;
     Ok(id.trim().as_bytes().to_vec())
 }
 
@@ -43,8 +42,8 @@ pub fn encrypt_pem(plaintext: &[u8], key: &[u8; 32]) -> anyhow::Result<Vec<u8>> 
     rng.fill(&mut nonce_bytes)
         .map_err(|_| anyhow::anyhow!("Failed to generate nonce"))?;
 
-    let unbound = UnboundKey::new(&AES_256_GCM, key)
-        .map_err(|_| anyhow::anyhow!("Invalid AES key"))?;
+    let unbound =
+        UnboundKey::new(&AES_256_GCM, key).map_err(|_| anyhow::anyhow!("Invalid AES key"))?;
     let aead_key = LessSafeKey::new(unbound);
 
     let mut data = plaintext.to_vec();
@@ -71,8 +70,8 @@ pub fn decrypt_pem(data: &[u8], key: &[u8; 32]) -> anyhow::Result<Vec<u8>> {
     let (nonce_slice, ciphertext) = data.split_at(NONCE_LEN);
     let nonce_bytes: [u8; NONCE_LEN] = nonce_slice.try_into().unwrap();
 
-    let unbound = UnboundKey::new(&AES_256_GCM, key)
-        .map_err(|_| anyhow::anyhow!("Invalid AES key"))?;
+    let unbound =
+        UnboundKey::new(&AES_256_GCM, key).map_err(|_| anyhow::anyhow!("Invalid AES key"))?;
     let aead_key = LessSafeKey::new(unbound);
 
     let mut buf = ciphertext.to_vec();
@@ -146,13 +145,11 @@ pub fn load_ca(dir: &Path) -> anyhow::Result<Option<LoadedCa>> {
 
     let encrypted = fs::read(&key_path).context("Failed to read ca.key.enc")?;
     let key_bytes = decrypt_pem(&encrypted, &enc_key)?;
-    let key_pem =
-        String::from_utf8(key_bytes).context("ca.key.enc contains invalid UTF-8")?;
+    let key_pem = String::from_utf8(key_bytes).context("ca.key.enc contains invalid UTF-8")?;
 
     let cert_pem = fs::read_to_string(&cert_path).context("Failed to read ca.crt")?;
 
-    let meta_str =
-        fs::read_to_string(&meta_path).context("Failed to read ca.meta.json")?;
+    let meta_str = fs::read_to_string(&meta_path).context("Failed to read ca.meta.json")?;
     let meta: serde_json::Value =
         serde_json::from_str(&meta_str).context("Failed to parse ca.meta.json")?;
 
@@ -177,7 +174,8 @@ mod tests {
     use super::*;
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string());
+        let dir = std::env::temp_dir()
+            .join(uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string());
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -267,7 +265,10 @@ mod tests {
     fn key_file_has_restricted_permissions() {
         let dir = temp_dir();
         save_ca(&dir, "key", "cert", "fp", 0).unwrap();
-        let mode = std::fs::metadata(dir.join("ca.key.enc")).unwrap().permissions().mode();
+        let mode = std::fs::metadata(dir.join("ca.key.enc"))
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600);
         std::fs::remove_dir_all(&dir).unwrap();
     }

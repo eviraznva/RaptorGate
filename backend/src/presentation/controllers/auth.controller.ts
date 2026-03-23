@@ -4,36 +4,28 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
-  Logger,
   Post,
   Res,
-  UseFilters,
 } from '@nestjs/common';
 import {
   ErrorResponseDto,
   ValidationErrorResponseDto,
 } from '../dtos/error-response.dto';
-import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
 import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
 import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
 import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
 import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto';
-import { DomainExceptionFilter } from '../filters/domain-exception.filter';
 import { IsPublic } from 'src/infrastructure/decorators/public.decorator';
 import { Cookie } from 'src/infrastructure/decorators/cookie.decorator';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { Permission } from 'src/domain/enums/permissions.enum';
 import { LoginResponseDto } from '../dtos/login-response.dto';
 import { Env } from 'src/shared/config/env.validation';
-import { Role } from 'src/domain/enums/role.enum';
-import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from '../dtos/login.dto';
 import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
 
-@UseFilters(DomainExceptionFilter)
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
@@ -178,12 +170,5 @@ export class AuthController {
       maxAge: 60 * 60 * 1000,
       path: '/auth/refresh',
     });
-  }
-
-  @Post('users')
-  @Roles(Role.SuperAdmin)
-  @RequirePermissions(Permission.USERS_READ, Permission.USERS_CREATE)
-  createUser() {
-    return 'user created';
   }
 }

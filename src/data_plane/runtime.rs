@@ -1,16 +1,23 @@
 use std::sync::Arc;
 
 use pcap::Direction;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tokio::task;
 use tun::AsyncDevice;
 
 use crate::config::AppConfig;
+use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::packet_handler::handle_packet;
 use crate::data_plane::policy_store::PolicyStore;
+use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 
-pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Result<()> {
+pub async fn run(
+    config: &AppConfig,
+    policies: Arc<PolicyStore>,
+    tcp_sessions: Arc<TcpSessionTracker>,
+    nat: Arc<Mutex<NatEngine>>,
+) -> anyhow::Result<()> {
     let all_devices = pcap::Device::list()?;
 
     let devices: Vec<pcap::Device> = all_devices
@@ -51,6 +58,7 @@ pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Resu
         let tun = Arc::clone(&tun);
         let policies = Arc::clone(&policies);
         let defrag = Arc::clone(&defrag);
+        let nat = Arc::clone(&nat);
         let name = device.name.clone();
         let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
 
@@ -95,10 +103,11 @@ pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Resu
         });
 
         let handler_name = name;
+        let tcp_sessions = Arc::clone(&tcp_sessions);
         let handle = tokio::spawn(async move {
             let mut rx = rx;
             while let Some(data) = rx.recv().await {
-                handle_packet(&handler_name, &data, &tun, &policies, &defrag).await;
+                handle_packet(&handler_name, &data, &tun, &policies, &defrag, &tcp_sessions, &nat).await;
             }
             eprintln!("[{handler_name}] Handler task exiting (sender dropped)");
         });
