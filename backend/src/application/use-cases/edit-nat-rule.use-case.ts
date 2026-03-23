@@ -31,6 +31,8 @@ export class EditNatRuleUseCase {
       natRule.setTranslatedPort(dto.translatedPort);
 
     natRule.setUpdatedAt(new Date());
+
+    await this.natRulesRepository.save(natRule);
   }
 
   private validateRequiredFields(dto: EditNatRuleDto): void {
