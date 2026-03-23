@@ -3,13 +3,16 @@ pub mod parsing;
 
 use derive_more::{Debug, Display, Error, PartialEq};
 
-use crate::{frame::{Hour, IP, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
+use crate::{
+    frame::{Hour, IP, IpVer, Port, Protocol, Weekday},
+    rule_tree::matcher::Match,
+};
 pub use matcher::MatchBuilder;
 
 pub struct RuleTree {
     name: String,
     description: String,
-    pub head: Match
+    pub head: Match,
 }
 
 impl RuleTree {
@@ -20,7 +23,6 @@ impl RuleTree {
             head,
         }
     }
-
 }
 
 #[derive(PartialEq, Debug)]
@@ -111,7 +113,15 @@ impl Pattern {
             ) => Ok(()),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Or(patterns), MatchKind::Protocol | MatchKind::DayOfWeek | MatchKind::IpVer | MatchKind::Hour | MatchKind::SrcIp | MatchKind::DstIp) => {
+            (
+                Pattern::Or(patterns),
+                MatchKind::Protocol
+                | MatchKind::DayOfWeek
+                | MatchKind::IpVer
+                | MatchKind::Hour
+                | MatchKind::SrcIp
+                | MatchKind::DstIp,
+            ) => {
                 for pattern in patterns {
                     pattern.validate_for(kind)?;
                 }
@@ -123,7 +133,10 @@ impl Pattern {
 }
 
 pub enum Step<'a> {
-    NeedsMatch { kind: &'a MatchKind, pattern: &'a Pattern },
+    NeedsMatch {
+        kind: &'a MatchKind,
+        pattern: &'a Pattern,
+    },
     Verdict(&'a Verdict),
     NoMatch,
 }

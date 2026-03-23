@@ -67,15 +67,37 @@ impl NatRule {
     pub fn id(&self) -> &str {
         &self.id
     }
-    pub fn priority(&self) -> u32 { self.priority }
-    pub fn in_interface(&self) -> Option<&str> {  self.in_interface.as_ref().map(|s| s.as_str()) }
-    pub fn out_interface(&self) -> Option<&str> { self.out_interface.as_ref().map(|s| s.as_str()) }
-    pub fn in_zone(&self) -> Option<&str> { self.in_zone.as_ref().map(|s| s.as_str()) }
-    pub fn out_zone(&self) -> Option<&str> { self.out_zone.as_ref().map(|s| s.as_str()) }
-    pub fn src_cidr(&self) -> Option<IpNet> { self.src_cidr }
-    pub fn dst_cidr(&self) -> Option<IpNet> { self.dst_cidr }
-    pub fn protocol(&self) -> Option<NatProtocol> { self.protocol }
-    pub fn src_port(&self) -> Option<u16> { self.src_port }
-    pub fn dst_port(&self) -> Option<u16> { self.dst_port }
-    pub fn action(&self) -> NatAction { self.action.clone() }
+    pub fn priority(&self) -> u32 {
+        self.priority
+    }
+    pub fn in_interface(&self) -> Option<&str> {
+        self.in_interface.as_ref().map(|s| s.as_str())
+    }
+    pub fn out_interface(&self) -> Option<&str> {
+        self.out_interface.as_ref().map(|s| s.as_str())
+    }
+    pub fn in_zone(&self) -> Option<&str> {
+        self.in_zone.as_ref().map(|s| s.as_str())
+    }
+    pub fn out_zone(&self) -> Option<&str> {
+        self.out_zone.as_ref().map(|s| s.as_str())
+    }
+    pub fn src_cidr(&self) -> Option<IpNet> {
+        self.src_cidr
+    }
+    pub fn dst_cidr(&self) -> Option<IpNet> {
+        self.dst_cidr
+    }
+    pub fn protocol(&self) -> Option<NatProtocol> {
+        self.protocol
+    }
+    pub fn src_port(&self) -> Option<u16> {
+        self.src_port
+    }
+    pub fn dst_port(&self) -> Option<u16> {
+        self.dst_port
+    }
+    pub fn action(&self) -> NatAction {
+        self.action.clone()
+    }
 }

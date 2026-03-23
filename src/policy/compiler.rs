@@ -22,8 +22,8 @@ pub fn compile_safe_deny() -> Result<CompiledPolicy, PolicyCompileError> {
             Pattern::Wildcard,
             ArmEnd::Verdict(Verdict::Drop),
         )
-            .build()
-            .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
+        .build()
+        .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
     );
 
     Ok(CompiledPolicy::new(
@@ -67,9 +67,9 @@ fn build_compiled_policy(
                 Pattern::Equal(FieldValue::Protocol(crate::frame::Protocol::Icmp)),
                 ArmEnd::Verdict(Verdict::Drop),
             )
-                .arm(Pattern::Wildcard, ArmEnd::Verdict(Verdict::Allow))
-                .build()
-                .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
+            .arm(Pattern::Wildcard, ArmEnd::Verdict(Verdict::Allow))
+            .build()
+            .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
         )
     } else {
         RuleTree::new(
@@ -80,8 +80,8 @@ fn build_compiled_policy(
                 Pattern::Wildcard,
                 ArmEnd::Verdict(Verdict::Allow),
             )
-                .build()
-                .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
+            .build()
+            .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
         )
     };
 

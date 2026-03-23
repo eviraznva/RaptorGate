@@ -9,12 +9,15 @@ use crate::control_plane::backend_api::proto::raptorgate::common::FirewallMode;
 use crate::control_plane::error::ControlPlaneError;
 use crate::control_plane::runtime::state::StatusPublisher;
 use crate::control_plane::service;
+use crate::control_plane::validation_api;
 use crate::policy::compiler;
 use crate::policy::runtime::CompiledPolicy;
 use crate::tls::CaInfo;
 
+#[derive(Clone)]
 pub struct ControlPlaneConfig {
     pub grpc_socket_path: String,
+    pub control_plane_grpc_socket_path: String,
     pub firewall_version: String,
     pub heartbeat_interval_secs: u64,
     pub event_buffer: usize,
@@ -30,6 +33,7 @@ impl From<&AppConfig> for ControlPlaneConfig {
     fn from(config: &AppConfig) -> Self {
         Self {
             grpc_socket_path: config.grpc_socket_path.clone(),
+            control_plane_grpc_socket_path: config.control_plane_grpc_socket_path.clone(),
             firewall_version: config.firewall_version.clone(),
             heartbeat_interval_secs: config.heartbeat_interval_secs,
             event_buffer: 10_000,
@@ -83,12 +87,19 @@ impl ControlPlane {
 
         let shutdown = CancellationToken::new();
 
-        let join = tokio::spawn(service::run(
-            config,
-            StatusPublisher::new(status_tx),
-            policy_tx,
-            shutdown.clone(),
-        ));
+        let status = StatusPublisher::new(status_tx);
+        let service_config = config.clone();
+        let validation_socket_path = config.control_plane_grpc_socket_path.clone();
+        let service_shutdown = shutdown.clone();
+        let validation_shutdown = shutdown.clone();
+
+        let join = tokio::spawn(async move {
+            tokio::try_join!(
+                service::run(service_config, status, policy_tx, service_shutdown),
+                validation_api::run(&validation_socket_path, validation_shutdown),
+            )?;
+            Ok(())
+        });
 
         Ok(Self {
             handle: ControlPlaneHandle {

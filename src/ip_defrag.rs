@@ -177,13 +177,14 @@ impl IpDefragEngine {
             .entries
             .retain(|_, e| e.created_at.elapsed() < timeout);
 
-        if !state.entries.contains_key(&key)
-            && state.entries.len() >= self.config.max_datagrams
-        {
+        if !state.entries.contains_key(&key) && state.entries.len() >= self.config.max_datagrams {
             return DefragResult::Dropped("max concurrent datagrams limit reached");
         }
 
-        let entry = state.entries.entry(key).or_insert_with(ReassemblyEntry::new);
+        let entry = state
+            .entries
+            .entry(key)
+            .or_insert_with(ReassemblyEntry::new);
 
         entry.fragment_count += 1;
         if entry.fragment_count > self.config.max_fragments_per_datagram {
@@ -196,7 +197,10 @@ impl IpDefragEngine {
         }
 
         if let Some(reason) = alignment_anomaly {
-            eprintln!("[defrag] ANOMALY (id={}): {reason}", header_slice.identification());
+            eprintln!(
+                "[defrag] ANOMALY (id={}): {reason}",
+                header_slice.identification()
+            );
             entry.anomalies.push(reason);
         }
 
@@ -208,7 +212,9 @@ impl IpDefragEngine {
             entry.total_payload_len = Some(new_end);
         }
 
-        entry.fragments.insert(fragment_offset_bytes, payload.to_vec());
+        entry
+            .fragments
+            .insert(fragment_offset_bytes, payload.to_vec());
 
         if !entry.is_complete() {
             return DefragResult::Pending;
@@ -232,7 +238,9 @@ impl IpDefragEngine {
         ip_header.dont_fragment = false;
         ip_header.fragment_offset = etherparse::IpFragOffset::ZERO;
         if ip_header.set_payload_len(payload_bytes.len()).is_err() {
-            return DefragResult::Dropped("reassembled payload too large for Ipv4Header::total_len");
+            return DefragResult::Dropped(
+                "reassembled payload too large for Ipv4Header::total_len",
+            );
         }
         ip_header.header_checksum = ip_header.calc_header_checksum();
 

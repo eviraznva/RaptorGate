@@ -88,7 +88,10 @@ pub async fn run(
 
                 match active_config.as_ref() {
                     Some(snapshot_active) => {
-                        tracing::warn!(version = snapshot_active.version, "Backend unavailable — entering EMERGENCY mode (snapshot from Redb)");
+                        tracing::warn!(
+                            version = snapshot_active.version,
+                            "Backend unavailable — entering EMERGENCY mode (snapshot from Redb)"
+                        );
                         status.set_phase(LifecyclePhase::Emergency);
                         status.set_mode(FirewallMode::Emergency);
                         status.set_version(Some(snapshot_active.version));
@@ -100,7 +103,9 @@ pub async fn run(
                         )?;
                     }
                     None => {
-                        tracing::warn!("No snapshot available — entering ALLOW-ALL mode (dev/test)");
+                        tracing::warn!(
+                            "No snapshot available — entering ALLOW-ALL mode (dev/test)"
+                        );
                         status.set_phase(LifecyclePhase::SafeDeny);
                         status.set_mode(FirewallMode::SafeDeny);
                         status.set_version(None);
@@ -110,7 +115,10 @@ pub async fn run(
             }
         }
 
-        tracing::info!(backoff_ms = reconnect_backoff_ms, "Reconnecting after backoff...");
+        tracing::info!(
+            backoff_ms = reconnect_backoff_ms,
+            "Reconnecting after backoff..."
+        );
         tokio::select! {
             _ = shutdown.cancelled() => {
                 status.set_phase(LifecyclePhase::Stopped);
@@ -178,7 +186,8 @@ async fn connect_and_bootstrap(
     status.set_phase(LifecyclePhase::FetchingInitialConfig);
 
     tracing::info!(socket = %config.grpc_socket_path, "Connecting to backend...");
-    let mut client = BackendApiClient::connect(&config.grpc_socket_path).await
+    let mut client = BackendApiClient::connect(&config.grpc_socket_path)
+        .await
         .inspect_err(|e| tracing::warn!(error = %e, "Backend connection failed"))?;
     tracing::info!("Connected to backend, fetching config...");
 
@@ -215,7 +224,10 @@ async fn connect_and_bootstrap(
     status.set_version(Some(active_config.version));
     status.set_backend_connected(true);
 
-    tracing::info!(version = active_config.version, "Config loaded, entering NORMAL mode");
+    tracing::info!(
+        version = active_config.version,
+        "Config loaded, entering NORMAL mode"
+    );
     Ok((client, active_config))
 }
 

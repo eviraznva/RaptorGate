@@ -1,7 +1,7 @@
 use derive_more::Display;
 use thiserror::Error;
 
-use crate::frame::{Hour, IpVer, Port, Protocol, Weekday, IP};
+use crate::frame::{Hour, IP, IpVer, Port, Protocol, Weekday};
 use crate::rule_tree::matcher::Match;
 use crate::rule_tree::parsing::ast::{
     AstBody, AstMatch, AstPattern, AstValue, Spanned, Verdict as AstVerdict,
@@ -14,7 +14,10 @@ use crate::rule_tree::{
 #[derive(Debug, Error, Display)]
 pub enum LowerError {
     #[display("Unknown match kind '{kind}' at {pos:?}")]
-    UnknownKind { kind: String, pos: Position },
+    UnknownKind {
+        kind: String,
+        pos: Position,
+    },
     #[display("Unknown value '{value}' for {kind} at {pos:?}")]
     UnknownValue {
         kind: MatchKind,
@@ -34,7 +37,9 @@ pub enum LowerError {
         pos: Position,
     },
     #[display("Empty match arms at {pos:?}")]
-    EmptyMatch { pos: Position },
+    EmptyMatch {
+        pos: Position,
+    },
     Rule(#[from] RuleError),
 }
 
@@ -135,8 +140,18 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
             }
 
             MatchKind::Hour => Ok(FieldValue::Hour(
-                Hour::try_from(u8::try_from(n.val).map_err(|_| LowerError::ValueOutOfRange { kind, value: n.val, pos })?)
-                    .map_err(|_| LowerError::ValueOutOfRange { kind, value: n.val, pos })?
+                Hour::try_from(
+                    u8::try_from(n.val).map_err(|_| LowerError::ValueOutOfRange {
+                        kind,
+                        value: n.val,
+                        pos,
+                    })?,
+                )
+                .map_err(|_| LowerError::ValueOutOfRange {
+                    kind,
+                    value: n.val,
+                    pos,
+                })?,
             )),
 
             _ => Err(LowerError::TypeMismatch {
@@ -222,10 +237,12 @@ pub(super) fn lower(ast: Spanned<AstMatch>) -> Result<Match, LowerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::{Hour, IpVer, Octet, Port, Protocol, Weekday, IP};
+    use crate::frame::{Hour, IP, IpVer, Octet, Port, Protocol, Weekday};
     use crate::rule_tree::parsing::ast::AstArm;
-    use crate::rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Operation, Pattern, Verdict};
     use crate::rule_tree::parsing::lexer::Position;
+    use crate::rule_tree::{
+        ArmEnd, FieldValue, MatchBuilder, MatchKind, Operation, Pattern, Verdict,
+    };
 
     // ── AST construction helpers ─────────────────────────────────────────────
     //
@@ -315,7 +332,10 @@ mod tests {
 
     #[test]
     fn lower_kind_day_of_week() {
-        assert_eq!(lower_kind(&sp("day_of_week".into())).unwrap(), MatchKind::DayOfWeek);
+        assert_eq!(
+            lower_kind(&sp("day_of_week".into())).unwrap(),
+            MatchKind::DayOfWeek
+        );
     }
 
     #[test]
@@ -325,17 +345,26 @@ mod tests {
 
     #[test]
     fn lower_kind_protocol() {
-        assert_eq!(lower_kind(&sp("protocol".into())).unwrap(), MatchKind::Protocol);
+        assert_eq!(
+            lower_kind(&sp("protocol".into())).unwrap(),
+            MatchKind::Protocol
+        );
     }
 
     #[test]
     fn lower_kind_src_port() {
-        assert_eq!(lower_kind(&sp("src_port".into())).unwrap(), MatchKind::SrcPort);
+        assert_eq!(
+            lower_kind(&sp("src_port".into())).unwrap(),
+            MatchKind::SrcPort
+        );
     }
 
     #[test]
     fn lower_kind_dst_port() {
-        assert_eq!(lower_kind(&sp("dst_port".into())).unwrap(), MatchKind::DstPort);
+        assert_eq!(
+            lower_kind(&sp("dst_port".into())).unwrap(),
+            MatchKind::DstPort
+        );
     }
 
     #[test]
@@ -385,13 +414,25 @@ mod tests {
     #[test]
     fn lower_value_ip_ver_unknown_ident() {
         let err = lower_value(MatchKind::IpVer, sp(AstValue::Ident(sp("v3".into())))).unwrap_err();
-        assert!(matches!(err, LowerError::UnknownValue { kind: MatchKind::IpVer, .. }));
+        assert!(matches!(
+            err,
+            LowerError::UnknownValue {
+                kind: MatchKind::IpVer,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn lower_value_ip_ver_type_mismatch_number() {
         let err = lower_value(MatchKind::IpVer, sp(AstValue::Number(sp(4)))).unwrap_err();
-        assert!(matches!(err, LowerError::TypeMismatch { kind: MatchKind::IpVer, .. }));
+        assert!(matches!(
+            err,
+            LowerError::TypeMismatch {
+                kind: MatchKind::IpVer,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -408,20 +449,27 @@ mod tests {
 
     #[test]
     fn lower_value_protocol_unknown_ident() {
-        let err = lower_value(MatchKind::Protocol, sp(AstValue::Ident(sp("quic".into())))).unwrap_err();
-        assert!(matches!(err, LowerError::UnknownValue { kind: MatchKind::Protocol, .. }));
+        let err =
+            lower_value(MatchKind::Protocol, sp(AstValue::Ident(sp("quic".into())))).unwrap_err();
+        assert!(matches!(
+            err,
+            LowerError::UnknownValue {
+                kind: MatchKind::Protocol,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn lower_value_day_of_week_all_variants() {
         let days = [
-            ("monday",    Weekday::Mon),
-            ("tuesday",   Weekday::Tue),
+            ("monday", Weekday::Mon),
+            ("tuesday", Weekday::Tue),
             ("wednesday", Weekday::Wed),
-            ("thursday",  Weekday::Thu),
-            ("friday",    Weekday::Fri),
-            ("saturday",  Weekday::Sat),
-            ("sunday",    Weekday::Sun),
+            ("thursday", Weekday::Thu),
+            ("friday", Weekday::Fri),
+            ("saturday", Weekday::Sat),
+            ("sunday", Weekday::Sun),
         ];
         for (s, expected) in days {
             let fv = lower_value(MatchKind::DayOfWeek, sp(AstValue::Ident(sp(s.into())))).unwrap();
@@ -431,8 +479,18 @@ mod tests {
 
     #[test]
     fn lower_value_day_of_week_unknown_ident() {
-        let err = lower_value(MatchKind::DayOfWeek, sp(AstValue::Ident(sp("funday".into())))).unwrap_err();
-        assert!(matches!(err, LowerError::UnknownValue { kind: MatchKind::DayOfWeek, .. }));
+        let err = lower_value(
+            MatchKind::DayOfWeek,
+            sp(AstValue::Ident(sp("funday".into()))),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LowerError::UnknownValue {
+                kind: MatchKind::DayOfWeek,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -440,8 +498,14 @@ mod tests {
         let fv = lower_value(
             MatchKind::SrcIp,
             sp(AstValue::StrLit(sp("192.168.1.10".into()))),
-        ).unwrap();
-        let expected = IP::new([Octet::Value(192), Octet::Value(168), Octet::Value(1), Octet::Value(10)]);
+        )
+        .unwrap();
+        let expected = IP::new([
+            Octet::Value(192),
+            Octet::Value(168),
+            Octet::Value(1),
+            Octet::Value(10),
+        ]);
         assert_eq!(fv, FieldValue::Ip(expected));
     }
 
@@ -450,8 +514,14 @@ mod tests {
         let fv = lower_value(
             MatchKind::DstIp,
             sp(AstValue::StrLit(sp("10.0.0.1".into()))),
-        ).unwrap();
-        let expected = IP::new([Octet::Value(10), Octet::Value(0), Octet::Value(0), Octet::Value(1)]);
+        )
+        .unwrap();
+        let expected = IP::new([
+            Octet::Value(10),
+            Octet::Value(0),
+            Octet::Value(0),
+            Octet::Value(1),
+        ]);
         assert_eq!(fv, FieldValue::Ip(expected));
     }
 
@@ -460,17 +530,28 @@ mod tests {
         let err = lower_value(
             MatchKind::SrcIp,
             sp(AstValue::StrLit(sp("not-an-ip".into()))),
-        ).unwrap_err();
-        assert!(matches!(err, LowerError::TypeMismatch { kind: MatchKind::SrcIp, .. }));
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LowerError::TypeMismatch {
+                kind: MatchKind::SrcIp,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn lower_value_str_lit_on_non_ip_kind_type_mismatch() {
-        let err = lower_value(
-            MatchKind::Protocol,
-            sp(AstValue::StrLit(sp("tcp".into()))),
-        ).unwrap_err();
-        assert!(matches!(err, LowerError::TypeMismatch { kind: MatchKind::Protocol, .. }));
+        let err =
+            lower_value(MatchKind::Protocol, sp(AstValue::StrLit(sp("tcp".into())))).unwrap_err();
+        assert!(matches!(
+            err,
+            LowerError::TypeMismatch {
+                kind: MatchKind::Protocol,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -490,8 +571,15 @@ mod tests {
         let err = lower_value(
             MatchKind::DstPort,
             sp(AstValue::Number(sp(u16::MAX as u64 + 1))),
-        ).unwrap_err();
-        assert!(matches!(err, LowerError::ValueOutOfRange { kind: MatchKind::DstPort, .. }));
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LowerError::ValueOutOfRange {
+                kind: MatchKind::DstPort,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -504,13 +592,25 @@ mod tests {
     fn lower_value_hour_out_of_range() {
         // Hour is a u8 with domain validation; 200 should exceed any valid hour
         let err = lower_value(MatchKind::Hour, sp(AstValue::Number(sp(200)))).unwrap_err();
-        assert!(matches!(err, LowerError::ValueOutOfRange { kind: MatchKind::Hour, .. }));
+        assert!(matches!(
+            err,
+            LowerError::ValueOutOfRange {
+                kind: MatchKind::Hour,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn lower_value_number_on_non_numeric_kind_type_mismatch() {
         let err = lower_value(MatchKind::IpVer, sp(AstValue::Number(sp(4)))).unwrap_err();
-        assert!(matches!(err, LowerError::TypeMismatch { kind: MatchKind::IpVer, .. }));
+        assert!(matches!(
+            err,
+            LowerError::TypeMismatch {
+                kind: MatchKind::IpVer,
+                ..
+            }
+        ));
     }
 
     // ── lower_pattern ────────────────────────────────────────────────────────
@@ -531,9 +631,17 @@ mod tests {
     fn lower_pattern_equal_src_ip() {
         let p = lower_pattern(
             MatchKind::SrcIp,
-            sp(AstPattern::Equal(sp(AstValue::StrLit(sp("192.168.1.10".into()))))),
-        ).unwrap();
-        let expected = IP::new([Octet::Value(192), Octet::Value(168), Octet::Value(1), Octet::Value(10)]);
+            sp(AstPattern::Equal(sp(AstValue::StrLit(sp(
+                "192.168.1.10".into()
+            ))))),
+        )
+        .unwrap();
+        let expected = IP::new([
+            Octet::Value(192),
+            Octet::Value(168),
+            Octet::Value(1),
+            Octet::Value(10),
+        ]);
         assert_eq!(p, Pattern::Equal(FieldValue::Ip(expected)));
     }
 
@@ -546,7 +654,10 @@ mod tests {
     #[test]
     fn lower_pattern_equal_hour() {
         let p = lower_pattern(MatchKind::Hour, sp(equal_num(14))).unwrap();
-        assert_eq!(p, Pattern::Equal(FieldValue::Hour(Hour::try_from(14).unwrap())));
+        assert_eq!(
+            p,
+            Pattern::Equal(FieldValue::Hour(Hour::try_from(14).unwrap()))
+        );
     }
 
     #[test]
@@ -558,55 +669,97 @@ mod tests {
     #[test]
     fn lower_pattern_greater_dst_port() {
         let p = lower_pattern(MatchKind::DstPort, sp(greater_num(1024))).unwrap();
-        assert_eq!(p, Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(1024))));
+        assert_eq!(
+            p,
+            Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(1024)))
+        );
     }
 
     #[test]
     fn lower_pattern_greater_hour() {
         let p = lower_pattern(MatchKind::Hour, sp(greater_num(10))).unwrap();
-        assert_eq!(p, Pattern::Comparison(Operation::Greater, FieldValue::Hour(Hour::try_from(10).unwrap())));
+        assert_eq!(
+            p,
+            Pattern::Comparison(
+                Operation::Greater,
+                FieldValue::Hour(Hour::try_from(10).unwrap())
+            )
+        );
     }
 
     #[test]
     fn lower_pattern_greater_day_of_week() {
         let p = lower_pattern(MatchKind::DayOfWeek, sp(greater_ident("monday"))).unwrap();
-        assert_eq!(p, Pattern::Comparison(Operation::Greater, FieldValue::DayOfWeek(Weekday::Mon)));
+        assert_eq!(
+            p,
+            Pattern::Comparison(Operation::Greater, FieldValue::DayOfWeek(Weekday::Mon))
+        );
     }
 
     #[test]
     fn lower_pattern_greater_or_equal_dst_port() {
         let p = lower_pattern(MatchKind::DstPort, sp(greater_or_equal_num(80))).unwrap();
-        assert_eq!(p, Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Port(Port::from(80))));
+        assert_eq!(
+            p,
+            Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Port(Port::from(80)))
+        );
     }
 
     #[test]
     fn lower_pattern_greater_or_equal_hour() {
         let p = lower_pattern(MatchKind::Hour, sp(greater_or_equal_num(9))).unwrap();
-        assert_eq!(p, Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Hour(Hour::try_from(9).unwrap())));
+        assert_eq!(
+            p,
+            Pattern::Comparison(
+                Operation::GreaterOrEqual,
+                FieldValue::Hour(Hour::try_from(9).unwrap())
+            )
+        );
     }
 
     #[test]
     fn lower_pattern_greater_or_equal_day_of_week() {
         let p = lower_pattern(MatchKind::DayOfWeek, sp(greater_or_equal_ident("monday"))).unwrap();
-        assert_eq!(p, Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::DayOfWeek(Weekday::Mon)));
+        assert_eq!(
+            p,
+            Pattern::Comparison(
+                Operation::GreaterOrEqual,
+                FieldValue::DayOfWeek(Weekday::Mon)
+            )
+        );
     }
 
     #[test]
     fn lower_pattern_lesser_or_equal_dst_port() {
         let p = lower_pattern(MatchKind::DstPort, sp(lesser_or_equal_num(1024))).unwrap();
-        assert_eq!(p, Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(1024))));
+        assert_eq!(
+            p,
+            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(1024)))
+        );
     }
 
     #[test]
     fn lower_pattern_lesser_or_equal_hour() {
         let p = lower_pattern(MatchKind::Hour, sp(lesser_or_equal_num(8))).unwrap();
-        assert_eq!(p, Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Hour(Hour::try_from(8).unwrap())));
+        assert_eq!(
+            p,
+            Pattern::Comparison(
+                Operation::LesserOrEqual,
+                FieldValue::Hour(Hour::try_from(8).unwrap())
+            )
+        );
     }
 
     #[test]
     fn lower_pattern_lesser_or_equal_day_of_week() {
         let p = lower_pattern(MatchKind::DayOfWeek, sp(lesser_or_equal_ident("friday"))).unwrap();
-        assert_eq!(p, Pattern::Comparison(Operation::LesserOrEqual, FieldValue::DayOfWeek(Weekday::Fri)));
+        assert_eq!(
+            p,
+            Pattern::Comparison(
+                Operation::LesserOrEqual,
+                FieldValue::DayOfWeek(Weekday::Fri)
+            )
+        );
     }
 
     #[test]
@@ -614,11 +767,15 @@ mod tests {
         let p = lower_pattern(
             MatchKind::Protocol,
             sp(or_patterns(vec![equal_ident("tcp"), equal_ident("udp")])),
-        ).unwrap();
-        assert_eq!(p, Pattern::Or(vec![
-            Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
-            Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
-        ]));
+        )
+        .unwrap();
+        assert_eq!(
+            p,
+            Pattern::Or(vec![
+                Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
+                Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+            ])
+        );
     }
 
     #[test]
@@ -630,12 +787,16 @@ mod tests {
                 equal_ident("wednesday"),
                 equal_ident("friday"),
             ])),
-        ).unwrap();
-        assert_eq!(p, Pattern::Or(vec![
-            Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
-            Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
-            Pattern::Equal(FieldValue::DayOfWeek(Weekday::Fri)),
-        ]));
+        )
+        .unwrap();
+        assert_eq!(
+            p,
+            Pattern::Or(vec![
+                Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
+                Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
+                Pattern::Equal(FieldValue::DayOfWeek(Weekday::Fri)),
+            ])
+        );
     }
 
     #[test]
@@ -643,12 +804,19 @@ mod tests {
         // | > 1024 | <= 80  →  Or[Comparison(Greater, 1024), Comparison(LesserOrEqual, 80)]
         let p = lower_pattern(
             MatchKind::DstPort,
-            sp(or_patterns(vec![greater_num(1024), lesser_or_equal_num(80)])),
-        ).unwrap();
-        assert_eq!(p, Pattern::Or(vec![
-            Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(1024))),
-            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(80))),
-        ]));
+            sp(or_patterns(vec![
+                greater_num(1024),
+                lesser_or_equal_num(80),
+            ])),
+        )
+        .unwrap();
+        assert_eq!(
+            p,
+            Pattern::Or(vec![
+                Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(1024))),
+                Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(80))),
+            ])
+        );
     }
 
     #[test]
@@ -657,8 +825,15 @@ mod tests {
         let err = lower_pattern(
             MatchKind::Protocol,
             sp(or_patterns(vec![equal_ident("tcp"), equal_ident("quic")])),
-        ).unwrap_err();
-        assert!(matches!(err, LowerError::UnknownValue { kind: MatchKind::Protocol, .. }));
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LowerError::UnknownValue {
+                kind: MatchKind::Protocol,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -695,16 +870,19 @@ mod tests {
 
     #[test]
     fn lower_body_nested_match() {
-        let inner = ast_match("protocol", vec![
-            arm(equal_ident("tcp"), verdict_body(AstVerdict::Allow)),
-        ]);
+        let inner = ast_match(
+            "protocol",
+            vec![arm(equal_ident("tcp"), verdict_body(AstVerdict::Allow))],
+        );
         let b = lower_body(sp(match_body(inner))).unwrap();
         let expected = ArmEnd::Match(
             MatchBuilder::with_arm(
                 MatchKind::Protocol,
                 Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
                 ArmEnd::Verdict(Verdict::Allow),
-            ).build().unwrap(),
+            )
+            .build()
+            .unwrap(),
         );
         assert_eq!(b, expected);
     }
@@ -715,246 +893,380 @@ mod tests {
 
     #[test]
     fn lower_single_arm_ip_ver_v4() {
-        let ast = ast_match("ip_ver", vec![
-            arm(equal_ident("v4"), verdict_body(AstVerdict::Allow)),
-        ]);
+        let ast = ast_match(
+            "ip_ver",
+            vec![arm(equal_ident("v4"), verdict_body(AstVerdict::Allow))],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::IpVer,
-            Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
-            ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::IpVer,
+                Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_single_arm_protocol_tcp_drop() {
-        let ast = ast_match("protocol", vec![
-            arm(equal_ident("tcp"), verdict_body(AstVerdict::Drop)),
-        ]);
+        let ast = ast_match(
+            "protocol",
+            vec![arm(equal_ident("tcp"), verdict_body(AstVerdict::Drop))],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::Protocol,
-            Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
-            ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::Protocol,
+                Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
+                ArmEnd::Verdict(Verdict::Drop),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_single_arm_dst_port_allow_warn() {
-        let ast = ast_match("dst_port", vec![
-            arm(equal_num(80), verdict_body(AstVerdict::AllowWarn(sp("dst port is 80".into())))),
-        ]);
+        let ast = ast_match(
+            "dst_port",
+            vec![arm(
+                equal_num(80),
+                verdict_body(AstVerdict::AllowWarn(sp("dst port is 80".into()))),
+            )],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::DstPort,
-            Pattern::Equal(FieldValue::Port(Port::from(80))),
-            ArmEnd::Verdict(Verdict::AllowWarn("dst port is 80".into())),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::DstPort,
+                Pattern::Equal(FieldValue::Port(Port::from(80))),
+                ArmEnd::Verdict(Verdict::AllowWarn("dst port is 80".into())),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_or_protocol_tcp_udp() {
-        let ast = ast_match("protocol", vec![
-            arm(
+        let ast = ast_match(
+            "protocol",
+            vec![arm(
                 or_patterns(vec![equal_ident("tcp"), equal_ident("udp")]),
                 verdict_body(AstVerdict::Allow),
-            ),
-        ]);
+            )],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::Protocol,
-            Pattern::Or(vec![
-                Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
-                Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
-            ]),
-            ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::Protocol,
+                Pattern::Or(vec![
+                    Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
+                    Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+                ]),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_or_three_days() {
-        let ast = ast_match("day_of_week", vec![
-            arm(
+        let ast = ast_match(
+            "day_of_week",
+            vec![arm(
                 or_patterns(vec![
                     equal_ident("monday"),
                     equal_ident("wednesday"),
                     equal_ident("friday"),
                 ]),
                 verdict_body(AstVerdict::Allow),
-            ),
-        ]);
+            )],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::DayOfWeek,
-            Pattern::Or(vec![
-                Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
-                Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
-                Pattern::Equal(FieldValue::DayOfWeek(Weekday::Fri)),
-            ]),
-            ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::DayOfWeek,
+                Pattern::Or(vec![
+                    Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
+                    Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
+                    Pattern::Equal(FieldValue::DayOfWeek(Weekday::Fri)),
+                ]),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_multiple_arms_protocol() {
-        let ast = ast_match("protocol", vec![
-            arm(equal_ident("tcp"), verdict_body(AstVerdict::Allow)),
-            arm(equal_ident("udp"), verdict_body(AstVerdict::Drop)),
-        ]);
+        let ast = ast_match(
+            "protocol",
+            vec![
+                arm(equal_ident("tcp"), verdict_body(AstVerdict::Allow)),
+                arm(equal_ident("udp"), verdict_body(AstVerdict::Drop)),
+            ],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::Protocol,
-            Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
-            ArmEnd::Verdict(Verdict::Allow),
-        ).arm(
-            Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
-            ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::Protocol,
+                Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .arm(
+                Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+                ArmEnd::Verdict(Verdict::Drop),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_comparison_dst_port_greater() {
-        let ast = ast_match("dst_port", vec![
-            arm(greater_num(79), verdict_body(AstVerdict::Allow)),
-        ]);
+        let ast = ast_match(
+            "dst_port",
+            vec![arm(greater_num(79), verdict_body(AstVerdict::Allow))],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::DstPort,
-            Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(79))),
-            ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::DstPort,
+                Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(79))),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_comparison_dst_port_greater_or_equal() {
-        let ast = ast_match("dst_port", vec![
-            arm(greater_or_equal_num(80), verdict_body(AstVerdict::Allow)),
-        ]);
+        let ast = ast_match(
+            "dst_port",
+            vec![arm(
+                greater_or_equal_num(80),
+                verdict_body(AstVerdict::Allow),
+            )],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::DstPort,
-            Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Port(Port::from(80))),
-            ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::DstPort,
+                Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Port(Port::from(80))),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_comparison_dst_port_lesser_or_equal() {
-        let ast = ast_match("dst_port", vec![
-            arm(lesser_or_equal_num(80), verdict_body(AstVerdict::Allow)),
-        ]);
+        let ast = ast_match(
+            "dst_port",
+            vec![arm(
+                lesser_or_equal_num(80),
+                verdict_body(AstVerdict::Allow),
+            )],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::DstPort,
-            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(80))),
-            ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::DstPort,
+                Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(80))),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_comparison_hour_greater_or_equal() {
-        let ast = ast_match("hour", vec![
-            arm(greater_or_equal_num(9), verdict_body(AstVerdict::Allow)),
-        ]);
+        let ast = ast_match(
+            "hour",
+            vec![arm(
+                greater_or_equal_num(9),
+                verdict_body(AstVerdict::Allow),
+            )],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::Hour,
-            Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Hour(Hour::try_from(9).unwrap())),
-            ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::Hour,
+                Pattern::Comparison(
+                    Operation::GreaterOrEqual,
+                    FieldValue::Hour(Hour::try_from(9).unwrap())
+                ),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_comparison_day_of_week_greater_or_equal() {
-        let ast = ast_match("day_of_week", vec![
-            arm(greater_or_equal_ident("monday"), verdict_body(AstVerdict::Allow)),
-        ]);
+        let ast = ast_match(
+            "day_of_week",
+            vec![arm(
+                greater_or_equal_ident("monday"),
+                verdict_body(AstVerdict::Allow),
+            )],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::DayOfWeek,
-            Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::DayOfWeek(Weekday::Mon)),
-            ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::DayOfWeek,
+                Pattern::Comparison(
+                    Operation::GreaterOrEqual,
+                    FieldValue::DayOfWeek(Weekday::Mon)
+                ),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_nested_ipver_protocol_dst_port() {
-        let ast = ast_match("ip_ver", vec![
-            arm(
-                equal_ident("v4"),
-                match_body(ast_match("protocol", vec![
-                    arm(
-                        equal_ident("tcp"),
-                        match_body(ast_match("dst_port", vec![
-                            arm(lesser_or_equal_num(1024), verdict_body(AstVerdict::Allow)),
-                            arm(greater_num(1024),         verdict_body(AstVerdict::AllowWarn(sp("high dst port".into())))),
-                        ])),
-                    ),
-                    arm(equal_ident("udp"), verdict_body(AstVerdict::Drop)),
-                ])),
-            ),
-            arm(equal_ident("v6"), verdict_body(AstVerdict::Drop)),
-        ]);
+        let ast = ast_match(
+            "ip_ver",
+            vec![
+                arm(
+                    equal_ident("v4"),
+                    match_body(ast_match(
+                        "protocol",
+                        vec![
+                            arm(
+                                equal_ident("tcp"),
+                                match_body(ast_match(
+                                    "dst_port",
+                                    vec![
+                                        arm(
+                                            lesser_or_equal_num(1024),
+                                            verdict_body(AstVerdict::Allow),
+                                        ),
+                                        arm(
+                                            greater_num(1024),
+                                            verdict_body(AstVerdict::AllowWarn(sp(
+                                                "high dst port".into(),
+                                            ))),
+                                        ),
+                                    ],
+                                )),
+                            ),
+                            arm(equal_ident("udp"), verdict_body(AstVerdict::Drop)),
+                        ],
+                    )),
+                ),
+                arm(equal_ident("v6"), verdict_body(AstVerdict::Drop)),
+            ],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::IpVer,
-            Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
-            ArmEnd::Match(
-                MatchBuilder::with_arm(
-                    MatchKind::Protocol,
-                    Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
-                    ArmEnd::Match(
-                        MatchBuilder::with_arm(
-                            MatchKind::DstPort,
-                            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(1024))),
-                            ArmEnd::Verdict(Verdict::Allow),
-                        ).arm(
-                            Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(1024))),
-                            ArmEnd::Verdict(Verdict::AllowWarn("high dst port".into())),
-                        ).build().unwrap(),
-                    ),
-                ).arm(
-                    Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
-                    ArmEnd::Verdict(Verdict::Drop),
-                ).build().unwrap(),
-            ),
-        ).arm(
-            Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
-            ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::IpVer,
+                Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
+                ArmEnd::Match(
+                    MatchBuilder::with_arm(
+                        MatchKind::Protocol,
+                        Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
+                        ArmEnd::Match(
+                            MatchBuilder::with_arm(
+                                MatchKind::DstPort,
+                                Pattern::Comparison(
+                                    Operation::LesserOrEqual,
+                                    FieldValue::Port(Port::from(1024))
+                                ),
+                                ArmEnd::Verdict(Verdict::Allow),
+                            )
+                            .arm(
+                                Pattern::Comparison(
+                                    Operation::Greater,
+                                    FieldValue::Port(Port::from(1024))
+                                ),
+                                ArmEnd::Verdict(Verdict::AllowWarn("high dst port".into())),
+                            )
+                            .build()
+                            .unwrap(),
+                        ),
+                    )
+                    .arm(
+                        Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+                        ArmEnd::Verdict(Verdict::Drop),
+                    )
+                    .build()
+                    .unwrap(),
+                ),
+            )
+            .arm(
+                Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
+                ArmEnd::Verdict(Verdict::Drop),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     #[test]
     fn lower_nested_or_at_outer_and_inner_levels() {
-        let ast = ast_match("ip_ver", vec![
-            arm(
+        let ast = ast_match(
+            "ip_ver",
+            vec![arm(
                 or_patterns(vec![equal_ident("v4"), equal_ident("v6")]),
-                match_body(ast_match("protocol", vec![
-                    arm(
+                match_body(ast_match(
+                    "protocol",
+                    vec![arm(
                         or_patterns(vec![equal_ident("tcp"), equal_ident("udp")]),
                         verdict_body(AstVerdict::Allow),
-                    ),
-                ])),
-            ),
-        ]);
+                    )],
+                )),
+            )],
+        );
         let result = lower(ast).unwrap();
-        assert_eq!(result, MatchBuilder::with_arm(
-            MatchKind::IpVer,
-            Pattern::Or(vec![
-                Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
-                Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
-            ]),
-            ArmEnd::Match(
-                MatchBuilder::with_arm(
-                    MatchKind::Protocol,
-                    Pattern::Or(vec![
-                        Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
-                        Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
-                    ]),
-                    ArmEnd::Verdict(Verdict::Allow),
-                ).build().unwrap(),
-            ),
-        ).build().unwrap());
+        assert_eq!(
+            result,
+            MatchBuilder::with_arm(
+                MatchKind::IpVer,
+                Pattern::Or(vec![
+                    Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
+                    Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
+                ]),
+                ArmEnd::Match(
+                    MatchBuilder::with_arm(
+                        MatchKind::Protocol,
+                        Pattern::Or(vec![
+                            Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
+                            Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+                        ]),
+                        ArmEnd::Verdict(Verdict::Allow),
+                    )
+                    .build()
+                    .unwrap(),
+                ),
+            )
+            .build()
+            .unwrap()
+        );
     }
 
     // ── lower error cases ────────────────────────────────────────────────────
@@ -968,19 +1280,27 @@ mod tests {
 
     #[test]
     fn lower_unknown_kind_returns_error() {
-        let ast = ast_match("banana", vec![
-            arm(equal_ident("tcp"), verdict_body(AstVerdict::Allow)),
-        ]);
+        let ast = ast_match(
+            "banana",
+            vec![arm(equal_ident("tcp"), verdict_body(AstVerdict::Allow))],
+        );
         let err = lower(ast).unwrap_err();
         assert!(matches!(err, LowerError::UnknownKind { kind, .. } if kind == "banana"));
     }
 
     #[test]
     fn lower_bad_value_in_arm_propagates_error() {
-        let ast = ast_match("ip_ver", vec![
-            arm(equal_ident("v5"), verdict_body(AstVerdict::Allow)),
-        ]);
+        let ast = ast_match(
+            "ip_ver",
+            vec![arm(equal_ident("v5"), verdict_body(AstVerdict::Allow))],
+        );
         let err = lower(ast).unwrap_err();
-        assert!(matches!(err, LowerError::UnknownValue { kind: MatchKind::IpVer, .. }));
+        assert!(matches!(
+            err,
+            LowerError::UnknownValue {
+                kind: MatchKind::IpVer,
+                ..
+            }
+        ));
     }
 }

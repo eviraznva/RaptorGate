@@ -1,5 +1,5 @@
-use std::time::Instant;
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::data_plane::nat::port_store::PortStore;
 use crate::data_plane::nat::types::flow_tuple::FlowTuple;
@@ -50,8 +50,10 @@ impl BindingTable {
     pub fn insert(&mut self, binding: NatBinding) {
         let binding_id = binding.binding_id;
 
-        self.forward_index.insert(binding.original_forward.clone(), binding_id);
-        self.reply_index.insert(binding.original_reply.clone(), binding_id);
+        self.forward_index
+            .insert(binding.original_forward.clone(), binding_id);
+        self.reply_index
+            .insert(binding.original_reply.clone(), binding_id);
         self.bindings.insert(binding_id, binding);
     }
 
@@ -70,7 +72,9 @@ impl BindingTable {
     pub fn expire_old_bindings(&mut self, port_store: &mut PortStore) {
         let now = Instant::now();
 
-        let expired: Vec<u64> = self.bindings.iter()
+        let expired: Vec<u64> = self
+            .bindings
+            .iter()
             .filter_map(|(binding_id, binding)| (binding.expires_at <= now).then_some(*binding_id))
             .collect();
 

@@ -1,6 +1,6 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use derive_more::{Debug, Display, Eq, Error, From};
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) trait Frame {
     fn ip_ver(&self) -> IpVer;
@@ -108,9 +108,21 @@ impl TryFrom<u8> for Hour {
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
-pub enum Protocol { Tcp, Udp, Icmp }
+pub enum Protocol {
+    Tcp,
+    Udp,
+    Icmp,
+}
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
-pub enum Weekday { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
+pub enum Weekday {
+    Mon,
+    Tue,
+    Wed,
+    Thu,
+    Fri,
+    Sat,
+    Sun,
+}
 
 pub struct RealFrame {
     ip_ver: IpVer,

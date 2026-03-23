@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use tokio::task;
 use pcap::Direction;
+use tokio::sync::{Mutex, mpsc};
+use tokio::task;
 use tun::AsyncDevice;
-use tokio::sync::{mpsc, Mutex};
 
 use crate::config::AppConfig;
 use crate::data_plane::nat::engine::NatEngine;
-use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::packet_handler::handle_packet;
+use crate::data_plane::policy_store::PolicyStore;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 
 pub async fn run(

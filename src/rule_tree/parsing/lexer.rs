@@ -52,8 +52,6 @@ pub struct Row(usize);
 #[cfg_attr(test, visibility::make(pub))]
 struct Col(usize);
 
-
-
 impl Display for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.row.0, self.col.0)
@@ -62,7 +60,7 @@ impl Display for Position {
 
 #[derive(Debug, Clone, PartialEq, Display)]
 #[display("{}: {}", pos, kind)]
-pub(super)struct Token {
+pub(super) struct Token {
     pub(super) pos: Position,
     pub(super) kind: TokenType,
 }
@@ -328,7 +326,9 @@ impl Lexer {
 mod tests {
     use std::vec;
 
-    use crate::rule_tree::parsing::lexer::{KeywordType, Lexer, LexerError, PatternType, Position, Token, TokenType};
+    use crate::rule_tree::parsing::lexer::{
+        KeywordType, Lexer, LexerError, PatternType, Position, Token, TokenType,
+    };
 
     #[test]
     fn empty_ruleset_passes() {
@@ -532,11 +532,7 @@ mod tests {
     gen_space_tests!(
         colon_separator_braces_full,
         "} : {",
-        vec![
-            TokenType::RBrace,
-            TokenType::Colon,
-            TokenType::LBrace,
-        ]
+        vec![TokenType::RBrace, TokenType::Colon, TokenType::LBrace,]
     );
 
     gen_space_tests!(

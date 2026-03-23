@@ -1,30 +1,28 @@
 mod config;
 mod control_plane;
 mod data_plane;
-mod policy;
 mod frame;
 mod ip_defrag;
 mod packet_validator;
+mod policy;
 mod policy_evaluator;
 mod rule_tree;
 mod tls;
 
 use ipnet::IpNet;
-use std::net::IpAddr;
-use std::sync::{Arc};
-use tokio::sync::Mutex;
 use std::collections::HashMap;
+use std::net::IpAddr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-use crate::tls::CaManager;
 use crate::config::AppConfig;
-use crate::policy::nat::nat_rules::NatRules;
-use crate::policy::nat::port_range::PortRange;
+use crate::control_plane::{ControlPlane, ControlPlaneConfig};
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::runtime as data_plane_runtime;
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
-use crate::control_plane::{ControlPlane, ControlPlaneConfig};
-
+use crate::policy::nat::nat_rules::NatRules;
+use crate::tls::CaManager;
 
 #[tokio::main]
 async fn main() {
@@ -70,6 +68,18 @@ async fn main() {
     let handle = control_plane.handle();
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
 
+    if config.disable_data_plane {
+        tracing::info!("DISABLE_DATA_PLANE=true; running control plane only");
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            eprintln!("Signal handling error: {err}");
+        }
+
+        if let Err(err) = control_plane.shutdown().await {
+            eprintln!("Control plane shutdown error: {err}");
+        }
+        return;
+    }
+
     let nat = build_test_nat();
 
     if let Err(err) = data_plane_runtime::run(&config, policy_store, nat).await {
@@ -83,8 +93,14 @@ async fn main() {
 
 fn build_test_nat() -> Arc<Mutex<NatEngine>> {
     let interface_ips = HashMap::from([
-        ("eth1".to_string(), "192.168.10.254".parse::<IpAddr>().unwrap()),
-        ("eth2".to_string(), "192.168.20.254".parse::<IpAddr>().unwrap()),
+        (
+            "eth1".to_string(),
+            "192.168.10.254".parse::<IpAddr>().unwrap(),
+        ),
+        (
+            "eth2".to_string(),
+            "192.168.20.254".parse::<IpAddr>().unwrap(),
+        ),
     ]);
 
     let rules = NatRules::new(vec![
@@ -118,5 +134,8 @@ fn build_test_nat() -> Arc<Mutex<NatEngine>> {
         ),
     ]);
 
-    Arc::new(Mutex::new(NatEngine::new(&Some(Arc::new(rules)), interface_ips)))
+    Arc::new(Mutex::new(NatEngine::new(
+        &Some(Arc::new(rules)),
+        interface_ips,
+    )))
 }
