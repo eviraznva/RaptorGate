@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package raptorgate.events;
+
+import "common/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Koperta zdarzenia wysyłanego przez Firewall → Backend przez EventStream.
+//
+// Znane wartości pola `type`:
+//   "fw.heartbeat"        — HeartbeatEvent
+//   "fw.metrics"          — MetricsBatch (z telemetry_models.proto)
+//   "fw.alert"            — AlertEvent
+//   "fw.policy_activated" — PolicyActivatedEvent
+//   "fw.policy_failed"    — PolicyFailedEvent
+//   "fw.resync_confirmed" — ResyncConfirmedEvent
+//   "fw.ca_ready"         — CaReadyEvent
+// ─────────────────────────────────────────────────────────────────────────────
+message FirewallEvent {
+  // UUID v7 — monotoniczny, używany do deduplikacji po stronie backendu.
+  string event_id = 1;
+
+  // Identyfikator typu eventu — determinuje jak deserializować payload.
+  string type = 2;
+
+  // Serializowana wiadomość protobuf odpowiadająca danemu typowi.
+  bytes payload = 3;
+
+  google.protobuf.Timestamp ts = 4;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Payloady
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Typ: "fw.heartbeat"
+//
+// Pierwsze HeartbeatEvent po nawiązaniu EventStream jest traktowane przez
+// backend jako sygnał że firewall wystartował poprawnie.
+// Brak kolejnego HeartbeatEvent przez np. >10 s → firewall nie odpowiada.
+// Brak nawiązania EventStream przez np. 30 s od startu backendu → firewall nie wystartował.
+message HeartbeatEvent {
+  // Wersja semantyczna oprogramowania firewalla (semver).
+  string firewall_version      = 1;
+  common.FirewallMode mode     = 2;
+  uint64 active_config_version = 3;
+  uint64 uptime_seconds        = 4;
+}
+
+// Typ: "fw.alert"
+//
+// Wysyłany gdy moduł inspekcji wygeneruje alert (np. IPS lub ML wykryje potencjalne zagrożenie).
+message AlertEvent {
+  string log_id      = 1;
+  string title       = 2;
+  string description = 3;
+
+  common.Severity   severity = 4;
+  common.AlertSource source  = 5;
+
+  // Wypełnione gdy source == IPS.
+  string signature_name = 6;
+
+  // Wypełnione gdy source == ML. Wartość 0.0–1.0.
+  float ml_confidence = 7;
+
+  string src_ip   = 8;
+  string dst_ip   = 9;
+  uint32 src_port = 10;
+  uint32 dst_port = 11;
+  string protocol = 12;
+
+  google.protobuf.Timestamp occurred_at = 13;
+}
+
+// Typ: "fw.policy_activated"
+//
+// Wysyłany po udanym atomowym przełączeniu polityki.
+message PolicyActivatedEvent {
+  string config_id      = 1;
+  uint64 config_version = 2;
+  string correlation_id = 3;
+  google.protobuf.Timestamp activated_at = 4;
+}
+
+// Typ: "fw.policy_failed"
+//
+// Wysyłany gdy kompilacja lub aktywacja nowej polityki zakończyła się błędem.
+// Poprzednia polityka pozostaje aktywna — firewall kontynuuje działanie.
+message PolicyFailedEvent {
+  string config_id      = 1;
+  uint64 config_version = 2;
+  string correlation_id = 3;
+
+  common.PolicyFailureCode failure_code    = 4;
+  string                   failure_message = 5;
+  repeated string          validation_errors = 6;
+
+  google.protobuf.Timestamp failed_at = 7;
+}
+
+// Typ: "fw.ca_ready"
+//
+// Wysyłany po każdym nawiązaniu EventStream z zainicjowanym CA.
+// Backend przechowuje certyfikat CA do dystrybucji do klientów.
+// Klucz prywatny nigdy nie opuszcza firewalla.
+message CaReadyEvent {
+  // Certyfikat CA w formacie PEM (klucz publiczny).
+  string ca_cert_pem = 1;
+  // Odcisk palca SHA-256 certyfikatu w formacie AA:BB:CC:...
+  string fingerprint = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+// Typ: "fw.resync_confirmed"
+//
+// Wysyłany po zakończeniu resynchronizacji zainicjowanej przez ResyncRequestedEvent.
+message ResyncConfirmedEvent {
+  uint64 previous_version = 1;
+  uint64 current_version  = 2;
+  string correlation_id   = 3;
+  // True gdy wersje konfiguracji były identyczne — nie było potrzeby przeładowania polityki.
+  bool no_change = 4;
+  google.protobuf.Timestamp confirmed_at = 5;
+}

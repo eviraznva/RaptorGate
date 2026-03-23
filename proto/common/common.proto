@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package raptorgate.common;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enumeracje współdzielone między modułami
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO        = 1;
+  SEVERITY_LOW         = 2;
+  SEVERITY_MEDIUM      = 3;
+  SEVERITY_HIGH        = 4;
+  SEVERITY_CRITICAL    = 5;
+}
+
+enum DefaultPolicy {
+  DEFAULT_POLICY_UNSPECIFIED = 0;
+  DEFAULT_POLICY_ALLOW       = 1;
+  DEFAULT_POLICY_DROP        = 2;
+}
+
+enum NatRuleType {
+  NAT_RULE_TYPE_UNSPECIFIED = 0;
+  NAT_RULE_TYPE_SNAT        = 1;
+  NAT_RULE_TYPE_DNAT        = 2;
+  NAT_RULE_TYPE_PAT         = 3;
+}
+
+enum CertificateType {
+  CERTIFICATE_TYPE_UNSPECIFIED = 0;
+  CERTIFICATE_TYPE_CA          = 1;
+  CERTIFICATE_TYPE_TLS_SERVER  = 2;
+}
+
+enum IdentitySource {
+  IDENTITY_SOURCE_UNSPECIFIED      = 0;
+  IDENTITY_SOURCE_LOCAL            = 1;
+  IDENTITY_SOURCE_RADIUS           = 2;
+  IDENTITY_SOURCE_ACTIVE_DIRECTORY = 3;
+}
+
+// Tryb działania procesu firewalla — raportowany w HeartbeatEvent.
+enum FirewallMode {
+  FIREWALL_MODE_UNSPECIFIED = 0;
+  // Konfiguracja pobrana od backendu, firewall działa normalnie.
+  FIREWALL_MODE_NORMAL      = 1;
+  // Backend był niedostępny przy starcie; firewall działa na lokalnym snapshotcie Redb.
+  FIREWALL_MODE_EMERGENCY   = 2;
+  // Brak snapshotu Redb; firewall blokuje cały ruch produkcyjny.
+  FIREWALL_MODE_SAFE_DENY   = 3;
+  // Trwa resynchronizacja z backendem.
+  FIREWALL_MODE_RESYNCING   = 4;
+}
+
+enum AlertSource {
+  ALERT_SOURCE_UNSPECIFIED = 0;
+
+  // Wykrywa anomalie flag TCP: Xmas scan, Null scan, SYN flood, pakiety INVALID.
+  ALERT_SOURCE_CONNTRACK = 1;
+
+  // Reguła z akcją DROP + WARN lub przekroczenie progu połączeń per IP.
+  ALERT_SOURCE_POLICY = 2;
+
+  // Wykrywa: cert pinning, nieważne certyfikaty, anomalie TLS handshake.
+  ALERT_SOURCE_TLS = 3;
+
+  // Wykrywa nieznane lub podejrzane protokoły na niestandardowych portach.
+  ALERT_SOURCE_DPI = 4;
+
+  // Wykrywa: trafienie w blacklistę domen, DNS tunneling (entropia/długość subdomeny).
+  ALERT_SOURCE_DNS = 5;
+
+  // Wykrywa: SQL injection, XSS, shellcode, path traversal i inne wzorce Aho-Corasick.
+  ALERT_SOURCE_IPS = 6;
+
+  // Klasyfikuje ruch jako malicious / suspicious na podstawie cech sesji.
+  ALERT_SOURCE_ML = 7;
+}
+
+enum ConfigChangeType {
+  CONFIG_CHANGE_TYPE_UNSPECIFIED   = 0;
+  CONFIG_CHANGE_TYPE_POLICY_UPDATE = 1;
+  CONFIG_CHANGE_TYPE_ROLLBACK      = 2;
+}
+
+enum PolicyFailureCode {
+  POLICY_FAILURE_CODE_UNSPECIFIED       = 0;
+  POLICY_FAILURE_CODE_VALIDATION_FAILED = 1;
+  POLICY_FAILURE_CODE_COMPILE_FAILED    = 2;
+  POLICY_FAILURE_CODE_RUNTIME_FAILED    = 3;
+}

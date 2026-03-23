@@ -1,0 +1,44 @@
+{
+  "items": [
+    {
+      "id": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4",
+      "name": "Bedroom",
+      "description": "The bedroom of the house",
+      "isActive": true,
+      "createdAt": "2026-03-19T18:36:47.226Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "a0db06f9-5063-4035-aadd-845248db19e4",
+      "name": "Office",
+      "description": "The office of the company",
+      "isActive": true,
+      "createdAt": "2026-03-19T18:37:00.315Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "7276db7e-eb41-4dc6-9b88-12f854e104f2",
+      "name": "LAN",
+      "description": "Internal network",
+      "isActive": true,
+      "createdAt": "2026-03-23T11:34:56.532Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "050eca33-2b53-4470-9f11-d369e0e7abbc",
+      "name": "WAN",
+      "description": "Internet",
+      "isActive": true,
+      "createdAt": "2026-03-23T11:35:03.586Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "f22659a6-9aeb-4cb9-90cb-bfb39735668a",
+      "name": "Dupa",
+      "description": "adsfgadfgasdfg",
+      "isActive": true,
+      "createdAt": "2026-03-23T17:42:54.213Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    }
+  ]
+}
