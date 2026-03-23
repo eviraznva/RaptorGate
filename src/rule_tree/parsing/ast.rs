@@ -63,9 +63,10 @@ pub(super) enum AstPattern {
     Equal(Spanned<AstValue>),
     Greater(Spanned<AstValue>),
     LesserOrEqual(Spanned<AstValue>),
+    Lesser(Spanned<AstValue>),
     GreaterOrEqual(Spanned<AstValue>),
-    Range(Spanned<AstValue>, Spanned<AstValue>),
     Or(Spanned<Vec<AstPattern>>),
+    And(Spanned<Vec<AstPattern>>),
     Wildcard,
 }
 
@@ -190,41 +191,57 @@ impl Parser {
     }
 
     fn parse_pattern(&mut self) -> Result<Spanned<AstPattern>, ParseError> {
-        match self.peek()?.kind {
-            TokenType::Pattern(PatternType::Or) => {
-                let or_tok = self.consume()?;
-                let mut patterns = Vec::new();
-                loop {
-                    patterns.push(self.parse_simple_pattern()?.val);
-                    match self.peek() {
-                        Ok(t) if t.kind == TokenType::Pattern(PatternType::Or) => {
-                            self.consume()?;
-                        }
-                        _ => break,
-                    }
-                }
-                Ok(Spanned {
-                    val: AstPattern::Or(Spanned {
-                        val: patterns,
-                        pos: or_tok.pos,
-                    }),
-                    pos: or_tok.pos,
-                })
-            }
-            _ => self.parse_simple_pattern(),
-        }
-    }
+        // match self.peek()?.kind {
+        //     TokenType::Pattern(PatternType::Or) => {
+        //         let or_tok = self.consume()?;
+        //         let mut patterns = Vec::new();
+        //         loop {
+        //             patterns.push(self.parse_simple_pattern()?.val);
+        //             match self.peek() {
+        //                 Ok(t) if t.kind == TokenType::Pattern(PatternType::Or) => { self.consume()?; }
+        //                 _ => break,
+        //             }
+        //         }
+        //         Ok(Spanned {
+        //             val: AstPattern::Or(Spanned { val: patterns, pos: or_tok.pos }),
+        //             pos: or_tok.pos,
+        //         })
+        //     }
+        //     _ => self.parse_simple_pattern()
+        // }
 
-    fn parse_simple_pattern(&mut self) -> Result<Spanned<AstPattern>, ParseError> {
         let token = self.consume()?;
         match token.kind {
             TokenType::Pattern(PatternType::Or) => {
-                Err(ParseError::NestedCombinatorNotImplemented(token))
-            }
-            TokenType::Pattern(PatternType::Wildcard) => Ok(Spanned {
-                val: AstPattern::Wildcard,
-                pos: token.pos,
-            }),
+                self.expect_token(TokenType::LParen)?;
+
+                let mut patterns = Vec::new();
+                while !(self.peek()?.kind == TokenType::RParen) {
+                    patterns.push(self.parse_pattern()?.val);
+                }
+                self.consume()?;
+
+                Ok(Spanned {
+                    val: AstPattern::Or(Spanned { val: patterns, pos: token.pos }),
+                    pos: token.pos,
+                })
+            },
+
+            TokenType::Pattern(PatternType::And) => {
+                self.expect_token(TokenType::LParen)?;
+
+                let mut patterns = Vec::new();
+                while !(self.peek()?.kind == TokenType::RParen) {
+                    patterns.push(self.parse_pattern()?.val);
+                }
+                self.consume()?;
+
+                Ok(Spanned {
+                    val: AstPattern::And(Spanned { val: patterns, pos: token.pos }),
+                    pos: token.pos,
+                })
+            },
+            TokenType::Pattern(PatternType::Wildcard) => Ok(Spanned { val: AstPattern::Wildcard, pos: token.pos }),
             TokenType::Pattern(PatternType::Equal) => {
                 let value = self.parse_value()?;
                 Ok(Spanned {
@@ -246,6 +263,10 @@ impl Parser {
                     pos: token.pos,
                 })
             }
+            TokenType::Pattern(PatternType::Lesser) => {
+                let value = self.parse_value()?;
+                Ok(Spanned { val: AstPattern::Lesser(value), pos: token.pos })
+            }
             TokenType::Pattern(PatternType::GreaterOrEqual) => {
                 let value = self.parse_value()?;
                 Ok(Spanned {
@@ -256,6 +277,10 @@ impl Parser {
             _ => Err(ParseError::UnexpectedToken(token)),
         }
     }
+
+    // fn parse_simple_pattern(&mut self) -> Result<Spanned<AstPattern>, ParseError> {
+    //     let token = self.consume()?;
+    // }
 
     fn parse_value(&mut self) -> Result<Spanned<AstValue>, ParseError> {
         let token = self.consume()?;
@@ -436,9 +461,7 @@ mod tests {
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::StringLiteral("tcp".into())),
         ]);
-        assert!(
-            matches!(p.parse_simple_pattern().unwrap().val, AstPattern::Equal(v) if matches!(&v.val, AstValue::StrLit(s) if s.val == "tcp"))
-        );
+        assert!(matches!(p.parse_pattern().unwrap().val, AstPattern::Equal(v) if matches!(&v.val, AstValue::StrLit(s) if s.val == "tcp")));
     }
 
     #[test]
@@ -447,77 +470,18 @@ mod tests {
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Number(80)),
         ]);
-        let pat = p.parse_simple_pattern().unwrap();
+        let pat = p.parse_pattern().unwrap();
         assert!(is_equal_number(&pat.val, 80));
     }
 
     #[test]
-    fn parse_simple_pattern_greater() {
+    fn parse_pattern_greater() {
         let mut p = Parser::new(vec![
             tok(TokenType::Pattern(PatternType::Greater)),
             tok(TokenType::Number(1024)),
         ]);
-        let pat = p.parse_simple_pattern().unwrap();
+        let pat = p.parse_pattern().unwrap();
         assert!(is_greater_number(&pat.val, 1024));
-    }
-
-    #[test]
-    fn parse_simple_pattern_rejects_nested_or() {
-        let mut p = Parser::new(vec![tok(TokenType::Pattern(PatternType::Or))]);
-        assert!(matches!(
-            p.parse_simple_pattern(),
-            Err(ParseError::NestedCombinatorNotImplemented(_))
-        ));
-    }
-
-    // ---- parse_pattern (Or) ------------------------------------------------
-
-    #[test]
-    fn parse_pattern_or_two_values() {
-        let mut p = Parser::new(vec![
-            tok(TokenType::Pattern(PatternType::Or)),
-            tok(TokenType::Pattern(PatternType::Equal)),
-            tok(TokenType::Identifier("tcp".into())),
-            tok(TokenType::Pattern(PatternType::Or)),
-            tok(TokenType::Pattern(PatternType::Equal)),
-            tok(TokenType::Identifier("udp".into())),
-        ]);
-
-        let pat = p.parse_pattern().unwrap();
-        match pat.val {
-            AstPattern::Or(v) => {
-                assert_eq!(v.val.len(), 2);
-                assert!(is_equal_ident(&v.val[0], "tcp"));
-                assert!(is_equal_ident(&v.val[1], "udp"));
-            }
-            _ => panic!("expected Or pattern"),
-        }
-    }
-
-    #[test]
-    fn parse_pattern_or_three_values() {
-        let mut p = Parser::new(vec![
-            tok(TokenType::Pattern(PatternType::Or)),
-            tok(TokenType::Pattern(PatternType::Equal)),
-            tok(TokenType::Identifier("tcp".into())),
-            tok(TokenType::Pattern(PatternType::Or)),
-            tok(TokenType::Pattern(PatternType::Equal)),
-            tok(TokenType::Identifier("udp".into())),
-            tok(TokenType::Pattern(PatternType::Or)),
-            tok(TokenType::Pattern(PatternType::Equal)),
-            tok(TokenType::Identifier("icmp".into())),
-        ]);
-
-        let pat = p.parse_pattern().unwrap();
-        match pat.val {
-            AstPattern::Or(v) => {
-                assert_eq!(v.val.len(), 3);
-                assert!(is_equal_ident(&v.val[0], "tcp"));
-                assert!(is_equal_ident(&v.val[1], "udp"));
-                assert!(is_equal_ident(&v.val[2], "icmp"));
-            }
-            _ => panic!("expected Or pattern"),
-        }
     }
 
     // ---- parse_body --------------------------------------------------------
@@ -685,9 +649,53 @@ mod tests {
 
     #[test]
     fn parse_match_or_pattern_with_nested_match() {
+        // match hour {
+        //     & (< 10  > 5) : verdict allow
+        //     = 2            : match dst_port {
+        //         > 1024 : verdict drop
+        //     }
+        // }
+        let mut p = Parser::new(vec![
+            tok(TokenType::Keyword(KeywordType::Match)),
+            tok(TokenType::Identifier("hour".into())),
+            tok(TokenType::LBrace),
+            // arm 1: or pattern (comment says &, but using Or to match Pattern/Parser features)
+            tok(TokenType::Pattern(PatternType::And)),
+            tok(TokenType::LParen),
+            tok(TokenType::Pattern(PatternType::Lesser)), // Using LesserOrEqual for <
+            tok(TokenType::Number(10)),
+            tok(TokenType::Pattern(PatternType::Greater)),
+            tok(TokenType::Number(5)),
+            tok(TokenType::RParen),
+            tok(TokenType::Colon),
+            tok(TokenType::Keyword(KeywordType::Verdict)),
+            tok(TokenType::Identifier("allow".into())),
+            // arm 2: nested match
+            tok(TokenType::Pattern(PatternType::Equal)),
+            tok(TokenType::Number(2)),
+            tok(TokenType::Colon),
+            tok(TokenType::Keyword(KeywordType::Match)),
+            tok(TokenType::Identifier("dst_port".into())),
+            tok(TokenType::LBrace),
+            tok(TokenType::Pattern(PatternType::Greater)),
+            tok(TokenType::Number(1024)),
+            tok(TokenType::Colon),
+            tok(TokenType::Keyword(KeywordType::Verdict)),
+            tok(TokenType::Identifier("drop".into())),
+            tok(TokenType::RBrace),
+            tok(TokenType::RBrace),
+        ]);
+        let ast = p.parse_match().unwrap();
+        assert_eq!(ast.val.arms.val.len(), 2);
+        assert!(matches!(&ast.val.arms.val[0].pattern.val, AstPattern::And(v) if v.val.len() == 2));
+        assert!(matches!(&ast.val.arms.val[1].body.val, AstBody::Match(_)));
+    }
+
+    #[test]
+    fn parse_match_and_pattern_with_nested_match() {
         // match protocol {
-        //     | = "tcp" | = "udp" : verdict allow
-        //     = "icmp"            : match dst_port {
+        //     | (= tcp  = udp) : verdict allow
+        //     = icmp            : match dst_port {
         //         > 1024 : verdict drop
         //     }
         // }
@@ -697,11 +705,12 @@ mod tests {
             tok(TokenType::LBrace),
             // arm 1: or pattern
             tok(TokenType::Pattern(PatternType::Or)),
+            tok(TokenType::LParen),
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Identifier("tcp".into())),
-            tok(TokenType::Pattern(PatternType::Or)),
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::Identifier("udp".into())),
+            tok(TokenType::RParen),
             tok(TokenType::Colon),
             tok(TokenType::Keyword(KeywordType::Verdict)),
             tok(TokenType::Identifier("allow".into())),

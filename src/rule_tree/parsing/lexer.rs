@@ -6,7 +6,7 @@ use thiserror::Error;
 
 macro_rules! separating_chars {
     () => {
-        '{' | '}' | '|' | '<' | '>' | '=' | ':'
+        '{' | '}' | '|' | '<' | '>' | '=' | ':' | '(' | ')' | '&'
     };
 }
 
@@ -80,6 +80,8 @@ pub(super) enum TokenType {
     LBrace,
     RBrace,
     Colon,
+    LParen,
+    RParen,
 }
 
 #[derive(Debug, Clone, PartialEq, Display)]
@@ -96,7 +98,7 @@ pub(super) enum PatternType {
     LesserOrEqual,
     GreaterOrEqual,
     Or,
-    Range,
+    And,
     Wildcard,
 }
 
@@ -165,18 +167,12 @@ impl WordBuilder {
                 return Some(self.exchange(c, pos));
             }
 
-            if matches!(self.current_word.as_str(), "<=" | ">=" | "<>") {
+            if matches!(self.current_word.as_str(), "<=" | ">=") {
                 return Some(self.exchange(c, pos));
             }
 
             if self.current_word.starts_with('<') || self.current_word.starts_with('>') {
-                let expected = if self.current_word.starts_with('>') {
-                    '<'
-                } else {
-                    '>'
-                };
-
-                if c == '=' || c == expected {
+                if c == '=' {
                     self.current_word.push(c);
                     return Some(self.exchange(' ', pos));
                 }
@@ -246,7 +242,7 @@ impl Lexer {
         self.curret_pos.col += 1.into();
     }
 
-    fn classify(word: Word) -> Token {
+    fn classify(word: &Word) -> Token {
         if let Ok(n) = word.contents.parse::<u64>() {
             return word.into_token(TokenType::Number(n));
         }
@@ -259,10 +255,12 @@ impl Lexer {
             ">=" => word.into_token(TokenType::Pattern(PatternType::GreaterOrEqual)),
             "_" => word.into_token(TokenType::Pattern(PatternType::Wildcard)),
             "|" => word.into_token(TokenType::Pattern(PatternType::Or)),
-            "<>" => word.into_token(TokenType::Pattern(PatternType::Range)),
+            "&" => word.into_token(TokenType::Pattern(PatternType::And)),
             "{" => word.into_token(TokenType::LBrace),
             "}" => word.into_token(TokenType::RBrace),
             ":" => word.into_token(TokenType::Colon),
+            "(" => word.into_token(TokenType::LParen),
+            ")" => word.into_token(TokenType::RParen),
             "match" => word.into_token(TokenType::Keyword(KeywordType::Match)),
             "verdict" => word.into_token(TokenType::Keyword(KeywordType::Verdict)),
             _ => word.into_token(TokenType::Identifier(word.contents.clone())),
@@ -278,7 +276,7 @@ impl Lexer {
                 LexerMode::Normal => {
                     if c == '\"' {
                         if let Some(word) = self.word_builder.flush() {
-                            tokens.push(Self::classify(word))
+                            tokens.push(Self::classify(&word));
                         }
                         self.mode = LexerMode::StringLiteral(StringLiteralBuilder {
                             start_pos: self.curret_pos,
@@ -291,7 +289,7 @@ impl Lexer {
                         continue;
                     };
 
-                    tokens.push(Self::classify(word));
+                    tokens.push(Self::classify(&word));
                 }
                 LexerMode::StringLiteral(sb) => {
                     if c == '\"' {
@@ -314,7 +312,7 @@ impl Lexer {
             }
             LexerMode::Normal => {
                 if let Some(word) = self.word_builder.flush() {
-                    tokens.push(Self::classify(word))
+                    tokens.push(Self::classify(&word));
                 }
             }
         }
@@ -461,15 +459,6 @@ mod tests {
     );
 
     gen_space_tests!(
-        rng_operator,
-        "5 <> abc",
-        vec![
-            TokenType::Number(5),
-            TokenType::Pattern(PatternType::Range),
-            TokenType::Identifier("abc".into()),
-        ]
-    );
-    gen_space_tests!(
         ge_operator,
         "5 > abc",
         vec![
@@ -507,6 +496,28 @@ mod tests {
             TokenType::Pattern(PatternType::Or),
             TokenType::Identifier("abc".into()),
         ]
+    );
+
+    gen_space_tests!(
+        and_operator,
+        "5 & abc",
+        vec![
+            TokenType::Number(5),
+            TokenType::Pattern(PatternType::And),
+            TokenType::Identifier("abc".into()),
+        ]
+    );
+
+    gen_space_tests!(
+        paren_separator,
+        "(244 2333)",
+        vec![
+            TokenType::LParen,
+            TokenType::Number(244),
+            TokenType::Number(2333),
+            TokenType::RParen,
+        ],
+        disable
     );
 
     gen_space_tests!(

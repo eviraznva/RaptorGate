@@ -306,7 +306,7 @@ fn lower_comparison_day_of_week_lesser_or_equal() {
 #[test]
 fn lower_or_protocol_tcp_udp() {
     assert_lower_eq(
-        "match protocol { | = tcp | = udp : verdict allow }",
+        "match protocol { |(= tcp = udp) : verdict allow }",
         MatchBuilder::with_arm(
             MatchKind::Protocol,
             Pattern::Or(vec![
@@ -322,7 +322,7 @@ fn lower_or_protocol_tcp_udp() {
 #[test]
 fn lower_or_day_of_week_three_values() {
     assert_lower_eq(
-        "match day_of_week { | = monday | = wednesday | = friday : verdict allow }",
+        "match day_of_week { |( = monday = wednesday = friday) : verdict allow }",
         MatchBuilder::with_arm(
             MatchKind::DayOfWeek,
             Pattern::Or(vec![
@@ -575,6 +575,48 @@ fn lower_nested_hour_wrong_day_drops() {
     );
 }
 
+// AND
+#[test]
+fn src_port_and() {
+    assert_lower_eq(
+        "match src_port { &( > 80 < 90 ) : verdict allow }",
+        MatchBuilder::with_arm(
+            MatchKind::SrcPort,
+            Pattern::And(
+                vec![
+                    Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
+                    Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
+                ],
+            ),
+            ArmEnd::Verdict(Verdict::Allow),
+        ).build().unwrap(),
+    );
+}
+
+
+#[test]
+fn src_port_and_or() {
+    assert_lower_eq(
+        "match src_port { |(&( > 80 < 90 ) =100) : verdict allow }",
+        MatchBuilder::with_arm(
+            MatchKind::SrcPort,
+            Pattern::Or(
+                vec![
+                    Pattern::And(
+                        vec![
+                        Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
+                        Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
+                        ],
+                    ),
+                    Pattern::Equal(FieldValue::Port(Port::from(100))),
+                ],
+            ),
+            ArmEnd::Verdict(Verdict::Allow),
+        ).build().unwrap(),
+    );
+}
+
+
 // ── Nested ORs ───────────────────────────────────────────
 // User-requested: an Or pattern as input to a nested match, plus an Or
 // pattern inside the nested match, exercising Or lowering at multiple levels.
@@ -585,8 +627,8 @@ fn lower_nested_or_at_outer_and_inner_levels() {
     //   (protocol = tcp | protocol = udp) → Allow
     assert_lower_eq(
         "match ip_ver { \
-        | = v4 | = v6 : match protocol { \
-            | = tcp | = udp : verdict allow \
+        |( = v4 =v6) : match protocol { \
+            |( = tcp =udp) : verdict allow \
         } \
         }",
         MatchBuilder::with_arm(
@@ -615,7 +657,7 @@ fn lower_nested_or_three_days_then_port_comparison() {
     //   dst_port > 1024 → DropWarn; <= 1024 → Allow
     assert_lower_eq(
         "match day_of_week { \
-        | = monday | = wednesday | = friday : match dst_port { \
+        |( = monday = wednesday = friday ) : match dst_port { \
             > 1024 : verdict drop_warn \"high port on work day\" \
                 <= 1024 : verdict allow \
         } \

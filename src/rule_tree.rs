@@ -1,6 +1,7 @@
 pub mod matcher;
 pub mod parsing;
 
+use arc_swap::docs::patterns;
 use derive_more::{Debug, Display, Error, PartialEq};
 
 use crate::{frame::{Hour, IpGlobbable, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
@@ -52,12 +53,10 @@ pub enum Verdict {
 pub enum Pattern {
     // TODO: move equal into comparision or alternatively remove comparision entirely
     Equal(FieldValue),
-    // TODO: remove `Glob`
-    Glob(FieldValue),
-    #[display("Range - from {}, to {}", _0, _1)]
-    Range(FieldValue, FieldValue),
     #[display("Patterns, count: {}", _0.len())]
     Or(Vec<Pattern>),
+    #[display("Patterns, count: {}", _0.len())]
+    And(Vec<Pattern>),
 
     #[display("Comparing with {}, to {}", _0, _1)]
     Comparison(Operation, FieldValue),
@@ -101,36 +100,18 @@ impl Pattern {
             (Pattern::Wildcard, _) => Ok(()),
 
             (Pattern::Equal(_), _) => Ok(()),
-
-            (Pattern::Glob(_), MatchKind::SrcIp | MatchKind::DstIp) => Ok(()),
-            (Pattern::Glob(_), _) => Err(RuleError::InvalidPattern(self.clone())),
-
-            (Pattern::Range(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour) => {
-                Ok(())
-            }
-            (Pattern::Range(..), _) => Err(RuleError::InvalidPattern(self.clone())),
-
-            (
-                Pattern::Comparison(..),
+            (Pattern::Comparison(..),
                 MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour | MatchKind::DayOfWeek,
             ) => Ok(()),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (
-                Pattern::Or(patterns),
-                MatchKind::Protocol
-                | MatchKind::DayOfWeek
-                | MatchKind::IpVer
-                | MatchKind::Hour
-                | MatchKind::SrcIp
-                | MatchKind::DstIp,
-            ) => {
+            (Pattern::Or(patterns) | Pattern::And(patterns), _) => {
                 for pattern in patterns {
                     pattern.validate_for(kind)?;
                 }
                 Ok(())
             }
-            (Pattern::Or(_), _) => Err(RuleError::InvalidPattern(self.clone())),
+            // (Pattern::Or(_), _) => Err(RuleError::InvalidPattern(self.clone())),
         }
     }
 }
@@ -204,43 +185,6 @@ mod tests {
             Octet::Value(0),
             Octet::Value(1),
         ])
-    }
-
-    #[test]
-    fn glob_invalid_for_non_ip_kinds() {
-        let pat = Pattern::Glob(FieldValue::Ip(dummy_ip()));
-        let invalid = [
-            MatchKind::IpVer,
-            MatchKind::DayOfWeek,
-            MatchKind::Hour,
-            MatchKind::Protocol,
-            MatchKind::SrcPort,
-            MatchKind::DstPort,
-        ];
-        for kind in invalid {
-            assert!(
-                pat.validate_for(&kind).is_err(),
-                "Glob should be invalid for {kind}"
-            );
-        }
-    }
-
-    #[test]
-    fn range_invalid_for_non_port_non_hour() {
-        let pat = Pattern::Range(FieldValue::Port(80.into()), FieldValue::Port(443.into()));
-        let invalid = [
-            MatchKind::SrcIp,
-            MatchKind::DstIp,
-            MatchKind::IpVer,
-            MatchKind::DayOfWeek,
-            MatchKind::Protocol,
-        ];
-        for kind in invalid {
-            assert!(
-                pat.validate_for(&kind).is_err(),
-                "Range should be invalid for {kind}"
-            );
-        }
     }
 
     #[test]
