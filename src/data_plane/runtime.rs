@@ -1,17 +1,22 @@
 use std::sync::Arc;
 
 use pcap::Direction;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tokio::task;
 use tun::AsyncDevice;
 
 use crate::config::AppConfig;
+use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::packet_handler::handle_packet;
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 
-pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>, tcp_sessions: Arc<TcpSessionTracker>) ->  anyhow::Result<()> {
+pub async fn run(
+    config: &AppConfig,
+    policies: Arc<PolicyStore>,
+    nat: Arc<Mutex<NatEngine>>,
+) -> anyhow::Result<()> {
     let all_devices = pcap::Device::list()?;
 
     let devices: Vec<pcap::Device> = all_devices
@@ -52,6 +57,7 @@ pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>, tcp_sessions: A
         let tun = Arc::clone(&tun);
         let policies = Arc::clone(&policies);
         let defrag = Arc::clone(&defrag);
+        let nat = Arc::clone(&nat);
         let name = device.name.clone();
         let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
 

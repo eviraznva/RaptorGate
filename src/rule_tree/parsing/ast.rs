@@ -12,8 +12,12 @@ pub(super) struct Spanned<T> {
 }
 
 impl AstMatch {
-    pub(super) fn kind(&self) -> &Spanned<String> { &self.kind }
-    pub(super) fn arms(&self) -> &Spanned<Vec<AstArm>> { &self.arms }
+    pub(super) fn kind(&self) -> &Spanned<String> {
+        &self.kind
+    }
+    pub(super) fn arms(&self) -> &Spanned<Vec<AstArm>> {
+        &self.arms
+    }
 
     #[cfg(test)]
     pub(super) fn for_tests(kind: Spanned<String>, arms: Spanned<Vec<AstArm>>) -> Self {
@@ -22,8 +26,12 @@ impl AstMatch {
 }
 
 impl AstArm {
-    pub(super) fn pattern(&self) -> &Spanned<AstPattern> { &self.pattern }
-    pub(super) fn body(&self) -> &Spanned<AstBody> { &self.body }
+    pub(super) fn pattern(&self) -> &Spanned<AstPattern> {
+        &self.pattern
+    }
+    pub(super) fn body(&self) -> &Spanned<AstBody> {
+        &self.body
+    }
 
     #[cfg(test)]
     pub(super) fn for_tests(pattern: Spanned<AstPattern>, body: Spanned<AstBody>) -> Self {
@@ -93,11 +101,18 @@ impl Parser {
     }
 
     fn peek(&self) -> Result<Token, ParseError> {
-        self.tokens.get(self.pos).ok_or(ParseError::UnexpectedEndOfInput).cloned()
+        self.tokens
+            .get(self.pos)
+            .ok_or(ParseError::UnexpectedEndOfInput)
+            .cloned()
     }
 
     fn consume(&mut self) -> Result<Token, ParseError> {
-        let t = self.tokens.get(self.pos).ok_or(ParseError::UnexpectedEndOfInput).cloned()?;
+        let t = self
+            .tokens
+            .get(self.pos)
+            .ok_or(ParseError::UnexpectedEndOfInput)
+            .cloned()?;
         self.pos += 1;
         Ok(t)
     }
@@ -114,7 +129,10 @@ impl Parser {
     fn parse_ident(&mut self) -> Result<Spanned<String>, ParseError> {
         let token = self.consume()?;
         match token.kind {
-            TokenType::Identifier(id) => Ok(Spanned { val: id, pos: token.pos }),
+            TokenType::Identifier(id) => Ok(Spanned {
+                val: id,
+                pos: token.pos,
+            }),
             _ => Err(ParseError::UnexpectedToken(token)),
         }
     }
@@ -129,7 +147,6 @@ impl Parser {
         }
     }
 
-
     fn parse_match(&mut self) -> Result<Spanned<AstMatch>, ParseError> {
         let start = self.consume()?;
         match start.kind {
@@ -141,7 +158,13 @@ impl Parser {
         let arms = self.parse_arms()?;
         self.expect_token(TokenType::RBrace)?;
         Ok(Spanned {
-            val: AstMatch { kind, arms: Spanned { val: arms, pos: start.pos } },
+            val: AstMatch {
+                kind,
+                arms: Spanned {
+                    val: arms,
+                    pos: start.pos,
+                },
+            },
             pos: start.pos,
         })
     }
@@ -149,7 +172,7 @@ impl Parser {
     fn parse_arms(&mut self) -> Result<Vec<AstArm>, ParseError> {
         let mut arms = Vec::new();
         while let Some(arm) = self.parse_arm()? {
-            arms.push(arm); 
+            arms.push(arm);
         }
 
         Ok(arms)
@@ -157,7 +180,7 @@ impl Parser {
 
     fn parse_arm(&mut self) -> Result<Option<AstArm>, ParseError> {
         if matches!(self.peek().map(|t| t.kind), Ok(TokenType::RBrace)) {
-            return Ok(None)
+            return Ok(None);
         }
 
         let pattern = self.parse_pattern()?;
@@ -174,39 +197,61 @@ impl Parser {
                 loop {
                     patterns.push(self.parse_simple_pattern()?.val);
                     match self.peek() {
-                        Ok(t) if t.kind == TokenType::Pattern(PatternType::Or) => { self.consume()?; }
+                        Ok(t) if t.kind == TokenType::Pattern(PatternType::Or) => {
+                            self.consume()?;
+                        }
                         _ => break,
                     }
                 }
                 Ok(Spanned {
-                    val: AstPattern::Or(Spanned { val: patterns, pos: or_tok.pos }),
+                    val: AstPattern::Or(Spanned {
+                        val: patterns,
+                        pos: or_tok.pos,
+                    }),
                     pos: or_tok.pos,
                 })
             }
-            _ => self.parse_simple_pattern()
+            _ => self.parse_simple_pattern(),
         }
     }
 
     fn parse_simple_pattern(&mut self) -> Result<Spanned<AstPattern>, ParseError> {
         let token = self.consume()?;
         match token.kind {
-            TokenType::Pattern(PatternType::Or) => Err(ParseError::NestedCombinatorNotImplemented(token)),
-            TokenType::Pattern(PatternType::Wildcard) => Ok(Spanned { val: AstPattern::Wildcard, pos: token.pos }),
+            TokenType::Pattern(PatternType::Or) => {
+                Err(ParseError::NestedCombinatorNotImplemented(token))
+            }
+            TokenType::Pattern(PatternType::Wildcard) => Ok(Spanned {
+                val: AstPattern::Wildcard,
+                pos: token.pos,
+            }),
             TokenType::Pattern(PatternType::Equal) => {
                 let value = self.parse_value()?;
-                Ok(Spanned { val: AstPattern::Equal(value), pos: token.pos })
+                Ok(Spanned {
+                    val: AstPattern::Equal(value),
+                    pos: token.pos,
+                })
             }
             TokenType::Pattern(PatternType::Greater) => {
                 let value = self.parse_value()?;
-                Ok(Spanned { val: AstPattern::Greater(value), pos: token.pos })
+                Ok(Spanned {
+                    val: AstPattern::Greater(value),
+                    pos: token.pos,
+                })
             }
             TokenType::Pattern(PatternType::LesserOrEqual) => {
                 let value = self.parse_value()?;
-                Ok(Spanned { val: AstPattern::LesserOrEqual(value), pos: token.pos })
+                Ok(Spanned {
+                    val: AstPattern::LesserOrEqual(value),
+                    pos: token.pos,
+                })
             }
             TokenType::Pattern(PatternType::GreaterOrEqual) => {
                 let value = self.parse_value()?;
-                Ok(Spanned { val: AstPattern::GreaterOrEqual(value), pos: token.pos })
+                Ok(Spanned {
+                    val: AstPattern::GreaterOrEqual(value),
+                    pos: token.pos,
+                })
             }
             _ => Err(ParseError::UnexpectedToken(token)),
         }
@@ -215,9 +260,27 @@ impl Parser {
     fn parse_value(&mut self) -> Result<Spanned<AstValue>, ParseError> {
         let token = self.consume()?;
         match token.kind {
-            TokenType::Number(n) => Ok(Spanned { val: AstValue::Number(Spanned { val: n, pos: token.pos }), pos: token.pos }),
-            TokenType::StringLiteral(s) => Ok(Spanned { val: AstValue::StrLit(Spanned { val: s, pos: token.pos }), pos: token.pos }),
-            TokenType::Identifier(id) => Ok(Spanned { val: AstValue::Ident(Spanned { val: id, pos: token.pos }), pos: token.pos }),
+            TokenType::Number(n) => Ok(Spanned {
+                val: AstValue::Number(Spanned {
+                    val: n,
+                    pos: token.pos,
+                }),
+                pos: token.pos,
+            }),
+            TokenType::StringLiteral(s) => Ok(Spanned {
+                val: AstValue::StrLit(Spanned {
+                    val: s,
+                    pos: token.pos,
+                }),
+                pos: token.pos,
+            }),
+            TokenType::Identifier(id) => Ok(Spanned {
+                val: AstValue::Ident(Spanned {
+                    val: id,
+                    pos: token.pos,
+                }),
+                pos: token.pos,
+            }),
             _ => Err(ParseError::UnexpectedToken(token)),
         }
     }
@@ -227,13 +290,19 @@ impl Parser {
             TokenType::Keyword(KeywordType::Verdict) => {
                 let kw = self.consume()?;
                 let verdict = self.parse_verdict()?;
-                Ok(Spanned { val: AstBody::Verdict(verdict), pos: kw.pos })
-            },
+                Ok(Spanned {
+                    val: AstBody::Verdict(verdict),
+                    pos: kw.pos,
+                })
+            }
             TokenType::Keyword(KeywordType::Match) => {
                 let m = self.parse_match()?;
                 let pos = m.pos;
-                Ok(Spanned { val: AstBody::Match(m), pos })
-            },
+                Ok(Spanned {
+                    val: AstBody::Match(m),
+                    pos,
+                })
+            }
             _ => {
                 let token = self.consume()?;
                 Err(ParseError::UnexpectedToken(token))
@@ -245,26 +314,38 @@ impl Parser {
         let token = self.consume()?;
         match &token.kind {
             TokenType::Identifier(id) => match id.as_str() {
-                "allow" => Ok(Spanned { val: Verdict::Allow, pos: token.pos }),
-                "drop" => Ok(Spanned { val: Verdict::Drop, pos: token.pos }),
+                "allow" => Ok(Spanned {
+                    val: Verdict::Allow,
+                    pos: token.pos,
+                }),
+                "drop" => Ok(Spanned {
+                    val: Verdict::Drop,
+                    pos: token.pos,
+                }),
                 "allow_warn" => {
                     let msg = self.parse_value()?;
                     if let AstValue::StrLit(s) = msg.val {
-                        Ok(Spanned { val: Verdict::AllowWarn(s), pos: token.pos })
+                        Ok(Spanned {
+                            val: Verdict::AllowWarn(s),
+                            pos: token.pos,
+                        })
                     } else {
                         Err(ParseError::UnexpectedToken(token))
                     }
-                },
+                }
                 "drop_warn" => {
                     let msg = self.parse_value()?;
                     if let AstValue::StrLit(s) = msg.val {
-                        Ok(Spanned { val: Verdict::DropWarn(s), pos: token.pos })
+                        Ok(Spanned {
+                            val: Verdict::DropWarn(s),
+                            pos: token.pos,
+                        })
                     } else {
                         Err(ParseError::UnexpectedToken(token))
                     }
-                },
+                }
                 _ => Err(ParseError::UnexpectedToken(token)),
-            }
+            },
             _ => Err(ParseError::UnexpectedToken(token)),
         }
     }
@@ -317,7 +398,13 @@ mod tests {
     #[test]
     fn parse_value_number() {
         let mut p = Parser::new(vec![tok(TokenType::Number(42))]);
-        assert_eq!(p.parse_value().unwrap().val, AstValue::Number(Spanned { val: 42, pos: Position::for_tests(1.into(), 1.into()) }));
+        assert_eq!(
+            p.parse_value().unwrap().val,
+            AstValue::Number(Spanned {
+                val: 42,
+                pos: Position::for_tests(1.into(), 1.into())
+            })
+        );
     }
 
     #[test]
@@ -335,7 +422,10 @@ mod tests {
     #[test]
     fn parse_value_unexpected_token() {
         let mut p = Parser::new(vec![tok(TokenType::LBrace)]);
-        assert!(matches!(p.parse_value(), Err(ParseError::UnexpectedToken(_))));
+        assert!(matches!(
+            p.parse_value(),
+            Err(ParseError::UnexpectedToken(_))
+        ));
     }
 
     // ---- parse_simple_pattern ----------------------------------------------
@@ -346,7 +436,9 @@ mod tests {
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::StringLiteral("tcp".into())),
         ]);
-        assert!(matches!(p.parse_simple_pattern().unwrap().val, AstPattern::Equal(v) if matches!(&v.val, AstValue::StrLit(s) if s.val == "tcp")));
+        assert!(
+            matches!(p.parse_simple_pattern().unwrap().val, AstPattern::Equal(v) if matches!(&v.val, AstValue::StrLit(s) if s.val == "tcp"))
+        );
     }
 
     #[test]
@@ -371,9 +463,7 @@ mod tests {
 
     #[test]
     fn parse_simple_pattern_rejects_nested_or() {
-        let mut p = Parser::new(vec![
-            tok(TokenType::Pattern(PatternType::Or)),
-        ]);
+        let mut p = Parser::new(vec![tok(TokenType::Pattern(PatternType::Or))]);
         assert!(matches!(
             p.parse_simple_pattern(),
             Err(ParseError::NestedCombinatorNotImplemented(_))
@@ -438,7 +528,9 @@ mod tests {
             tok(TokenType::Keyword(KeywordType::Verdict)),
             tok(TokenType::Identifier("allow".into())),
         ]);
-        assert!(matches!(p.parse_body().unwrap().val, AstBody::Verdict(v) if matches!(v.val, Verdict::Allow)));
+        assert!(
+            matches!(p.parse_body().unwrap().val, AstBody::Verdict(v) if matches!(v.val, Verdict::Allow))
+        );
     }
 
     #[test]
@@ -448,7 +540,9 @@ mod tests {
             tok(TokenType::Identifier("allow_warn".into())),
             tok(TokenType::StringLiteral("allow warn message".into())),
         ]);
-        assert!(matches!(p.parse_body().unwrap().val, AstBody::Verdict(v) if matches!(&v.val, Verdict::AllowWarn(s) if s.val == "allow warn message")));
+        assert!(
+            matches!(p.parse_body().unwrap().val, AstBody::Verdict(v) if matches!(&v.val, Verdict::AllowWarn(s) if s.val == "allow warn message"))
+        );
     }
 
     #[test]
@@ -458,13 +552,19 @@ mod tests {
             tok(TokenType::Identifier("allow_warn".into())),
             tok(TokenType::Number(5)),
         ]);
-        assert!(matches!(p.parse_body(), Err(ParseError::UnexpectedToken(_))));
+        assert!(matches!(
+            p.parse_body(),
+            Err(ParseError::UnexpectedToken(_))
+        ));
     }
 
     #[test]
     fn parse_body_unexpected_token() {
         let mut p = Parser::new(vec![tok(TokenType::Number(5))]);
-        assert!(matches!(p.parse_body(), Err(ParseError::UnexpectedToken(_))));
+        assert!(matches!(
+            p.parse_body(),
+            Err(ParseError::UnexpectedToken(_))
+        ));
     }
 
     // ---- parse_arm ---------------------------------------------------------
@@ -479,7 +579,9 @@ mod tests {
             tok(TokenType::Identifier("allow".into())),
         ]);
         let arm = p.parse_arm().unwrap().unwrap();
-        assert!(matches!(arm.pattern.val, AstPattern::Equal(v) if matches!(&v.val, AstValue::Ident(s) if s.val == "v4")));
+        assert!(
+            matches!(arm.pattern.val, AstPattern::Equal(v) if matches!(&v.val, AstValue::Ident(s) if s.val == "v4"))
+        );
         assert!(matches!(arm.body.val, AstBody::Verdict(v) if matches!(v.val, Verdict::Allow)));
     }
 
@@ -634,7 +736,10 @@ mod tests {
             // missing LBrace
             tok(TokenType::Pattern(PatternType::Equal)),
         ]);
-        assert!(matches!(p.parse_match(), Err(ParseError::UnexpectedToken(_))));
+        assert!(matches!(
+            p.parse_match(),
+            Err(ParseError::UnexpectedToken(_))
+        ));
     }
 
     #[test]
@@ -645,7 +750,10 @@ mod tests {
             tok(TokenType::LBrace),
             // no arms, no RBrace — just EOF
         ]);
-        assert!(matches!(p.parse_match(), Err(ParseError::UnexpectedEndOfInput)));
+        assert!(matches!(
+            p.parse_match(),
+            Err(ParseError::UnexpectedEndOfInput)
+        ));
     }
 
     #[test]
@@ -661,6 +769,9 @@ mod tests {
             tok(TokenType::Identifier("allow".into())),
             tok(TokenType::RBrace),
         ]);
-        assert!(matches!(p.parse_match(), Err(ParseError::UnexpectedToken(_))));
+        assert!(matches!(
+            p.parse_match(),
+            Err(ParseError::UnexpectedToken(_))
+        ));
     }
 }

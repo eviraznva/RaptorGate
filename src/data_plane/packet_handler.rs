@@ -3,16 +3,28 @@ use std::sync::Arc;
 use tun::AsyncDevice;
 
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
+use tokio::sync::Mutex;
 
+use crate::data_plane::nat::engine::NatEngine;
+use crate::data_plane::nat::types::nat_outcome::NatOutcome;
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::frame::RealFrame;
 use crate::ip_defrag::{DefragResult, IpDefragEngine};
 use crate::rule_tree::Verdict;
 
-pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies: &PolicyStore, defrag: &Arc<IpDefragEngine>, tcp_sessions: &TcpSessionTracker) {
+const ETH_HDR: usize = 14;
+
+pub async fn handle_packet(
+    iface: &str,
+    data: &[u8],
+    tun: &AsyncDevice,
+    policies: &PolicyStore,
+    defrag: &Arc<IpDefragEngine>,
+    nat: &Arc<Mutex<NatEngine>>,
+) {
     let packet = match SlicedPacket::from_ethernet(data) {
-        Ok(packet) => packet,
+        Ok(p) => p,
         Err(err) => {
             eprintln!("[{iface}] SlicedPacket parse error: {err:?}");
             return;
@@ -28,24 +40,34 @@ pub async fn handle_packet(iface: &str, data: &[u8], tun: &AsyncDevice, policies
         return;
     }
 
-    // Pakiet sfragmentowany - przekazanie do silnika skladania.
+    drop(packet);
+
+    let mut buf = data.to_vec();
+    let pre_outcome = nat.lock().await.process_prerouting(&mut buf, iface, None);
+
+    log_nat_outcome("PREROUTING", iface, &pre_outcome);
+
+    let packet = match SlicedPacket::from_ethernet(&buf) {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("[{iface}] SlicedPacket reparse error: {err:?}");
+            return;
+        }
+    };
+
     if packet.is_ip_payload_fragmented() {
-        match defrag.process(&packet) {
+        drop(packet);
+        match defrag.process(&SlicedPacket::from_ethernet(&buf).unwrap()) {
             DefragResult::Pending => {}
             DefragResult::Complete(eth_frame) => {
-                // Skladanie zakonczone - ponowne parsowanie i przekazanie.
-                match SlicedPacket::from_ethernet(&eth_frame) {
-                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, policies, tcp_sessions).await,
-                    Err(err) => eprintln!("[{iface}] DROP (reassembled packet parse error: {err:?})"),
-                }
+                forward_packet(iface, &eth_frame, tun, policies, nat).await;
             }
             DefragResult::CompleteWithAnomaly(eth_frame, anomalies) => {
-                // Skladanie zakonczone mimo anomalii - logowanie i przekazanie.
-                eprintln!("[{iface}] WARN (defrag anomalies: {})", anomalies.join("; "));
-                match SlicedPacket::from_ethernet(&eth_frame) {
-                    Ok(reassembled) => forward_packet(iface, &reassembled, tun, policies, tcp_sessions).await,
-                    Err(err) => eprintln!("[{iface}] DROP (reassembled packet parse error: {err:?})"),
-                }
+                eprintln!(
+                    "[{iface}] WARN (defrag anomalies: {})",
+                    anomalies.join("; ")
+                );
+                forward_packet(iface, &eth_frame, tun, policies, nat).await;
             }
             DefragResult::Dropped(reason) => {
                 println!("[{iface}] DROP (defrag: {reason})");
@@ -105,7 +127,6 @@ async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevic
                 Some(TransportSlice::Icmpv4(_)) => ("ICMP", "-".into()),
                 _ => ("OTHER", "-".into()),
             };
-
             format!("{src} -> {dst} proto={proto} ports={ports} ttl={ttl} len={total_len}")
         }
         _ => "N/A".into(),
@@ -116,11 +137,75 @@ async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevic
         return;
     }
 
-    println!("[{iface}] PASS {ip_info}");
+    let out_iface = packet_endpoints(&packet)
+        .and_then(|(_, dst)| infer_out_interface(dst))
+        .unwrap_or(iface);
 
-    if let Some(ip_payload) = packet.ether_payload().map(|ether| ether.payload) {
-        if let Err(err) = tun.send(ip_payload).await {
+    let mut raw_mut = raw.to_vec();
+    let outcome = nat
+        .lock()
+        .await
+        .process_postrouting(&mut raw_mut, out_iface, None);
+
+    log_nat_outcome("POSTROUTING", iface, &outcome);
+
+    tracing::debug!(iface, %ip_info, "PASS");
+
+    if raw_mut.len() > ETH_HDR {
+        if let Err(err) = tun.send(&raw_mut[ETH_HDR..]).await {
             eprintln!("[{iface}] Failed to send to tun0: {err}");
         }
+    }
+}
+
+fn log_nat_outcome(stage: &str, iface: &str, outcome: &NatOutcome) {
+    match outcome {
+        NatOutcome::NoMatch => {}
+        NatOutcome::Created {
+            binding_id,
+            rule_id,
+        } => {
+            tracing::info!(
+                stage,
+                iface,
+                binding_id,
+                rule_id,
+                "NAT: new binding created"
+            );
+        }
+        NatOutcome::AppliedExisting {
+            binding_id,
+            direction,
+        } => {
+            tracing::debug!(
+                stage,
+                iface,
+                binding_id,
+                ?direction,
+                "NAT: existing binding applied"
+            );
+        }
+    }
+}
+
+fn packet_endpoints(packet: &SlicedPacket<'_>) -> Option<(std::net::IpAddr, std::net::IpAddr)> {
+    match packet.net.as_ref()? {
+        NetSlice::Ipv4(ipv4) => Some((
+            std::net::IpAddr::V4(ipv4.header().source_addr()),
+            std::net::IpAddr::V4(ipv4.header().destination_addr()),
+        )),
+        NetSlice::Ipv6(ipv6) => Some((
+            std::net::IpAddr::V6(ipv6.header().source_addr()),
+            std::net::IpAddr::V6(ipv6.header().destination_addr()),
+        )),
+        _ => None,
+    }
+}
+
+fn infer_out_interface(dst_ip: std::net::IpAddr) -> Option<&'static str> {
+    match dst_ip {
+        std::net::IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 10] => Some("eth1"),
+        std::net::IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 20] => Some("eth2"),
+        _ => None,
     }
 }

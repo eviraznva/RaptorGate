@@ -1,6 +1,6 @@
-use std::{net::IpAddr, time::{SystemTime, UNIX_EPOCH}};
 use derive_more::{Debug, Display, Eq, Error, From};
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) trait Frame {
     fn ip_ver(&self) -> IpVer;
@@ -26,6 +26,16 @@ pub struct IpGlobbable {
 impl IpGlobbable {
     pub fn new(octets: [Octet; 4]) -> Self {
         Self { octets }
+    }
+
+    pub fn octets(&self) -> [Octet; 4] {
+        self.octets
+    }
+}
+
+impl From<Port> for u16 {
+    fn from(p: Port) -> u16 {
+        p.0
     }
 }
 
@@ -117,9 +127,21 @@ impl TryFrom<u8> for Hour {
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
-pub enum Protocol { Tcp, Udp, Icmp }
+pub enum Protocol {
+    Tcp,
+    Udp,
+    Icmp,
+}
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
-pub enum Weekday { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
+pub enum Weekday {
+    Mon,
+    Tue,
+    Wed,
+    Thu,
+    Fri,
+    Sat,
+    Sun,
+}
 
 // TODO: encode arrival time as `Instant`
 pub struct RealFrame<'a> {

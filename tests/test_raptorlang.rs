@@ -348,8 +348,8 @@ fn lower_multiple_arms_protocol_tcp_then_udp() {
             Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
             ArmEnd::Verdict(Verdict::Allow),
         ).arm(
-        Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
-        ArmEnd::Verdict(Verdict::Drop),
+            Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+            ArmEnd::Verdict(Verdict::Drop),
         ).build().unwrap(),
     );
 }
@@ -364,8 +364,8 @@ fn lower_multiple_arms_neither_tcp_nor_udp() {
             Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
             ArmEnd::Verdict(Verdict::Allow),
         ).arm(
-        Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
-        ArmEnd::Verdict(Verdict::Drop),
+            Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+            ArmEnd::Verdict(Verdict::Drop),
         ).build().unwrap(),
     );
 }
@@ -397,8 +397,8 @@ fn lower_drop_warn_verdict() {
             Pattern::Comparison(Operation::Greater, FieldValue::Hour(Hour::try_from(12).unwrap())),
             ArmEnd::Verdict(Verdict::Allow),
         ).arm(
-        Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Hour(Hour::try_from(12).unwrap())),
-        ArmEnd::Verdict(Verdict::DropWarn("hour outside range".into())),
+            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Hour(Hour::try_from(12).unwrap())),
+            ArmEnd::Verdict(Verdict::DropWarn("hour outside range".into())),
         ).build().unwrap(),
     );
 }
@@ -435,20 +435,20 @@ fn lower_nested_ipver_protocol_dst_port() {
                             Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(1024))),
                             ArmEnd::Verdict(Verdict::Allow),
                         ).arm(
-                        Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(1024))),
-                        ArmEnd::Verdict(Verdict::AllowWarn("high dst port".into())),
+                            Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(1024))),
+                            ArmEnd::Verdict(Verdict::AllowWarn("high dst port".into())),
                         ).build().unwrap(),
                     ),
                 ).arm(
-                Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
-                ArmEnd::Verdict(Verdict::Drop),
+                    Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+                    ArmEnd::Verdict(Verdict::Drop),
                 ).build().unwrap(),
             ),
-            ).arm(
+        ).arm(
             Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
             ArmEnd::Verdict(Verdict::Drop),
-            ).build().unwrap(),
-            );
+        ).build().unwrap(),
+    );
 }
 
 // Mirrors: nested_v4_udp_drop
@@ -470,12 +470,12 @@ fn lower_nested_v4_udp_drop() {
                     Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
                     ArmEnd::Verdict(Verdict::Allow),
                 ).arm(
-                Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
-                ArmEnd::Verdict(Verdict::Drop),
+                    Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+                    ArmEnd::Verdict(Verdict::Drop),
                 ).build().unwrap(),
             ),
         ).build().unwrap(),
-        );
+    );
 }
 
 // Mirrors: nested_v6_drop
@@ -491,8 +491,8 @@ fn lower_nested_v6_drop() {
             Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
             ArmEnd::Verdict(Verdict::Allow),
         ).arm(
-        Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
-        ArmEnd::Verdict(Verdict::Drop),
+            Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
+            ArmEnd::Verdict(Verdict::Drop),
         ).build().unwrap(),
     );
 }
@@ -506,8 +506,8 @@ fn lower_day_of_week_wildcard() {
             Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
             ArmEnd::Verdict(Verdict::Allow),
         ).arm(
-        Pattern::Wildcard,
-        ArmEnd::Verdict(Verdict::Drop),
+            Pattern::Wildcard,
+            ArmEnd::Verdict(Verdict::Drop),
         ).build().unwrap(),
     );
 }
@@ -536,15 +536,15 @@ fn lower_nested_hour_then_day_of_week_allow() {
                     Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
                     ArmEnd::Verdict(Verdict::Allow),
                 ).arm(
-                Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
-                ArmEnd::Verdict(Verdict::Drop),
+                    Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
+                    ArmEnd::Verdict(Verdict::Drop),
                 ).build().unwrap(),
             ),
         ).arm(
-        Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Hour(Hour::try_from(8).unwrap())),
-        ArmEnd::Verdict(Verdict::AllowWarn("hour outside range".into())),
+            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Hour(Hour::try_from(8).unwrap())),
+            ArmEnd::Verdict(Verdict::AllowWarn("hour outside range".into())),
         ).build().unwrap(),
-        );
+    );
 }
 
 #[test]
@@ -567,12 +567,12 @@ fn lower_nested_hour_wrong_day_drops() {
                     Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
                     ArmEnd::Verdict(Verdict::Allow),
                 ).arm(
-                Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
-                ArmEnd::Verdict(Verdict::Drop),
+                    Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
+                    ArmEnd::Verdict(Verdict::Drop),
                 ).build().unwrap(),
             ),
         ).build().unwrap(),
-        );
+    );
 }
 
 // ── Nested ORs ───────────────────────────────────────────
@@ -606,7 +606,7 @@ fn lower_nested_or_at_outer_and_inner_levels() {
                 ).build().unwrap(),
             ),
         ).build().unwrap(),
-        );
+    );
 }
 
 #[test]
@@ -633,10 +633,10 @@ fn lower_nested_or_three_days_then_port_comparison() {
                     Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(1024))),
                     ArmEnd::Verdict(Verdict::DropWarn("high port on work day".into())),
                 ).arm(
-                Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(1024))),
-                ArmEnd::Verdict(Verdict::Allow),
+                    Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(1024))),
+                    ArmEnd::Verdict(Verdict::Allow),
                 ).build().unwrap(),
             ),
         ).build().unwrap(),
-        );
+    );
 }

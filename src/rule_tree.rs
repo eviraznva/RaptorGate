@@ -9,7 +9,7 @@ pub use matcher::MatchBuilder;
 pub struct RuleTree {
     name: String,
     description: String,
-    pub head: Match
+    pub head: Match,
 }
 
 impl RuleTree {
@@ -20,7 +20,6 @@ impl RuleTree {
             head,
         }
     }
-
 }
 
 impl std::fmt::Display for RuleTree {
@@ -117,7 +116,15 @@ impl Pattern {
             ) => Ok(()),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Or(patterns), MatchKind::Protocol | MatchKind::DayOfWeek | MatchKind::IpVer | MatchKind::Hour | MatchKind::SrcIp | MatchKind::DstIp) => {
+            (
+                Pattern::Or(patterns),
+                MatchKind::Protocol
+                | MatchKind::DayOfWeek
+                | MatchKind::IpVer
+                | MatchKind::Hour
+                | MatchKind::SrcIp
+                | MatchKind::DstIp,
+            ) => {
                 for pattern in patterns {
                     pattern.validate_for(kind)?;
                 }
@@ -129,7 +136,10 @@ impl Pattern {
 }
 
 pub enum Step<'a> {
-    NeedsMatch { kind: &'a MatchKind, pattern: &'a Pattern },
+    NeedsMatch {
+        kind: &'a MatchKind,
+        pattern: &'a Pattern,
+    },
     Verdict(&'a Verdict),
     NoMatch,
 }
@@ -262,7 +272,7 @@ mod tests {
     //     }
     // }
 
-#[test]
+    #[test]
     fn or_accepts_all_valid_nested_patterns_for_kind() {
         let pat = Pattern::Or(vec![
             Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),

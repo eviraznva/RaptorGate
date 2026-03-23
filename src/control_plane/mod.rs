@@ -1,6 +1,7 @@
 mod api;
 mod error;
 mod service;
+mod validation_api;
 
 pub mod backend_api;
 pub mod config;

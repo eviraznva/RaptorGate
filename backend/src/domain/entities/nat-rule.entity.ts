@@ -96,4 +96,48 @@ export class NatRule {
   public getUpdatedAt(): Date {
     return this.updatedAt;
   }
+
+  public setType(type: string): void {
+    this.type = NatType.create(type);
+  }
+
+  public setIsActive(isActive: boolean): void {
+    this.isActive = isActive;
+  }
+
+  public setPriority(priority: number): void {
+    this.priority = Priority.create(priority);
+  }
+
+  public setSourceIp(sourceIp: string | null): void {
+    this.sourceIp = sourceIp === null ? null : IpAddress.create(sourceIp);
+  }
+
+  public setDestinationIp(destinationIp: string | null): void {
+    this.destinationIp =
+      destinationIp === null ? null : IpAddress.create(destinationIp);
+  }
+
+  public setSourcePort(sourcePort: number | null): void {
+    this.sourcePort = sourcePort === null ? null : Port.create(sourcePort);
+  }
+
+  public setDestinationPort(destinationPort: number | null): void {
+    this.destinationPort =
+      destinationPort === null ? null : Port.create(destinationPort);
+  }
+
+  public setTranslatedIp(translatedIp: string | null): void {
+    this.translatedIp =
+      translatedIp === null ? null : IpAddress.create(translatedIp);
+  }
+
+  public setTranslatedPort(translatedPort: number | null): void {
+    this.translatedPort =
+      translatedPort === null ? null : Port.create(translatedPort);
+  }
+
+  public setUpdatedAt(updatedAt: Date): void {
+    this.updatedAt = updatedAt;
+  }
 }

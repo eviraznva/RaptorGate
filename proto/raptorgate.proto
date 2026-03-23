@@ -11,7 +11,8 @@ import "events/firewall_events.proto";
 //
 // Hostowany przez Backend (NestJS / grpc-js).
 // Firewall jest zawsze klientem (Rust / tonic).
-// Transport: gRPC over Unix Domain Socket (np. /var/run/raptorgate/backend.sock)
+// Transport: gRPC over Unix Domain Socket (np.
+// /var/run/raptorgate/backend.sock)
 //
 // Importowane typy:
 //   raptorgate.config.GetConfigRequest    — config/config_service.proto
