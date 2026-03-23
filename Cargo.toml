@@ -35,6 +35,7 @@ rcgen = { version = "0.13", features = ["pem"] }
 ring = "0.17"
 tokio-util = "0.7.16"
 redb = "3.1.1"
+libc = "0.2"
 
 [build-dependencies]
 protoc-bin-vendored = "3.2.0"

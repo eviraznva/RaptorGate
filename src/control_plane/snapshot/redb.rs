@@ -34,7 +34,17 @@ impl SnapshotStore for RedbSnapshotStore {
             None => return Ok(None),
         };
 
-        Ok(Some(ConfigResponse::decode(bytes.as_slice())?))
+        match ConfigResponse::decode(bytes.as_slice()) {
+            Ok(response) => Ok(Some(response)),
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "Ignoring incompatible snapshot payload and clearing stored snapshot"
+                );
+                self.clear()?;
+                Ok(None)
+            }
+        }
     }
 
     fn save(&self, response: &ConfigResponse) -> Result<(), SnapshotError> {
@@ -45,6 +55,18 @@ impl SnapshotStore for RedbSnapshotStore {
             table.insert(KEY, response.encode_to_vec().as_slice())?;
         }
 
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+impl RedbSnapshotStore {
+    fn clear(&self) -> Result<(), SnapshotError> {
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(TABLE)?;
+            let _ = table.remove(KEY)?;
+        }
         tx.commit()?;
         Ok(())
     }
