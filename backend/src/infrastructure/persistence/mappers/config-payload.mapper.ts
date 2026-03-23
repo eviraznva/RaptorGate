@@ -1,7 +1,4 @@
-import {
-  ConfigSnapshotPayload,
-  ConfigSectionVersions as PayloadSectionVersions,
-} from '../../../domain/value-objects/config-snapshot-payload.interface';
+import { ConfigSnapshotPayload } from '../../../domain/value-objects/config-snapshot-payload.interface';
 import {
   DefaultPolicy,
   NatRuleType,
