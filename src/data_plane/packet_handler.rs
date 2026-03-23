@@ -21,6 +21,7 @@ pub async fn handle_packet(
     tun: &AsyncDevice,
     policies: &PolicyStore,
     defrag: &Arc<IpDefragEngine>,
+    tcp: &TcpSessionTracker,
     nat: &Arc<Mutex<NatEngine>>,
 ) {
     let packet = match SlicedPacket::from_ethernet(data) {
@@ -60,14 +61,14 @@ pub async fn handle_packet(
         match defrag.process(&SlicedPacket::from_ethernet(&buf).unwrap()) {
             DefragResult::Pending => {}
             DefragResult::Complete(eth_frame) => {
-                forward_packet(iface, &eth_frame, tun, policies, nat).await;
+                forward_packet(iface, &eth_frame, &SlicedPacket::from_ethernet(&eth_frame).expect("nwm co tu sie odjebalo"), tun, policies, tcp, nat).await;
             }
             DefragResult::CompleteWithAnomaly(eth_frame, anomalies) => {
                 eprintln!(
                     "[{iface}] WARN (defrag anomalies: {})",
                     anomalies.join("; ")
                 );
-                forward_packet(iface, &eth_frame, tun, policies, nat).await;
+                forward_packet(iface, &eth_frame, &SlicedPacket::from_ethernet(&eth_frame).expect("nwm co tu sie odjebalo"), tun, policies, tcp, nat).await;
             }
             DefragResult::Dropped(reason) => {
                 println!("[{iface}] DROP (defrag: {reason})");
@@ -76,11 +77,11 @@ pub async fn handle_packet(
         return;
     }
 
-    forward_packet(iface, &packet, tun, policies, tcp_sessions).await;
+    forward_packet(iface, &buf, &packet, tun, policies, tcp, nat).await;
 }
 
 // Ocena polityki dla zlozonego lub niesfragmentowanego pakietu i przekazuje go do TUN.
-async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore, tcp_sessions: &TcpSessionTracker) {
+async fn forward_packet(iface: &str, raw: &[u8], packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore, tcp_sessions: &TcpSessionTracker, nat: &Arc<Mutex<NatEngine>>) {
     let compiled_policy = policies.load();
     let verdict = RealFrame::from_sliced(packet)
         .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));

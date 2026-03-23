@@ -21,6 +21,8 @@ use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::{runtime as data_plane_runtime, tcp_session_tracker};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
+use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
+use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::runtime::CompiledPolicy;
 use crate::tls::CaManager;
 
@@ -69,7 +71,7 @@ async fn main() {
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
     let tcp_session_tracker = TcpSessionTracker::new();
 
-    if let Err(err) = data_plane_runtime::run(&config, policy_store, tcp_session_tracker).await {
+    if let Err(err) = data_plane_runtime::run(&config, policy_store, tcp_session_tracker, build_test_nat()).await {
         eprintln!("Data plane error: {err}");
     }
 

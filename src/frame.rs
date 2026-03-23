@@ -1,6 +1,6 @@
 use derive_more::{Debug, Display, Eq, Error, From};
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{net::IpAddr, time::{SystemTime, UNIX_EPOCH}};
 
 pub(crate) trait Frame {
     fn ip_ver(&self) -> IpVer;

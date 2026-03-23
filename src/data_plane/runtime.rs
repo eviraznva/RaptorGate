@@ -15,6 +15,7 @@ use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 pub async fn run(
     config: &AppConfig,
     policies: Arc<PolicyStore>,
+    tcp_sessions: Arc<TcpSessionTracker>,
     nat: Arc<Mutex<NatEngine>>,
 ) -> anyhow::Result<()> {
     let all_devices = pcap::Device::list()?;
@@ -106,7 +107,7 @@ pub async fn run(
         let handle = tokio::spawn(async move {
             let mut rx = rx;
             while let Some(data) = rx.recv().await {
-                handle_packet(&handler_name, &data, &tun, &policies, &defrag, &tcp_sessions).await;
+                handle_packet(&handler_name, &data, &tun, &policies, &defrag, &tcp_sessions, &nat).await;
             }
             eprintln!("[{handler_name}] Handler task exiting (sender dropped)");
         });
