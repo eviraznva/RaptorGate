@@ -14,6 +14,7 @@ use crate::frame::{Frame, Port};
 pub struct TcpSessionTracker {
     sessions: Arc<DashMap<TcpIdentifier, TcpSession>>, //TODO: Transition away from using `Arc` since we want to avoid indirection, do something like in `PacketBuffer`.
     buffer: Arc<PacketBuffer>,
+    timewait_timeout: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +110,7 @@ impl TcpSessionTracker {
         Arc::new(Self {
             sessions: Arc::new(DashMap::new()),
             buffer: PacketBuffer::new(),
+            timewait_timeout: TIME_WAIT_TIMEOUT,
         })
     }
 
@@ -200,6 +202,7 @@ impl TcpSessionTracker {
             PostAction::ProcessBuffer { flags, from } => {
                 self.process_from_buffer(&id, flags, from.as_ref())?;
             },
+            PostAction::ScheduleTimeWaitCleanup => { self.schedule_timewait_cleanup(&id); },
         }
 
         result
@@ -348,6 +351,7 @@ impl TcpSessionTracker {
                             && packet.acknowledgment_number == responder.next_expected_seq
                         {
                             session.state = TcpSessionState::TimeWait;
+                            return (Ok(Some(session.state)), PostAction::ScheduleTimeWaitCleanup);
                         }
                     }
                 }
@@ -368,9 +372,10 @@ impl TcpSessionTracker {
     fn schedule_timewait_cleanup(&self, id: &TcpIdentifier) {
         let sessions = self.sessions.clone();
         let id = id.clone();
+        let timeout = self.timewait_timeout;
 
         tokio::spawn(async move {
-            tokio::time::sleep(TIME_WAIT_TIMEOUT).await;
+            tokio::time::sleep(timeout).await;
             if let Some(entry) = sessions.get(&id) && entry.state == TcpSessionState::TimeWait {
                 drop(entry);
                 sessions.remove(&id);
@@ -416,6 +421,7 @@ enum PostAction {
     None,
     RemoveSession,
     ProcessBuffer { flags: Option<TcpFlags>, from: Option<EndpointIdentifier> },
+    ScheduleTimeWaitCleanup,
 }
 
 #[derive(Error, Debug)]
@@ -538,7 +544,7 @@ const PENDING_TIMEOUT: Duration = Duration::from_millis(250);
 const PENDING_PACKETS_PER_SESSION: usize = 16;
 const PAYLOAD_MAX_SIZE: u32 = 1460;
 const REORDER_TOLERANCE: u32 = 3 * PAYLOAD_MAX_SIZE;
-const TIME_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
+const TIME_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 
 
 struct SessionPackets {
@@ -907,7 +913,7 @@ mod tests {
         assert!(result.is_ok(), "deadlock: RST during Established timed out");
     }
 
-    /// Deadlock scenario 2: RST arrives during handshake (SynSent).
+    /// Deadlock scenario 2: RST arrives during handshake (`SynSent`).
     #[tokio::test(flavor = "current_thread")]
     async fn rst_during_handshake_does_not_deadlock() {
         let result = tokio::time::timeout(Duration::from_secs(2), async {
@@ -983,5 +989,28 @@ mod tests {
         }).await;
 
         assert!(result.is_ok(), "deadlock: RST during Closing timed out");
+    }
+
+    #[tokio::test]
+    async fn timewait_cleanup_removes_session_after_timeout() {
+        let mut tracker: Arc<TcpSessionTracker> = TcpSessionTracker::new();
+        Arc::get_mut(&mut tracker).unwrap().timewait_timeout = Duration::from_millis(500);
+        let id = session_id();
+
+        // Full handshake
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0)).unwrap();
+        tracker.process_tcp(make_packet(server(), client(), TcpFlags::SYN | TcpFlags::ACK, 5000, 1001, 8192, 0)).unwrap();
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::ACK, 1001, 5001, 8192, 0)).unwrap();
+
+        // Close sequence
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::FIN | TcpFlags::ACK, 1001, 5001, 8192, 0)).unwrap();
+        tracker.process_tcp(make_packet(server(), client(), TcpFlags::FIN | TcpFlags::ACK, 5001, 1002, 8192, 0)).unwrap();
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::ACK, 1002, 5002, 8192, 0)).unwrap();
+
+        assert!(tracker.sessions.contains_key(&id), "session should exist in TimeWait");
+
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
+        assert!(!tracker.sessions.contains_key(&id), "session should be removed after TimeWait timeout");
     }
 }
