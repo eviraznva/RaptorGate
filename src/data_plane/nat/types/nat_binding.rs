@@ -2,6 +2,12 @@ use std::time::Instant;
 
 use crate::data_plane::nat::types::flow_tuple::FlowTuple;
 
+#[derive(Debug, Clone, Copy)]
+pub enum NatBindingDirection {
+    Forward,
+    Reply,
+}
+
 #[derive(Debug, Clone)]
 pub struct NatBinding {
     pub binding_id: u64,

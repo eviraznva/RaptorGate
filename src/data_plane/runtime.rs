@@ -1,17 +1,21 @@
 use std::sync::Arc;
 
-use pcap::Direction;
-use tokio::sync::mpsc;
 use tokio::task;
+use pcap::Direction;
 use tun::AsyncDevice;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::config::AppConfig;
-use crate::data_plane::nat::dummy_lab::NatLabRuntime;
-use crate::data_plane::packet_handler::handle_packet;
+use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
+use crate::data_plane::packet_handler::handle_packet;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 
-pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Result<()> {
+pub async fn run(
+    config: &AppConfig,
+    policies: Arc<PolicyStore>,
+    nat: Arc<Mutex<NatEngine>>,
+) -> anyhow::Result<()> {
     let all_devices = pcap::Device::list()?;
 
     let devices: Vec<pcap::Device> = all_devices
@@ -44,12 +48,6 @@ pub async fn run(config: &AppConfig, policies: Arc<PolicyStore>) -> anyhow::Resu
     )?);
 
     let defrag = Arc::new(IpDefragEngine::new(DefragConfig::default()));
-    let nat = Arc::new(if config.dummy_nat_enabled {
-        println!("Dummy NAT lab enabled for Vagrant topology");
-        NatLabRuntime::dummy_vagrant(config.dummy_nat_allow_all)
-    } else {
-        NatLabRuntime::disabled()
-    });
 
     let pcap_timeout_ms = config.pcap_timeout_ms;
     let mut handles = Vec::new();

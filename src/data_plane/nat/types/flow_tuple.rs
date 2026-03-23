@@ -1,6 +1,17 @@
 use std::net::IpAddr;
 
-use crate::data_plane::nat::types::nat_proto_dummy::L4Proto;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum L4Proto {
+    Tcp,
+    Udp,
+    Icmp,
+}
+
+impl L4Proto {
+    pub fn has_ports(self) -> bool {
+        matches!(self, L4Proto::Tcp | L4Proto::Udp)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FlowTuple {

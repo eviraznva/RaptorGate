@@ -1,5 +1,3 @@
-use anyhow::anyhow;
-
 use crate::rule_tree::{matcher::Match, parsing::{ast::Parser, lexer::Lexer}};
 
 mod ast;
