@@ -10,17 +10,17 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { CreateNatRuleDto } from '../dtos/create-nat-rule.dto';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { Role } from 'src/domain/enums/role.enum';
 import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
-import { Permission } from 'src/domain/enums/permissions.enum';
-import { ApiOperation } from '@nestjs/swagger';
-import { GetAllNatRulesResponseDto } from '../dtos/get-all-nat-rules-response.dto';
 import { GetAllNatRulesUseCase } from 'src/application/use-cases/get-all-nat-rules.use-case';
-import { EditNatRuleDto } from '../dtos/edit-nat-rule.dto';
-import { EditNatRuleUseCase } from 'src/application/use-cases/edit-nat-rule.use-case';
 import { DeleteNatRuleUseCase } from 'src/application/use-cases/delete-nat-rule.use-case';
+import { EditNatRuleUseCase } from 'src/application/use-cases/edit-nat-rule.use-case';
+import { GetAllNatRulesResponseDto } from '../dtos/get-all-nat-rules-response.dto';
+import { Roles } from 'src/infrastructure/decorators/roles.decorator';
+import { Permission } from 'src/domain/enums/permissions.enum';
+import { CreateNatRuleDto } from '../dtos/create-nat-rule.dto';
+import { EditNatRuleDto } from '../dtos/edit-nat-rule.dto';
+import { Role } from 'src/domain/enums/role.enum';
+import { ApiOperation } from '@nestjs/swagger';
 
 @Controller('nat')
 export class NatRuleController {
@@ -78,15 +78,7 @@ export class NatRuleController {
   async editNatRule(@Body() dto: EditNatRuleDto, @Param('id') id: string) {
     await this.editNatRuleUseCase.execute({
       id,
-      type: dto.type,
-      isActive: dto.isActive,
-      sourceIp: dto.srcIp,
-      destinationIp: dto.dstIp,
-      sourcePort: dto.srcPort,
-      destinationPort: dto.dstPort,
-      translatedIp: dto.translatedIp,
-      translatedPort: dto.translatedPort,
-      priority: dto.priority,
+      ...dto,
     });
   }
 

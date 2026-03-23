@@ -1,62 +1,115 @@
-import { DeleteNatRuleUseCase } from 'src/application/use-cases/delete-nat-rule.use-case';
-import { GetAllNatRulesUseCase } from 'src/application/use-cases/get-all-nat-rules.use-case';
-import { EditNatRuleUseCase } from 'src/application/use-cases/edit-nat-rule.use-case';
 import { CreateNatRuleUseCase } from 'src/application/use-cases/create-nat-rule.use-case';
-import { TestingModule, Test } from '@nestjs/testing';
+import { GetAllNatRulesUseCase } from 'src/application/use-cases/get-all-nat-rules.use-case';
+import { DeleteNatRuleUseCase } from 'src/application/use-cases/delete-nat-rule.use-case';
+import { EditNatRuleUseCase } from 'src/application/use-cases/edit-nat-rule.use-case';
 import { NatRuleController } from './nat-rule.controller';
+import { Test, TestingModule } from '@nestjs/testing';
 
 describe('NatRuleController', () => {
   let controller: NatRuleController;
-  const createNatRuleUseCase = { execute: jest.fn() };
-  const getAllNatRulesUseCase = { execute: jest.fn() };
-  const editNatRuleUseCase = { execute: jest.fn() };
-  const deleteNatRuleUseCase = { execute: jest.fn() };
+
+  const createNatRuleUseCase = {
+    execute: jest.fn(),
+  };
+
+  const getAllNatRulesUseCase = {
+    execute: jest.fn(),
+  };
+
+  const editNatRuleUseCase = {
+    execute: jest.fn(),
+  };
+
+  const deleteNatRuleUseCase = {
+    execute: jest.fn(),
+  };
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    createNatRuleUseCase.execute.mockReset();
+    getAllNatRulesUseCase.execute.mockReset();
+    editNatRuleUseCase.execute.mockReset();
+    deleteNatRuleUseCase.execute.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [NatRuleController],
       providers: [
-        { provide: CreateNatRuleUseCase, useValue: createNatRuleUseCase },
-        { provide: GetAllNatRulesUseCase, useValue: getAllNatRulesUseCase },
-        { provide: EditNatRuleUseCase, useValue: editNatRuleUseCase },
-        { provide: DeleteNatRuleUseCase, useValue: deleteNatRuleUseCase },
+        {
+          provide: CreateNatRuleUseCase,
+          useValue: createNatRuleUseCase,
+        },
+        {
+          provide: GetAllNatRulesUseCase,
+          useValue: getAllNatRulesUseCase,
+        },
+        {
+          provide: EditNatRuleUseCase,
+          useValue: editNatRuleUseCase,
+        },
+        {
+          provide: DeleteNatRuleUseCase,
+          useValue: deleteNatRuleUseCase,
+        },
       ],
     }).compile();
 
     controller = module.get(NatRuleController);
   });
 
-  it('normalizes UI field aliases before invoking the edit use case', async () => {
-    await controller.editNatRule(
-      {
-        type: 'SNAT',
-        priority: 20,
-        srcIp: '192.168.1.10',
-        dstIp: null,
-        srcPort: null,
-        dstPort: null,
-        translatedIp: '172.16.0.20',
-        translatedPort: null,
-        createdAt: '2026-03-20T23:11:43.970Z',
-        updatedAt: '2026-03-20T23:11:43.970Z',
-        createdBy: '00000000-0000-4000-8000-000000000001',
-      } as any,
-      '5d375e76-b212-4c9e-8da0-601e5ebb3cd3',
-    );
+  it('createNatRule calls use-case with dto and access token', async () => {
+    createNatRuleUseCase.execute.mockResolvedValue(undefined);
 
-    expect(editNatRuleUseCase.execute).toHaveBeenCalledWith({
-      id: '5d375e76-b212-4c9e-8da0-601e5ebb3cd3',
+    const dto = {
       type: 'SNAT',
-      isActive: undefined,
+      isActive: true,
       sourceIp: '192.168.1.10',
       destinationIp: null,
       sourcePort: null,
       destinationPort: null,
       translatedIp: '172.16.0.20',
       translatedPort: null,
-      priority: 20,
+      priority: 10,
+    };
+    const accessToken = 'token-value';
+
+    await controller.createNatRule(dto, accessToken);
+
+    expect(createNatRuleUseCase.execute).toHaveBeenCalledWith({
+      ...dto,
+      accessToken,
     });
+  });
+
+  it('getAllNatRules returns use-case response', async () => {
+    const result = { natRules: [] };
+    getAllNatRulesUseCase.execute.mockResolvedValue(result);
+
+    await expect(controller.getAllNatRules()).resolves.toEqual(result);
+    expect(getAllNatRulesUseCase.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('editNatRule calls use-case with route id merged into dto', async () => {
+    editNatRuleUseCase.execute.mockResolvedValue(undefined);
+
+    const id = 'rule-id-123';
+    const dto = {
+      priority: 25,
+      isActive: false,
+    };
+
+    await controller.editNatRule(dto, id);
+
+    expect(editNatRuleUseCase.execute).toHaveBeenCalledWith({
+      id,
+      ...dto,
+    });
+  });
+
+  it('deleteNatRule calls use-case with id', async () => {
+    deleteNatRuleUseCase.execute.mockResolvedValue(undefined);
+
+    const id = 'rule-id-321';
+    await controller.deleteNatRule(id);
+
+    expect(deleteNatRuleUseCase.execute).toHaveBeenCalledWith(id);
   });
 });

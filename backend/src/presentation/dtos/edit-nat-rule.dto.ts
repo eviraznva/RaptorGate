@@ -15,16 +15,16 @@ export class EditNatRuleDto {
     enum: ['SNAT', 'DNAT', 'PAT'],
     required: false,
   })
-  @IsOptional()
   @IsIn(['SNAT', 'DNAT', 'PAT'])
+  @IsOptional()
   type?: string;
 
   @ApiProperty({
     example: true,
     required: false,
   })
-  @IsOptional()
   @IsBoolean()
+  @IsOptional()
   isActive?: boolean;
 
   @ApiProperty({
@@ -32,18 +32,18 @@ export class EditNatRuleDto {
     required: false,
     nullable: true,
   })
-  @IsOptional()
   @IsIP()
-  srcIp?: string | null;
+  @IsOptional()
+  sourceIp?: string | null;
 
   @ApiProperty({
     example: '10.0.0.5',
     required: false,
     nullable: true,
   })
-  @IsOptional()
   @IsIP()
-  dstIp?: string | null;
+  @IsOptional()
+  destinationIp?: string | null;
 
   @ApiProperty({
     example: 443,
@@ -52,11 +52,11 @@ export class EditNatRuleDto {
     minimum: 1,
     maximum: 65535,
   })
-  @IsOptional()
   @IsInt()
-  @Min(1)
   @Max(65535)
-  srcPort?: number | null;
+  @Min(1)
+  @IsOptional()
+  sourcePort?: number | null;
 
   @ApiProperty({
     example: 8080,
@@ -65,19 +65,19 @@ export class EditNatRuleDto {
     minimum: 1,
     maximum: 65535,
   })
-  @IsOptional()
   @IsInt()
   @Min(1)
   @Max(65535)
-  dstPort?: number | null;
+  @IsOptional()
+  destinationPort?: number | null;
 
   @ApiProperty({
     example: '172.16.0.20',
     required: false,
     nullable: true,
   })
-  @IsOptional()
   @IsIP()
+  @IsOptional()
   translatedIp?: string | null;
 
   @ApiProperty({
@@ -87,10 +87,10 @@ export class EditNatRuleDto {
     minimum: 1,
     maximum: 65535,
   })
-  @IsOptional()
   @IsInt()
   @Min(1)
   @Max(65535)
+  @IsOptional()
   translatedPort?: number | null;
 
   @ApiProperty({
