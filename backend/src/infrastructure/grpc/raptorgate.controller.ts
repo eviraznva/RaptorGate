@@ -11,7 +11,7 @@ import {
   HeartbeatEvent,
   CaReadyEvent,
 } from './generated/events/firewall_events';
-import { GetActiveConfigUseCase } from 'src/application/use-cases/get-active-config.use-case';
+import { GetActiveConfigUseCase } from '../../application/use-cases/get-active-config.use-case';
 import { BackendEvent, HeartbeatAck } from './generated/events/backend_events';
 import { CaCertStore } from '../stores/ca-cert.store';
 import { Controller, Inject, Logger } from '@nestjs/common';

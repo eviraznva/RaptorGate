@@ -1,5 +1,5 @@
-import type { TokenPayload } from 'src/application/ports/token-service.interface';
-import { Env } from 'src/shared/config/env.validation';
+import type { TokenPayload } from '../../application/ports/token-service.interface';
+import { Env } from '../../shared/config/env.validation';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';

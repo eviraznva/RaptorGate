@@ -2,8 +2,8 @@ import {
   ITokenService,
   TokenPair,
   TokenPayload,
-} from 'src/application/ports/token-service.interface';
-import { Env } from 'src/shared/config/env.validation';
+} from '../../application/ports/token-service.interface';
+import { Env } from '../../shared/config/env.validation';
 import { ConfigService } from '@nestjs/config';
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';

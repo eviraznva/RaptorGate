@@ -1,16 +1,16 @@
 import {
   ConfigSnapshotPayload,
   ConfigSectionVersions as PayloadSectionVersions,
-} from 'src/domain/value-objects/config-snapshot-payload.interface';
+} from '../../../domain/value-objects/config-snapshot-payload.interface';
 import {
   DefaultPolicy,
   NatRuleType,
   Severity,
   CertificateType,
   IdentitySource,
-} from 'src/infrastructure/grpc/generated/common/common';
-import { ConfigSectionVersions } from 'src/infrastructure/grpc/generated/config/config_models';
-import { ConfigResponse } from 'src/infrastructure/grpc/generated/config/config_service';
+} from '../../grpc/generated/common/common';
+import { ConfigSectionVersions } from '../../grpc/generated/config/config_models';
+import { ConfigResponse } from '../../grpc/generated/config/config_service';
 
 function mapDefaultPolicy(v: string): DefaultPolicy {
   switch (v) {

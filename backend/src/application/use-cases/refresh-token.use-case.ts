@@ -1,7 +1,7 @@
-import { RefreshTokenIsInvalidException } from 'src/domain/exceptions/refresh-token-is-invalid.exception';
-import { UserNotFoundException } from 'src/domain/exceptions/user-not-found.exception';
-import { USER_REPOSITORY_TOKEN } from 'src/domain/repositories/user.repository';
-import type { IUserRepository } from 'src/domain/repositories/user.repository';
+import { RefreshTokenIsInvalidException } from '../../domain/exceptions/refresh-token-is-invalid.exception';
+import { UserNotFoundException } from '../../domain/exceptions/user-not-found.exception';
+import { USER_REPOSITORY_TOKEN } from '../../domain/repositories/user.repository';
+import type { IUserRepository } from '../../domain/repositories/user.repository';
 import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto';
 import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface';
 import type { ITokenService } from '../ports/token-service.interface';

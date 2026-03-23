@@ -1,5 +1,5 @@
-import { CaCertStore } from 'src/infrastructure/stores/ca-cert.store';
-import { IsPublic } from 'src/infrastructure/decorators/public.decorator';
+import { CaCertStore } from '../../infrastructure/stores/ca-cert.store';
+import { IsPublic } from '../../infrastructure/decorators/public.decorator';
 import { Controller, Get, Res, ServiceUnavailableException } from '@nestjs/common';
 import type { Response } from 'express';
 

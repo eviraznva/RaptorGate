@@ -1,8 +1,8 @@
-import { mapPayloadToConfigResponse } from 'src/infrastructure/persistence/mappers/config-payload.mapper';
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from 'src/domain/repositories/config-snapshot.repository';
-import type { IConfigSnapshotRepository } from 'src/domain/repositories/config-snapshot.repository';
-import { ConfigSectionVersions } from 'src/infrastructure/grpc/generated/config/config_models';
-import { ConfigResponse } from 'src/infrastructure/grpc/generated/config/config_service';
+import { mapPayloadToConfigResponse } from '../../infrastructure/persistence/mappers/config-payload.mapper';
+import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository';
+import type { IConfigSnapshotRepository } from '../../domain/repositories/config-snapshot.repository';
+import { ConfigSectionVersions } from '../../infrastructure/grpc/generated/config/config_models';
+import { ConfigResponse } from '../../infrastructure/grpc/generated/config/config_service';
 import { Inject, Injectable } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { status } from '@grpc/grpc-js';

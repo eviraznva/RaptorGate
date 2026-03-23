@@ -5,10 +5,10 @@ import {
   UnauthorizedException,
   NotFoundException,
 } from '@nestjs/common';
-import { RefreshTokenIsInvalidException } from 'src/domain/exceptions/refresh-token-is-invalid.exception';
-import { InvalidCredentialsException } from 'src/domain/exceptions/invalid-credentials.exception';
-import { UserAlreadyExistsException } from 'src/domain/exceptions/user-already-exitst.exception';
-import { UserNotFoundException } from 'src/domain/exceptions/user-not-found.exception';
+import { RefreshTokenIsInvalidException } from '../../domain/exceptions/refresh-token-is-invalid.exception';
+import { InvalidCredentialsException } from '../../domain/exceptions/invalid-credentials.exception';
+import { UserAlreadyExistsException } from '../../domain/exceptions/user-already-exitst.exception';
+import { UserNotFoundException } from '../../domain/exceptions/user-not-found.exception';
 
 @Catch(
   UserAlreadyExistsException,

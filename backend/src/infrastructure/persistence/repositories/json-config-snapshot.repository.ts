@@ -1,7 +1,7 @@
-import { IConfigSnapshotRepository } from 'src/domain/repositories/config-snapshot.repository';
+import { IConfigSnapshotRepository } from '../../../domain/repositories/config-snapshot.repository';
 import { ConfigurationSnapshotsFileSchema } from '../schemas/configuration-snapshots.schema';
 import { ConfigurationSnapshotJsonMapper } from '../mappers/configuration-snapshots.mapper';
-import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
+import { ConfigurationSnapshot } from '../../../domain/entities/configuration-snapshot.entity';
 import { FileStore } from '../json/file-store';
 import { Mutex } from '../json/file-mutex';
 import { Inject } from '@nestjs/common';

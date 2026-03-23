@@ -1,5 +1,5 @@
-import { IPermissionRepository } from 'src/domain/repositories/permission.repository';
-import { Permission } from 'src/domain/entities/permission.entity';
+import { IPermissionRepository } from '../../../domain/repositories/permission.repository';
+import { Permission } from '../../../domain/entities/permission.entity';
 import { FileStore } from '../json/file-store';
 import { Injectable } from '@nestjs/common';
 import { join } from 'node:path';

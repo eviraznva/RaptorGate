@@ -1,4 +1,4 @@
-import { User } from 'src/domain/entities/user.entity';
+import { User } from '../../../domain/entities/user.entity';
 import { UserRecord } from '../schemas/users.schema';
 
 export class UserJsonMapper {

@@ -1,6 +1,6 @@
-import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
-import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
-import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
+import { RefreshTokenUseCase } from '../../application/use-cases/refresh-token.use-case';
+import { LogoutUserUseCase } from '../../application/use-cases/logout-user.use-case';
+import { LoginUserUseCase } from '../../application/use-cases/login-user.use-case';
 import { TestingModule, Test } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
 import { ConfigService } from '@nestjs/config';

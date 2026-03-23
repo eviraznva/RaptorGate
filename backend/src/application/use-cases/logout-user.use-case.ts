@@ -1,7 +1,7 @@
-import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
-import { UserNotFoundException } from 'src/domain/exceptions/user-not-found.exception';
-import { USER_REPOSITORY_TOKEN } from 'src/domain/repositories/user.repository';
-import type { IUserRepository } from 'src/domain/repositories/user.repository';
+import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception';
+import { UserNotFoundException } from '../../domain/exceptions/user-not-found.exception';
+import { USER_REPOSITORY_TOKEN } from '../../domain/repositories/user.repository';
+import type { IUserRepository } from '../../domain/repositories/user.repository';
 import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface';
 import type { ITokenService } from '../ports/token-service.interface';
 import { LogoutUserDto } from '../dtos/logout-user.dto';

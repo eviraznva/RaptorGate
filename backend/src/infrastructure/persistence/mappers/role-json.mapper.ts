@@ -1,6 +1,6 @@
-import { Permission } from 'src/domain/entities/permission.entity';
+import { Permission } from '../../../domain/entities/permission.entity';
 import { PermissionRecord } from '../schemas/permissions.schema';
-import { Role } from 'src/domain/entities/role.entity';
+import { Role } from '../../../domain/entities/role.entity';
 import { RoleRecord } from '../schemas/roles.schema';
 
 export class RoleJsonMapper {

@@ -10,10 +10,10 @@ import {
   RolePermissionsFile,
   RolePermissionsFileSchema,
 } from '../schemas/role-permissions.schema';
-import { IRoleRepository } from 'src/domain/repositories/role.repository';
+import { IRoleRepository } from '../../../domain/repositories/role.repository';
 import { RolesFile, RolesFileSchema } from '../schemas/roles.schema';
 import { RoleJsonMapper } from '../mappers/role-json.mapper';
-import { Role } from 'src/domain/entities/role.entity';
+import { Role } from '../../../domain/entities/role.entity';
 import { Inject, Injectable } from '@nestjs/common';
 import { FileStore } from '../json/file-store';
 import { Mutex } from '../json/file-mutex';
