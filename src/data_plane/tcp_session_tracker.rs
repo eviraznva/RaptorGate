@@ -87,7 +87,11 @@ impl From<AckNumber> for SeqNumber {
 
 impl TcpPacketInfo {
     fn new(tcp: &TcpSlice, src: EndpointIdentifier, dst: EndpointIdentifier) -> Result<Self, TcpSessionError> {
-        let Some(flags) = TcpFlags::from_bits(tcp.header_slice()[TcpOffsets::FLAGS]) else { return Err(TcpSessionError::ZeroFlagPacket); /*FIXME: placeholder error*/ };
+        let flag_start = tcp.header_slice()[TcpOffsets::FLAGS];
+        let flag_end = tcp.header_slice()[TcpOffsets::FLAGS + 1];
+
+        let raw = ((flag_start & 0x01) as u16) << 8 | (flag_end as u16);
+        let Some(flags) = TcpFlags::from_bits(raw) else { return Err(TcpSessionError::ZeroFlagPacket); /*FIXME: placeholder error*/ };
         Ok(Self {
             flags,
             sequence_number: tcp.sequence_number().into(),
@@ -476,11 +480,16 @@ impl PacketBuffer {
 
 bitflags! {
     #[derive(Debug, PartialEq, Clone)]
-    pub struct TcpFlags: u8 {
-        const SYN = 0b0001;
-        const ACK = 0b0010;
-        const RST = 0b0100;
-        const FIN = 0b1000;
+    pub struct TcpFlags: u16 {
+        const FIN = 0x01;
+        const SYN = 0x02;
+        const RST = 0x04;
+        const PSH = 0x08;
+        const ACK = 0x10;
+        const URG = 0x20;
+        const ECE = 0x40;
+        const CWR = 0x80;
+        const NS  = 0x100;
     }
 }
 
@@ -515,7 +524,7 @@ impl SessionPackets {
 enum TcpOffsets {}
 
 impl TcpOffsets {
-    pub const FLAGS: usize = 13;
+    pub const FLAGS: usize = 12;
 }
 
 
