@@ -94,10 +94,16 @@ impl ControlPlane {
         let validation_shutdown = shutdown.clone();
 
         let join = tokio::spawn(async move {
-            tokio::try_join!(
+            let result = tokio::try_join!(
                 service::run(service_config, status, policy_tx, service_shutdown),
                 validation_api::run(&validation_socket_path, validation_shutdown),
-            )?;
+            );
+
+            if let Err(err) = &result {
+                tracing::error!(error = %err, "Control plane task exited with error");
+            }
+
+            result?;
             Ok(())
         });
 

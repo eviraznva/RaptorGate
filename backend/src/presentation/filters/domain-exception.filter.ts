@@ -13,6 +13,7 @@ import { RefreshTokenIsInvalidException } from 'src/domain/exceptions/refresh-to
 import { RegexPatternIsInvalidException } from 'src/domain/exceptions/regex-pattern-is-invalid.exception';
 import { SnapshotTypeIsInvalidException } from 'src/domain/exceptions/snapshot-type-is-invalid.exception';
 import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
+import { RaptorLangValidationException } from 'src/domain/exceptions/raptor-lang-validation.exception';
 import { UserSourceIsInvalidException } from 'src/domain/exceptions/user-source-is-invalid.exception';
 import { MacAddressIsInvalidException } from 'src/domain/exceptions/mac-address-is-invalid.exception';
 import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
@@ -36,6 +37,7 @@ import { UserNotFoundException } from 'src/domain/exceptions/user-not-found.exce
   RefreshTokenIsInvalidException,
   SnapshotTypeIsInvalidException,
   AccessTokenIsInvalidException,
+  RaptorLangValidationException,
   MacAddressIsInvalidException,
   EntityAlreadyExistsException,
   UserSourceIsInvalidException,
@@ -86,6 +88,7 @@ export class DomainExceptionFilter implements ExceptionFilter {
       exception instanceof NatTypeIsInvalidException ||
       exception instanceof PortIsInvalidException ||
       exception instanceof PriorityIsInvalidException ||
+      exception instanceof RaptorLangValidationException ||
       exception instanceof RegexPatternIsInvalidException ||
       exception instanceof SemanticVersionIsInvalidException ||
       exception instanceof SnapshotTypeIsInvalidException ||

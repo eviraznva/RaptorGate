@@ -932,6 +932,7 @@ dependencies = [
  "etherparse",
  "hyper-util",
  "ipnet",
+ "libc",
  "nonempty",
  "paste",
  "pcap",

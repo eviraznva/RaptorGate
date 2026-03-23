@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 type GenerationTarget = {
@@ -54,15 +54,12 @@ const targets: GenerationTarget[] = [
       path.join(protoRoot, 'config', 'config_service.proto'),
       path.join(protoRoot, 'events', 'backend_events.proto'),
       path.join(protoRoot, 'events', 'firewall_events.proto'),
+      path.join(protoRoot, 'control', 'validation_service.proto'),
       path.join(protoRoot, 'telemetry', 'telemetry_models.proto'),
       path.join(protoRoot, 'raptorgate.proto'),
     ],
-    options: [
-      ...baseOptions,
-      'nestJs=true',
-      'outputServices=default',
-    ],
-  }
+    options: [...baseOptions, 'nestJs=true', 'outputServices=default'],
+  },
 ];
 
 function prepareOutputDirectory(target: GenerationTarget): void {
@@ -90,13 +87,11 @@ function generateTarget(target: GenerationTarget): void {
   );
 
   if (result.error) {
-    throw new Error(
-      `Proto generation failed: ${result.error.message}`,
-    );
+    throw new Error(`Proto generation failed: ${result.error.message}`);
   }
 
   if (result.status !== 0) {
-    throw new Error("Proto generation failed");
+    throw new Error('Proto generation failed');
   }
 }
 

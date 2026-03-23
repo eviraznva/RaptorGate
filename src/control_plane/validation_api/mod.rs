@@ -19,7 +19,7 @@ use proto::raptorgate::control::{ValidateRaptorLangRequest, ValidateRaptorLangRe
 pub async fn run(socket_path: &str, shutdown: CancellationToken) -> Result<(), ControlPlaneError> {
     prepare_socket(socket_path)?;
 
-    let listener = UnixListener::bind(socket_path)?;
+    let listener = bind_listener(socket_path)?;
     let incoming =
         UnixListenerStream::new(listener).map(|stream| stream.map_err(ControlPlaneError::from));
 
@@ -37,6 +37,12 @@ pub async fn run(socket_path: &str, shutdown: CancellationToken) -> Result<(), C
         .map_err(ControlPlaneError::Serve);
     cleanup_socket(socket_path);
     result
+}
+
+fn bind_listener(socket_path: &str) -> Result<UnixListener, ControlPlaneError> {
+    let listener = UnixListener::bind(socket_path)?;
+    tracing::info!(socket = socket_path, "Validation gRPC socket bound");
+    Ok(listener)
 }
 
 fn prepare_socket(socket_path: &str) -> Result<(), ControlPlaneError> {
