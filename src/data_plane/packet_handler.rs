@@ -64,7 +64,14 @@ async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevic
         .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));
 
     let allowed_tcp = match tcp_sessions.process_packet(packet) {
-        Ok(_) => true,
+        Ok(state) => { 
+            #[cfg(debug_assertions)]
+            if state.is_some() {
+                println!("sessions: {:?}", tcp_sessions.get_sessions_between([192, 168, 10], [192, 168, 20]));
+            }
+
+            true 
+        },
         Err(err) => {
             eprintln!("Rejected tcp with {err}");
             false

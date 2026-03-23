@@ -136,6 +136,22 @@ impl TcpSessionTracker {
         }
     }
 
+    #[cfg(debug_assertions)]
+    pub fn get_sessions(&self) -> Vec<(TcpIdentifier, TcpSessionState)> {
+        self.sessions.iter().map(|entry| (entry.key().clone(), entry.value().state)).collect()
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn get_sessions_between(&self, subnet_a: [u8; 3], subnet_b: [u8; 3]) -> Vec<(TcpIdentifier, TcpSessionState)> {
+        let matches_subnet = |ip: &IpAddr, subnet: [u8; 3]| matches!(ip, IpAddr::V4(a) if a.octets()[..3] == subnet);
+        self.sessions.iter().filter_map(|entry| {
+            let (a, b) = entry.key().endpoints.clone().into_ordered_tuple();
+            let ab = matches_subnet(&a.ip, subnet_a) && matches_subnet(&b.ip, subnet_b);
+            let ba = matches_subnet(&a.ip, subnet_b) && matches_subnet(&b.ip, subnet_a);
+            (ab || ba).then(|| (entry.key().clone(), entry.value().state))
+        }).collect()
+    }
+
     fn process_tcp(&self, packet: TcpPacketInfo) -> Result<Option<TcpSessionState>, TcpSessionError> {
         let endpoints = (
             packet.src.clone(),
@@ -146,57 +162,68 @@ impl TcpSessionTracker {
             endpoints: UnorderedPair::from(endpoints.clone()),
         };
 
-        let entry = self.sessions.entry(id.clone());
+        let (result, post_action) = {
+            let entry = self.sessions.entry(id.clone());
 
-        match entry {
-            Entry::Occupied(mut e) => {
-                let session = e.get_mut();
+            match entry {
+                Entry::Occupied(mut e) => {
+                    let session = e.get_mut();
+                    self.process_session_state(session, packet)
+                }
 
-                self.process_session_state(session, packet, &id)
+                Entry::Vacant(e) => {
+                    bitflags_match!(&packet.flags, {
+                        &TcpFlags::SYN => {
+                            let dst = packet.dst.clone();
+                            e.insert(TcpSession::new(
+                                TcpSessionState::Handshake(TcpHandshakeState::SynSent),
+                                Endpoint { id: packet.src.clone(), next_expected_seq: packet.sequence_number.wrapping_add(1), max_window_size: packet.window_size},
+                                Endpoint { id: packet.dst.clone(), next_expected_seq: 0.into(), max_window_size: 0 },
+                            ));
+
+                            (Ok(Some(TcpSessionState::Handshake(TcpHandshakeState::SynSent))),
+                             PostAction::ProcessBuffer { flags: Some(TcpFlags::SYN | TcpFlags::ACK), from: Some(dst) })
+                        },
+
+                        _ => {
+                            (self.buffer.add_packet(id.clone(), packet.clone())
+                                .map_err(TcpSessionError::from).map(|()| None), PostAction::None)
+                        },
+                    })
+                }
             }
+        };
 
-            Entry::Vacant(e) => {
-                bitflags_match!(&packet.flags, {
-                    &TcpFlags::SYN => { 
-                        let inserted = e.insert(TcpSession::new(
-                            TcpSessionState::Handshake(TcpHandshakeState::SynSent),
-                            Endpoint { id: packet.src.clone(), next_expected_seq: packet.sequence_number.wrapping_add(1), max_window_size: packet.window_size},
-                            Endpoint { id: packet.dst.clone(), next_expected_seq: 0.into(), max_window_size: 0 },
-                        ));
-
-                        self.process_from_buffer(inserted.key(), Some(TcpFlags::SYN | TcpFlags::ACK), Some(&packet.dst))?;
-
-                        // if let Some(session) = self.buffer.get_session(&id) {
-                        //     for p in session.value().iter() {
-                        //         self.process_packet(p.clone())?;
-                        //     }
-                        // }
-
-                        Ok(Some(TcpSessionState::Handshake(TcpHandshakeState::SynSent)))
-                    },
-
-                    _ => { 
-                        self.buffer.add_packet(id.clone(), packet.clone())?;
-                        Ok(None)
-                    },
-                })
-            }
+        match post_action {
+            PostAction::None => {},
+            PostAction::RemoveSession => { self.sessions.remove(&id); },
+            PostAction::ProcessBuffer { flags, from } => {
+                self.process_from_buffer(&id, flags, from.as_ref())?;
+            },
         }
+
+        result
     }
 
     #[allow(clippy::too_many_lines)]
-    fn process_session_state(&self, session: &mut TcpSession, packet: TcpPacketInfo, id: &TcpIdentifier) -> Result<Option<TcpSessionState>, TcpSessionError> {
+    fn process_session_state(&self, session: &mut TcpSession, packet: TcpPacketInfo) -> (Result<Option<TcpSessionState>, TcpSessionError>, PostAction) {
         match session.state {
-            TcpSessionState::Handshake(s) => match s {
+            TcpSessionState::Handshake(s) => {
+                if packet.flags.contains(TcpFlags::RST) {
+                    return (Ok(Some(TcpSessionState::Closed)), PostAction::RemoveSession);
+                }
+
+                match s {
                 TcpHandshakeState::SynSent => {
                     if packet.flags.contains(TcpFlags::SYN | TcpFlags::ACK)
-                        && packet.src == session.receiver.id 
+                        && packet.src == session.receiver.id
                             && packet.acknowledgment_number == session.initiator.next_expected_seq {
                                 session.receiver.next_expected_seq = packet.sequence_number.wrapping_add(1);
                                 session.receiver.max_window_size = packet.window_size;
                                 session.state = TcpSessionState::Handshake(TcpHandshakeState::SynAckReceived);
 
-                                self.process_from_buffer(id, Some(TcpFlags::ACK), Some(&session.initiator.id))?;
+                                let from = session.initiator.id.clone();
+                                return (Ok(Some(session.state)), PostAction::ProcessBuffer { flags: Some(TcpFlags::ACK), from: Some(from) });
                     }
                 },
 
@@ -208,23 +235,22 @@ impl TcpSessionTracker {
                                 session.initiator.next_expected_seq = session.initiator.next_expected_seq.wrapping_add(u32::from(packet.payload_size));
                                 session.state = TcpSessionState::Established;
 
-                                self.process_from_buffer(id, None, None)?;
+                                return (Ok(Some(session.state)), PostAction::ProcessBuffer { flags: None, from: None });
                     }
                 },
 
-            },
+            }},
             TcpSessionState::Established => {
                 if packet.flags.contains(TcpFlags::RST) {
-                    self.sessions.remove(id);
-                    return Ok(Some(TcpSessionState::Closed));
+                    return (Ok(Some(TcpSessionState::Closed)), PostAction::RemoveSession);
                 }
 
                 if packet.flags.contains(TcpFlags::SYN) {
-                    return Err(TcpSessionError::InvalidFlagOnSessionState { flags: TcpFlags::SYN, state: TcpSessionState::Established });
+                    return (Err(TcpSessionError::InvalidFlagOnSessionState { flags: TcpFlags::SYN, state: TcpSessionState::Established }), PostAction::None);
                 }
 
                 if !packet.flags.contains(TcpFlags::ACK) {
-                    return Err(TcpSessionError::InvalidFlagOnSessionState { flags: packet.flags, state: TcpSessionState::Established }); //TODO: this should probably be handled differently
+                    return (Err(TcpSessionError::InvalidFlagOnSessionState { flags: packet.flags, state: TcpSessionState::Established }), PostAction::None); //TODO: this should probably be handled differently
                 }
 
                 let mut saw_fin = false;
@@ -240,7 +266,7 @@ impl TcpSessionTracker {
                     let hi = sender.next_expected_seq.wrapping_add(receiver.max_window_size.into());
 
                     if !packet.sequence_number.is_between_wrapped(lo, hi) {
-                        return Err(TcpSessionError::OutOfWindow { lo: lo.into(), hi: hi.into(), seq: packet.sequence_number.into() });
+                        return (Err(TcpSessionError::OutOfWindow { lo: lo.into(), hi: hi.into(), seq: packet.sequence_number.into() }), PostAction::None);
                     }
 
                     sender.next_expected_seq = sender.next_expected_seq
@@ -255,7 +281,8 @@ impl TcpSessionTracker {
                 if saw_fin {
                     session.state = TcpSessionState::Closing(TcpClosingState::FinSent);
                     session.set_closing_initiator(&packet.src);
-                    self.process_from_buffer(id, Some(TcpFlags::ACK), Some(&packet.src))?;
+                    let from = packet.src.clone();
+                    return (Ok(Some(session.state)), PostAction::ProcessBuffer { flags: Some(TcpFlags::ACK), from: Some(from) });
                 }
             }
 
@@ -281,6 +308,10 @@ impl TcpSessionTracker {
                     sender.next_expected_seq = sender.next_expected_seq.wrapping_add(1);
                 }
 
+                if packet.flags.contains(TcpFlags::RST) {
+                    return (Ok(Some(TcpSessionState::Closed)), PostAction::RemoveSession);
+                }
+
                 match closing_state {
                     TcpClosingState::FinSent => {
                         if packet.flags.contains(TcpFlags::FIN | TcpFlags::ACK)
@@ -288,13 +319,15 @@ impl TcpSessionTracker {
                             && packet.acknowledgment_number == initiator.next_expected_seq
                         {
                             session.state = TcpSessionState::Closing(TcpClosingState::AckFinSent);
-                            self.process_from_buffer(id, Some(TcpFlags::ACK), Some(&initiator.id))?;
+                            let from = initiator.id.clone();
+                            return (Ok(Some(session.state)), PostAction::ProcessBuffer { flags: Some(TcpFlags::ACK), from: Some(from) });
                         } else if packet.flags.contains(TcpFlags::ACK)
                             && packet.src == responder.id
                             && packet.acknowledgment_number == initiator.next_expected_seq
                         {
                             session.state = TcpSessionState::Closing(TcpClosingState::AckSent);
-                            self.process_from_buffer(id, Some(TcpFlags::FIN), Some(&responder.id))?;
+                            let from = responder.id.clone();
+                            return (Ok(Some(session.state)), PostAction::ProcessBuffer { flags: Some(TcpFlags::FIN), from: Some(from) });
                         }
                     }
 
@@ -304,7 +337,8 @@ impl TcpSessionTracker {
                             && packet.acknowledgment_number == initiator.next_expected_seq
                         {
                             session.state = TcpSessionState::Closing(TcpClosingState::AckFinSent);
-                            self.process_from_buffer(id, Some(TcpFlags::ACK), Some(&initiator.id))?;
+                            let from = initiator.id.clone();
+                            return (Ok(Some(session.state)), PostAction::ProcessBuffer { flags: Some(TcpFlags::ACK), from: Some(from) });
                         }
                     }
 
@@ -321,15 +355,14 @@ impl TcpSessionTracker {
 
             TcpSessionState::TimeWait => {
                 if packet.flags.contains(TcpFlags::RST) {
-                    self.sessions.remove(id);
-                    return Ok(Some(TcpSessionState::Closed));
+                    return (Ok(Some(TcpSessionState::Closed)), PostAction::RemoveSession);
                 }
             }
 
             TcpSessionState::Closed => unreachable!() //TODO: separate return type and the state that the session can actually be in
         }
 
-        Ok(Some(session.state))
+        (Ok(Some(session.state)), PostAction::None)
     }
 
     fn schedule_timewait_cleanup(&self, id: &TcpIdentifier) {
@@ -361,12 +394,12 @@ impl TcpSessionTracker {
         let packets: Vec<TcpPacketInfo> = if let Some(session) = self.buffer.get_session(session_id) {
             session.iter()
                 .filter(|&p| {
-                    let flag_match = flags.as_ref().is_none_or(|f| p.flags == *f);
+                    let flag_match = flags.as_ref().is_none_or(|f| p.flags.contains(f.clone()));
                     let from_match = from.is_none_or(|f| &p.src == f);
                     flag_match && from_match
                 })
             .cloned()
-                .collect()
+            .collect()
         } else {
             return Ok(());
         };
@@ -377,6 +410,12 @@ impl TcpSessionTracker {
 
         Ok(())
     }
+}
+
+enum PostAction {
+    None,
+    RemoveSession,
+    ProcessBuffer { flags: Option<TcpFlags>, from: Option<EndpointIdentifier> },
 }
 
 #[derive(Error, Debug)]
@@ -395,12 +434,12 @@ pub enum TcpSessionError {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct TcpIdentifier {
+pub struct TcpIdentifier {
     endpoints: UnorderedPair<EndpointIdentifier>
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
-struct EndpointIdentifier {
+pub struct EndpointIdentifier {
     ip: IpAddr,
     port: Port,
 }
@@ -499,7 +538,7 @@ const PENDING_TIMEOUT: Duration = Duration::from_millis(250);
 const PENDING_PACKETS_PER_SESSION: usize = 16;
 const PAYLOAD_MAX_SIZE: u32 = 1460;
 const REORDER_TOLERANCE: u32 = 3 * PAYLOAD_MAX_SIZE;
-const TIME_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+const TIME_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 
 
 struct SessionPackets {
@@ -687,7 +726,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cleans_up_sessions_after_timeout() {
+    async fn cleans_up_buffered_after_timeout() {
         let buffer = PacketBuffer::new();
         let id = mk_id(2);
 
@@ -836,5 +875,113 @@ mod tests {
         ));
         assert_eq!(result.unwrap(), Some(TcpSessionState::TimeWait));
         assert!(tracker.sessions.contains_key(&id), "session still present during TimeWait");
+    }
+
+    /// Deadlock scenario 1: RST arrives on an established session.
+    /// `process_session_state` calls `self.sessions.remove(id)` while the
+    /// `Entry` write lock is already held by `process_tcp`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn rst_during_established_does_not_deadlock() {
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            let tracker: Arc<TcpSessionTracker> = TcpSessionTracker::new();
+
+            // Complete handshake
+            tracker.process_tcp(make_packet(
+                client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0,
+            )).unwrap();
+            tracker.process_tcp(make_packet(
+                server(), client(), TcpFlags::SYN | TcpFlags::ACK, 5000, 1001, 8192, 0,
+            )).unwrap();
+            tracker.process_tcp(make_packet(
+                client(), server(), TcpFlags::ACK, 1001, 5001, 8192, 0,
+            )).unwrap();
+
+            // RST while established — triggers self.sessions.remove(id) under entry lock
+            let result = tracker.process_tcp(make_packet(
+                server(), client(), TcpFlags::RST, 5001, 1001, 0, 0,
+            ));
+            assert_eq!(result.unwrap(), Some(TcpSessionState::Closed));
+            assert!(!tracker.sessions.contains_key(&session_id()), "session should be removed after RST");
+        }).await;
+
+        assert!(result.is_ok(), "deadlock: RST during Established timed out");
+    }
+
+    /// Deadlock scenario 2: RST arrives during handshake (SynSent).
+    #[tokio::test(flavor = "current_thread")]
+    async fn rst_during_handshake_does_not_deadlock() {
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            let tracker: Arc<TcpSessionTracker> = TcpSessionTracker::new();
+
+            tracker.process_tcp(make_packet(
+                client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0,
+            )).unwrap();
+
+            // RST from server while in SynSent
+            let result = tracker.process_tcp(make_packet(
+                server(), client(), TcpFlags::RST, 0, 1001, 0, 0,
+            ));
+            assert_eq!(result.unwrap(), Some(TcpSessionState::Closed));
+            assert!(!tracker.sessions.contains_key(&session_id()));
+        }).await;
+
+        assert!(result.is_ok(), "deadlock: RST during SynSent timed out");
+    }
+
+    /// Deadlock scenario 3: SYN-ACK arrives before SYN, gets buffered.
+    /// When SYN is then processed, `process_from_buffer` calls `process_tcp`
+    /// recursively while the entry write lock is held.
+    #[tokio::test(flavor = "current_thread")]
+    async fn out_of_order_syn_ack_buffered_does_not_deadlock() {
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            let tracker: Arc<TcpSessionTracker> = TcpSessionTracker::new();
+
+            // SYN-ACK arrives first — no session exists, goes to buffer
+            tracker.process_tcp(make_packet(
+                server(), client(), TcpFlags::SYN | TcpFlags::ACK, 5000, 1001, 8192, 0,
+            )).unwrap();
+
+            // SYN arrives — creates session, then process_from_buffer tries to
+            // process the buffered SYN-ACK via process_tcp while holding the entry lock
+            let result = tracker.process_tcp(make_packet(
+                client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0,
+            ));
+            assert!(result.is_ok(), "processing SYN with buffered SYN-ACK failed: {:?}", result);
+        }).await;
+
+        assert!(result.is_ok(), "deadlock: out-of-order SYN-ACK buffer processing timed out");
+    }
+
+    /// Deadlock scenario 4: RST during Closing state.
+    #[tokio::test(flavor = "current_thread")]
+    async fn rst_during_closing_does_not_deadlock() {
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            let tracker: Arc<TcpSessionTracker> = TcpSessionTracker::new();
+
+            // Full handshake
+            tracker.process_tcp(make_packet(
+                client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0,
+            )).unwrap();
+            tracker.process_tcp(make_packet(
+                server(), client(), TcpFlags::SYN | TcpFlags::ACK, 5000, 1001, 8192, 0,
+            )).unwrap();
+            tracker.process_tcp(make_packet(
+                client(), server(), TcpFlags::ACK, 1001, 5001, 8192, 0,
+            )).unwrap();
+
+            // FIN to enter Closing
+            tracker.process_tcp(make_packet(
+                client(), server(), TcpFlags::FIN | TcpFlags::ACK, 1001, 5001, 8192, 0,
+            )).unwrap();
+
+            // RST during Closing(FinSent)
+            let result = tracker.process_tcp(make_packet(
+                server(), client(), TcpFlags::RST, 5001, 1002, 0, 0,
+            ));
+            assert_eq!(result.unwrap(), Some(TcpSessionState::Closed));
+            assert!(!tracker.sessions.contains_key(&session_id()));
+        }).await;
+
+        assert!(result.is_ok(), "deadlock: RST during Closing timed out");
     }
 }
