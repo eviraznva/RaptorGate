@@ -8,7 +8,7 @@ pub struct NatRules {
 impl NatRules {
     pub fn new(mut rules: Vec<NatRule>) -> Self {
         rules.sort_by_key(NatRule::priority);
-        
+
         Self { rules }
     }
 

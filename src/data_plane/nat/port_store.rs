@@ -1,8 +1,8 @@
-use std::net::IpAddr;
 use std::collections::HashSet;
+use std::net::IpAddr;
 
-use crate::policy::nat::port_range::PortRange;
 use crate::data_plane::nat::types::flow_tuple::L4Proto;
+use crate::policy::nat::port_range::PortRange;
 
 pub struct PortStore {
     leased_ports: HashSet<(IpAddr, L4Proto, u16)>,
@@ -17,9 +17,13 @@ impl PortStore {
         }
     }
 
-    pub fn add(&mut self, public_ip: IpAddr, proto: L4Proto, original_port: u16, pool: Option<PortRange>) 
-        -> Option<u16> 
-    {
+    pub fn add(
+        &mut self,
+        public_ip: IpAddr,
+        proto: L4Proto,
+        original_port: u16,
+        pool: Option<PortRange>,
+    ) -> Option<u16> {
         if !proto.has_ports() {
             return Some(original_port);
         }
@@ -35,7 +39,7 @@ impl PortStore {
 
         for port in pool.start()..=pool.end() {
             let candidate = (public_ip, proto, port);
-            
+
             if !self.leased_ports.contains(&candidate) {
                 self.leased_ports.insert(candidate);
                 return Some(port);

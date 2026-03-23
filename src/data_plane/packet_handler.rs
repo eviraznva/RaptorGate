@@ -2,15 +2,15 @@ use std::sync::Arc;
 
 use tun::AsyncDevice;
 
-use tokio::sync::Mutex;
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
+use tokio::sync::Mutex;
 
-use crate::frame::RealFrame;
-use crate::rule_tree::Verdict;
 use crate::data_plane::nat::engine::NatEngine;
-use crate::data_plane::policy_store::PolicyStore;
-use crate::ip_defrag::{DefragResult, IpDefragEngine};
 use crate::data_plane::nat::types::nat_outcome::NatOutcome;
+use crate::data_plane::policy_store::PolicyStore;
+use crate::frame::RealFrame;
+use crate::ip_defrag::{DefragResult, IpDefragEngine};
+use crate::rule_tree::Verdict;
 
 const ETH_HDR: usize = 14;
 
@@ -38,14 +38,14 @@ pub async fn handle_packet(
         println!("[{iface}] DROP (invalid packet: {reason})");
         return;
     }
-    
+
     drop(packet);
-    
+
     let mut buf = data.to_vec();
     let pre_outcome = nat.lock().await.process_prerouting(&mut buf, iface, None);
-    
+
     log_nat_outcome("PREROUTING", iface, &pre_outcome);
-    
+
     let packet = match SlicedPacket::from_ethernet(&buf) {
         Ok(p) => p,
         Err(err) => {
@@ -62,7 +62,10 @@ pub async fn handle_packet(
                 forward_packet(iface, &eth_frame, tun, policies, nat).await;
             }
             DefragResult::CompleteWithAnomaly(eth_frame, anomalies) => {
-                eprintln!("[{iface}] WARN (defrag anomalies: {})", anomalies.join("; "));
+                eprintln!(
+                    "[{iface}] WARN (defrag anomalies: {})",
+                    anomalies.join("; ")
+                );
                 forward_packet(iface, &eth_frame, tun, policies, nat).await;
             }
             DefragResult::Dropped(reason) => {
@@ -93,22 +96,24 @@ async fn forward_packet(
 
     let compiled_policy = policies.load();
     let frame = RealFrame::from_sliced(&packet);
-    let verdict = frame.as_ref().and_then(|f| compiled_policy.evaluator().evaluate(f));
+    let verdict = frame
+        .as_ref()
+        .and_then(|f| compiled_policy.evaluator().evaluate(f));
 
     let allow = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
 
     match &verdict {
         Some(Verdict::AllowWarn(msg)) => eprintln!("[{iface}] WARN (allow): {msg}"),
-        Some(Verdict::DropWarn(msg))  => eprintln!("[{iface}] WARN (drop): {msg}"),
+        Some(Verdict::DropWarn(msg)) => eprintln!("[{iface}] WARN (drop): {msg}"),
         _ => {}
     }
 
     let ip_info = match &packet.net {
         Some(NetSlice::Ipv4(ipv4)) => {
             let header = ipv4.header();
-            let src       = std::net::Ipv4Addr::from(header.source());
-            let dst       = std::net::Ipv4Addr::from(header.destination());
-            let ttl       = header.ttl();
+            let src = std::net::Ipv4Addr::from(header.source());
+            let dst = std::net::Ipv4Addr::from(header.destination());
+            let ttl = header.ttl();
             let total_len = header.total_len();
             let (proto, ports) = match &packet.transport {
                 Some(TransportSlice::Tcp(tcp)) => (
@@ -131,18 +136,21 @@ async fn forward_packet(
         tracing::debug!(iface, %ip_info, "DROP");
         return;
     }
-    
+
     let out_iface = packet_endpoints(&packet)
         .and_then(|(_, dst)| infer_out_interface(dst))
         .unwrap_or(iface);
-    
+
     let mut raw_mut = raw.to_vec();
-    let outcome = nat.lock().await.process_postrouting(&mut raw_mut, out_iface, None);
-    
+    let outcome = nat
+        .lock()
+        .await
+        .process_postrouting(&mut raw_mut, out_iface, None);
+
     log_nat_outcome("POSTROUTING", iface, &outcome);
 
     tracing::debug!(iface, %ip_info, "PASS");
-    
+
     if raw_mut.len() > ETH_HDR {
         if let Err(err) = tun.send(&raw_mut[ETH_HDR..]).await {
             eprintln!("[{iface}] Failed to send to tun0: {err}");
@@ -153,11 +161,29 @@ async fn forward_packet(
 fn log_nat_outcome(stage: &str, iface: &str, outcome: &NatOutcome) {
     match outcome {
         NatOutcome::NoMatch => {}
-        NatOutcome::Created { binding_id, rule_id } => {
-            tracing::info!(stage, iface, binding_id, rule_id, "NAT: new binding created");
+        NatOutcome::Created {
+            binding_id,
+            rule_id,
+        } => {
+            tracing::info!(
+                stage,
+                iface,
+                binding_id,
+                rule_id,
+                "NAT: new binding created"
+            );
         }
-        NatOutcome::AppliedExisting { binding_id, direction } => {
-            tracing::debug!(stage, iface, binding_id, ?direction, "NAT: existing binding applied");
+        NatOutcome::AppliedExisting {
+            binding_id,
+            direction,
+        } => {
+            tracing::debug!(
+                stage,
+                iface,
+                binding_id,
+                ?direction,
+                "NAT: existing binding applied"
+            );
         }
     }
 }

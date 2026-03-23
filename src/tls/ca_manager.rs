@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
-use ring::digest::{digest, SHA256};
+use ring::digest::{SHA256, digest};
 use time::OffsetDateTime;
 
 use crate::tls::cert_storage;
@@ -92,8 +92,12 @@ fn generate_ca() -> anyhow::Result<GeneratedCa> {
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     params.not_before = now;
     params.not_after = expiry;
-    params.distinguished_name.push(DnType::CommonName, "RaptorGate CA");
-    params.distinguished_name.push(DnType::OrganizationName, "RaptorGate");
+    params
+        .distinguished_name
+        .push(DnType::CommonName, "RaptorGate CA");
+    params
+        .distinguished_name
+        .push(DnType::OrganizationName, "RaptorGate");
 
     let cert = params
         .self_signed(&key_pair)
@@ -128,7 +132,8 @@ mod tests {
     use super::*;
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string());
+        let dir = std::env::temp_dir()
+            .join(uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string());
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

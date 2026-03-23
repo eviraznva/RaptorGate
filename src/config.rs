@@ -5,6 +5,7 @@ pub struct AppConfig {
     // Packet capture
     pub capture_interfaces: Vec<String>,
     pub pcap_timeout_ms: i32,
+    pub disable_data_plane: bool,
 
     // TUN device
     pub tun_device_name: String,
@@ -16,6 +17,7 @@ pub struct AppConfig {
 
     // gRPC / backend
     pub grpc_socket_path: String,
+    pub control_plane_grpc_socket_path: String,
     pub firewall_version: String,
     pub heartbeat_interval_secs: u64,
 
@@ -43,6 +45,11 @@ impl AppConfig {
                 .parse()
                 .context("PCAP_TIMEOUT_MS must be an integer")?,
 
+            disable_data_plane: std::env::var("DISABLE_DATA_PLANE")
+                .unwrap_or_else(|_| "false".into())
+                .to_lowercase()
+                == "true",
+
             tun_device_name: std::env::var("TUN_DEVICE_NAME").unwrap_or_else(|_| "tun0".into()),
 
             tun_address: std::env::var("TUN_ADDRESS")
@@ -62,6 +69,9 @@ impl AppConfig {
 
             grpc_socket_path: std::env::var("GRPC_SOCKET_PATH")
                 .unwrap_or_else(|_| "./sockets/firewall.sock".into()),
+
+            control_plane_grpc_socket_path: std::env::var("CONTROL_PLANE_GRPC_SOCKET_PATH")
+                .unwrap_or_else(|_| "./sockets/control-plane.sock".into()),
 
             firewall_version: std::env::var("FIREWALL_VERSION")
                 .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into()),
