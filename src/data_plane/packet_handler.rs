@@ -45,7 +45,7 @@ pub async fn handle_packet(
 
     let mut buf = data.to_vec();
     let pre_outcome = nat.lock().await.process_prerouting(&mut buf, iface, None);
-
+    
     log_nat_outcome("PREROUTING", iface, &pre_outcome);
 
     let packet = match SlicedPacket::from_ethernet(&buf) {
@@ -147,7 +147,7 @@ async fn forward_packet(iface: &str, raw: &[u8], packet: &SlicedPacket<'_>, tun:
         .lock()
         .await
         .process_postrouting(&mut raw_mut, out_iface, None);
-
+    
     log_nat_outcome("POSTROUTING", iface, &outcome);
 
     tracing::debug!(iface, %ip_info, "PASS");
