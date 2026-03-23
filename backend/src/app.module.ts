@@ -1,6 +1,7 @@
 import { RolesPermissionsGuard } from './infrastructure/adapters/roles-permissions.guard';
 import { DomainExceptionFilter } from './presentation/filters/domain-exception.filter';
 import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard';
+import { ConfigSnapshotModule } from './modules/config-snapshot.module';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
 import { ZonePairsModule } from './modules/zone-pairs.module';
 import { validate } from './shared/config/env.validation';
@@ -27,6 +28,7 @@ import { Module } from '@nestjs/common';
         limit: 100, // 100 requestów globalnie
       },
     ]),
+    ConfigSnapshotModule,
     ZonePairsModule,
     PassportModule,
     RulesModule,

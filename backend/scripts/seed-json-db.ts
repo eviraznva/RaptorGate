@@ -1,10 +1,9 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import * as bcrypt from 'bcrypt';
-
 import { ROLE_PERMISSIONS } from '../src/domain/constants/role-permissions';
 import { Permission } from '../src/domain/enums/permissions.enum';
 import { Role } from '../src/domain/enums/role.enum';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import * as bcrypt from 'bcrypt';
 
 type JsonTable<T> = { items: T[] };
 
@@ -62,7 +61,10 @@ async function main() {
   await mkdir(DB_DIR, { recursive: true });
 
   const now = new Date().toISOString();
-  const saltRounds = Number.parseInt(process.env.BCRYPT_SALT_ROUNDS ?? '12', 10);
+  const saltRounds = Number.parseInt(
+    process.env.BCRYPT_SALT_ROUNDS ?? '12',
+    10,
+  );
   const passwordHash = await bcrypt.hash('admin123', saltRounds);
 
   const rolesOrder: Role[] = [
@@ -81,11 +83,13 @@ async function main() {
   const roleIdByName = new Map(roles.map((r) => [r.name, r.id]));
 
   const permissionsValues = Object.values(Permission);
-  const permissions: PermissionRecord[] = permissionsValues.map((name, idx) => ({
-    id: seqUuid(1000 + idx),
-    name,
-    description: permissionDescription(name),
-  }));
+  const permissions: PermissionRecord[] = permissionsValues.map(
+    (name, idx) => ({
+      id: seqUuid(1000 + idx),
+      name,
+      description: permissionDescription(name),
+    }),
+  );
 
   const permissionIdByName = new Map(permissions.map((p) => [p.name, p.id]));
 
@@ -149,7 +153,9 @@ async function main() {
     'network_session_history.json',
   ];
 
-  await Promise.all(emptyTables.map((tableName) => writeJson(tableName, { items: [] })));
+  await Promise.all(
+    emptyTables.map((tableName) => writeJson(tableName, { items: [] })),
+  );
 
   await writeJson('_meta.json', {
     schemaVersion: 1,
@@ -161,7 +167,8 @@ async function main() {
       user_roles: userRoles.length,
       role_permissions: rolePermissions.length,
     },
-    notes: 'Seed generated from role.enum.ts, permissions.enum.ts and role-permissions.ts',
+    notes:
+      'Seed generated from role.enum.ts, permissions.enum.ts and role-permissions.ts',
   });
 
   console.log('Seeded backend/data/json-db');

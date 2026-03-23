@@ -8,8 +8,8 @@ import {
 } from 'src/domain/repositories/rules-repository';
 import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../ports/raptor-lang-validation-service.interface';
 import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
-import type { IRaptorLangValidationService } from '../ports/raptor-lang-validation-service.interface';
 import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
+import type { IRaptorLangValidationService } from '../ports/raptor-lang-validation-service.interface';
 import { FirewallRule } from 'src/domain/entities/firewall-rule.entity';
 import { Priority } from 'src/domain/value-objects/priority.vo';
 import { CreateRuleDto } from '../dtos/create-rule.dto';
