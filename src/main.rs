@@ -19,7 +19,6 @@ use crate::config::AppConfig;
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
-use crate::data_plane::runtime as data_plane_runtime;
 use crate::data_plane::{runtime as data_plane_runtime, tcp_session_tracker};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
