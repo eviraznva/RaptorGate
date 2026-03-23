@@ -63,7 +63,14 @@ async fn forward_packet(iface: &str, packet: &SlicedPacket<'_>, tun: &AsyncDevic
     let verdict = RealFrame::from_sliced(packet)
         .and_then(|frame| compiled_policy.evaluator().evaluate(&frame));
 
-    let allowed_tcp = tcp_sessions.process_packet(packet).is_ok();
+    let allowed_tcp = match tcp_sessions.process_packet(packet) {
+        Ok(_) => true,
+        Err(err) => {
+            eprintln!("Rejected tcp with {err}");
+            false
+        }
+    };
+
     let allowed_policy = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
 
     match &verdict {
