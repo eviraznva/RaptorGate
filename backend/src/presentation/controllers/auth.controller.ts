@@ -4,40 +4,31 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
-  Logger,
   Post,
   Res,
-  UseFilters,
 } from '@nestjs/common';
 import {
   ErrorResponseDto,
   ValidationErrorResponseDto,
 } from '../dtos/error-response.dto';
-import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
 import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
 import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
 import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
 import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto';
-import { DomainExceptionFilter } from '../filters/domain-exception.filter';
 import { IsPublic } from 'src/infrastructure/decorators/public.decorator';
 import { Cookie } from 'src/infrastructure/decorators/cookie.decorator';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { Permission } from 'src/domain/enums/permissions.enum';
 import { LoginResponseDto } from '../dtos/login-response.dto';
 import { Env } from 'src/shared/config/env.validation';
-import { Role } from 'src/domain/enums/role.enum';
-import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from '../dtos/login.dto';
 import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
 
-@UseFilters(DomainExceptionFilter)
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
-  private readonly logger = new Logger(AuthController.name);
   constructor(
     @Inject() private readonly refreshTokenUseCase: RefreshTokenUseCase,
     @Inject() private readonly configService: ConfigService<Env, true>,
@@ -88,7 +79,9 @@ export class AuthController {
 
     res.cookie('refresh_token', refreshToken, {
       httpOnly: true,
-      secure: this.configService.get('NODE_ENV') === 'development',
+      secure:
+        this.configService.get('NODE_ENV') === 'development' ||
+        this.configService.get('NODE_ENV') === 'production',
       sameSite: 'strict',
       maxAge: 60 * 60 * 1000,
       path: '/auth/refresh',
@@ -115,6 +108,7 @@ export class AuthController {
     status: 500,
     description: 'Internal server error',
   })
+  @IsPublic()
   @Post('refresh')
   async refresh(
     @ExtractToken() accessToken: string,
@@ -129,7 +123,9 @@ export class AuthController {
     if (useCase.refreshToken) {
       res.cookie('refresh_token', useCase.refreshToken, {
         httpOnly: true,
-        secure: this.configService.get('NODE_ENV') === 'development',
+        secure:
+          this.configService.get('NODE_ENV') === 'development' ||
+          this.configService.get('NODE_ENV') === 'production',
         sameSite: 'strict',
         maxAge: 60 * 60 * 1000,
         path: '/auth/refresh',
@@ -167,17 +163,12 @@ export class AuthController {
 
     res.clearCookie('refresh_token', {
       httpOnly: true,
-      secure: this.configService.get('NODE_ENV') === 'development',
+      secure:
+        this.configService.get('NODE_ENV') === 'development' ||
+        this.configService.get('NODE_ENV') === 'production',
       sameSite: 'strict',
       maxAge: 60 * 60 * 1000,
       path: '/auth/refresh',
     });
-  }
-
-  @Post('users')
-  @Roles(Role.Viewer)
-  @RequirePermissions(Permission.USERS_READ, Permission.USERS_CREATE)
-  createUser() {
-    return 'user created';
   }
 }

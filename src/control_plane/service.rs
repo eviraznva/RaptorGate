@@ -1,4 +1,5 @@
 use std::cmp::min;
+use std::panic;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -10,8 +11,8 @@ use crate::control_plane::api::{ControlPlaneConfig, LifecyclePhase};
 use crate::control_plane::backend_api::client::BackendApiClient;
 use crate::control_plane::backend_api::event_codec::{
     BE_CONFIG_CHANGED, BE_HEARTBEAT_ACK, BE_RESYNC_REQUESTED, FW_HEARTBEAT, FW_METRICS,
-    current_timestamp, decode_backend_payload, encode_firewall_event, encode_policy_activated,
-    encode_policy_failed, encode_resync_confirmed,
+    current_timestamp, decode_backend_payload, encode_ca_ready, encode_firewall_event,
+    encode_policy_activated, encode_policy_failed, encode_resync_confirmed,
 };
 use crate::control_plane::backend_api::proto::raptorgate::common::{
     FirewallMode, PolicyFailureCode,
@@ -20,8 +21,8 @@ use crate::control_plane::backend_api::proto::raptorgate::config::{
     ConfigRequestReason, ConfigResponse, GetConfigRequest,
 };
 use crate::control_plane::backend_api::proto::raptorgate::events::{
-    ConfigChangedEvent, HeartbeatAck, HeartbeatEvent, PolicyActivatedEvent, PolicyFailedEvent,
-    ResyncConfirmedEvent, ResyncRequestedEvent,
+    CaReadyEvent, ConfigChangedEvent, HeartbeatAck, HeartbeatEvent, PolicyActivatedEvent,
+    PolicyFailedEvent, ResyncConfirmedEvent, ResyncRequestedEvent,
 };
 use crate::control_plane::backend_api::proto::raptorgate::telemetry::MetricsBatch;
 use crate::control_plane::config::active_config::ActiveConfig;
@@ -38,6 +39,22 @@ pub async fn run(
     policy_tx: watch::Sender<Arc<CompiledPolicy>>,
     shutdown: CancellationToken,
 ) -> Result<(), ControlPlaneError> {
+    if let Some(ref dsl) = config.dev_policy_override {
+        panic!("DEV MODE: Control plane is running with a policy override. This should only be used for testing and development purposes, and not in production environments.");
+        tracing::info!("DEV MODE: Applying policy override and skipping control plane syncing.");
+
+        let override_policy = compiler::compile_override(dsl)
+            .map_err(|err| ControlPlaneError::PolicyCompile(err.to_string()))?;
+
+        // let override_policy = compiler::compile_override(dsl).expect("ERROR: couldnt compile override policy");
+
+        let _ = policy_tx.send(Arc::new(override_policy));
+        status.set_phase(LifecyclePhase::Normal);
+
+        shutdown.cancelled().await;
+        return Ok(());
+    }
+
     let snapshot_store = open_snapshot_store(&config)?;
     let mut active_config = load_snapshot(snapshot_store.as_ref(), &config, &status, &policy_tx)?;
     let mut reconnect_backoff_ms = config.reconnect_initial_backoff_ms;
@@ -88,7 +105,10 @@ pub async fn run(
 
                 match active_config.as_ref() {
                     Some(snapshot_active) => {
-                        tracing::warn!(version = snapshot_active.version, "Backend unavailable — entering EMERGENCY mode (snapshot from Redb)");
+                        tracing::warn!(
+                            version = snapshot_active.version,
+                            "Backend unavailable — entering EMERGENCY mode (snapshot from Redb)"
+                        );
                         status.set_phase(LifecyclePhase::Emergency);
                         status.set_mode(FirewallMode::Emergency);
                         status.set_version(Some(snapshot_active.version));
@@ -100,17 +120,22 @@ pub async fn run(
                         )?;
                     }
                     None => {
-                        tracing::warn!("No snapshot available — entering SAFE-DENY mode (drop all)");
+                        tracing::warn!(
+                            "No snapshot available — entering ALLOW-ALL mode (dev/test)"
+                        );
                         status.set_phase(LifecyclePhase::SafeDeny);
                         status.set_mode(FirewallMode::SafeDeny);
                         status.set_version(None);
-                        publish_safe_deny(&policy_tx)?;
+                        publish_fallback(&policy_tx, false)?;
                     }
                 }
             }
         }
 
-        tracing::info!(backoff_ms = reconnect_backoff_ms, "Reconnecting after backoff...");
+        tracing::info!(
+            backoff_ms = reconnect_backoff_ms,
+            "Reconnecting after backoff..."
+        );
         tokio::select! {
             _ = shutdown.cancelled() => {
                 status.set_phase(LifecyclePhase::Stopped);
@@ -178,7 +203,8 @@ async fn connect_and_bootstrap(
     status.set_phase(LifecyclePhase::FetchingInitialConfig);
 
     tracing::info!(socket = %config.grpc_socket_path, "Connecting to backend...");
-    let mut client = BackendApiClient::connect(&config.grpc_socket_path).await
+    let mut client = BackendApiClient::connect(&config.grpc_socket_path)
+        .await
         .inspect_err(|e| tracing::warn!(error = %e, "Backend connection failed"))?;
     tracing::info!("Connected to backend, fetching config...");
 
@@ -193,7 +219,6 @@ async fn connect_and_bootstrap(
             correlation_id,
             reason: request_reason,
             known_versions: existing.as_ref().map(|cfg| cfg.section_versions.clone()),
-            known_version: existing.as_ref().map(|cfg| cfg.version as i32),
         })
         .await?;
 
@@ -216,7 +241,10 @@ async fn connect_and_bootstrap(
     status.set_version(Some(active_config.version));
     status.set_backend_connected(true);
 
-    tracing::info!(version = active_config.version, "Config loaded, entering NORMAL mode");
+    tracing::info!(
+        version = active_config.version,
+        "Config loaded, entering NORMAL mode"
+    );
     Ok((client, active_config))
 }
 
@@ -245,6 +273,17 @@ async fn run_event_session(
         Ok(Ok(())) => {}
         Ok(Err(err)) => return Err(ControlPlaneError::ConfigFetch(err)),
         Err(err) => return Err(ControlPlaneError::Join(err.to_string())),
+    }
+
+    if let Some(ca) = &config.ca_info {
+        let _ = stream_channels
+            .outbound
+            .send(encode_ca_ready(CaReadyEvent {
+                ca_cert_pem: ca.cert_pem.clone(),
+                fingerprint: ca.fingerprint.clone(),
+                expires_at: Some(ca.expires_at.clone()),
+            }))
+            .await;
     }
 
     let mut interval = tokio::time::interval(Duration::from_secs(config.heartbeat_interval_secs));
@@ -372,7 +411,6 @@ async fn reconcile_config_change(
             correlation_id,
             reason: reason as i32,
             known_versions: Some(active_config.section_versions.clone()),
-            known_version: Some(active_config.version as i32),
         })
         .await?;
 
@@ -404,6 +442,16 @@ fn publish_active_config(
     source: PolicySource,
 ) -> Result<(), ControlPlaneError> {
     let policy = compiler::compile_from_active_config(active_config, block_icmp, source)
+        .map_err(|err| ControlPlaneError::PolicyCompile(err.to_string()))?;
+    let _ = policy_tx.send(Arc::new(policy));
+    Ok(())
+}
+
+fn publish_fallback(
+    policy_tx: &watch::Sender<Arc<CompiledPolicy>>,
+    block_icmp: bool,
+) -> Result<(), ControlPlaneError> {
+    let policy = compiler::compile_fallback(block_icmp)
         .map_err(|err| ControlPlaneError::PolicyCompile(err.to_string()))?;
     let _ = policy_tx.send(Arc::new(policy));
     Ok(())

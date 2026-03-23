@@ -1,7 +1,7 @@
 use crate::control_plane::config::active_config::ActiveConfig;
 use crate::policy::runtime::{CompiledPolicy, PolicyMetadata, PolicySource};
 use crate::policy_evaluator::PolicyEvaluator;
-use crate::rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
+use crate::rule_tree::{parsing::parse_rule_tree, RuleTree, Verdict};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PolicyCompileError {
@@ -13,17 +13,30 @@ pub fn compile_fallback(block_icmp: bool) -> Result<CompiledPolicy, PolicyCompil
     build_compiled_policy(None, None, 0, PolicySource::LocalFallback, block_icmp)
 }
 
+pub fn compile_override(dsl: &str) -> Result<CompiledPolicy, PolicyCompileError> {
+    let tree = RuleTree::new(
+        "dev-override".into(),
+        "Dev mode policy override".into(),
+        parse_rule_tree(dsl).map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
+    );
+
+    Ok(CompiledPolicy::new(
+        PolicyMetadata {
+            config_version: None,
+            bundle_checksum: None,
+            source: PolicySource::LocalFallback,
+            rule_count: 0,
+        },
+        PolicyEvaluator::new(tree, Verdict::Drop),
+    ))
+}
+
 pub fn compile_safe_deny() -> Result<CompiledPolicy, PolicyCompileError> {
     let tree = RuleTree::new(
         "safe-deny".into(),
         "Drop everything".into(),
-        MatchBuilder::with_arm(
-            MatchKind::Protocol,
-            Pattern::Wildcard,
-            ArmEnd::Verdict(Verdict::Drop),
-        )
-        .build()
-        .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
+        parse_rule_tree("match protocol { _ : verdict drop }")
+            .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
     );
 
     Ok(CompiledPolicy::new(
@@ -62,26 +75,15 @@ fn build_compiled_policy(
         RuleTree::new(
             "default".into(),
             "Block ICMP, allow everything else".into(),
-            MatchBuilder::with_arm(
-                MatchKind::Protocol,
-                Pattern::Equal(FieldValue::Protocol(crate::frame::Protocol::Icmp)),
-                ArmEnd::Verdict(Verdict::Drop),
-            )
-            .arm(Pattern::Wildcard, ArmEnd::Verdict(Verdict::Allow))
-            .build()
-            .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
+            parse_rule_tree("match protocol { = icmp : verdict drop  _ : verdict allow }")
+                .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
         )
     } else {
         RuleTree::new(
             "default".into(),
             "Allow everything".into(),
-            MatchBuilder::with_arm(
-                MatchKind::Protocol,
-                Pattern::Wildcard,
-                ArmEnd::Verdict(Verdict::Allow),
-            )
-            .build()
-            .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
+            parse_rule_tree("match protocol { _ : verdict allow }")
+                .map_err(|err| PolicyCompileError::Fallback(err.to_string()))?,
         )
     };
 

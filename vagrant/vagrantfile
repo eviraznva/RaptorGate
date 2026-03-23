@@ -35,20 +35,18 @@ def setup_nftables
     nft flush ruleset
     nft add table inet filter
 
-    # INPUT:  drop everything unless explicitly allowed
-    # FORWARD: drop everything — force all forwarding through tun0 (our NGFW app)
-    #          Without this, the kernel would forward packets directly between
-    #          enp0s8 and enp0s9, completely bypassing our application.
-    # OUTPUT:  accept — the router must be able to send packets (ARP, forwarded from tun0, etc.)
     nft 'add chain inet filter input   { type filter hook input   priority 0; policy drop; }'
     nft 'add chain inet filter forward { type filter hook forward priority 0; policy drop; }'
     nft 'add chain inet filter output  { type filter hook output  priority 0; policy accept; }'
 
-    # Allow forwarding ONLY from/to tun0.
-    # Traffic flow: enp0s8/9 -> pcap capture -> NGFW app -> tun0 -> kernel forward -> enp0s8/9
-    # Direct forward between physical interfaces (enp0s8 <-> enp0s9) stays BLOCKED.
-    nft add rule inet filter forward iif "tun0" accept
-    nft add rule inet filter forward oif "tun0" accept
+    # NOTE: tun0 rules are added in setup_ngfw_service, after the
+    # service starts and tun0 has its final interface index.
+
+    # Userspace DNAT publishes TCP/8080 on r1's eth2 address (192.168.20.254),
+    # but the Linux local TCP stack must not see that traffic. If INPUT accepts
+    # it, the kernel treats it as a local connection and eventually sends RSTs,
+    # breaking the userspace-forwarded session.
+    nft insert rule inet filter input iifname "eth2" ip daddr 192.168.20.254 tcp dport 8080 drop
 
     # Allow loopback, established/related connections, and SSH access to the VM
     nft add rule inet filter input iif lo accept
@@ -57,7 +55,6 @@ def setup_nftables
     nft add rule inet filter input tcp dport 2201 ct state new accept
   SHELL
 end
-
 def setup_postgres
   <<-SHELL
     apt-get update -qq
@@ -108,29 +105,29 @@ def setup_ngfw_service
     sysctl -w net.ipv4.ip_forward=1
     echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 
-    # Disable reverse path filtering on tun0.
-    # Without this, the kernel drops packets arriving on tun0 whose source IP
-    # (e.g. 192.168.10.10) has a route through a different interface (enp0s8).
-    # rp_filter checks: "would I route a reply back through the same interface
-    # this packet arrived on?" — for tun0 the answer is always no, so it drops.
     sysctl -w net.ipv4.conf.all.rp_filter=0
     sysctl -w net.ipv4.conf.default.rp_filter=0
-    sysctl -w net.ipv4.conf.tun0.rp_filter=0
+    sysctl -w net.ipv4.conf.tun0.1_filter=0
+    sysctl -w net.ipv4.conf.eth1.rp_filter=0
+    sysctl -w net.ipv4.conf.eth2.rp_filter=0
+    sysctl -w net.ipv4.conf.all.accept_local=1
+    sysctl -w net.ipv4.conf.tun0.accept_local=1
+    sysctl -w net.ipv4.conf.eth2.accept_local=1
 
     mkdir -p /resources/ngfw
     mkdir -p /resources/ngfw/.data
     mkdir -p /resources/ngfw/sockets
-    # cp -rf /opt/ngfw/bin/Debug/net10.0/linux-x64/* /resources/ngfw
     chmod +x /resources/ngfw/ngfw
-    # setcap cap_net_raw+ep /resources/ngfw/ngfw
     cp -rf /resources/services/* /etc/systemd/system/
     systemctl daemon-reload
     systemctl restart ngfw
     systemctl enable --now ngfw
-    # /resources/ngfw/ngfw &
+
+    # tun0 now has its final index — safe to write nftables rules by name
+    nft add rule inet filter forward iif "tun0" accept
+    nft add rule inet filter forward oif "tun0" accept
   SHELL
 end
-
 unless File.respond_to?(:exists?)
   class << File
     def exists?(path)

@@ -5,6 +5,7 @@ Wants=backend.service
 
 [Service]
 WorkingDirectory=/resources/ngfw
+ExecStartPre=/bin/mkdir -p /resources/ngfw/sockets
 ExecStart=/resources/ngfw/ngfw
 Restart=on-failure
 RestartSec=5
@@ -14,6 +15,10 @@ StandardError=journal
 User=root
 AmbientCapabilities=CAP_NET_RAW
 Environment="CAPTURE_INTERFACES=eth1,eth2"
+EnvironmentFile=/etc/systemd/system/ngfw.env
+Environment="CONTROL_PLANE_GRPC_SOCKET_PATH=/resources/ngfw/sockets/control-plane.sock"
+Environment="DUMMY_NAT_ENABLED=true"
+Environment="DUMMY_NAT_ALLOW_ALL=true"
 
 [Install]
 WantedBy=multi-user.target

@@ -1,7 +1,12 @@
 use derive_more::Debug;
 use nonempty::NonEmpty;
 
-use crate::{frame::{Hour, Octet, Weekday}, rule_tree::{Arm, ArmEnd, FieldValue, IpVer, MatchKind, Operation, Pattern, RuleError, RuleTree, Verdict}};
+use crate::{
+    frame::{Hour, Octet, Weekday},
+    rule_tree::{
+        Arm, ArmEnd, FieldValue, IpVer, MatchKind, Operation, Pattern, RuleError, RuleTree, Verdict,
+    },
+};
 
 #[derive(PartialEq, Debug)]
 pub struct Match {
@@ -34,14 +39,17 @@ pub struct MatchBuilder {
 
 impl MatchBuilder {
     pub fn with_arm(kind: MatchKind, pattern: Pattern, into: ArmEnd) -> Self {
-        Self { kind, arms: NonEmpty::new(Box::new(Arm { pattern, into })) }
-    }  
-       
+        Self {
+            kind,
+            arms: NonEmpty::new(Box::new(Arm { pattern, into })),
+        }
+    }
+
     pub fn arm(mut self, pattern: Pattern, into: ArmEnd) -> Self {
         self.arms.push(Box::new(Arm { pattern, into }));
         self
-    }  
-       
+    }
+
     pub fn build(self) -> Result<Match, RuleError> {
         let m = Match::new(self.kind, self.arms)?;
         Ok(m)

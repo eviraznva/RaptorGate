@@ -18,8 +18,12 @@ pub enum SnapshotError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ControlPlaneError {
+    #[error("i/o failed: {0}")]
+    Io(#[from] std::io::Error),
     #[error("transport connect failed: {0}")]
     Connect(#[from] tonic::transport::Error),
+    #[error("transport serve failed: {0}")]
+    Serve(tonic::transport::Error),
     #[error("config fetch failed: {0}")]
     ConfigFetch(#[from] tonic::Status),
     #[error("snapshot error: {0}")]

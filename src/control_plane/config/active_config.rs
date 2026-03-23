@@ -1,6 +1,8 @@
 use crate::control_plane::backend_api::proto::raptorgate::config::{
-    ConfigResponse, ConfigSectionVersions, DnsBlacklistEntry, FirewallCertificate, IdentityBundle,
-    IpsSignature, MlModel, NatRule, Rule, SslBypassEntry, Zone, ZoneInterface, ZonePair,
+    ConfigResponse, ConfigSectionVersions, DnsBlacklistEntry, DnsBlacklistSet, FirewallCertificate,
+    FirewallCertificateSet, IdentityBundle, IpsSignature, IpsSignatureSet, MlModel, NatRule,
+    NatRuleSet, Rule, RuleSet, SslBypassEntry, SslBypassSet, Zone, ZoneInterface, ZoneInterfaceSet,
+    ZonePair, ZonePairSet, ZoneSet,
 };
 use crate::control_plane::config::delta::{ChangedSections, DeltaError};
 
@@ -28,16 +30,19 @@ impl ActiveConfig {
             version: resp.config_version,
             bundle_checksum: resp.bundle_checksum,
             section_versions: resp.current_versions.unwrap_or_default(),
-            rules: resp.rules,
-            zones: resp.zones,
-            zone_interfaces: resp.zone_interfaces,
-            zone_pairs: resp.zone_pairs,
-            nat_rules: resp.nat_rules,
-            dns_blacklist: resp.dns_blacklist,
-            ssl_bypass_list: resp.ssl_bypass_list,
-            ips_signatures: resp.ips_signatures,
+            rules: resp.rules.map(|s| s.items).unwrap_or_default(),
+            zones: resp.zones.map(|s| s.items).unwrap_or_default(),
+            zone_interfaces: resp.zone_interfaces.map(|s| s.items).unwrap_or_default(),
+            zone_pairs: resp.zone_pairs.map(|s| s.items).unwrap_or_default(),
+            nat_rules: resp.nat_rules.map(|s| s.items).unwrap_or_default(),
+            dns_blacklist: resp.dns_blacklist.map(|s| s.items).unwrap_or_default(),
+            ssl_bypass_list: resp.ssl_bypass_list.map(|s| s.items).unwrap_or_default(),
+            ips_signatures: resp.ips_signatures.map(|s| s.items).unwrap_or_default(),
             ml_model: resp.ml_model,
-            firewall_certificates: resp.firewall_certificates,
+            firewall_certificates: resp
+                .firewall_certificates
+                .map(|s| s.items)
+                .unwrap_or_default(),
             identity: resp.identity,
         }
     }
@@ -49,16 +54,44 @@ impl ActiveConfig {
             correlation_id: String::new(),
             configuration_changed: true,
             current_versions: Some(self.section_versions.clone()),
-            rules: self.rules.clone(),
-            zones: self.zones.clone(),
-            zone_interfaces: self.zone_interfaces.clone(),
-            zone_pairs: self.zone_pairs.clone(),
-            nat_rules: self.nat_rules.clone(),
-            dns_blacklist: self.dns_blacklist.clone(),
-            ssl_bypass_list: self.ssl_bypass_list.clone(),
-            ips_signatures: self.ips_signatures.clone(),
+            rules: Some(RuleSet {
+                version: self.section_versions.rules,
+                checksum: String::new(),
+                items: self.rules.clone(),
+            }),
+            zones: Some(ZoneSet {
+                version: self.section_versions.zones,
+                items: self.zones.clone(),
+            }),
+            zone_interfaces: Some(ZoneInterfaceSet {
+                version: self.section_versions.zone_interfaces,
+                items: self.zone_interfaces.clone(),
+            }),
+            zone_pairs: Some(ZonePairSet {
+                version: self.section_versions.zone_pairs,
+                items: self.zone_pairs.clone(),
+            }),
+            nat_rules: Some(NatRuleSet {
+                version: self.section_versions.nat_rules,
+                items: self.nat_rules.clone(),
+            }),
+            dns_blacklist: Some(DnsBlacklistSet {
+                version: self.section_versions.dns_blacklist,
+                items: self.dns_blacklist.clone(),
+            }),
+            ssl_bypass_list: Some(SslBypassSet {
+                version: self.section_versions.ssl_bypass_list,
+                items: self.ssl_bypass_list.clone(),
+            }),
+            ips_signatures: Some(IpsSignatureSet {
+                version: self.section_versions.ips_signatures,
+                items: self.ips_signatures.clone(),
+            }),
             ml_model: self.ml_model.clone(),
-            firewall_certificates: self.firewall_certificates.clone(),
+            firewall_certificates: Some(FirewallCertificateSet {
+                version: self.section_versions.certificates,
+                items: self.firewall_certificates.clone(),
+            }),
             identity: self.identity.clone(),
         }
     }
@@ -75,42 +108,42 @@ impl ActiveConfig {
             bundle_checksum: resp.bundle_checksum,
             section_versions: current_versions,
             rules: if changed.rules {
-                resp.rules
+                resp.rules.map(|s| s.items).unwrap_or_default()
             } else {
                 self.rules.clone()
             },
             zones: if changed.zones {
-                resp.zones
+                resp.zones.map(|s| s.items).unwrap_or_default()
             } else {
                 self.zones.clone()
             },
             zone_interfaces: if changed.zone_interfaces {
-                resp.zone_interfaces
+                resp.zone_interfaces.map(|s| s.items).unwrap_or_default()
             } else {
                 self.zone_interfaces.clone()
             },
             zone_pairs: if changed.zone_pairs {
-                resp.zone_pairs
+                resp.zone_pairs.map(|s| s.items).unwrap_or_default()
             } else {
                 self.zone_pairs.clone()
             },
             nat_rules: if changed.nat_rules {
-                resp.nat_rules
+                resp.nat_rules.map(|s| s.items).unwrap_or_default()
             } else {
                 self.nat_rules.clone()
             },
             dns_blacklist: if changed.dns_blacklist {
-                resp.dns_blacklist
+                resp.dns_blacklist.map(|s| s.items).unwrap_or_default()
             } else {
                 self.dns_blacklist.clone()
             },
             ssl_bypass_list: if changed.ssl_bypass_list {
-                resp.ssl_bypass_list
+                resp.ssl_bypass_list.map(|s| s.items).unwrap_or_default()
             } else {
                 self.ssl_bypass_list.clone()
             },
             ips_signatures: if changed.ips_signatures {
-                resp.ips_signatures
+                resp.ips_signatures.map(|s| s.items).unwrap_or_default()
             } else {
                 self.ips_signatures.clone()
             },
@@ -121,6 +154,8 @@ impl ActiveConfig {
             },
             firewall_certificates: if changed.certificates {
                 resp.firewall_certificates
+                    .map(|s| s.items)
+                    .unwrap_or_default()
             } else {
                 self.firewall_certificates.clone()
             },
@@ -136,6 +171,7 @@ impl ActiveConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::ser::State::Empty;
 
     fn base_versions() -> ConfigSectionVersions {
         ConfigSectionVersions {
@@ -177,6 +213,7 @@ mod tests {
             ssl_bypass_list: Vec::new(),
             ips_signatures: Vec::new(),
             ml_model: Some(MlModel {
+                version: 0,
                 id: "model-1".into(),
                 name: "model".into(),
                 artifact_path: "/tmp/model.onnx".into(),
@@ -200,7 +237,7 @@ mod tests {
                 correlation_id: "corr".into(),
                 configuration_changed: true,
                 current_versions: Some(next_versions),
-                nat_rules: Vec::new(),
+                nat_rules: None,
                 ..Default::default()
             })
             .expect("delta should apply");

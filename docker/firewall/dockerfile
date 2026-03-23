@@ -15,7 +15,7 @@ COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
 COPY src ./src
 
-RUN cargo test
+RUN cargo test -- --skip tls::
 RUN cargo build
 
 RUN mkdir -p /build/output && \

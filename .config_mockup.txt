@@ -1,0 +1,63 @@
+rule1:
+    desc: "bla bla bla"
+    filter:
+        match(ip_ver) {
+            v4 => match(mac) {
+                "00:11:22:33:44:55" => {
+                    allow
+                },
+                "66:77:88:99:AA:BB" => {
+                    warn_and_allow
+                },
+                _ => {
+                    drop
+                }
+
+                match(ip) {
+                    "192.168.0.1" => {
+                        match(source_port) {
+                            80 => allow
+                                match(protocol) {
+                                    "TCP" => allow
+                                    _ => drop
+                                }
+                            443 => allow
+                            _ => drop
+                        }
+                    },
+
+                    "192.168.0.*" => {
+                        warn_and_allow
+                    },
+
+                    _ => match(destionation_port) {
+                        22 => allow
+                        _ => drop
+                    }
+
+                    match(arrival_time) {
+                        match(hour) {
+                            0..=6 => drop
+                            _ => allow
+                    }
+                    match(day_of_week) {
+                        "Saturday" | "Sunday" => drop
+                        _ => allow
+                }
+            }
+            match (protocol) {
+                "TCP" => allow
+                "UDP" => warn_and_allow
+            _ => drop
+            match(flow) {
+                match(confidence) {
+                    > 0.5 => allow
+                    _ => drop
+                }
+            }
+
+            v6 => {
+                drop
+            }
+    
+        }

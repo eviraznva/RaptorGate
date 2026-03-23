@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "id": "07c5b5fb-4304-4997-90e4-115af50098bb",
+      "type": "SNAT",
+      "isActive": true,
+      "srcIp": "192.168.1.10",
+      "dstIp": null,
+      "srcPort": null,
+      "dstPort": null,
+      "translatedIp": "172.16.0.20",
+      "translatedPort": null,
+      "priority": 10,
+      "createdAt": "2026-03-23T06:43:47.449Z",
+      "updatedAt": "2026-03-23T06:51:19.805Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    }
+  ]
+}
