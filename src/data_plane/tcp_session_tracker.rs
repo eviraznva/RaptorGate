@@ -1013,4 +1013,53 @@ mod tests {
 
         assert!(!tracker.sessions.contains_key(&id), "session should be removed after TimeWait timeout");
     }
+
+    #[tokio::test]
+    async fn multiple_concurrent_sessions_all_cleaned_up_after_timewait() {
+        let mut tracker = TcpSessionTracker::new();
+        Arc::get_mut(&mut tracker).unwrap().timewait_timeout = Duration::from_millis(500);
+
+        // Three independent sessions with distinct client ports
+        let sessions: Vec<(EndpointIdentifier, EndpointIdentifier, u32, u32)> = vec![
+            (
+                EndpointIdentifier { ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), port: Port::from(1001u16) },
+                EndpointIdentifier { ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), port: Port::from(443u16) },
+                1000, 5000,
+            ),
+            (
+                EndpointIdentifier { ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), port: Port::from(1002u16) },
+                EndpointIdentifier { ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), port: Port::from(443u16) },
+                2000, 6000,
+            ),
+            (
+                EndpointIdentifier { ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)), port: Port::from(1003u16) },
+                EndpointIdentifier { ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), port: Port::from(443u16) },
+                3000, 7000,
+            ),
+        ];
+
+        let ids: Vec<TcpIdentifier> = sessions.iter().map(|(c, s, _, _)| TcpIdentifier {
+            endpoints: UnorderedPair::from((c.clone(), s.clone())),
+        }).collect();
+
+        for (c, s, isn_c, isn_s) in &sessions {
+            // Handshake
+            tracker.process_tcp(make_packet(c.clone(), s.clone(), TcpFlags::SYN, *isn_c, 0, 8192, 0)).unwrap();
+            tracker.process_tcp(make_packet(s.clone(), c.clone(), TcpFlags::SYN | TcpFlags::ACK, *isn_s, isn_c + 1, 8192, 0)).unwrap();
+            tracker.process_tcp(make_packet(c.clone(), s.clone(), TcpFlags::ACK, isn_c + 1, isn_s + 1, 8192, 0)).unwrap();
+            // Close
+            tracker.process_tcp(make_packet(c.clone(), s.clone(), TcpFlags::FIN | TcpFlags::ACK, isn_c + 1, isn_s + 1, 8192, 0)).unwrap();
+            tracker.process_tcp(make_packet(s.clone(), c.clone(), TcpFlags::FIN | TcpFlags::ACK, isn_s + 1, isn_c + 2, 8192, 0)).unwrap();
+            tracker.process_tcp(make_packet(c.clone(), s.clone(), TcpFlags::ACK, isn_c + 2, isn_s + 2, 8192, 0)).unwrap();
+        }
+
+        for id in &ids {
+            assert!(tracker.sessions.contains_key(id), "session {id:?} should be in TimeWait");
+        }
+        assert_eq!(tracker.sessions.len(), 3);
+
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
+        assert_eq!(tracker.sessions.len(), 0, "all sessions should be cleaned up after TimeWait timeout");
+    }
 }
