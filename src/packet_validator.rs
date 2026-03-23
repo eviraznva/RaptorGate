@@ -2,7 +2,7 @@ use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum InvalidReason {
+pub(crate) enum InvalidReason {
     #[error("TTL is zero")]
     TtlZero,
     #[error("invalid IPv4 header checksum")]
@@ -16,7 +16,7 @@ pub enum InvalidReason {
 }
 
 // Sprawdza czy pakiet jest poprawny: TTL, suma kontrolna IPv4 i L4.
-pub fn validate(packet: &SlicedPacket) -> Result<(), InvalidReason> {
+pub(crate) fn validate(packet: &SlicedPacket) -> Result<(), InvalidReason> {
     let ipv4 = match &packet.net {
         Some(NetSlice::Ipv4(ipv4)) => ipv4,
         _ => return Ok(()),

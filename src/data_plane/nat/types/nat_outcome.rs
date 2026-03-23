@@ -1,4 +1,4 @@
-use crate::data_plane::nat::types::nat_binding_direction::NatBindingDirection;
+use crate::data_plane::nat::types::nat_binding::NatBindingDirection;
 
 #[derive(Debug)]
 pub enum NatOutcome {

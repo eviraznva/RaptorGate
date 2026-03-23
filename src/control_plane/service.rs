@@ -100,11 +100,11 @@ pub async fn run(
                         )?;
                     }
                     None => {
-                        tracing::warn!("No snapshot available — entering SAFE-DENY mode (drop all)");
+                        tracing::warn!("No snapshot available — entering ALLOW-ALL mode (dev/test)");
                         status.set_phase(LifecyclePhase::SafeDeny);
                         status.set_mode(FirewallMode::SafeDeny);
                         status.set_version(None);
-                        publish_safe_deny(&policy_tx)?;
+                        publish_fallback(&policy_tx, false)?;
                     }
                 }
             }
@@ -413,6 +413,16 @@ fn publish_active_config(
     source: PolicySource,
 ) -> Result<(), ControlPlaneError> {
     let policy = compiler::compile_from_active_config(active_config, block_icmp, source)
+        .map_err(|err| ControlPlaneError::PolicyCompile(err.to_string()))?;
+    let _ = policy_tx.send(Arc::new(policy));
+    Ok(())
+}
+
+fn publish_fallback(
+    policy_tx: &watch::Sender<Arc<CompiledPolicy>>,
+    block_icmp: bool,
+) -> Result<(), ControlPlaneError> {
+    let policy = compiler::compile_fallback(block_icmp)
         .map_err(|err| ControlPlaneError::PolicyCompile(err.to_string()))?;
     let _ = policy_tx.send(Arc::new(policy));
     Ok(())

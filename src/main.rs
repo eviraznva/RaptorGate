@@ -1,66 +1,44 @@
-use std::sync::Arc;
-
-use tun::AsyncDevice;
-
 mod config;
 mod control_plane;
 mod data_plane;
+mod policy;
 mod frame;
 mod ip_defrag;
-mod policy;
+mod packet_validator;
 mod policy_evaluator;
 mod rule_tree;
 mod tls;
 
+use ipnet::IpNet;
+use std::net::IpAddr;
+use std::sync::{Arc};
+use tokio::sync::Mutex;
+use std::collections::HashMap;
+
+use crate::tls::CaManager;
 use crate::config::AppConfig;
-use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+use crate::policy::nat::nat_rules::NatRules;
+use crate::policy::nat::port_range::PortRange;
+use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::runtime as data_plane_runtime;
-use crate::policy_evaluator::PolicyEvaluator;
-use crate::rule_tree::{ArmEnd, FieldValue, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
-use crate::tls::CaManager;
+use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
+use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .init();
+
     let config = match AppConfig::from_env() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Configuration error: {e}");
-            return;
-        }
-    };
-
-    let all_devices = match pcap::Device::list() {
-        Ok(list) => list,
+        Ok(config) => config,
         Err(err) => {
-            eprintln!("Device lookup error: {err:?}");
-            return;
-        }
-    };
-
-    let devices: Vec<pcap::Device> = all_devices
-        .into_iter()
-        .filter(|dev| config.capture_interfaces.contains(&dev.name))
-        .collect();
-
-    if devices.is_empty() {
-        eprintln!("No matching devices found");
-        return;
-    }
-
-    println!(
-        "Using devices: {}",
-        devices
-            .iter()
-            .map(|d| d.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-
-    let tun = match setup_tun(&config.tun_device_name, config.tun_address, config.tun_netmask) {
-        Ok(t) => Arc::new(t),
-        Err(e) => {
-            eprintln!("Can't set up tun: {e:?}");
+            eprintln!("Configuration error: {err}");
             return;
         }
     };
@@ -84,57 +62,61 @@ async fn main() {
     let control_plane = match ControlPlane::start(cp_config).await {
         Ok(control_plane) => control_plane,
         Err(err) => {
-            eprintln!("Control plane startup error: {err:?}");
+            eprintln!("Failed to start control plane: {err}");
             return;
         }
     };
+
+    let handle = control_plane.handle();
+    let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
+
+    let nat = build_test_nat();
+
+    if let Err(err) = data_plane_runtime::run(&config, policy_store, nat).await {
+        eprintln!("Data plane error: {err}");
+    }
+
+    if let Err(err) = control_plane.shutdown().await {
+        eprintln!("Control plane shutdown error: {err}");
+    }
 }
 
-fn build_policy(block_icmp: bool) -> PolicyEvaluator {
-    use frame::Protocol;
+fn build_test_nat() -> Arc<Mutex<NatEngine>> {
+    let interface_ips = HashMap::from([
+        ("eth1".to_string(), "192.168.10.254".parse::<IpAddr>().unwrap()),
+        ("eth2".to_string(), "192.168.20.254".parse::<IpAddr>().unwrap()),
+    ]);
 
-    let tree = if block_icmp {
-        RuleTree::new(
-            "default".into(),
-            "Block ICMP, allow everything else".into(),
-            MatchBuilder::with_arm(
-                MatchKind::Protocol,
-                Pattern::Equal(FieldValue::Protocol(Protocol::Icmp)),
-                ArmEnd::Verdict(Verdict::Drop),
-            )
-            .arm(Pattern::Wildcard, ArmEnd::Verdict(Verdict::Allow))
-            .build()
-            .expect("default policy is valid"),
-        )
-    } else {
-        RuleTree::new(
-            "default".into(),
-            "Allow everything".into(),
-            MatchBuilder::with_arm(
-                MatchKind::Protocol,
-                Pattern::Wildcard,
-                ArmEnd::Verdict(Verdict::Allow),
-            )
-            .build()
-            .expect("default policy is valid"),
-        )
-    };
+    let rules = NatRules::new(vec![
+        NatRule::new(
+            "masq-lan1-to-lan2".to_string(),
+            10,
+            None,
+            Some("eth2".to_string()),
+            None,
+            None,
+            Some("192.168.10.0/24".parse::<IpNet>().unwrap()),
+            None,
+            None,
+            None,
+            None,
+            NatAction::Masquerade,
+        ),
+        NatRule::new(
+            "dnat-portfwd-8080-to-h1-80".to_string(),
+            20,
+            Some("eth2".to_string()),
+            None,
+            None,
+            None,
+            None,
+            Some("192.168.10.10/32".parse::<IpNet>().unwrap()),
+            Some(NatProtocol::Tcp),
+            Some(80),
+            Some(8080),
+            NatAction::Dnat,
+        ),
+    ]);
 
-    PolicyEvaluator::new(tree, Verdict::Drop)
-}
-
-fn setup_tun(name: &str, address: std::net::Ipv4Addr, netmask: std::net::Ipv4Addr) -> tun::Result<AsyncDevice> {
-    let mut config = tun::Configuration::default();
-    config
-        .tun_name(name)
-        .address(address)
-        .netmask(netmask)
-        .up();
-
-    #[cfg(target_os = "linux")]
-    config.platform_config(|config| {
-        config.ensure_root_privileges(true);
-    });
-
-    tun::create_as_async(&config)
+    Arc::new(Mutex::new(NatEngine::new(&Some(Arc::new(rules)), interface_ips)))
 }

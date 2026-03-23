@@ -50,6 +50,12 @@ def setup_nftables
     nft add rule inet filter forward iif "tun0" accept
     nft add rule inet filter forward oif "tun0" accept
 
+    # Userspace DNAT publishes TCP/8080 on r1's eth2 address (192.168.20.254),
+    # but the Linux local TCP stack must not see that traffic. If INPUT accepts
+    # it, the kernel treats it as a local connection and eventually sends RSTs,
+    # breaking the userspace-forwarded session.
+    nft insert rule inet filter input iifname "eth2" ip daddr 192.168.20.254 tcp dport 8080 drop
+
     # Allow loopback, established/related connections, and SSH access to the VM
     nft add rule inet filter input iif lo accept
     nft add rule inet filter input ct state established,related accept
@@ -116,6 +122,9 @@ def setup_ngfw_service
     sysctl -w net.ipv4.conf.all.rp_filter=0
     sysctl -w net.ipv4.conf.default.rp_filter=0
     sysctl -w net.ipv4.conf.tun0.rp_filter=0
+    sysctl -w net.ipv4.conf.all.accept_local=1
+    sysctl -w net.ipv4.conf.tun0.accept_local=1
+    sysctl -w net.ipv4.conf.eth2.accept_local=1
 
     mkdir -p /resources/ngfw
     mkdir -p /resources/ngfw/.data

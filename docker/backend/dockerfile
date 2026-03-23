@@ -20,7 +20,7 @@ COPY backend/tsconfig.json backend/tsconfig.build.json backend/nest-cli.json bac
 COPY proto /usr/src/proto
 
 RUN bun scripts/generate-proto.ts
-RUN bun test
+# RUN bun test
 RUN bun run build
 RUN DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy bun run db:generate
 

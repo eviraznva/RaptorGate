@@ -149,7 +149,7 @@ impl Parser {
     fn parse_arms(&mut self) -> Result<Vec<AstArm>, ParseError> {
         let mut arms = Vec::new();
         while let Some(arm) = self.parse_arm()? {
-            arms.push(arm); 
+            arms.push(arm);
         }
 
         Ok(arms)

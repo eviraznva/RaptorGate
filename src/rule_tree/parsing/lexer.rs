@@ -41,7 +41,7 @@ pub(crate) struct Position {
 impl Position {
     pub fn for_tests(row: Row, col: Col) -> Self {
         Position { row, col }
-    } 
+    }
 }
 
 #[derive(Debug, Clone, Copy, From, Add, AddAssign, PartialEq)]

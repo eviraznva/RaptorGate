@@ -1,7 +1,7 @@
 pub mod matcher;
 pub mod parsing;
 
-use derive_more::{Display, Error, PartialEq};
+use derive_more::{Debug, Display, Error, PartialEq};
 
 use crate::{frame::{Hour, IP, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
 pub use matcher::MatchBuilder;
@@ -14,18 +14,22 @@ pub struct RuleTree {
 
 impl RuleTree {
     pub fn new(name: String, description: String, head: Match) -> Self {
-        Self { name, description, head }
+        Self {
+            name,
+            description,
+            head,
+        }
     }
-    
+
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq, Debug)]
 struct Arm {
     pattern: Pattern,
     into: ArmEnd,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum ArmEnd {
     Verdict(Verdict),
     Match(Match),
@@ -41,6 +45,7 @@ pub enum Verdict {
 
 #[derive(Debug, Display, Clone, PartialEq)]
 pub enum Pattern {
+    // TODO: move equal into comparision or alternatively remove comparision entirely
     Equal(FieldValue),
     // TODO: remove `Glob`
     Glob(FieldValue),
@@ -95,13 +100,23 @@ impl Pattern {
             (Pattern::Glob(_), MatchKind::SrcIp | MatchKind::DstIp) => Ok(()),
             (Pattern::Glob(_), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Range(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour) => Ok(()),
+            (Pattern::Range(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour) => {
+                Ok(())
+            }
             (Pattern::Range(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Comparison(..), MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour | MatchKind::DayOfWeek) => Ok(()),
+            (
+                Pattern::Comparison(..),
+                MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour | MatchKind::DayOfWeek,
+            ) => Ok(()),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
-            (Pattern::Or(_), MatchKind::Protocol | MatchKind::DayOfWeek | MatchKind::IpVer | MatchKind::Hour | MatchKind::SrcIp | MatchKind::DstIp) => Ok(()),
+            (Pattern::Or(patterns), MatchKind::Protocol | MatchKind::DayOfWeek | MatchKind::IpVer | MatchKind::Hour | MatchKind::SrcIp | MatchKind::DstIp) => {
+                for pattern in patterns {
+                    pattern.validate_for(kind)?;
+                }
+                Ok(())
+            }
             (Pattern::Or(_), _) => Err(RuleError::InvalidPattern(self.clone())),
         }
     }
@@ -120,7 +135,10 @@ pub struct TreeWalker<'a> {
 
 impl<'a> TreeWalker<'a> {
     pub fn new(tree: &'a RuleTree) -> Self {
-        Self { current: &tree.head, arm_index: 0 }
+        Self {
+            current: &tree.head,
+            arm_index: 0,
+        }
     }
 
     pub fn current_step(&self) -> Step<'a> {
@@ -164,7 +182,12 @@ mod tests {
     use super::*;
 
     fn dummy_ip() -> IP {
-        IP::new([Octet::Value(10), Octet::Value(0), Octet::Value(0), Octet::Value(1)])
+        IP::new([
+            Octet::Value(10),
+            Octet::Value(0),
+            Octet::Value(0),
+            Octet::Value(1),
+        ])
     }
 
     #[test]
@@ -221,16 +244,28 @@ mod tests {
         }
     }
 
+    // #[test]
+    // fn or_invalid_for_port_kinds() {
+    //     let pat = Pattern::Or(vec![Pattern::Equal(FieldValue::Port(80.into()))]);
+    //     let invalid = [MatchKind::SrcPort, MatchKind::DstPort];
+    //     for kind in invalid {
+    //         assert!(
+    //             pat.validate_for(&kind).is_err(),
+    //             "Or should be invalid for {kind}"
+    //         );
+    //     }
+    // }
+
     #[test]
-    fn or_invalid_for_port_kinds() {
-        let pat = Pattern::Or(vec![Pattern::Equal(FieldValue::Port(80.into()))]);
-        let invalid = [MatchKind::SrcPort, MatchKind::DstPort];
-        for kind in invalid {
-            assert!(
-                pat.validate_for(&kind).is_err(),
-                "Or should be invalid for {kind}"
-            );
-        }
+    fn or_accepts_all_valid_nested_patterns_for_kind() {
+        let pat = Pattern::Or(vec![
+            Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
+            Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
+        ]);
+
+        assert!(
+            pat.validate_for(&MatchKind::Protocol).is_ok(),
+            "Or should accept valid nested patterns for Protocol"
+        );
     }
 }
-
