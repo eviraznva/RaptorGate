@@ -23,7 +23,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:generate": "drizzle-kit generate",
     "proto:generate": "bun scripts/generate-proto.ts",
-    "db:seed": "tsx seed.ts"
+    "db:seed": "tsx seed.ts",
+    "test:integration:grpc": "RUN_FIREWALL_INTEGRATION=1 jest --testPathPatterns=raptorgate-grpc.integration --verbose --forceExit"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.3",

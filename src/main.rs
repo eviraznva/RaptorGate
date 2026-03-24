@@ -93,20 +93,20 @@ fn build_test_nat() -> Arc<Mutex<NatEngine>> {
     ]);
 
     let rules = NatRules::new(vec![
-        NatRule::new(
-            "masq-lan1-to-lan2".to_string(),
-            10,
-            None,
-            Some("eth2".to_string()),
-            None,
-            None,
-            Some("192.168.10.0/24".parse::<IpNet>().unwrap()),
-            None,
-            None,
-            None,
-            None,
-            NatAction::Masquerade,
-        ),
+        // NatRule::new(
+        //     "masq-lan1-to-lan2".to_string(),
+        //     10,
+        //     None,
+        //     Some("eth2".to_string()),
+        //     None,
+        //     None,
+        //     Some("192.168.10.0/24".parse::<IpNet>().unwrap()),
+        //     None,
+        //     None,
+        //     None,
+        //     None,
+        //     NatAction::Masquerade,
+        // ),
         NatRule::new(
             "dnat-portfwd-8080-to-h1-80".to_string(),
             20,

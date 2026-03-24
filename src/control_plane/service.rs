@@ -40,18 +40,20 @@ pub async fn run(
     shutdown: CancellationToken,
 ) -> Result<(), ControlPlaneError> {
     if let Some(ref dsl) = config.dev_policy_override {
-        panic!("DEV MODE: Control plane is running with a policy override. This should only be used for testing and development purposes, and not in production environments.");
+        tracing::warn!("DEV MODE: Control plane is running with a policy override. This should only be used for testing and development purposes, and not in production environments.");
         tracing::info!("DEV MODE: Applying policy override and skipping control plane syncing.");
 
         let override_policy = compiler::compile_override(dsl)
             .map_err(|err| ControlPlaneError::PolicyCompile(err.to_string()))?;
 
-        // let override_policy = compiler::compile_override(dsl).expect("ERROR: couldnt compile override policy");
-
+        tracing::info!("DEV MODE: Override policy compiled successfully");
         let _ = policy_tx.send(Arc::new(override_policy));
+        tracing::info!("DEV MODE: Override policy activated, entering Normal phase");
         status.set_phase(LifecyclePhase::Normal);
+        tracing::info!("DEV MODE: Control plane idle — backend connection and heartbeat disabled in override mode");
 
         shutdown.cancelled().await;
+        tracing::info!("DEV MODE: Shutdown signal received, exiting");
         return Ok(());
     }
 
