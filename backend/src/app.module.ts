@@ -5,6 +5,7 @@ import { ConfigSnapshotModule } from './modules/config-snapshot.module';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
 import { GrpcModule } from './infrastructure/grpc/grpc.module';
 import { ZonePairsModule } from './modules/zone-pairs.module';
+import { RealtimeModule } from './modules/realtime.module';
 import { validate } from './shared/config/env.validation';
 import { RulesModule } from './modules/rules.module';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
@@ -31,6 +32,7 @@ import { Module } from '@nestjs/common';
     ]),
     ConfigSnapshotModule,
     ZonePairsModule,
+    RealtimeModule,
     PassportModule,
     RulesModule,
     GrpcModule,
