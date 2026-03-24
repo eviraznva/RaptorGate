@@ -3,6 +3,7 @@ import { DomainExceptionFilter } from './presentation/filters/domain-exception.f
 import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard';
 import { ConfigSnapshotModule } from './modules/config-snapshot.module';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
+import { GrpcModule } from './infrastructure/grpc/grpc.module';
 import { ZonePairsModule } from './modules/zone-pairs.module';
 import { validate } from './shared/config/env.validation';
 import { RulesModule } from './modules/rules.module';
@@ -32,6 +33,7 @@ import { Module } from '@nestjs/common';
     ZonePairsModule,
     PassportModule,
     RulesModule,
+    GrpcModule,
     AuthModule,
     ZoneModule,
     NatModule,
