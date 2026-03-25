@@ -55,41 +55,6 @@ def setup_nftables
     nft add rule inet filter input tcp dport 2201 ct state new accept
   SHELL
 end
-def setup_postgres
-  <<-SHELL
-    apt-get update -qq
-    apt-get install -y --no-install-recommends postgresql postgresql-contrib
-
-    systemctl enable postgresql
-    systemctl start postgresql
-
-    # Create database and user
-    sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='raptorgate'" | grep -q 1 || \
-      sudo -u postgres psql -c "CREATE USER raptorgate WITH PASSWORD 'raptorgate';"
-    sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='raptorgate'" | grep -q 1 || \
-      sudo -u postgres psql -c "CREATE DATABASE raptorgate OWNER raptorgate;"
-
-    # Allow connections from localhost only (default pg_hba.conf is fine)
-    echo "=== PostgreSQL setup complete ==="
-    echo "Host: localhost:5432"
-    echo "Database: raptorgate"
-    echo "User: raptorgate / raptorgate"
-  SHELL
-end
-
-def setup_redis
-  <<-SHELL
-    apt-get update -qq
-    apt-get install -y --no-install-recommends redis-server
-
-    systemctl enable redis-server
-    systemctl restart redis-server
-
-    echo "=== Redis setup complete ==="
-    echo "Host: localhost:6379"
-  SHELL
-end
-
 def setup_backend_service
   <<-SHELL
     chmod +x /resources/backend/bun
@@ -214,7 +179,7 @@ Vagrant.configure("2") do |config|
     r1.vm.provision "shell", inline:
       configure_interface("eth1", "192.168.10.254", "24") +
       configure_interface("eth2", "192.168.20.254", "24") +
-      setup_tun_device + setup_nftables + setup_ngfw_service + setup_postgres + setup_backend_service
+      setup_tun_device + setup_nftables + setup_ngfw_service + setup_backend_service
 
     # r1 has two interfaces, no gateway needed since it IS the gateway
   end
