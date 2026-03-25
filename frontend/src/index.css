@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+/* RaptorGate theme */
+
+:root {
+  --raptor-bg: #0c0c0c;
+  --raptor-panel: #161616;
+  --raptor-border: #262626;
+  --raptor-accent: #06b6d4;
+  --raptor-text: #f5f5f5;
+}
+
+/* base */
+
+body {
+  margin: 0;
+  background: var(--raptor-bg);
+  color: var(--raptor-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* reusable components */
+
+.panel {
+  background: var(--raptor-panel);
+  border: 1px solid var(--raptor-border);
+}
+
+.input {
+  background: #0c0c0c;
+  border: 1px solid var(--raptor-border);
+  padding: 0.75rem 1rem;
+  width: 100%;
+  color: white;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--raptor-accent);
+}
+
+.btn-primary {
+  background: var(--raptor-accent);
+  color: black;
+  padding: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #0891b2;
+}

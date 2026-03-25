@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package raptorgate.control;
+
+service RaptorLangValidationService {
+  rpc ValidateRaptorLang(ValidateRaptorLangRequest)
+      returns (ValidateRaptorLangResponse);
+}
+
+message ValidateRaptorLangRequest {
+  string dsl = 1;
+}
+
+message ValidateRaptorLangResponse {
+  bool is_valid = 1;
+  string error_message = 2;
+}
