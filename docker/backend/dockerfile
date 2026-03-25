@@ -15,20 +15,17 @@ RUN bun install --frozen-lockfile
 
 COPY backend/src ./src
 COPY backend/scripts ./scripts
-COPY backend/drizzle ./drizzle
-COPY backend/tsconfig.json backend/tsconfig.build.json backend/nest-cli.json backend/drizzle.config.ts ./
+COPY backend/tsconfig.json backend/tsconfig.build.json backend/nest-cli.json ./
 COPY proto /usr/src/proto
 
 RUN bun scripts/generate-proto.ts
 # RUN bun test
 RUN bun run build
-RUN DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy bun run db:generate
 
 RUN mkdir -p /build/output/backend \
  && cp -R dist /build/output/backend/dist \
  && cp -R node_modules /build/output/backend/node_modules \
- && cp -R drizzle /build/output/backend/drizzle \
- && cp package.json bun.lock drizzle.config.ts /build/output/backend/ \
+ && cp package.json bun.lock /build/output/backend/ \
  && cp /usr/local/bin/bun /build/output/backend/bun
 
 FROM alpine:3.19 AS runtime
