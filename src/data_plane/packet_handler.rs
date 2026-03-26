@@ -8,7 +8,8 @@ use tokio::sync::Mutex;
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::nat::types::nat_outcome::NatOutcome;
 use crate::data_plane::policy_store::PolicyStore;
-use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
+use crate::data_plane::tcp_session_tracker::{TcpSessionState, TcpSessionTracker};
+use crate::dpi::{DpiClassifier, InspectResult};
 use crate::frame::RealFrame;
 use crate::ip_defrag::{DefragResult, IpDefragEngine};
 use crate::rule_tree::Verdict;
@@ -22,6 +23,7 @@ pub async fn handle_packet(
     policies: &PolicyStore,
     defrag: &Arc<IpDefragEngine>,
     tcp: &TcpSessionTracker,
+    dpi: &DpiClassifier,
     nat: &Arc<Mutex<NatEngine>>,
 ) {
     let packet = match SlicedPacket::from_ethernet(data) {
@@ -61,14 +63,14 @@ pub async fn handle_packet(
         match defrag.process(&SlicedPacket::from_ethernet(&buf).unwrap()) {
             DefragResult::Pending => {}
             DefragResult::Complete(eth_frame) => {
-                forward_packet(iface, &eth_frame, &SlicedPacket::from_ethernet(&eth_frame).expect("nwm co tu sie odjebalo"), tun, policies, tcp, nat).await;
+                forward_packet(iface, &eth_frame, &SlicedPacket::from_ethernet(&eth_frame).expect("nwm co tu sie odjebalo"), tun, policies, tcp, dpi, nat).await;
             }
             DefragResult::CompleteWithAnomaly(eth_frame, anomalies) => {
                 eprintln!(
                     "[{iface}] WARN (defrag anomalies: {})",
                     anomalies.join("; ")
                 );
-                forward_packet(iface, &eth_frame, &SlicedPacket::from_ethernet(&eth_frame).expect("nwm co tu sie odjebalo"), tun, policies, tcp, nat).await;
+                forward_packet(iface, &eth_frame, &SlicedPacket::from_ethernet(&eth_frame).expect("nwm co tu sie odjebalo"), tun, policies, tcp, dpi, nat).await;
             }
             DefragResult::Dropped(reason) => {
                 println!("[{iface}] DROP (defrag: {reason})");
@@ -77,28 +79,47 @@ pub async fn handle_packet(
         return;
     }
 
-    forward_packet(iface, &buf, &packet, tun, policies, tcp, nat).await;
+    forward_packet(iface, &buf, &packet, tun, policies, tcp, dpi, nat).await;
 }
 
 // Ocena polityki dla zlozonego lub niesfragmentowanego pakietu i przekazuje go do TUN.
-async fn forward_packet(iface: &str, raw: &[u8], packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore, tcp_sessions: &TcpSessionTracker, nat: &Arc<Mutex<NatEngine>>) {
+async fn forward_packet(iface: &str, raw: &[u8], packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore, tcp_sessions: &TcpSessionTracker, dpi: &DpiClassifier, nat: &Arc<Mutex<NatEngine>>) {
     let compiled_policy = policies.load();
     let verdict = RealFrame::from_sliced(packet).map(|frame| compiled_policy.evaluator().evaluate(&frame));
 
     let allowed_tcp = match tcp_sessions.process_packet(packet) {
-        Ok(state) => { 
+        Ok(state) => {
             #[cfg(debug_assertions)]
             if state.is_some() {
                 println!("sessions: {:?}", tcp_sessions.get_sessions_between([192, 168, 10], [192, 168, 20]));
             }
 
-            true 
+            // Sprzątanie sesji DPI po zamknięciu TCP
+            if matches!(state, Some(TcpSessionState::Closed | TcpSessionState::TimeWait)) {
+                if let Some((src, dst)) = flow_endpoints(packet) {
+                    dpi.remove_session(src.0, src.1, dst.0, dst.1);
+                }
+            }
+
+            true
         },
         Err(err) => {
             eprintln!("Rejected tcp with {err}");
             false
         }
     };
+
+    // Inspekcja DPI
+    let dpi_result = dpi.inspect_packet(packet);
+    match &dpi_result {
+        InspectResult::Done(ctx) => {
+            tracing::info!(iface, ?ctx, "DPI: classification done");
+        }
+        InspectResult::NeedMore => {
+            tracing::trace!(iface, "DPI: need more packets");
+        }
+        InspectResult::Skipped => {}
+    }
 
     let allowed_policy = matches!(verdict, Some(Verdict::Allow | Verdict::AllowWarn(_)));
 
@@ -208,4 +229,15 @@ fn infer_out_interface(dst_ip: std::net::IpAddr) -> Option<&'static str> {
         std::net::IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 20] => Some("eth2"),
         _ => None,
     }
+}
+
+// Zwraca (src_ip, src_port) i (dst_ip, dst_port) z pakietu TCP/UDP.
+fn flow_endpoints(packet: &SlicedPacket<'_>) -> Option<((std::net::IpAddr, u16), (std::net::IpAddr, u16))> {
+    let (src_ip, dst_ip) = packet_endpoints(packet)?;
+    let (src_port, dst_port) = match &packet.transport {
+        Some(TransportSlice::Tcp(tcp)) => (tcp.source_port(), tcp.destination_port()),
+        Some(TransportSlice::Udp(udp)) => (udp.source_port(), udp.destination_port()),
+        _ => return None,
+    };
+    Some(((src_ip, src_port), (dst_ip, dst_port)))
 }

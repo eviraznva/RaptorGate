@@ -1,6 +1,7 @@
 mod config;
 mod control_plane;
 mod data_plane;
+mod dpi;
 mod frame;
 mod ip_defrag;
 mod packet_validator;
@@ -24,6 +25,7 @@ use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::runtime::CompiledPolicy;
+use crate::dpi::DpiClassifier;
 use crate::tls::CaManager;
 
 #[tokio::main]
@@ -70,8 +72,9 @@ async fn main() {
     let handle = control_plane.handle();
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
     let tcp_session_tracker = TcpSessionTracker::new();
+    let dpi_classifier = Arc::new(DpiClassifier::new());
 
-    if let Err(err) = data_plane_runtime::run(&config, policy_store, tcp_session_tracker, build_test_nat()).await {
+    if let Err(err) = data_plane_runtime::run(&config, policy_store, tcp_session_tracker, dpi_classifier, build_test_nat()).await {
         eprintln!("Data plane error: {err}");
     }
 
