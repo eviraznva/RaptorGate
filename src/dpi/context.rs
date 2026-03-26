@@ -2,7 +2,7 @@ use super::AppProto;
 
 // Metadane zebrane przez klasyfikator DPI dla pojedynczej sesji.
 // Uzupełniane inkrementalnie podczas inspekcji pierwszych pakietów.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DpiContext {
     pub app_proto: Option<AppProto>,
     pub tls_sni: Option<String>,
