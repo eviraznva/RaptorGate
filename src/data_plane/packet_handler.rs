@@ -9,7 +9,7 @@ use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::nat::types::nat_outcome::NatOutcome;
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
-use crate::frame::RealFrame;
+
 use crate::ip_defrag::{DefragResult, IpDefragEngine};
 use crate::rule_tree::Verdict;
 
@@ -83,7 +83,8 @@ pub async fn handle_packet(
 // Ocena polityki dla zlozonego lub niesfragmentowanego pakietu i przekazuje go do TUN.
 async fn forward_packet(iface: &str, raw: &[u8], packet: &SlicedPacket<'_>, tun: &AsyncDevice, policies: &PolicyStore, tcp_sessions: &TcpSessionTracker, nat: &Arc<Mutex<NatEngine>>) {
     let compiled_policy = policies.load();
-    let verdict = RealFrame::from_sliced(packet).map(|frame| compiled_policy.evaluator().evaluate(&frame));
+    #[allow(unused_variables)]
+    let verdict: Option<Verdict> = None; // forward_packet is superseded by the new pipeline
 
     let allowed_tcp = match tcp_sessions.process_packet(packet) {
         Ok(state) => { 

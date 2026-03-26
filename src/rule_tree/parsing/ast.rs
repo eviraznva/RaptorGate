@@ -222,10 +222,13 @@ impl Parser {
                 self.consume()?;
 
                 Ok(Spanned {
-                    val: AstPattern::Or(Spanned { val: patterns, pos: token.pos }),
+                    val: AstPattern::Or(Spanned {
+                        val: patterns,
+                        pos: token.pos,
+                    }),
                     pos: token.pos,
                 })
-            },
+            }
 
             TokenType::Pattern(PatternType::And) => {
                 self.expect_token(TokenType::LParen)?;
@@ -237,11 +240,17 @@ impl Parser {
                 self.consume()?;
 
                 Ok(Spanned {
-                    val: AstPattern::And(Spanned { val: patterns, pos: token.pos }),
+                    val: AstPattern::And(Spanned {
+                        val: patterns,
+                        pos: token.pos,
+                    }),
                     pos: token.pos,
                 })
-            },
-            TokenType::Pattern(PatternType::Wildcard) => Ok(Spanned { val: AstPattern::Wildcard, pos: token.pos }),
+            }
+            TokenType::Pattern(PatternType::Wildcard) => Ok(Spanned {
+                val: AstPattern::Wildcard,
+                pos: token.pos,
+            }),
             TokenType::Pattern(PatternType::Equal) => {
                 let value = self.parse_value()?;
                 Ok(Spanned {
@@ -265,7 +274,10 @@ impl Parser {
             }
             TokenType::Pattern(PatternType::Lesser) => {
                 let value = self.parse_value()?;
-                Ok(Spanned { val: AstPattern::Lesser(value), pos: token.pos })
+                Ok(Spanned {
+                    val: AstPattern::Lesser(value),
+                    pos: token.pos,
+                })
             }
             TokenType::Pattern(PatternType::GreaterOrEqual) => {
                 let value = self.parse_value()?;
@@ -461,7 +473,9 @@ mod tests {
             tok(TokenType::Pattern(PatternType::Equal)),
             tok(TokenType::StringLiteral("tcp".into())),
         ]);
-        assert!(matches!(p.parse_pattern().unwrap().val, AstPattern::Equal(v) if matches!(&v.val, AstValue::StrLit(s) if s.val == "tcp")));
+        assert!(
+            matches!(p.parse_pattern().unwrap().val, AstPattern::Equal(v) if matches!(&v.val, AstValue::StrLit(s) if s.val == "tcp"))
+        );
     }
 
     #[test]
