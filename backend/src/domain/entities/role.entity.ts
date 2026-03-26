@@ -1,4 +1,4 @@
-import { Permission } from './permission.entity';
+import { Permission } from './permission.entity.js';
 
 export class Role {
   private constructor(

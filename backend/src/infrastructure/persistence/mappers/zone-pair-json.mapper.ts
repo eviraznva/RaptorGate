@@ -1,5 +1,8 @@
-import { ZonePairRecord } from '../schemas/zone-pairs.schema';
-import { ZonePair, ZonePairPolicy } from 'src/domain/entities/zone-pair.entity';
+import {
+  ZonePair,
+  ZonePairPolicy,
+} from '../../../domain/entities/zone-pair.entity.js';
+import { ZonePairRecord } from '../schemas/zone-pairs.schema.js';
 
 export class ZonePairJsonMapper {
   constructor() {}

@@ -1,4 +1,4 @@
-import { ZonePair } from '../entities/zone-pair.entity';
+import { ZonePair } from '../entities/zone-pair.entity.js';
 
 export interface IZonePairRepository {
   save(zonePair: ZonePair): Promise<void>;
@@ -7,6 +7,7 @@ export interface IZonePairRepository {
   findBySrcZoneId(srcZoneId: string): Promise<ZonePair[]>;
   findByDstZoneId(dstZoneId: string): Promise<ZonePair[]>;
   findAll(): Promise<ZonePair[]>;
+  overwriteAll(zonePairs: ZonePair[]): Promise<void>;
   delete(id: string): Promise<void>;
 }
 

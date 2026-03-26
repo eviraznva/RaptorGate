@@ -1,12 +1,12 @@
+import { IZonePairRepository } from '../../../domain/repositories/zone-pair.repository.js';
 import {
   ZonePairsFile,
   ZonePairsFileSchema,
-} from '../schemas/zone-pairs.schema';
-import { IZonePairRepository } from 'src/domain/repositories/zone-pair.repository';
-import { ZonePairJsonMapper } from '../mappers/zone-pair-json.mapper';
-import { ZonePair } from 'src/domain/entities/zone-pair.entity';
-import { FileStore } from '../json/file-store';
-import { Mutex } from '../json/file-mutex';
+} from '../schemas/zone-pairs.schema.js';
+import { ZonePairJsonMapper } from '../mappers/zone-pair-json.mapper.js';
+import { ZonePair } from '../../../domain/entities/zone-pair.entity.js';
+import { FileStore } from '../json/file-store.js';
+import { Mutex } from '../json/file-mutex.js';
 import { Inject } from '@nestjs/common';
 import { join } from 'path';
 
@@ -44,6 +44,18 @@ export class JsonZonePairRepository implements IZonePairRepository {
 
     await this.mutex.runExclusive(async () => {
       await this.fileStore.writeJsonAtomic(this.filePath, zonePairs);
+    });
+  }
+
+  async overwriteAll(zonePairs: ZonePair[]): Promise<void> {
+    const toZonePairs = zonePairs.map((zone) =>
+      ZonePairJsonMapper.toRecord(zone),
+    );
+
+    await this.mutex.runExclusive(async () => {
+      await this.fileStore.writeJsonAtomic(this.filePath, {
+        items: toZonePairs,
+      });
     });
   }
 

@@ -1,11 +1,11 @@
-import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
-import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
-import { ZONE_REPOSITORY_TOKEN } from 'src/domain/repositories/zone.repository';
-import type { IZoneRepository } from 'src/domain/repositories/zone.repository';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface';
-import type { ITokenService } from '../ports/token-service.interface';
-import { CreateZoneDto } from '../dtos/create-zone.dto';
-import { Zone } from 'src/domain/entities/zone.entity';
+import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
+import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-already-exists-exception.js';
+import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
+import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
+import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
+import type { ITokenService } from '../ports/token-service.interface.js';
+import { Zone } from '../../domain/entities/zone.entity.js';
+import { CreateZoneDto } from '../dtos/create-zone.dto.js';
 import { Inject } from '@nestjs/common';
 
 export class CreateZoneUseCase {

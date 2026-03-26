@@ -1,4 +1,3 @@
-import { ApiProperty } from '@nestjs/swagger';
 import {
   IsBoolean,
   IsIn,
@@ -9,6 +8,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateNatRuleDto {
   @ApiProperty({

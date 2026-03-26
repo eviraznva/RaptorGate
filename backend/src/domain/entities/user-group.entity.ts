@@ -1,4 +1,4 @@
-import { UserSource } from '../value-objects/user-source.vo';
+import { UserSource } from '../value-objects/user-source.vo.js';
 
 export class UserGroup {
   private constructor(

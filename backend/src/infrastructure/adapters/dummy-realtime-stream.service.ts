@@ -1,5 +1,5 @@
-import { RealtimeMetricDto } from 'src/presentation/dtos/realtime-metric.dto';
-import { RealtimeAlertDto } from 'src/presentation/dtos/realtime-alert.dto';
+import { RealtimeMetricDto } from '../../presentation/dtos/realtime-metric.dto.js';
+import { RealtimeAlertDto } from '../../presentation/dtos/realtime-alert.dto.js';
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Subject } from 'rxjs';

@@ -1,6 +1,6 @@
-import { ZONE_REPOSITORY_TOKEN } from 'src/domain/repositories/zone.repository';
-import type { IZoneRepository } from 'src/domain/repositories/zone.repository';
-import { GetAllZonesDto } from '../dtos/get-all-zones.dto';
+import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
+import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
+import { GetAllZonesDto } from '../dtos/get-all-zones.dto.js';
 import { Inject } from '@nestjs/common';
 
 export class GetAllZonesUseCase {

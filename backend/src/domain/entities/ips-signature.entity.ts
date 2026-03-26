@@ -1,5 +1,5 @@
-import { SignatureCategory } from '../value-objects/signature-category.vo';
-import { RegexPattern } from '../value-objects/regex-pattern.vo';
+import { SignatureCategory } from '../value-objects/signature-category.vo.js';
+import { RegexPattern } from '../value-objects/regex-pattern.vo.js';
 
 export type SignatureSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 

@@ -1,4 +1,4 @@
-import { Priority } from '../value-objects/priority.vo';
+import { Priority } from '../value-objects/priority.vo.js';
 
 export class FirewallRule {
   private constructor(

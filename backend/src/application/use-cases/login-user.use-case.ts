@@ -1,13 +1,13 @@
-import { InvalidCredentialsException } from 'src/domain/exceptions/invalid-credentials.exception';
-import type { IUserRepository } from 'src/domain/repositories/user.repository';
-import { USER_REPOSITORY_TOKEN } from 'src/domain/repositories/user.repository';
-import { PASSWORD_HASHER_TOKEN } from '../ports/passowrd-hasher.interface';
-import type { IPasswordHasher } from '../ports/passowrd-hasher.interface';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface';
-import type { ITokenService } from '../ports/token-service.interface';
-import { LoginResponseDto } from '../dtos/login-response.dto';
+import { InvalidCredentialsException } from '../../domain/exceptions/invalid-credentials.exception.js';
+import { USER_REPOSITORY_TOKEN } from '../../domain/repositories/user.repository.js';
+import type { IUserRepository } from '../../domain/repositories/user.repository.js';
+import { PASSWORD_HASHER_TOKEN } from '../ports/passowrd-hasher.interface.js';
+import type { IPasswordHasher } from '../ports/passowrd-hasher.interface.js';
+import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
+import type { ITokenService } from '../ports/token-service.interface.js';
+import { LoginResponseDto } from '../dtos/login-response.dto.js';
 import { Inject, Injectable } from '@nestjs/common';
-import { LoginDto } from '../dtos/login.dto';
+import { LoginDto } from '../dtos/login.dto.js';
 
 @Injectable()
 export class LoginUserUseCase {

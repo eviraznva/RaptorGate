@@ -1,11 +1,11 @@
-import { ZONE_PAIR_REPOSITORY_TOKEN } from 'src/domain/repositories/zone-pair.repository';
-import type { IZonePairRepository } from 'src/domain/repositories/zone-pair.repository';
-import { ZONE_REPOSITORY_TOKEN } from 'src/domain/repositories/zone.repository';
-import type { IZoneRepository } from 'src/domain/repositories/zone.repository';
-import { EditZonePairDto } from '../dtos/edit-zone-pair.dto';
+import { AtLeastOneFieldRequiredException } from '../../domain/exceptions/at-least-one-field-required.exception.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
+import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
+import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
+import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
+import { EditZonePairDto } from '../dtos/edit-zone-pair.dto.js';
 import { Injectable, Inject } from '@nestjs/common';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
-import { AtLeastOneFieldRequiredException } from 'src/domain/exceptions/at-least-one-field-required.exception';
 
 @Injectable()
 export class EditZonePairUseCase {

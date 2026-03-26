@@ -1,21 +1,21 @@
 import {
   GrpcRaptorLangValidationService,
   RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
-} from 'src/infrastructure/adapters/grpc-raptor-lang-validation.service';
-import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from 'src/application/ports/raptor-lang-validation-service.interface';
-import { JsonRuleRepository } from 'src/infrastructure/persistence/repositories/json-rule.repository';
-import { GetAllRulesUseCase } from 'src/application/use-cases/get-all-rules.use-case';
-import { TOKEN_SERVICE_TOKEN } from 'src/application/ports/token-service.interface';
-import { CreateRuleUseCase } from 'src/application/use-cases/create-rule.use-case';
-import { DeleteRuleUseCase } from 'src/application/use-cases/delete-rule.use-case';
-import { RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/rules-repository';
-import { EditRuleUseCase } from 'src/application/use-cases/edit-rule.use-case';
-import { RulesController } from 'src/presentation/controllers/rule.controller';
-import { TokenService } from 'src/infrastructure/adapters/jwt-token.service';
-import { FileStore } from 'src/infrastructure/persistence/json/file-store';
-import { Mutex } from 'src/infrastructure/persistence/json/file-mutex';
+} from '../infrastructure/adapters/grpc-raptor-lang-validation.service.js';
+import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../application/ports/raptor-lang-validation-service.interface.js';
+import { JsonRuleRepository } from '../infrastructure/persistence/repositories/json-rule.repository.js';
+import { GetAllRulesUseCase } from '../application/use-cases/get-all-rules.use-case.js';
+import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
+import { CreateRuleUseCase } from '../application/use-cases/create-rule.use-case.js';
+import { DeleteRuleUseCase } from '../application/use-cases/delete-rule.use-case.js';
+import { RULES_REPOSITORY_TOKEN } from '../domain/repositories/rules-repository.js';
+import { EditRuleUseCase } from '../application/use-cases/edit-rule.use-case.js';
+import { RulesController } from '../presentation/controllers/rule.controller.js';
+import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
+import { FileStore } from '../infrastructure/persistence/json/file-store.js';
+import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
 import { ClientsModule, Transport } from '@nestjs/microservices';
-import { Env } from 'src/shared/config/env.validation';
+import { Env } from '../shared/config/env.validation.js';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Module } from '@nestjs/common';

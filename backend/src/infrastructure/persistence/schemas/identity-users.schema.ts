@@ -1,10 +1,10 @@
-import { z } from 'zod';
 import {
   isoDateTimeSchema,
   nullableIsoDateTimeSchema,
   tableFileSchema,
   uuidSchema,
-} from './_common';
+} from './_common.js';
+import { z } from 'zod';
 
 export const IdentityUserRecordSchema = z
   .object({
@@ -20,7 +20,9 @@ export const IdentityUserRecordSchema = z
   })
   .strict();
 
-export const IdentityUsersFileSchema = tableFileSchema(IdentityUserRecordSchema);
+export const IdentityUsersFileSchema = tableFileSchema(
+  IdentityUserRecordSchema,
+);
 
 export type IdentityUserRecord = z.infer<typeof IdentityUserRecordSchema>;
 export type IdentityUsersFile = z.infer<typeof IdentityUsersFileSchema>;

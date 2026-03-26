@@ -1,14 +1,17 @@
-import { IRulesRepository } from 'src/domain/repositories/rules-repository';
-import { FirewallRule } from 'src/domain/entities/firewall-rule.entity';
-import { RulesFile, RulesFileSchema } from '../schemas/rules.schema';
-import { RuleJsonMapper } from '../mappers/rule-json.mapper';
-import { FileStore } from '../json/file-store';
-import { Mutex } from '../json/file-mutex';
+import { IRulesRepository } from '../../../domain/repositories/rules-repository.js';
+import { FirewallRule } from '../../../domain/entities/firewall-rule.entity.js';
+import { RulesFile, RulesFileSchema } from '../schemas/rules.schema.js';
+import { RuleJsonMapper } from '../mappers/rule-json.mapper.js';
+import { FileStore } from '../json/file-store.js';
+import { Mutex } from '../json/file-mutex.js';
 import { Inject } from '@nestjs/common';
 import { join } from 'node:path';
 
 export class JsonRuleRepository implements IRulesRepository {
-  private readonly filePath: string = join(process.cwd(), 'rules.json');
+  private readonly filePath: string = join(
+    process.cwd(),
+    'data/json-db/rules.json',
+  );
   constructor(
     @Inject(FileStore) private readonly fileStore: FileStore,
     @Inject(Mutex) private readonly mutex: Mutex,
@@ -45,6 +48,14 @@ export class JsonRuleRepository implements IRulesRepository {
     if (!ruleById) return null;
 
     return RuleJsonMapper.toDomain(ruleById);
+  }
+
+  async overwriteAll(rules: FirewallRule[]): Promise<void> {
+    const toRules = rules.map((rule) => RuleJsonMapper.toRecord(rule));
+
+    await this.mutex.runExclusive(async () => {
+      await this.fileStore.writeJsonAtomic(this.filePath, { items: toRules });
+    });
   }
 
   async findAll(): Promise<FirewallRule[]> {

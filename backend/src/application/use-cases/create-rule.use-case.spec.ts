@@ -1,22 +1,23 @@
 import {
   RAPTOR_LANG_VALIDATION_SERVICE_TOKEN,
   type IRaptorLangValidationService,
-} from '../ports/raptor-lang-validation-service.interface';
+} from '../ports/raptor-lang-validation-service.interface.js';
 import {
   TOKEN_SERVICE_TOKEN,
   type ITokenService,
   type TokenPayload,
-} from '../ports/token-service.interface';
+} from '../ports/token-service.interface.js';
 import {
   RULES_REPOSITORY_TOKEN,
   type IRulesRepository,
-} from 'src/domain/repositories/rules-repository';
-import { CreateRuleUseCase } from './create-rule.use-case';
-import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
-import { RaptorLangValidationException } from 'src/domain/exceptions/raptor-lang-validation.exception';
-import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
-import { FirewallRule } from 'src/domain/entities/firewall-rule.entity';
-import { Priority } from 'src/domain/value-objects/priority.vo';
+} from '../../domain/repositories/rules-repository.js';
+import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
+import { RaptorLangValidationException } from '../../domain/exceptions/raptor-lang-validation.exception.js';
+import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-already-exists-exception.js';
+import { FirewallRule } from '../../domain/entities/firewall-rule.entity.js';
+import { Priority } from '../../domain/value-objects/priority.vo.js';
+import { CreateRuleUseCase } from './create-rule.use-case.js';
+import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 
 describe('CreateRuleUseCase', () => {

@@ -1,13 +1,13 @@
-import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
-import { NatConfigIsInvalidException } from 'src/domain/exceptions/nat-config-is-invalid.exception';
-import { NAT_RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/nat-rules.repository';
-import type { INatRulesRepository } from 'src/domain/repositories/nat-rules.repository';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface';
-import type { ITokenService } from '../ports/token-service.interface';
-import { Priority } from 'src/domain/value-objects/priority.vo';
-import { NatType } from 'src/domain/value-objects/nat-type.vo';
-import { CreateNatRuleDto } from '../dtos/create-nat-rule.dto';
-import { NatRule } from 'src/domain/entities/nat-rule.entity';
+import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
+import { NatConfigIsInvalidException } from '../../domain/exceptions/nat-config-is-invalid.exception.js';
+import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
+import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
+import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
+import type { ITokenService } from '../ports/token-service.interface.js';
+import { Priority } from '../../domain/value-objects/priority.vo.js';
+import { NatType } from '../../domain/value-objects/nat-type.vo.js';
+import { NatRule } from '../../domain/entities/nat-rule.entity.js';
+import { CreateNatRuleDto } from '../dtos/create-nat-rule.dto.js';
 import { Inject, Injectable } from '@nestjs/common';
 
 @Injectable()

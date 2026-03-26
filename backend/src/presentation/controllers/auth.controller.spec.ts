@@ -1,9 +1,11 @@
-import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
-import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
-import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
+import { RefreshTokenUseCase } from '../../application/use-cases/refresh-token.use-case.js';
+import { LogoutUserUseCase } from '../../application/use-cases/logout-user.use-case.js';
+import { LoginUserUseCase } from '../../application/use-cases/login-user.use-case.js';
+import { AuthController } from './auth.controller.js';
+import { jest } from '@jest/globals';
 import { TestingModule, Test } from '@nestjs/testing';
-import { AuthController } from './auth.controller';
 import { ConfigService } from '@nestjs/config';
+
 describe('AuthController', () => {
   let controller: AuthController;
   let loginUserUseCase: jest.Mocked<LoginUserUseCase>;

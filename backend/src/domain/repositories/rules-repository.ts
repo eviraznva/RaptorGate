@@ -1,4 +1,4 @@
-import { FirewallRule } from '../entities/firewall-rule.entity';
+import { FirewallRule } from '../entities/firewall-rule.entity.js';
 
 export interface IRulesRepository {
   save(rule: FirewallRule): Promise<void>;
@@ -6,6 +6,7 @@ export interface IRulesRepository {
   findActive(): Promise<FirewallRule[]>;
   findAll(): Promise<FirewallRule[]>;
   finfByName(name: string): Promise<FirewallRule | null>;
+  overwriteAll(rules: FirewallRule[]): Promise<void>;
   delete(id: string): Promise<void>;
 }
 

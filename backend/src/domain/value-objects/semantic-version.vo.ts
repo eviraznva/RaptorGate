@@ -1,4 +1,4 @@
-import { SemanticVersionIsInvalidException } from '../exceptions/semantic-version-is-invalid.exception';
+import { SemanticVersionIsInvalidException } from '../exceptions/semantic-version-is-invalid.exception.js';
 
 export class SemanticVersion {
   private readonly value: string;

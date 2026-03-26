@@ -1,4 +1,4 @@
-import { IsPublic } from './infrastructure/decorators/public.decorator';
+import { IsPublic } from './infrastructure/decorators/public.decorator.js';
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 

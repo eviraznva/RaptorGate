@@ -1,5 +1,5 @@
-import { User } from 'src/domain/entities/user.entity';
-import { UserRecord } from '../schemas/users.schema';
+import { User } from '../../../domain/entities/user.entity.js';
+import { UserRecord } from '../schemas/users.schema.js';
 
 export class UserJsonMapper {
   static toDomain(record: UserRecord): User {

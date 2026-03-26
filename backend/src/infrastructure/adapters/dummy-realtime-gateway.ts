@@ -5,8 +5,8 @@ import {
   OnGatewayConnection,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
+import { DummyRealtimeStreamService } from './dummy-realtime-stream.service.js';
 import { Logger, OnModuleDestroy } from '@nestjs/common';
-import { DummyRealtimeStreamService } from './dummy-realtime-stream.service';
 import { Server, Socket } from 'socket.io';
 import { Subscription } from 'rxjs';
 

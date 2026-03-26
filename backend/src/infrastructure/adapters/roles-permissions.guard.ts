@@ -6,14 +6,14 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { REQUIRE_PERMISSIONS_KEY } from '../decorators/require-permissions.decorator';
-import { TOKEN_SERVICE_TOKEN } from 'src/application/ports/token-service.interface';
-import type { ITokenService } from 'src/application/ports/token-service.interface';
-import { ROLE_REPOSITORY_TOKEN } from 'src/domain/repositories/role.repository';
-import type { IRoleRepository } from 'src/domain/repositories/role.repository';
-import { Permission } from 'src/domain/enums/permissions.enum';
-import { ROLES_KEY } from '../decorators/roles.decorator';
-import { Role } from 'src/domain/enums/role.enum';
+import { REQUIRE_PERMISSIONS_KEY } from '../decorators/require-permissions.decorator.js';
+import { TOKEN_SERVICE_TOKEN } from '../../application/ports/token-service.interface.js';
+import type { ITokenService } from '../../application/ports/token-service.interface.js';
+import { ROLE_REPOSITORY_TOKEN } from '../../domain/repositories/role.repository.js';
+import type { IRoleRepository } from '../../domain/repositories/role.repository.js';
+import { Permission } from '../../domain/enums/permissions.enum.js';
+import { ROLES_KEY } from '../decorators/roles.decorator.js';
+import { Role } from '../../domain/enums/role.enum.js';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 
