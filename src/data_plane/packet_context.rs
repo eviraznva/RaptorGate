@@ -8,7 +8,7 @@ use ouroboros::self_referencing;
 pub struct PacketContext {
     pub src_interface: Arc<str>,
     pub warnings: Vec<String>,
-    raw: Vec<u8>,
+    pub raw: Vec<u8>,
     #[borrows(raw)]
     #[covariant]
     pub sliced_packet: SlicedPacket<'this>,

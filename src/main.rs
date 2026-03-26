@@ -22,6 +22,7 @@ use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
+use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
@@ -74,6 +75,8 @@ async fn main() {
 
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
+    let tun = TunForwarder::get(&config);
+
     let (_sniffer, mut raw_rx, errs) = InterfaceSniffer::with_sniffing(&config);
     for e in errs {
         tracing::error!(error = %e, "interface sniffer error");
@@ -82,8 +85,8 @@ async fn main() {
     while let Some(raw_packet) = raw_rx.recv().await {
         if let Some(ctx) = defrag.process_raw(raw_packet) {
             tokio::spawn(async move {
-                // pipeline.process(ctx).await  — wired up once pipeline stages are implemented
-                tracing::trace!("Received complete packet for processing: {ctx:?}");
+                // pipeline.process(&mut ctx).await — wired up once pipeline stages exist
+                tun.forward(&ctx).await;
             });
         }
     }
