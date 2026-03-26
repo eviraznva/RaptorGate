@@ -17,9 +17,9 @@ use tokio::sync::Mutex;
 
 use crate::config::AppConfig;
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
-use crate::data_plane::{runtime as data_plane_runtime, tcp_session_tracker};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
@@ -71,14 +71,33 @@ async fn main() {
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
     let tcp_session_tracker = TcpSessionTracker::new();
 
-    if let Err(err) = data_plane_runtime::run(&config, policy_store, tcp_session_tracker, build_test_nat()).await {
-        eprintln!("Data plane error: {err}");
+    let (sniffer, mut packet_channel, errs) = InterfaceSniffer::with_sniffing(&config);
+    for e in errs { tracing::error!(error = %e, "Interface sniffer error"); }
+
+        // async_scoped::TokioScope::scope_and_block(|s| async move {
+            // while let Some(packet) = packet_channel.recv().await {
+            //     s.spawn(async move {
+            //         tracing::trace!(iface = %packet.borrow_src_interface(), len = packet.borrow_sliced_packet().ip_payload().map(|p| p.payload), "packet received");
+            //     });
+            // }
+
+        //     s.spawn(async move {
+        //         println!("test");
+        //     });
+        //
+        // });
+
+    while let Some(packet) = packet_channel.recv().await {
+        tokio::spawn(async move {
+            tracing::trace!(iface = %packet.borrow_src_interface(), payload = packet.borrow_sliced_packet().ip_payload().map(|p| p.payload), "packet received");
+        });
     }
 
     if let Err(err) = control_plane.shutdown().await {
         eprintln!("Control plane shutdown error: {err}");
     }
 }
+
 
 fn build_test_nat() -> Arc<Mutex<NatEngine>> {
     let interface_ips = HashMap::from([
