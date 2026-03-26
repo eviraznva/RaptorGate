@@ -1,11 +1,11 @@
-import { RefreshTokenIsInvalidException } from 'src/domain/exceptions/refresh-token-is-invalid.exception';
-import { UserNotFoundException } from 'src/domain/exceptions/user-not-found.exception';
-import { USER_REPOSITORY_TOKEN } from 'src/domain/repositories/user.repository';
-import type { IUserRepository } from 'src/domain/repositories/user.repository';
-import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface';
-import type { ITokenService } from '../ports/token-service.interface';
-import { RefreshTokenDto } from '../dtos/refresh-token.dto';
+import { RefreshTokenIsInvalidException } from '../../domain/exceptions/refresh-token-is-invalid.exception.js';
+import { UserNotFoundException } from '../../domain/exceptions/user-not-found.exception.js';
+import { USER_REPOSITORY_TOKEN } from '../../domain/repositories/user.repository.js';
+import type { IUserRepository } from '../../domain/repositories/user.repository.js';
+import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto.js';
+import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
+import type { ITokenService } from '../ports/token-service.interface.js';
+import { RefreshTokenDto } from '../dtos/refresh-token.dto.js';
 import { Inject, Injectable } from '@nestjs/common';
 
 @Injectable()

@@ -1,4 +1,4 @@
-import { Zone } from '../entities/zone.entity';
+import { Zone } from '../entities/zone.entity.js';
 
 export interface IZoneRepository {
   save(zone: Zone, createdBy: string): Promise<void>;
@@ -6,6 +6,7 @@ export interface IZoneRepository {
   findAll(): Promise<Zone[]>;
   findByName(name: string): Promise<Zone | null>;
   findActive(): Promise<Zone[]>;
+  overwriteAll(zones: Zone[]): Promise<void>;
   delete(id: string): Promise<void>;
 }
 

@@ -1,15 +1,15 @@
-import { ZONE_PAIR_REPOSITORY_TOKEN } from 'src/domain/repositories/zone-pair.repository';
-import type { IZonePairRepository } from 'src/domain/repositories/zone-pair.repository';
-import { ZONE_REPOSITORY_TOKEN } from 'src/domain/repositories/zone.repository';
-import type { IZoneRepository } from 'src/domain/repositories/zone.repository';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface';
-import type { ITokenService } from '../ports/token-service.interface';
-import { CreateZonePairDto } from '../dtos/create-zone-pair.dto';
-import { ZonePair } from 'src/domain/entities/zone-pair.entity';
+import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
+import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-already-exists-exception.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
+import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
+import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
+import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
+import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
+import type { ITokenService } from '../ports/token-service.interface.js';
+import { ZonePair } from '../../domain/entities/zone-pair.entity.js';
+import { CreateZonePairDto } from '../dtos/create-zone-pair.dto.js';
 import { Inject, Injectable } from '@nestjs/common';
-import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
-import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
 
 @Injectable()
 export class CreateZonePairUseCase {

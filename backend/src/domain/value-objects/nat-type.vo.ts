@@ -1,4 +1,4 @@
-import { NatTypeIsInvalidException } from '../exceptions/nat-type-is-invalid.exception';
+import { NatTypeIsInvalidException } from '../exceptions/nat-type-is-invalid.exception.js';
 
 export type NatTypeType = 'SNAT' | 'DNAT' | 'PAT';
 

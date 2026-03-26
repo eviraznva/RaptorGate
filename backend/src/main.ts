@@ -2,21 +2,22 @@ import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { apiReference } from '@scalar/nestjs-api-reference';
+import { Env } from './shared/config/env.validation.js';
 import { Logger, ValidationPipe } from '@nestjs/common';
-import { Env } from './shared/config/env.validation';
 import { ConfigService } from '@nestjs/config';
+import { AppModule } from './app.module.js';
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
-import { AppModule } from './app.module';
 import { cwd } from 'node:process';
 import { join } from 'node:path';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+  const certsDir = join(cwd(), 'devCerts');
 
   const httpsOptions = {
-    key: readFileSync('/home/marek/RaptorGate/backend/devCerts/key.pem'),
-    cert: readFileSync('/home/marek/RaptorGate/backend/devCerts/cert.pem'),
+    key: readFileSync(join(certsDir, 'key.pem')),
+    cert: readFileSync(join(certsDir, 'cert.pem')),
   };
 
   const app = await NestFactory.create(AppModule, {

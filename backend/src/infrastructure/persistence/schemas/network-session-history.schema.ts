@@ -1,11 +1,11 @@
-import { z } from 'zod';
 import {
   bigintLikeSchema,
   isoDateTimeSchema,
   nullableIsoDateTimeSchema,
   tableFileSchema,
   uuidSchema,
-} from './_common';
+} from './_common.js';
+import { z } from 'zod';
 
 export const NetworkSessionHistoryRecordSchema = z
   .object({

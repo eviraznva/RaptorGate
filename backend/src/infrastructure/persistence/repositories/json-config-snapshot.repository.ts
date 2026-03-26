@@ -1,16 +1,21 @@
-import { IConfigSnapshotRepository } from 'src/domain/repositories/config-snapshot.repository';
 import {
   ConfigurationSnapshotsFile,
   ConfigurationSnapshotsFileSchema,
-} from '../schemas/configuration-snapshots.schema';
-import { ConfigurationSnapshotJsonMapper } from '../mappers/configuration-snapshots.mapper';
-import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
-import { FileStore } from '../json/file-store';
-import { Mutex } from '../json/file-mutex';
-import { Inject } from '@nestjs/common';
+} from '../schemas/configuration-snapshots.schema.js';
+import { IConfigSnapshotRepository } from '../../../domain/repositories/config-snapshot.repository.js';
+import { ConfigurationSnapshot } from '../../../domain/entities/configuration-snapshot.entity.js';
+import { ConfigurationSnapshotJsonMapper } from '../mappers/configuration-snapshots.mapper.js';
+import { FileStore } from '../json/file-store.js';
+import { Mutex } from '../json/file-mutex.js';
+import { Inject, Logger } from '@nestjs/common';
 import { join } from 'node:path';
+import {
+  mapConfigBundlePayloadToDomain,
+  mapConfigSnapshotToPayloadRecord,
+} from '../mappers/config-payload.mapper.js';
 
 export class JsonConfigSnapshotRepository implements IConfigSnapshotRepository {
+  private readonly logger = new Logger(JsonConfigSnapshotRepository.name);
   private readonly filePath = join(
     process.cwd(),
     'data/json-db/configuration_snapshots.json',
@@ -31,6 +36,9 @@ export class JsonConfigSnapshotRepository implements IConfigSnapshotRepository {
   async save(configSnapshot: ConfigurationSnapshot): Promise<void> {
     const snapshots = await this.readPayload();
 
+    const payload = mapConfigSnapshotToPayloadRecord(configSnapshot);
+    configSnapshot.setPayloadJson(JSON.stringify(payload));
+
     const next = ConfigurationSnapshotJsonMapper.toRecord(configSnapshot);
 
     const existingRow = await this.findById(configSnapshot.getId());
@@ -50,9 +58,17 @@ export class JsonConfigSnapshotRepository implements IConfigSnapshotRepository {
   async findAllSnapshots(): Promise<ConfigurationSnapshot[]> {
     const snapshots = await this.readPayload();
 
-    return snapshots.items.map((snapshot) =>
-      ConfigurationSnapshotJsonMapper.toDomain(snapshot),
-    );
+    return snapshots.items.map((snapshot) => {
+      const configSnapshotToDomain =
+        ConfigurationSnapshotJsonMapper.toDomain(snapshot);
+
+      const payloadToDomain = mapConfigBundlePayloadToDomain(
+        configSnapshotToDomain,
+      );
+
+      configSnapshotToDomain.setPayloadJson(payloadToDomain);
+      return configSnapshotToDomain;
+    });
   }
 
   async findActiveSnapshot(): Promise<ConfigurationSnapshot | null> {
@@ -61,10 +77,17 @@ export class JsonConfigSnapshotRepository implements IConfigSnapshotRepository {
     const activeSnapshot = snapshots.items.find(
       (snapshot) => snapshot.isActive,
     );
-
     if (!activeSnapshot) return null;
 
-    return ConfigurationSnapshotJsonMapper.toDomain(activeSnapshot);
+    const activeSnapshotToDomain =
+      ConfigurationSnapshotJsonMapper.toDomain(activeSnapshot);
+    const payloadToDomain = mapConfigBundlePayloadToDomain(
+      activeSnapshotToDomain,
+    );
+
+    activeSnapshotToDomain.setPayloadJson(payloadToDomain);
+
+    return activeSnapshotToDomain;
   }
 
   async findById(id: string): Promise<ConfigurationSnapshot | null> {
@@ -73,6 +96,15 @@ export class JsonConfigSnapshotRepository implements IConfigSnapshotRepository {
 
     if (!snapshotById) return null;
 
-    return ConfigurationSnapshotJsonMapper.toDomain(snapshotById);
+    const configSnapshotToDomain =
+      ConfigurationSnapshotJsonMapper.toDomain(snapshotById);
+
+    const payloadToDomain = mapConfigBundlePayloadToDomain(
+      configSnapshotToDomain,
+    );
+
+    configSnapshotToDomain.setPayloadJson(payloadToDomain);
+
+    return configSnapshotToDomain;
   }
 }

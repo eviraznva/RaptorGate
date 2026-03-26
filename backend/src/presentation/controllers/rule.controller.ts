@@ -8,18 +8,19 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
-import { GetAllRulesUseCase } from 'src/application/use-cases/get-all-rules.use-case';
-import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
-import { CreateRuleUseCase } from 'src/application/use-cases/create-rule.use-case';
-import { DeleteRuleUseCase } from 'src/application/use-cases/delete-rule.use-case';
-import { EditRuleUseCase } from 'src/application/use-cases/edit-rule.use-case';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { Permission } from 'src/domain/enums/permissions.enum';
-import { CreateRuleDto } from '../dtos/create-rule.dto';
-import { EditRuleDto } from '../dtos/edit-rule.dto';
-import { Role } from 'src/domain/enums/role.enum';
+import { RequirePermissions } from '../../infrastructure/decorators/require-permissions.decorator.js';
+import { GetAllRulesUseCase } from '../../application/use-cases/get-all-rules.use-case.js';
+import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
+import { CreateRuleUseCase } from '../../application/use-cases/create-rule.use-case.js';
+import { DeleteRuleUseCase } from '../../application/use-cases/delete-rule.use-case.js';
+import { EditRuleUseCase } from '../../application/use-cases/edit-rule.use-case.js';
+import { Roles } from '../../infrastructure/decorators/roles.decorator.js';
+import { Permission } from '../../domain/enums/permissions.enum.js';
+import { CreateRuleDto } from '../dtos/create-rule.dto.js';
+import { EditRuleDto } from '../dtos/edit-rule.dto.js';
+import { Role } from '../../domain/enums/role.enum.js';
 import { ApiOperation } from '@nestjs/swagger';
+import { GetAllRulesResponseDto } from '../dtos/get-all-rules-response.dto.js';
 
 @Controller('rule')
 export class RulesController {
@@ -56,9 +57,9 @@ export class RulesController {
   @Get()
   @Roles(Role.Viewer)
   @RequirePermissions(Permission.RULES_READ)
-  async getAllRules() {
+  async getAllRules(): Promise<GetAllRulesResponseDto> {
     const rules = await this.getAllRulesUseCase.execute();
-    return { rules };
+    return rules;
   }
 
   @ApiOperation({

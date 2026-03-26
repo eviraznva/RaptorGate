@@ -8,21 +8,21 @@ import {
   Res,
 } from '@nestjs/common';
 import {
-  ErrorResponseDto,
   ValidationErrorResponseDto,
-} from '../dtos/error-response.dto';
-import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
-import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
-import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
-import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
+  ErrorResponseDto,
+} from '../dtos/error-response.dto.js';
+import { RefreshTokenUseCase } from '../../application/use-cases/refresh-token.use-case.js';
+import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
+import { LogoutUserUseCase } from '../../application/use-cases/logout-user.use-case.js';
+import { LoginUserUseCase } from '../../application/use-cases/login-user.use-case.js';
+import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto.js';
+import { IsPublic } from '../../infrastructure/decorators/public.decorator.js';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
-import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto';
-import { IsPublic } from 'src/infrastructure/decorators/public.decorator';
-import { Cookie } from 'src/infrastructure/decorators/cookie.decorator';
-import { LoginResponseDto } from '../dtos/login-response.dto';
-import { Env } from 'src/shared/config/env.validation';
+import { Cookie } from '../../infrastructure/decorators/cookie.decorator.js';
+import { LoginResponseDto } from '../dtos/login-response.dto.js';
+import { Env } from '../../shared/config/env.validation.js';
+import { LoginDto } from '../dtos/login.dto.js';
 import { ConfigService } from '@nestjs/config';
-import { LoginDto } from '../dtos/login.dto';
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 

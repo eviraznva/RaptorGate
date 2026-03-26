@@ -1,18 +1,18 @@
 import {
-  TOKEN_SERVICE_TOKEN,
-  type ITokenService,
-} from '../ports/token-service.interface';
-import {
   RULES_REPOSITORY_TOKEN,
   type IRulesRepository,
-} from 'src/domain/repositories/rules-repository';
-import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../ports/raptor-lang-validation-service.interface';
-import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
-import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
-import type { IRaptorLangValidationService } from '../ports/raptor-lang-validation-service.interface';
-import { FirewallRule } from 'src/domain/entities/firewall-rule.entity';
-import { Priority } from 'src/domain/value-objects/priority.vo';
-import { CreateRuleDto } from '../dtos/create-rule.dto';
+} from '../../domain/repositories/rules-repository.js';
+import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
+import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../ports/raptor-lang-validation-service.interface.js';
+import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-already-exists-exception.js';
+import type { IRaptorLangValidationService } from '../ports/raptor-lang-validation-service.interface.js';
+import {
+  TOKEN_SERVICE_TOKEN,
+  type ITokenService,
+} from '../ports/token-service.interface.js';
+import { FirewallRule } from '../../domain/entities/firewall-rule.entity.js';
+import { Priority } from '../../domain/value-objects/priority.vo.js';
+import { CreateRuleDto } from '../dtos/create-rule.dto.js';
 import { Inject, Injectable } from '@nestjs/common';
 
 @Injectable()

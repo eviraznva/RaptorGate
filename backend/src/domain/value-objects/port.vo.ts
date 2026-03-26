@@ -1,4 +1,4 @@
-import { PortIsInvalidException } from '../exceptions/port-is-invalid.exception';
+import { PortIsInvalidException } from '../exceptions/port-is-invalid.exception.js';
 
 export class Port {
   private readonly value: number;

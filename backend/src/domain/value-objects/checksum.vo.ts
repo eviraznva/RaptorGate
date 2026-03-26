@@ -1,4 +1,4 @@
-import { ChecksumIsInvalidException } from '../exceptions/checksum-is-invalid.exception';
+import { ChecksumIsInvalidException } from '../exceptions/checksum-is-invalid.exception.js';
 
 export class Checksum {
   private readonly value: string;
