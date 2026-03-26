@@ -86,14 +86,14 @@ let handler = FirewallQueryHandler {
     nat_engine:   Arc::clone(&nat_engine),
 };
 let pipeline = Chain {
-    head: PolicyEvalStage  { policies: &*policy_store },
+    head: PolicyEvalStage  { policies: Arc::clone(&policy_store) },
     tail: Chain {
-        head: TcpTrackingStage { tracker: &*tcp_tracker },
+        head: TcpTrackingStage { tracker: Arc::clone(&tcp_tracker) },
         tail: // ...
     }
 };
 ```
-Nadal są rzeczy w Arcach, bo handlowanie requestów z serwera potrzebuje `'static`. Sam pipeline działa na zwykłych referencjach. Zwykłe singletony nie są używane bo je trudno mockować.
+Pipeline używa `Arc<T>` dla zależności — ten sam Arc co handler gRPC. Koszt to ~4 atomowe operacje na pakiet przy 2 zależnościach. `&'static T` byłoby szybsze, ale komplikuje inicjalizację i izolację testów. Zwykłe singletony nie są używane bo je trudno mockować.
 
 ## Eventy / Co z backendem
 

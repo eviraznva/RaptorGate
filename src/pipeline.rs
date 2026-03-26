@@ -1,4 +1,4 @@
-mod wrappers;
+pub mod wrappers;
 
 use crate::data_plane::packet_context::PacketContext;
 
@@ -9,7 +9,8 @@ pub trait Stage: Send + Sync {
 
 pub enum StageOutcome { Continue, Halt }
 
-pub struct Chain<A: Stage, B: Stage> { head: A, tail: B }
+#[derive(Clone)]
+pub struct Chain<A: Stage, B: Stage> { pub head: A, pub tail: B }
 impl<A: Stage, B: Stage> Stage for Chain<A, B> {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let outcome = if self.head.is_applicable(ctx) {

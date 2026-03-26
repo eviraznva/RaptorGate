@@ -12,6 +12,7 @@ mod pipeline;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+use etherparse::NetSlice;
 use tokio::sync::Mutex;
 use ipnet::IpNet;
 
@@ -23,12 +24,16 @@ use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
+use crate::pipeline::{Chain, Stage, StageOutcome};
+use crate::pipeline::wrappers::{PolicyEvalStage, TcpClassificationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::tls::CaManager;
 
 #[tokio::main]
 async fn main() {
+    type DataPipeline = Chain<PolicyEvalStage, TcpClassificationStage>;
+
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .with_target(false)
@@ -81,11 +86,24 @@ async fn main() {
         tracing::error!(error = %e, "interface sniffer error");
     }
 
+
+    let pipeline = DataPipeline {
+        head: PolicyEvalStage { policies: Arc::clone(&policy_store) },
+        tail: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
+    };
+
     while let Some(raw_packet) = raw_rx.recv().await {
-        if let Some(ctx) = defrag.process_raw(raw_packet) {
+        if let Some(mut ctx) = defrag.process_raw(raw_packet) {
+            let pipeline = pipeline.clone();
             tokio::spawn(async move {
-                // pipeline.process(&mut ctx).await — wired up once pipeline stages exist
-                tun.forward(&ctx).await;
+                if !matches!(&ctx.borrow_sliced_packet().net, Some(NetSlice::Ipv4(_))) { // we should support Ipv6 and ARP at some point
+                    return;
+                }
+                let result: StageOutcome = pipeline.process(&mut ctx).await;
+
+                if matches!(result, StageOutcome::Continue) {
+                    tun.forward(&ctx).await;
+                }
             });
         }
     }
