@@ -25,14 +25,19 @@ use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::{Chain, Stage, StageOutcome};
-use crate::pipeline::wrappers::{PolicyEvalStage, TcpClassificationStage};
+use crate::pipeline::wrappers::{NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::tls::CaManager;
 
 #[tokio::main]
 async fn main() {
-    type DataPipeline = Chain<PolicyEvalStage, TcpClassificationStage>;
+    type DataPipeline =
+        Chain<ValidationStage,
+        Chain<NatPreroutingStage,
+        Chain<PolicyEvalStage,
+        Chain<TcpClassificationStage,
+              NatPostroutingStage>>>>;
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -77,6 +82,7 @@ async fn main() {
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
     let tcp_session_tracker = TcpSessionTracker::new();
 
+    let nat_engine = build_test_nat();
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
     let tun = TunForwarder::get(&config);
@@ -88,8 +94,17 @@ async fn main() {
 
 
     let pipeline = DataPipeline {
-        head: PolicyEvalStage { policies: Arc::clone(&policy_store) },
-        tail: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
+        head: ValidationStage,
+        tail: Chain {
+            head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
+            tail: Chain {
+                head: PolicyEvalStage { policies: Arc::clone(&policy_store) },
+                tail: Chain {
+                    head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
+                    tail: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                },
+            },
+        },
     };
 
     while let Some(raw_packet) = raw_rx.recv().await {
