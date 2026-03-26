@@ -1,27 +1,27 @@
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
-use etherparse::{SlicedPacket, err::packet};
+use etherparse::{err::packet, SlicedPacket};
 use ouroboros::self_referencing;
-use pcap::Packet;
 
 #[self_referencing]
+#[derive(Debug)]
 pub struct PacketContext {
-    pub src_interface: Arc<str> , // we copy the interface name twice, maybe this is faster than a `String`
-
+    pub src_interface: Arc<str>,
+    pub warnings: Vec<String>,
     raw: Vec<u8>,
     #[borrows(raw)]
     #[covariant]
     pub sliced_packet: SlicedPacket<'this>,
-
 }
 
 impl PacketContext {
-    pub(super) fn from_captured_packet(packet: &Packet<'_>, src_interface: Arc<str>) -> Result<PacketContext, packet::SliceError> {
-
+    pub fn from_raw(raw: Vec<u8>, src_interface: Arc<str>) -> Result<Self, packet::SliceError> {
         PacketContextTryBuilder {
-            raw: packet.data.to_vec(),
-            sliced_packet_builder: |raw| SlicedPacket::from_ethernet(raw),
             src_interface,
-        }.try_build()
+            warnings: Vec::new(),
+            raw,
+            sliced_packet_builder: |raw| SlicedPacket::from_ethernet(raw),
+        }
+        .try_build()
     }
 }

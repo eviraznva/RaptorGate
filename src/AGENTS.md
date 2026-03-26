@@ -203,6 +203,43 @@ impl FirewallQueryService for QueryHandler {
 }
 ```
 
+## Logowanie / Eventy / Ostrzeżenia
+
+### Ostrzeżenia
+
+- `ctx.warnings: Vec<String>` na `PacketContext` akumuluje ostrzeżenia w trakcie przetwarzania
+- Warstwy pushują ostrzeżenia przed zwróceniem `Continue` lub `Halt` — brak rozróżnienia na poziomie warstwy
+- `AllowWarn` / `DropWarn` zostają **izolowane w silniku polityk** i nie wychodzą do systemu typów pipeline'u. `PolicyEvalStage` tłumaczy je:
+  - `AllowWarn` → `Continue` + push do `ctx.warnings`
+  - `DropWarn` → `Halt` + push do `ctx.warnings`
+- Emisja ostrzeżeń następuje w **pętli pakietów po powrocie `pipeline.process()`**, gdzie `ctx.verdict` jest ostateczny:
+  - `Allow` → emituj ostrzeżenia jako allow warnings (log + event do backendu)
+  - `Drop` → emituj ostrzeżenia jako deny warnings (log + event do backendu)
+  - Zapobiega to emisji allow warnings dla pakietów później odrzuconych przez kolejną warstwę
+
+### Logowanie
+
+Dwa poziomy, każdy należy do innej warstwy:
+
+- **Logi obserwacyjne** (`tracing::trace/debug`) — emitowane wewnątrz funkcji pomocniczych gdzie dana rzecz się dzieje, niezależnie od wyniku. Np. nawiązanie sesji TCP loguje się tam, nie w `process`.
+- **Logi wynikowe** (`tracing::warn/error`) — emitowane w `process` gdy błąd mapuje się na `Halt`, bo tam znany jest wynik i dostępny jest pełny `PacketContext`.
+
+Brak duplikacji — każdy poziom loguje inne rzeczy na innym poziomie abstrakcji.
+
+### Eventy
+
+Ten sam podział co logowanie:
+
+- **Eventy domenowe** (`TcpSessionEstablished`, `NatBindingCreated`) — emitowane wewnątrz funkcji która je tworzy, bezwarunkowo. Są to fakty o tym co się wydarzyło, niezależne od wyniku pipeline'u.
+- **Eventy wynikowe** (odrzucony pakiet, ostrzeżenia jako eventy) — emitowane w pętli pakietów po powrocie chain'u, używając ostatecznego `ctx.verdict` + `ctx.warnings`. Nigdy nie emitowane w środku pipeline'u dla pakietów na ścieżce allow, bo verdict nie jest jeszcze ostateczny.
+
+### `StageOutcome`
+
+- Warstwy które chcą przekazać kontekst o halcie pushują do `ctx.warnings` przed zwróceniem
+- Warstwy które haltują cicho (zniekształcony pakiet, zły checksum) po prostu zwracają `Halt` bez pushowania czegokolwiek
+- Obecność lub brak `ctx.warnings` wystarczy do rozróżnienia "ma coś do powiedzenia" od "cichy drop"
+- `HaltReason` enum dla granularności metryk odłożony do czasu zaprojektowania właściwego systemu metryk
+
 ## Inspekcja DNS
 
 Trzymamy listę domen zblacklistowanych jako drzewo podzielone na poziomy domeny.

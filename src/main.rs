@@ -8,12 +8,13 @@ mod policy;
 mod policy_evaluator;
 mod rule_tree;
 mod tls;
+mod pipeline;
 
-use ipnet::IpNet;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use ipnet::IpNet;
 
 use crate::config::AppConfig;
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
@@ -21,9 +22,9 @@ use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
+use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
-use crate::policy::runtime::CompiledPolicy;
 use crate::tls::CaManager;
 
 #[tokio::main]
@@ -71,26 +72,20 @@ async fn main() {
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
     let tcp_session_tracker = TcpSessionTracker::new();
 
-    let (sniffer, mut packet_channel, errs) = InterfaceSniffer::with_sniffing(&config);
-    for e in errs { tracing::error!(error = %e, "Interface sniffer error"); }
+    let defrag = IpDefragEngine::new(DefragConfig::default());
 
-        // async_scoped::TokioScope::scope_and_block(|s| async move {
-            // while let Some(packet) = packet_channel.recv().await {
-            //     s.spawn(async move {
-            //         tracing::trace!(iface = %packet.borrow_src_interface(), len = packet.borrow_sliced_packet().ip_payload().map(|p| p.payload), "packet received");
-            //     });
-            // }
+    let (_sniffer, mut raw_rx, errs) = InterfaceSniffer::with_sniffing(&config);
+    for e in errs {
+        tracing::error!(error = %e, "interface sniffer error");
+    }
 
-        //     s.spawn(async move {
-        //         println!("test");
-        //     });
-        //
-        // });
-
-    while let Some(packet) = packet_channel.recv().await {
-        tokio::spawn(async move {
-            tracing::trace!(iface = %packet.borrow_src_interface(), payload = packet.borrow_sliced_packet().ip_payload().map(|p| p.payload), "packet received");
-        });
+    while let Some(raw_packet) = raw_rx.recv().await {
+        if let Some(ctx) = defrag.process_raw(raw_packet) {
+            tokio::spawn(async move {
+                // pipeline.process(ctx).await  — wired up once pipeline stages are implemented
+                tracing::trace!("Received complete packet for processing: {ctx:?}");
+            });
+        }
     }
 
     if let Err(err) = control_plane.shutdown().await {
@@ -98,34 +93,13 @@ async fn main() {
     }
 }
 
-
 fn build_test_nat() -> Arc<Mutex<NatEngine>> {
     let interface_ips = HashMap::from([
-        (
-            "eth1".to_string(),
-            "192.168.10.254".parse::<IpAddr>().unwrap(),
-        ),
-        (
-            "eth2".to_string(),
-            "192.168.20.254".parse::<IpAddr>().unwrap(),
-        ),
+        ("eth1".to_string(), "192.168.10.254".parse::<IpAddr>().unwrap()),
+        ("eth2".to_string(), "192.168.20.254".parse::<IpAddr>().unwrap()),
     ]);
 
     let rules = NatRules::new(vec![
-        // NatRule::new(
-        //     "masq-lan1-to-lan2".to_string(),
-        //     10,
-        //     None,
-        //     Some("eth2".to_string()),
-        //     None,
-        //     None,
-        //     Some("192.168.10.0/24".parse::<IpNet>().unwrap()),
-        //     None,
-        //     None,
-        //     None,
-        //     None,
-        //     NatAction::Masquerade,
-        // ),
         NatRule::new(
             "dnat-portfwd-8080-to-h1-80".to_string(),
             20,

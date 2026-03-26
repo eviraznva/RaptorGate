@@ -1,21 +1,29 @@
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use pcap::Direction;
 use thiserror::Error;
-use tokio::sync::{mpsc};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::{config::AppConfig, data_plane::packet_context::PacketContext};
+use crate::config::AppConfig;
+
+/// Raw packet data as captured from the NIC, before parsing or reassembly.
+pub struct RawPacket {
+    pub raw: Vec<u8>,
+    pub iface: Arc<str>,
+}
 
 pub struct InterfaceSniffer {
-    tx: mpsc::Sender<PacketContext>,
+    tx: mpsc::Sender<RawPacket>,
     handles: DashMap<String, CancellationToken>,
     pcap_timeout_ms: i32,
 }
 
 impl InterfaceSniffer {
-    pub fn with_sniffing(config: &AppConfig) -> (Self, mpsc::Receiver<PacketContext>, Vec<SnifferError>) {
+    pub fn with_sniffing(
+        config: &AppConfig,
+    ) -> (Self, mpsc::Receiver<RawPacket>, Vec<SnifferError>) {
         let (tx, rx) = mpsc::channel(1024);
         let mut sniffer = Self {
             tx,
@@ -27,7 +35,7 @@ impl InterfaceSniffer {
         for iface in &config.capture_interfaces {
             if let Err(err) = sniffer.sniff_new(iface.clone()) {
                 errs.push(err);
-            };
+            }
         }
 
         (sniffer, rx, errs)
@@ -63,23 +71,17 @@ impl InterfaceSniffer {
 
                 match cap.next_packet() {
                     Ok(pkt) => {
-                        let Ok(packet_context) = PacketContext::from_captured_packet(
-                            &pkt,
-                            iface_arc.clone()
-                        ) else {
-                            tracing::warn!(iface = %name, "failed to parse captured packet, skipping");
-                            continue;
+                        let packet = RawPacket {
+                            raw: pkt.data.to_vec(),
+                            iface: Arc::clone(&iface_arc),
                         };
-
-                        if tx.blocking_send(
-                            packet_context
-                        ).is_err() {
+                        if tx.blocking_send(packet).is_err() {
                             tracing::info!(iface = %name, "channel closed, stopping capture");
                             break;
                         }
                     }
-
-                    Err(pcap::Error::TimeoutExpired) => {}, // TODO: check if there's a way to immiedietely cancel this, without waiting for the timeout
+                    // TODO: check if there's a way to cancel immediately without waiting for timeout
+                    Err(pcap::Error::TimeoutExpired) => {}
                     Err(e) => {
                         tracing::error!(iface = %name, error = %e, "capture error, stopping");
                         break;
@@ -91,8 +93,6 @@ impl InterfaceSniffer {
         self.handles.insert(iface, token);
         Ok(())
     }
-
-
 
     pub fn cancel_sniffing(&mut self, iface: &str) {
         match self.handles.remove(iface) {
@@ -106,14 +106,10 @@ impl InterfaceSniffer {
         }
     }
 
-
     pub fn cancel_all(&self) {
         for entry in &self.handles {
-            let token = entry.value();
-            let iface = entry.key();
-
-            token.cancel();
-            tracing::info!(iface = %iface, "capture cancellation requested");
+            entry.value().cancel();
+            tracing::info!(iface = %entry.key(), "capture cancellation requested");
         }
     }
 

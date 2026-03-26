@@ -1,0 +1,25 @@
+mod wrappers;
+
+use crate::data_plane::packet_context::PacketContext;
+
+pub trait Stage: Send + Sync {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool { true }
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome;
+}
+
+pub enum StageOutcome { Continue, Halt }
+
+pub struct Chain<A: Stage, B: Stage> { head: A, tail: B }
+impl<A: Stage, B: Stage> Stage for Chain<A, B> {
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let outcome = if self.head.is_applicable(ctx) {
+            self.head.process(ctx).await
+        } else {
+            StageOutcome::Continue
+        };
+        match outcome {
+            StageOutcome::Continue => self.tail.process(ctx).await,
+            StageOutcome::Halt     => StageOutcome::Halt,
+        }
+    }
+}
