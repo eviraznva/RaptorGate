@@ -8,19 +8,19 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
-import { GetAllZonePairsUseCase } from 'src/application/use-cases/get-all-zone-pairs.use-case';
-import { CreateZonePairUseCase } from 'src/application/use-cases/create-zone-pair.use-case';
-import { DeleteZonePairUseCase } from 'src/application/use-cases/delete-zone-pair.use-case';
-import { EditZonePairUseCase } from 'src/application/use-cases/edit-zone-pair.use-case';
-import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
-import { CreateZonePairDto } from '../dtos/create-zone-pair.dto';
-import { Permission } from 'src/domain/enums/permissions.enum';
-import { EditZonePairDto } from '../dtos/edit-zone-pair.dto';
-import { Role } from 'src/domain/enums/role.enum';
+import { RequirePermissions } from '../../infrastructure/decorators/require-permissions.decorator.js';
+import { GetAllZonePairsUseCase } from '../../application/use-cases/get-all-zone-pairs.use-case.js';
+import { CreateZonePairUseCase } from '../../application/use-cases/create-zone-pair.use-case.js';
+import { DeleteZonePairUseCase } from '../../application/use-cases/delete-zone-pair.use-case.js';
+import { EditZonePairUseCase } from '../../application/use-cases/edit-zone-pair.use-case.js';
+import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
+import { Roles } from '../../infrastructure/decorators/roles.decorator.js';
+import { ZonePair } from '../../domain/entities/zone-pair.entity.js';
+import { CreateZonePairDto } from '../dtos/create-zone-pair.dto.js';
+import { Permission } from '../../domain/enums/permissions.enum.js';
+import { EditZonePairDto } from '../dtos/edit-zone-pair.dto.js';
+import { Role } from '../../domain/enums/role.enum.js';
 import { ApiOperation } from '@nestjs/swagger';
-import { ZonePair } from 'src/domain/entities/zone-pair.entity';
 
 @Controller('zone-pairs')
 export class ZonePairsController {

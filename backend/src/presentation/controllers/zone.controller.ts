@@ -8,18 +8,18 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
-import { GetAllZonesUseCase } from 'src/application/use-cases/get-all-zones.use-case';
-import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
-import { DeleteZoneUseCase } from 'src/application/use-cases/delete-zone.use-case';
-import { CreateZoneUseCase } from 'src/application/use-cases/create-zone.use-case';
-import { EditZoneUseCase } from 'src/application/use-cases/edit-zone.use-case';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { Permission } from 'src/domain/enums/permissions.enum';
-import { CreateZoneDto } from '../dtos/create-zone.dto';
-import { Zone } from 'src/domain/entities/zone.entity';
-import { EditZoneDto } from '../dtos/edit-zone.dto';
-import { Role } from 'src/domain/enums/role.enum';
+import { RequirePermissions } from '../../infrastructure/decorators/require-permissions.decorator.js';
+import { GetAllZonesUseCase } from '../../application/use-cases/get-all-zones.use-case.js';
+import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
+import { CreateZoneUseCase } from '../../application/use-cases/create-zone.use-case.js';
+import { DeleteZoneUseCase } from '../../application/use-cases/delete-zone.use-case.js';
+import { EditZoneUseCase } from '../../application/use-cases/edit-zone.use-case.js';
+import { Roles } from '../../infrastructure/decorators/roles.decorator.js';
+import { Permission } from '../../domain/enums/permissions.enum.js';
+import { Zone } from '../../domain/entities/zone.entity.js';
+import { CreateZoneDto } from '../dtos/create-zone.dto.js';
+import { EditZoneDto } from '../dtos/edit-zone.dto.js';
+import { Role } from '../../domain/enums/role.enum.js';
 import { ApiOperation } from '@nestjs/swagger';
 
 @Controller('zones')

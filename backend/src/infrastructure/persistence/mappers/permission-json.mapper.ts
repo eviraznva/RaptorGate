@@ -1,5 +1,5 @@
-import { Permission } from 'src/domain/entities/permission.entity';
-import { PermissionRecord } from '../schemas/permissions.schema';
+import { Permission } from '../../../domain/entities/permission.entity.js';
+import { PermissionRecord } from '../schemas/permissions.schema.js';
 
 export class PermissionJsonMapper {
   static toDomain(record: PermissionRecord): Permission {

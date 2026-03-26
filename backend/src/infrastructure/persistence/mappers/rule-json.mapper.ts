@@ -1,6 +1,6 @@
-import { FirewallRule } from 'src/domain/entities/firewall-rule.entity';
-import { Priority } from 'src/domain/value-objects/priority.vo';
-import { RuleRecord } from '../schemas/rules.schema';
+import { FirewallRule } from '../../../domain/entities/firewall-rule.entity.js';
+import { Priority } from '../../../domain/value-objects/priority.vo.js';
+import { RuleRecord } from '../schemas/rules.schema.js';
 
 export class RuleJsonMapper {
   constructor() {}

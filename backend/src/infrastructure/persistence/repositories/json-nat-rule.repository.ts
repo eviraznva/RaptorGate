@@ -1,10 +1,13 @@
-import { INatRulesRepository } from 'src/domain/repositories/nat-rules.repository';
-import { NatRulesFile, NatRulesFileSchema } from '../schemas/nat-rules.schema';
-import { NatRuleJsonMapper } from '../mappers/nat-rule-json.mapper';
-import { NatRule } from 'src/domain/entities/nat-rule.entity';
+import { INatRulesRepository } from '../../../domain/repositories/nat-rules.repository.js';
+import {
+  NatRulesFile,
+  NatRulesFileSchema,
+} from '../schemas/nat-rules.schema.js';
+import { NatRuleJsonMapper } from '../mappers/nat-rule-json.mapper.js';
+import { NatRule } from '../../../domain/entities/nat-rule.entity.js';
 import { Inject, Injectable } from '@nestjs/common';
-import { FileStore } from '../json/file-store';
-import { Mutex } from '../json/file-mutex';
+import { FileStore } from '../json/file-store.js';
+import { Mutex } from '../json/file-mutex.js';
 import { join } from 'node:path';
 
 @Injectable()
@@ -46,6 +49,18 @@ export class JsonNatRuleRepository implements INatRulesRepository {
       }
 
       await this.fileStore.writeJsonAtomic(this.filePath, payload);
+    });
+  }
+
+  async overwriteAll(natRules: NatRule[]): Promise<void> {
+    const toNatRules = natRules.map((natRule) =>
+      NatRuleJsonMapper.toRecord(natRule, crypto.randomUUID()),
+    );
+
+    await this.mutex.runExclusive(async () => {
+      await this.fileStore.writeJsonAtomic(this.filePath, {
+        items: toNatRules,
+      });
     });
   }
 

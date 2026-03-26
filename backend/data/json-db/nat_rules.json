@@ -13,7 +13,7 @@
       "priority": 10,
       "createdAt": "2026-03-23T06:43:47.449Z",
       "updatedAt": "2026-03-23T06:51:19.805Z",
-      "createdBy": "00000000-0000-4000-8000-000000000001"
+      "createdBy": "76f0a8cb-37cd-4511-9aaf-b8024aa1aca5"
     },
     {
       "id": "b29c1dda-9515-4f83-86cf-48aed6f661ae",
@@ -28,7 +28,7 @@
       "priority": 10,
       "createdAt": "2026-03-23T11:34:19.429Z",
       "updatedAt": "2026-03-23T11:34:19.429Z",
-      "createdBy": "00000000-0000-4000-8000-000000000001"
+      "createdBy": "e79d8463-5650-4e0d-b76d-a4de3ca9c804"
     },
     {
       "id": "f877657b-687e-43a4-bb77-079e42167540",
@@ -43,7 +43,7 @@
       "priority": 20,
       "createdAt": "2026-03-23T11:34:29.174Z",
       "updatedAt": "2026-03-23T11:34:29.174Z",
-      "createdBy": "00000000-0000-4000-8000-000000000001"
+      "createdBy": "06856b09-0107-40eb-9575-b4a58605c7c0"
     },
     {
       "id": "3349d1c9-c725-474a-b4ce-77a2558f6298",
@@ -58,7 +58,22 @@
       "priority": 30,
       "createdAt": "2026-03-23T11:34:38.607Z",
       "updatedAt": "2026-03-23T11:34:38.607Z",
-      "createdBy": "00000000-0000-4000-8000-000000000001"
+      "createdBy": "df1455c6-916a-47f8-91c5-3cc7675b123a"
+    },
+    {
+      "id": "6c7faecd-56c8-4f85-b39f-10a63470b04a",
+      "type": "SNAT",
+      "isActive": true,
+      "srcIp": "192.168.1.99",
+      "dstIp": null,
+      "srcPort": null,
+      "dstPort": null,
+      "translatedIp": "10.0.0.5",
+      "translatedPort": null,
+      "priority": 99,
+      "createdAt": "2026-03-26T15:39:15.504Z",
+      "updatedAt": "2026-03-26T15:39:15.504Z",
+      "createdBy": "368562e3-4039-43db-bc01-50793beee4de"
     }
   ]
 }

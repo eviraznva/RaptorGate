@@ -1,14 +1,14 @@
-import { JsonNatRuleRepository } from 'src/infrastructure/persistence/repositories/json-nat-rule.repository';
-import { GetAllNatRulesUseCase } from 'src/application/use-cases/get-all-nat-rules.use-case';
-import { CreateNatRuleUseCase } from 'src/application/use-cases/create-nat-rule.use-case';
-import { NAT_RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/nat-rules.repository';
-import { DeleteNatRuleUseCase } from 'src/application/use-cases/delete-nat-rule.use-case';
-import { EditNatRuleUseCase } from 'src/application/use-cases/edit-nat-rule.use-case';
-import { NatRuleController } from 'src/presentation/controllers/nat-rule.controller';
-import { TOKEN_SERVICE_TOKEN } from 'src/application/ports/token-service.interface';
-import { TokenService } from 'src/infrastructure/adapters/jwt-token.service';
-import { FileStore } from 'src/infrastructure/persistence/json/file-store';
-import { Mutex } from 'src/infrastructure/persistence/json/file-mutex';
+import { JsonNatRuleRepository } from '../infrastructure/persistence/repositories/json-nat-rule.repository.js';
+import { GetAllNatRulesUseCase } from '../application/use-cases/get-all-nat-rules.use-case.js';
+import { CreateNatRuleUseCase } from '../application/use-cases/create-nat-rule.use-case.js';
+import { DeleteNatRuleUseCase } from '../application/use-cases/delete-nat-rule.use-case.js';
+import { NAT_RULES_REPOSITORY_TOKEN } from '../domain/repositories/nat-rules.repository.js';
+import { EditNatRuleUseCase } from '../application/use-cases/edit-nat-rule.use-case.js';
+import { NatRuleController } from '../presentation/controllers/nat-rule.controller.js';
+import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
+import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
+import { FileStore } from '../infrastructure/persistence/json/file-store.js';
+import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
 import { JwtService } from '@nestjs/jwt';
 import { Module } from '@nestjs/common';
 

@@ -1,4 +1,4 @@
-import { ZonePairPolicy } from 'src/domain/entities/zone-pair.entity';
+import { ZonePairPolicy } from '../../domain/entities/zone-pair.entity.js';
 
 export class CreateZonePairDto {
   srcZoneId: string;

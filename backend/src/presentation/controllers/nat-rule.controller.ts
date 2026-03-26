@@ -1,5 +1,3 @@
-import { CreateNatRuleUseCase } from 'src/application/use-cases/create-nat-rule.use-case';
-import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
 import {
   Body,
   Controller,
@@ -10,16 +8,18 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
-import { GetAllNatRulesUseCase } from 'src/application/use-cases/get-all-nat-rules.use-case';
-import { DeleteNatRuleUseCase } from 'src/application/use-cases/delete-nat-rule.use-case';
-import { EditNatRuleUseCase } from 'src/application/use-cases/edit-nat-rule.use-case';
-import { GetAllNatRulesResponseDto } from '../dtos/get-all-nat-rules-response.dto';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { Permission } from 'src/domain/enums/permissions.enum';
-import { CreateNatRuleDto } from '../dtos/create-nat-rule.dto';
-import { EditNatRuleDto } from '../dtos/edit-nat-rule.dto';
-import { Role } from 'src/domain/enums/role.enum';
+import { RequirePermissions } from '../../infrastructure/decorators/require-permissions.decorator.js';
+import { GetAllNatRulesUseCase } from '../../application/use-cases/get-all-nat-rules.use-case.js';
+import { CreateNatRuleUseCase } from '../../application/use-cases/create-nat-rule.use-case.js';
+import { DeleteNatRuleUseCase } from '../../application/use-cases/delete-nat-rule.use-case.js';
+import { EditNatRuleUseCase } from '../../application/use-cases/edit-nat-rule.use-case.js';
+import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
+import { GetAllNatRulesResponseDto } from '../dtos/get-all-nat-rules-response.dto.js';
+import { Roles } from '../../infrastructure/decorators/roles.decorator.js';
+import { Permission } from '../../domain/enums/permissions.enum.js';
+import { CreateNatRuleDto } from '../dtos/create-nat-rule.dto.js';
+import { EditNatRuleDto } from '../dtos/edit-nat-rule.dto.js';
+import { Role } from '../../domain/enums/role.enum.js';
 import { ApiOperation } from '@nestjs/swagger';
 
 @Controller('nat')

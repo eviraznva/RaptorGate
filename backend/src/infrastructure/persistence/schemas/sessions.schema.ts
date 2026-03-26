@@ -1,10 +1,10 @@
-import { z } from 'zod';
 import {
   isoDateTimeSchema,
   nullableIsoDateTimeSchema,
   tableFileSchema,
   uuidSchema,
-} from './_common';
+} from './_common.js';
+import { z } from 'zod';
 
 export const SessionRecordSchema = z
   .object({

@@ -1,16 +1,17 @@
-import { Test, type TestingModule } from '@nestjs/testing';
+import type { ConfigSnapshotPayload } from '../../domain/value-objects/config-snapshot-payload.interface.js';
+import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
+import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
+import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { Checksum } from '../../domain/value-objects/checksum.vo.js';
 import { type LoggerService, type LogLevel } from '@nestjs/common';
 import { type ChildProcess, spawn } from 'node:child_process';
+import { Test, type TestingModule } from '@nestjs/testing';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { GrpcModule } from './grpc.module.js';
 import { join, resolve } from 'node:path';
+import { jest } from '@jest/globals';
 import { tmpdir } from 'node:os';
-import { GrpcModule } from './grpc.module';
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from 'src/domain/repositories/config-snapshot.repository';
-import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
-import { SnapshotType } from 'src/domain/value-objects/snapshot-type.vo';
-import { Checksum } from 'src/domain/value-objects/checksum.vo';
-import type { ConfigSnapshotPayload } from 'src/domain/value-objects/config-snapshot-payload.interface';
 
 const runIntegration = process.env.RUN_FIREWALL_INTEGRATION === '1';
 const describeIntegration = runIntegration ? describe : describe.skip;
@@ -43,7 +44,12 @@ const TEST_PAYLOAD: ConfigSnapshotPayload = {
     dns_blacklist: { items: [] },
     ssl_bypass_list: { items: [] },
     ips_signatures: { items: [] },
-    ml_model: { id: 'ml-1', name: 'noop', artifact_path: '/dev/null', checksum: 'none' },
+    ml_model: {
+      id: 'ml-1',
+      name: 'noop',
+      artifact_path: '/dev/null',
+      checksum: 'none',
+    },
     firewall_certificates: { items: [] },
     identity: {
       user_groups: [],
@@ -96,7 +102,11 @@ class TestLogger implements LoggerService {
 }
 
 describeIntegration('gRPC integration: firewall ↔ backend', () => {
-  let app: ReturnType<TestingModule['createNestMicroservice']> extends Promise<infer T> ? T : never;
+  let app: ReturnType<TestingModule['createNestMicroservice']> extends Promise<
+    infer T
+  >
+    ? T
+    : never;
   let firewallProcess: ChildProcess | null = null;
   let runtimeDir: string;
   let firewallLogs = '';
