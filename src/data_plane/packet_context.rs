@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use etherparse::{err::packet, SlicedPacket};
 use ouroboros::self_referencing;
@@ -8,6 +9,7 @@ use ouroboros::self_referencing;
 pub struct PacketContext {
     pub src_interface: Arc<str>,
     pub warnings: Vec<String>,
+    pub arrival_time: SystemTime,
     pub raw: Vec<u8>,
     #[borrows(raw)]
     #[covariant]
@@ -19,6 +21,7 @@ impl PacketContext {
         PacketContextTryBuilder {
             src_interface,
             warnings: Vec::new(),
+            arrival_time: SystemTime::now(),
             raw,
             sliced_packet_builder: |raw| SlicedPacket::from_ethernet(raw),
         }

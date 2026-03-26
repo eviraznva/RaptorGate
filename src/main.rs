@@ -1,7 +1,6 @@
 mod config;
 mod control_plane;
 mod data_plane;
-mod frame;
 mod ip_defrag;
 mod packet_validator;
 mod policy;

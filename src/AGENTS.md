@@ -1,5 +1,9 @@
-# Rework:
+# Dla agenta:
+- Nie próbuj reformatować części kodu, których nie modyfikujesz
+- Nie dodawaj komentarzy, chyba że dany fragment kodu jest w normalnych warunkach nieoczekiwany / używane jest unsafe
+
 Prowadzony aktualnie jest rework kilku aspektów firewalla. Zapoznaj się z wymaganiami
+# Rework:
 ## Processing pakietów
 
 Zasada polega na chainowaniu warstw processingu. Każda warstwa przyjmuje referencje do pakietu wrappowanego w context. Każda wartstwa implementuje trait `Stage`:

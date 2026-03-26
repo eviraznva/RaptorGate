@@ -4,12 +4,11 @@ use bitflags::{bitflags, bitflags_match};
 use dashmap::{DashMap, Entry};
 use derive_more::{Add, AddAssign, Display, From, Into};
 use etherparse::{IpPayloadSlice, Ipv4Slice, NetSlice, SlicedPacket, TcpSlice, TransportSlice, err::tcp::HeaderSliceError};
-use ngfw::frame::RealFrame;
 use ringbuffer::{AllocRingBuffer, RingBuffer};
 use thiserror::Error;
 use unordered_pair::UnorderedPair;
 
-use crate::frame::{Frame, Port};
+use crate::rule_tree::types::Port;
 
 pub struct TcpSessionTracker {
     sessions: Arc<DashMap<TcpIdentifier, TcpSession>>, //TODO: Transition away from using `Arc` since we want to avoid indirection, do something like in `PacketBuffer`.

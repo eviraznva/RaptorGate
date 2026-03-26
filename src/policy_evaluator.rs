@@ -1,10 +1,11 @@
 use std::fmt::Display;
+use std::net::IpAddr;
 
-use arc_swap::docs::patterns;
+use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
-use crate::{
-    frame::Frame,
-    rule_tree::{FieldValue, MatchKind, Operation, Pattern, RuleTree, Step, TreeWalker, Verdict},
+use crate::rule_tree::{
+    ArrivalInfo, FieldValue, IpVer, MatchKind, Operation, Pattern, Port, Protocol, RuleTree, Step,
+    TreeWalker, Verdict,
 };
 
 pub(crate) struct PolicyEvaluator {
@@ -20,18 +21,16 @@ impl PolicyEvaluator {
         }
     }
 
-    pub(crate) fn evaluate<T: Frame>(&self, frame: &T) -> Verdict {
-        let context = PolicyContext {
-            frame,
-            allowed: false,
-            warned: false,
-        };
+    pub(crate) fn evaluate(&self, packet: &SlicedPacket, arrival: &ArrivalInfo) -> Verdict {
         let mut walker = TreeWalker::new(&self.rules);
 
         loop {
             match walker.current_step() {
                 Step::NeedsMatch { kind, pattern } => {
-                    let Some(value) = Self::extract(*kind, &context) else {walker.advance(false); continue};
+                    let Some(value) = Self::extract(*kind, packet, arrival) else {
+                        walker.advance(false);
+                        continue;
+                    };
                     let matched = Self::pattern_matches(pattern, value);
                     if let Step::Verdict(v) = walker.advance(matched) {
                         return v.clone();
@@ -43,17 +42,61 @@ impl PolicyEvaluator {
         }
     }
 
-    fn extract<T: Frame>(kind: MatchKind, context: &PolicyContext<T>) -> Option<FieldValue> {
-        let frame = context.frame;
+    fn extract(
+        kind: MatchKind,
+        packet: &SlicedPacket,
+        arrival: &ArrivalInfo,
+    ) -> Option<FieldValue> {
         match kind {
-            MatchKind::SrcIp => Some(FieldValue::Ip(frame.src_ip().into())),
-            MatchKind::DstIp => Some(FieldValue::Ip(frame.dst_ip().into())),
-            MatchKind::IpVer => Some(FieldValue::IpVer(frame.ip_ver())),
-            MatchKind::DayOfWeek => Some(FieldValue::DayOfWeek(frame.day_of_week())),
-            MatchKind::Hour => Some(FieldValue::Hour(frame.hour())),
-            MatchKind::Protocol => Some(FieldValue::Protocol(frame.protocol())),
-            MatchKind::SrcPort => frame.src_port().map(FieldValue::Port),
-            MatchKind::DstPort => frame.dst_port().map(FieldValue::Port),
+            MatchKind::SrcIp => {
+                let ipv4 = packet.net.as_ref()?.ipv4_ref()?;
+                Some(FieldValue::Ip(
+                    IpAddr::V4(ipv4.header().source_addr()).into(),
+                ))
+            }
+            MatchKind::DstIp => {
+                let ipv4 = packet.net.as_ref()?.ipv4_ref()?;
+                Some(FieldValue::Ip(
+                    IpAddr::V4(ipv4.header().destination_addr()).into(),
+                ))
+            }
+            MatchKind::IpVer => {
+                let ver = match &packet.net {
+                    Some(NetSlice::Ipv4(_)) => IpVer::V4,
+                    Some(NetSlice::Ipv6(_)) => IpVer::V6,
+                    _ => return None,
+                };
+                Some(FieldValue::IpVer(ver))
+            }
+            MatchKind::Protocol => {
+                let proto = match &packet.transport {
+                    Some(TransportSlice::Tcp(_)) => Protocol::Tcp,
+                    Some(TransportSlice::Udp(_)) => Protocol::Udp,
+                    Some(TransportSlice::Icmpv4(_)) => Protocol::Icmp,
+                    _ => return None,
+                };
+                Some(FieldValue::Protocol(proto))
+            }
+            MatchKind::SrcPort => match &packet.transport {
+                Some(TransportSlice::Tcp(tcp)) => {
+                    Some(FieldValue::Port(Port::from(tcp.source_port())))
+                }
+                Some(TransportSlice::Udp(udp)) => {
+                    Some(FieldValue::Port(Port::from(udp.source_port())))
+                }
+                _ => None,
+            },
+            MatchKind::DstPort => match &packet.transport {
+                Some(TransportSlice::Tcp(tcp)) => {
+                    Some(FieldValue::Port(Port::from(tcp.destination_port())))
+                }
+                Some(TransportSlice::Udp(udp)) => {
+                    Some(FieldValue::Port(Port::from(udp.destination_port())))
+                }
+                _ => None,
+            },
+            MatchKind::Hour => Some(FieldValue::Hour(arrival.hour)),
+            MatchKind::DayOfWeek => Some(FieldValue::DayOfWeek(arrival.day_of_week)),
         }
     }
 
@@ -93,92 +136,83 @@ impl PolicyEvaluator {
 
 impl Display for PolicyEvaluator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PolicyEvaluator {{ rules: {}, orphaned_verdict: {} }}", self.rules, self.orphaned_verdict)
+        write!(
+            f,
+            "PolicyEvaluator {{ rules: {}, orphaned_verdict: {} }}",
+            self.rules, self.orphaned_verdict
+        )
     }
-}
-
-struct PolicyContext<'a, T>
-where
-    T: Frame,
-{
-    frame: &'a T,
-    allowed: bool,
-    warned: bool,
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use etherparse::{PacketBuilder, SlicedPacket};
 
     use super::*;
-    use crate::{
-        frame::{Hour, IpGlobbable, IpVer, Octet, Port, Protocol, Weekday},
-        rule_tree::{ArmEnd, MatchBuilder},
+    use crate::rule_tree::{
+        ArmEnd, ArrivalInfo, Hour, IpGlobbable, IpVer, MatchBuilder, Octet, Port, Protocol, Weekday,
     };
 
     type IP = IpGlobbable;
 
-    struct DummyFrame {
-        src_ip: IpAddr,
-        dst_ip: IpAddr,
-        ip_ver: IpVer,
-        protocol: Protocol,
-        src_port: Option<Port>,
-        dst_port: Option<Port>,
-        hour: Hour,
-        day_of_week: Weekday,
+    // ── Packet helpers ────────────────────────────────────────
+
+    fn tcp_packet(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16) -> Vec<u8> {
+        let builder = PacketBuilder::ethernet2([0; 6], [0; 6])
+            .ipv4(src_ip, dst_ip, 64)
+            .tcp(src_port, dst_port, 0, 1024);
+        let mut result = Vec::with_capacity(builder.size(0));
+        builder.write(&mut result, &[]).unwrap();
+        result
     }
 
-    impl DummyFrame {
-        fn default_v4() -> Self {
-            Self {
-                src_ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-                dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                ip_ver: IpVer::V4,
-                protocol: Protocol::Tcp,
-                src_port: Some(Port::from(12345)),
-                dst_port: Some(Port::from(80)),
-                hour: Hour::try_from(14).unwrap(),
-                day_of_week: Weekday::Wed,
-            }
-        }
+    fn udp_packet(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16) -> Vec<u8> {
+        let builder = PacketBuilder::ethernet2([0; 6], [0; 6])
+            .ipv4(src_ip, dst_ip, 64)
+            .udp(src_port, dst_port);
+        let mut result = Vec::with_capacity(builder.size(0));
+        builder.write(&mut result, &[]).unwrap();
+        result
     }
 
-    impl Frame for DummyFrame {
-        fn ip_ver(&self) -> IpVer {
-            self.ip_ver
-        }
-        fn src_ip(&self) -> IpAddr {
-            self.src_ip
-        }
-        fn dst_ip(&self) -> IpAddr {
-            self.dst_ip
-        }
-        fn protocol(&self) -> Protocol {
-            self.protocol
-        }
-        fn src_port(&self) -> Option<Port> {
-            self.src_port
-        }
-        fn dst_port(&self) -> Option<Port> {
-            self.dst_port
-        }
-        fn hour(&self) -> Hour {
-            self.hour
-        }
-        fn day_of_week(&self) -> Weekday {
-            self.day_of_week
-        }
+    fn icmp_packet(src_ip: [u8; 4], dst_ip: [u8; 4]) -> Vec<u8> {
+        let builder = PacketBuilder::ethernet2([0; 6], [0; 6])
+            .ipv4(src_ip, dst_ip, 64)
+            .icmpv4_echo_request(0, 0);
+        let mut result = Vec::with_capacity(builder.size(0));
+        builder.write(&mut result, &[]).unwrap();
+        result
+    }
 
-        fn transport_data(&'_ self) -> Option<&'_ etherparse::TransportSlice<'_>> {
-            None
+    fn ipv6_tcp_packet() -> Vec<u8> {
+        let builder = PacketBuilder::ethernet2([0; 6], [0; 6])
+            .ipv6([0; 16], [0; 16], 64)
+            .tcp(0, 0, 0, 1024);
+        let mut result = Vec::with_capacity(builder.size(0));
+        builder.write(&mut result, &[]).unwrap();
+        result
+    }
+
+    /// Default test packet: 192.168.1.10 → 10.0.0.1, TCP 12345 → 80
+    fn default_packet() -> Vec<u8> {
+        tcp_packet([192, 168, 1, 10], [10, 0, 0, 1], 12345, 80)
+    }
+
+    /// Default test arrival: hour=14, day=Wednesday
+    fn default_arrival() -> ArrivalInfo {
+        ArrivalInfo {
+            hour: Hour::try_from(14).unwrap(),
+            day_of_week: Weekday::Wed,
         }
     }
 
-    fn eval(tree: RuleTree, frame: &DummyFrame) -> Verdict {
+    fn eval(tree: RuleTree, raw: &[u8], arrival: &ArrivalInfo) -> Verdict {
+        let sliced = SlicedPacket::from_ethernet(raw).unwrap();
         let evaluator = PolicyEvaluator::new(tree, Verdict::Drop);
-        evaluator.evaluate(frame)
+        evaluator.evaluate(&sliced, arrival)
     }
+
+    // ── Wildcard ──────────────────────────────────────────────
 
     #[test]
     fn wildcard_always_matches() {
@@ -193,7 +227,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     // ── Equal: IP version ─────────────────────────────────────
@@ -211,7 +248,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -227,7 +267,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Equal: Protocol ───────────────────────────────────────
@@ -245,7 +288,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     #[test]
@@ -261,7 +307,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Equal: Src IP ─────────────────────────────────────────
@@ -285,7 +334,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -307,7 +359,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Equal: Dst IP ─────────────────────────────────────────
@@ -331,7 +386,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     // ── Equal: Src Port ───────────────────────────────────────
@@ -349,7 +407,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -365,7 +426,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Equal: Dst Port ───────────────────────────────────────
@@ -384,7 +448,7 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(
-            eval(tree, &DummyFrame::default_v4()),
+            eval(tree, &default_packet(), &default_arrival()),
             Verdict::AllowWarn("dst port is 80".into())
         );
     }
@@ -404,7 +468,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -420,7 +487,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Equal: DayOfWeek ──────────────────────────────────────
@@ -438,7 +508,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     #[test]
@@ -454,7 +527,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Glob: IP with wildcards ───────────────────────────────
@@ -473,7 +549,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -490,7 +569,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     #[test]
@@ -507,9 +589,11 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
-
 
     #[test]
     fn range_dst_port_below() {
@@ -519,8 +603,14 @@ mod tests {
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
                 Pattern::And(vec![
-                    Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Port(Port::from(81))),
-                    Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(443))),
+                    Pattern::Comparison(
+                        Operation::GreaterOrEqual,
+                        FieldValue::Port(Port::from(81)),
+                    ),
+                    Pattern::Comparison(
+                        Operation::LesserOrEqual,
+                        FieldValue::Port(Port::from(443)),
+                    ),
                 ]),
                 ArmEnd::Verdict(Verdict::Allow),
             )
@@ -528,7 +618,10 @@ mod tests {
             .unwrap(),
         );
         // dst_port = 80, not in [81, 443]
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     #[test]
@@ -539,7 +632,10 @@ mod tests {
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
                 Pattern::And(vec![
-                    Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Port(Port::from(80))),
+                    Pattern::Comparison(
+                        Operation::GreaterOrEqual,
+                        FieldValue::Port(Port::from(80)),
+                    ),
                     Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(80))),
                 ]),
                 ArmEnd::Verdict(Verdict::Allow),
@@ -547,7 +643,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -562,7 +661,10 @@ mod tests {
                         Operation::GreaterOrEqual,
                         FieldValue::Port(Port::from(10000)),
                     ),
-                    Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(20000))),
+                    Pattern::Comparison(
+                        Operation::LesserOrEqual,
+                        FieldValue::Port(Port::from(20000)),
+                    ),
                 ]),
                 ArmEnd::Verdict(Verdict::Allow),
             )
@@ -570,7 +672,10 @@ mod tests {
             .unwrap(),
         );
         // src_port = 12345
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     // ── Range: Hour ───────────────────────────────────────────
@@ -598,7 +703,10 @@ mod tests {
             .unwrap(),
         );
         // hour = 14, in [9, 17]
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -624,7 +732,10 @@ mod tests {
             .unwrap(),
         );
         // hour = 14, not in [15, 23]
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Comparison: Port ──────────────────────────────────────
@@ -643,7 +754,10 @@ mod tests {
             .unwrap(),
         );
         // dst_port = 80 > 79
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -660,7 +774,10 @@ mod tests {
             .unwrap(),
         );
         // dst_port = 80, not > 80
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     #[test]
@@ -676,7 +793,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -693,7 +813,10 @@ mod tests {
             .unwrap(),
         );
         // dst_port = 80 < 81
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -709,7 +832,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     // ── Comparison: Hour ──────────────────────────────────────
@@ -731,7 +857,10 @@ mod tests {
             .unwrap(),
         );
         // hour = 14 > 10
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -751,7 +880,10 @@ mod tests {
             .unwrap(),
         );
         // hour = 14, not < 10
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Comparison: DayOfWeek ─────────────────────────────────
@@ -773,7 +905,10 @@ mod tests {
             .unwrap(),
         );
         // Wed >= Mon
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -790,7 +925,10 @@ mod tests {
             .unwrap(),
         );
         // Wed < Fri
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -807,7 +945,10 @@ mod tests {
             .unwrap(),
         );
         // Wed not < Mon
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Or ────────────────────────────────────────────────────
@@ -828,13 +969,15 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
     fn or_protocol_matches_second() {
-        let mut frame = DummyFrame::default_v4();
-        frame.protocol = Protocol::Udp;
+        let raw = udp_packet([192, 168, 1, 10], [10, 0, 0, 1], 12345, 80);
         let tree = RuleTree::new(
             "or_proto_2nd".into(),
             "".into(),
@@ -849,7 +992,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &frame), Verdict::Allow);
+        assert_eq!(eval(tree, &raw, &default_arrival()), Verdict::Allow);
     }
 
     #[test]
@@ -868,8 +1011,11 @@ mod tests {
             .build()
             .unwrap(),
         );
-        // frame is Tcp
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        // packet is Tcp
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     #[test]
@@ -889,7 +1035,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -899,47 +1048,45 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
-                Pattern::Or(
-                    vec![
-                    Pattern::And(
-                        vec![
+                Pattern::Or(vec![
+                    Pattern::And(vec![
                         Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
                         Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
-                        ],
-                    ),
+                    ]),
                     Pattern::Equal(FieldValue::Port(Port::from(12345))),
-                    ],
-                ),
+                ]),
                 ArmEnd::Verdict(Verdict::Allow),
-            ).build().unwrap()
+            )
+            .build()
+            .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
     fn combined_and_or_allow_in_nested() {
-        let mut frame = DummyFrame::default_v4();
-        frame.src_port = Some(Port::from(81));
+        let raw = tcp_packet([192, 168, 1, 10], [10, 0, 0, 1], 81, 80);
         let tree = RuleTree::new(
             "or_dow".into(),
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
-                Pattern::Or(
-                    vec![
-                    Pattern::And(
-                        vec![
+                Pattern::Or(vec![
+                    Pattern::And(vec![
                         Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
                         Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
-                        ],
-                    ),
+                    ]),
                     Pattern::Equal(FieldValue::Port(Port::from(12345))),
-                    ],
-                ),
+                ]),
                 ArmEnd::Verdict(Verdict::Allow),
-            ).build().unwrap()
+            )
+            .build()
+            .unwrap(),
         );
-        assert_eq!(eval(tree, &frame), Verdict::Allow);
+        assert_eq!(eval(tree, &raw, &default_arrival()), Verdict::Allow);
     }
 
     #[test]
@@ -949,21 +1096,22 @@ mod tests {
             "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
-                Pattern::Or(
-                    vec![
-                    Pattern::And(
-                        vec![
+                Pattern::Or(vec![
+                    Pattern::And(vec![
                         Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
                         Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
-                        ],
-                    ),
+                    ]),
                     Pattern::Equal(FieldValue::Port(Port::from(100))),
-                    ],
-                ),
+                ]),
                 ArmEnd::Verdict(Verdict::Allow),
-            ).build().unwrap()
+            )
+            .build()
+            .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     #[test]
@@ -982,7 +1130,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -1002,7 +1153,10 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Multiple arms (fallthrough to second arm) ─────────────
@@ -1024,13 +1178,15 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
     fn multiple_arms_second_matches() {
-        let mut frame = DummyFrame::default_v4();
-        frame.protocol = Protocol::Udp;
+        let raw = udp_packet([192, 168, 1, 10], [10, 0, 0, 1], 12345, 80);
         let tree = RuleTree::new(
             "multi_arms_2nd".into(),
             "".into(),
@@ -1046,7 +1202,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        assert_eq!(eval(tree, &frame), Verdict::Drop);
+        assert_eq!(eval(tree, &raw, &default_arrival()), Verdict::Drop);
     }
 
     #[test]
@@ -1066,19 +1222,18 @@ mod tests {
             .build()
             .unwrap(),
         );
-        // frame is Tcp
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        // packet is Tcp
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Port-less protocol returns None for port extraction ───
 
     #[test]
     fn icmp_frame_port_extraction_returns_none() {
-        let mut frame = DummyFrame::default_v4();
-        frame.protocol = Protocol::Icmp;
-        frame.src_port = None;
-        frame.dst_port = None;
-
+        let raw = icmp_packet([192, 168, 1, 10], [10, 0, 0, 1]);
         let tree = RuleTree::new(
             "port_none".into(),
             "".into(),
@@ -1091,7 +1246,7 @@ mod tests {
             .unwrap(),
         );
         // extract returns None → evaluate returns Drop
-        assert_eq!(eval(tree, &frame), Verdict::Drop);
+        assert_eq!(eval(tree, &raw, &default_arrival()), Verdict::Drop);
     }
 
     // ── Nested tree (larger integration-style test) ───────────
@@ -1154,7 +1309,10 @@ mod tests {
             .unwrap(),
         );
 
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -1203,10 +1361,9 @@ mod tests {
             .unwrap(),
         );
 
-        let mut frame = DummyFrame::default_v4();
-        frame.dst_port = Some(Port::from(8080));
+        let raw = tcp_packet([192, 168, 1, 10], [10, 0, 0, 1], 12345, 8080);
         assert_eq!(
-            eval(tree, &frame),
+            eval(tree, &raw, &default_arrival()),
             Verdict::AllowWarn("high dst port".into())
         );
     }
@@ -1237,9 +1394,8 @@ mod tests {
             .unwrap(),
         );
 
-        let mut frame = DummyFrame::default_v4();
-        frame.protocol = Protocol::Udp;
-        assert_eq!(eval(tree, &frame), Verdict::Drop);
+        let raw = udp_packet([192, 168, 1, 10], [10, 0, 0, 1], 12345, 80);
+        assert_eq!(eval(tree, &raw, &default_arrival()), Verdict::Drop);
     }
 
     #[test]
@@ -1260,9 +1416,10 @@ mod tests {
             .unwrap(),
         );
 
-        let mut frame = DummyFrame::default_v4();
-        frame.ip_ver = IpVer::V6;
-        assert_eq!(eval(tree, &frame), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &ipv6_tcp_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     // ── Nested: IP glob + hour range + day check ──────────────
@@ -1319,8 +1476,11 @@ mod tests {
             .unwrap(),
         );
 
-        // Default: src=192.168.1.10, hour=14 (in [8,18]), day=Wed → Allow
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Allow);
+        // src=192.168.1.10, hour=14 (in [8,18]), day=Wed → Allow
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Allow
+        );
     }
 
     #[test]
@@ -1369,7 +1529,10 @@ mod tests {
         );
 
         // day=Wed, but arm only allows Mon → falls to wildcard → Drop
-        assert_eq!(eval(tree, &DummyFrame::default_v4()), Verdict::Drop);
+        assert_eq!(
+            eval(tree, &default_packet(), &default_arrival()),
+            Verdict::Drop
+        );
     }
 
     #[test]
@@ -1412,9 +1575,9 @@ mod tests {
             .unwrap(),
         );
 
-        // hour=14, not in [8,12] → falls to wildcard → AllowWarn
+        // hour=14, not in [8,12] → falls to wildcard → DropWarn
         assert_eq!(
-            eval(tree, &DummyFrame::default_v4()),
+            eval(tree, &default_packet(), &default_arrival()),
             Verdict::DropWarn("hour outside range".into())
         );
     }
