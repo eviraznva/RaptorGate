@@ -8,6 +8,7 @@ mod policy_evaluator;
 mod rule_tree;
 mod tls;
 mod pipeline;
+mod events;
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -81,6 +82,8 @@ async fn main() {
     let handle = control_plane.handle();
     let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
     let tcp_session_tracker = TcpSessionTracker::new();
+
+    tokio::spawn(events::init_event_queue());
 
     let nat_engine = build_test_nat();
     let defrag = IpDefragEngine::new(DefragConfig::default());
