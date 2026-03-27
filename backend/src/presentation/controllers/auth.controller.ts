@@ -8,18 +8,26 @@ import {
   Res,
 } from '@nestjs/common';
 import {
-  ValidationErrorResponseDto,
-  ErrorResponseDto,
-} from '../dtos/error-response.dto.js';
+  ApiError400,
+  ApiError401,
+  ApiError404,
+  ApiError429,
+  ApiError500,
+} from '../decorators/api-error-response.decorator.js';
+import {
+  ApiCreatedEnvelope,
+  ApiNoContentEnvelope,
+} from '../decorators/api-envelope-response.decorator.js';
 import { RefreshTokenUseCase } from '../../application/use-cases/refresh-token.use-case.js';
 import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
 import { LogoutUserUseCase } from '../../application/use-cases/logout-user.use-case.js';
 import { LoginUserUseCase } from '../../application/use-cases/login-user.use-case.js';
 import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto.js';
 import { IsPublic } from '../../infrastructure/decorators/public.decorator.js';
-import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
+import { ResponseMessage } from '../decorators/response-message.decorator.js';
 import { Cookie } from '../../infrastructure/decorators/cookie.decorator.js';
 import { LoginResponseDto } from '../dtos/login-response.dto.js';
+import { ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { Env } from '../../shared/config/env.validation.js';
 import { LoginDto } from '../dtos/login.dto.js';
 import { ConfigService } from '@nestjs/config';
@@ -36,34 +44,20 @@ export class AuthController {
     @Inject() private readonly loginUserUseCase: LoginUserUseCase,
   ) {}
 
-  @IsPublic()
-  @Post('login')
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'User login',
     description:
       'Authenticates user with username and password, returns JWT access token',
   })
+  @IsPublic()
+  @Post('login')
+  @HttpCode(HttpStatus.CREATED)
   @ApiBody({ type: LoginDto })
-  @ApiResponse({
-    status: 200,
-    description: 'Login successful',
-    type: LoginResponseDto,
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Validation error - invalid request body',
-    type: ValidationErrorResponseDto,
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Invalid credentials',
-    type: ErrorResponseDto,
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Internal server error',
-  })
+  @ResponseMessage('User logged in')
+  @ApiCreatedEnvelope(LoginResponseDto, 'User logged in')
+  @ApiError400('Validation failed or invalid credentials')
+  @ApiError429('Too many login attempts')
+  @ApiError500()
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   async login(
     @Body() loginDto: LoginDto,
@@ -90,26 +84,19 @@ export class AuthController {
     return loginResponse;
   }
 
+  @IsPublic()
+  @Post('refresh')
   @ApiOperation({
     summary: 'Refresh JWT access token',
     description:
       "Refreshes JWT access token using a valid refresh token. The refresh token is expected to be sent as an HTTP-only cookie named 'refresh_token'. The current access token should be sent in the Authorization header as a Bearer token. If the refresh token is valid and not expired, a new access token will be issued. If the refresh token is close to expiring, a new refresh token will also be issued and set in the cookie.",
   })
-  @ApiResponse({
-    status: 201,
-    description: 'Access token refreshed successfully',
-    type: RefreshTokenResponseDto,
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Invalid access token format or missing refresh token cookie',
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Internal server error',
-  })
-  @IsPublic()
-  @Post('refresh')
+  @ResponseMessage('Access token refreshed')
+  @ApiCreatedEnvelope(RefreshTokenResponseDto, 'Access token refreshed')
+  @ApiError401('Authorization header missing/invalid or refresh token invalid')
+  @ApiError404('User not found')
+  @ApiError429('Too many requests')
+  @ApiError500()
   async refresh(
     @ExtractToken() accessToken: string,
     @Cookie('refresh_token') refreshToken: string,
@@ -137,24 +124,19 @@ export class AuthController {
     };
   }
 
+  @Post('logout')
+  @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'User logout',
     description:
       'Logs out the user by invalidating the current access token and clearing the refresh token cookie. The access token should be sent in the Authorization header as a Bearer token. Upon successful logout, the refresh token cookie will be cleared.',
   })
-  @ApiResponse({
-    status: 201,
-    description: 'User logged out',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Invalid access token format',
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Internal server error',
-  })
-  @Post('logout')
+  @ResponseMessage('User logged out')
+  @ApiNoContentEnvelope()
+  @ApiError401('Missing or invalid token')
+  @ApiError404('User not found')
+  @ApiError429('Too many requests')
+  @ApiError500()
   async logout(
     @ExtractToken() accessToken: string,
     @Res({ passthrough: true }) res: Response,

@@ -6,6 +6,7 @@ import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-tok
 import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../ports/raptor-lang-validation-service.interface.js';
 import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-already-exists-exception.js';
 import type { IRaptorLangValidationService } from '../ports/raptor-lang-validation-service.interface.js';
+import { CreateRuleResponseDto } from '../dtos/create-rule-response.dto.js';
 import {
   TOKEN_SERVICE_TOKEN,
   type ITokenService,
@@ -25,7 +26,7 @@ export class CreateRuleUseCase {
     private readonly raptorLangValidationService: IRaptorLangValidationService,
   ) {}
 
-  async execute(dto: CreateRuleDto): Promise<void> {
+  async execute(dto: CreateRuleDto): Promise<CreateRuleResponseDto> {
     const claims = this.tokenService.decodeAccessToken(dto.accessToken);
     if (!claims) throw new AccessTokenIsInvalidException();
 
@@ -50,5 +51,18 @@ export class CreateRuleUseCase {
     );
 
     await this.rulesRepository.save(newRule);
+
+    return {
+      id: newRule.getId(),
+      name: newRule.getName(),
+      description: newRule.getDescription(),
+      zonePairId: newRule.getZonePairId(),
+      isActive: newRule.getIsActive(),
+      content: newRule.getContent(),
+      priority: newRule.getPriority().getValue(),
+      createdAt: newRule.getCreatedAt(),
+      updatedAt: newRule.getUpdatedAt(),
+      createdBy: newRule.getCreatedBy(),
+    };
   }
 }

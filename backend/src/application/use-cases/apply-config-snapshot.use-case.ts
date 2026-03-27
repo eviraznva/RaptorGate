@@ -27,6 +27,7 @@ import type { ITokenService } from '../ports/token-service.interface.js';
 import { Checksum } from '../../domain/value-objects/checksum.vo.js';
 import { Inject, Injectable } from '@nestjs/common';
 import { hash } from 'node:crypto';
+import { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 
 @Injectable()
 export class ApplyConfigSnapshotUseCase {
@@ -54,7 +55,9 @@ export class ApplyConfigSnapshotUseCase {
     private readonly userRolesRepository: IUserRolesRepository,
   ) {}
 
-  async execute(dto: ApplyConfigSnapshotDto): Promise<void> {
+  async execute(
+    dto: ApplyConfigSnapshotDto,
+  ): Promise<ApplyConfigSnapshotResponseDto> {
     const claims = this.tokenService.decodeAccessToken(dto.accessToken);
     if (!claims) throw new AccessTokenIsInvalidException();
 
@@ -147,5 +150,17 @@ export class ApplyConfigSnapshotUseCase {
       currentActiveSnapshot.setIsActive(false);
       await this.configSnapshotRepository.save(currentActiveSnapshot);
     }
+
+    return {
+      id: newConfigSnapshot.getId(),
+      versionNumber: newConfigSnapshot.getVersionNumber(),
+      snapshotType: newConfigSnapshot.getSnapshotType().getValue(),
+      checksum: newConfigSnapshot.getChecksum().getValue(),
+      isActive: newConfigSnapshot.getIsActive(),
+      payloadJson: newConfigSnapshot.getPayloadJson(),
+      changesSummary: newConfigSnapshot.getChangesSummary(),
+      createdAt: newConfigSnapshot.getCreatedAt(),
+      createdBy: newConfigSnapshot.getCreatedBy(),
+    };
   }
 }

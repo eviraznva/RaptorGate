@@ -2,6 +2,7 @@ import { NatConfigIsInvalidException } from '../../domain/exceptions/nat-config-
 import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
 import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
+import { EditNatRuleResponseDto } from '../dtos/edit-nat-rule-response.dto.js';
 import { EditNatRuleDto } from '../dtos/edit-nat-rule.dto.js';
 import { Inject, Injectable } from '@nestjs/common';
 
@@ -12,7 +13,7 @@ export class EditNatRuleUseCase {
     private readonly natRulesRepository: INatRulesRepository,
   ) {}
 
-  async execute(dto: EditNatRuleDto): Promise<void> {
+  async execute(dto: EditNatRuleDto): Promise<EditNatRuleResponseDto> {
     const natRule = await this.natRulesRepository.findById(dto.id);
     if (!natRule) throw new EntityNotFoundException('nat rule', dto.id);
 
@@ -33,6 +34,21 @@ export class EditNatRuleUseCase {
     natRule.setUpdatedAt(new Date());
 
     await this.natRulesRepository.save(natRule);
+
+    return {
+      id: natRule.getId(),
+      type: natRule.getType().getValue(),
+      isActive: natRule.getIsActive(),
+      sourceIp: natRule.getSourceIp()?.getValue || null,
+      destinationIp: natRule.getDestinationIp()?.getValue || null,
+      sourcePort: natRule.getSourcePort()?.getValue || null,
+      destinationPort: natRule.getDestinationPort()?.getValue || null,
+      translatedIp: natRule.getTranslatedIp()?.getValue || null,
+      translatedPort: natRule.getTranslatedPort()?.getValue || null,
+      priority: natRule.getPriority().getValue(),
+      createdAt: natRule.getCreatedAt(),
+      updatedAt: natRule.getUpdatedAt(),
+    };
   }
 
   private validateRequiredFields(dto: EditNatRuleDto): void {

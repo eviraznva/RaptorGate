@@ -3,7 +3,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { apiReference } from '@scalar/nestjs-api-reference';
 import { Env } from './shared/config/env.validation.js';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module.js';
 import { NestFactory } from '@nestjs/core';
@@ -81,6 +81,10 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      exceptionFactory: (errors) => {
+        const first = Object.values(errors[0]?.constraints ?? {})[0];
+        return new BadRequestException(first ?? 'Validation failed');
+      },
     }),
   );
 
