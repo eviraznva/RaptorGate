@@ -35,11 +35,6 @@ impl DpiSessionEntry {
             result: None,
         }
     }
-
-    fn is_done(&self) -> bool {
-        self.result.is_some()
-    }
-
     fn limits_exceeded(&self) -> bool {
         self.buffer.len() >= MAX_INSPECT_BYTES || self.packets_seen >= MAX_INSPECT_PACKETS
     }
@@ -106,8 +101,8 @@ impl DpiClassifier {
         self.sessions.remove(&key);
     }
 
-    // Liczba aktywnych sesji DPI.
-    pub fn session_count(&self) -> usize {
+    // Liczba aktywnych sesji DPI. Można użyć później do trackingu.
+    fn session_count(&self) -> usize {
         self.sessions.len()
     }
 
@@ -237,7 +232,7 @@ mod tests {
     #[test]
     fn test_session_entry_limits() {
         let mut entry = DpiSessionEntry::new();
-        assert!(!entry.is_done());
+        assert!(entry.result.is_none());
         assert!(!entry.limits_exceeded());
 
         for _ in 0..MAX_INSPECT_PACKETS {
@@ -414,7 +409,7 @@ mod tests {
         classifier.sessions.insert(key.clone(), entry);
 
         let cached = classifier.sessions.get(&key).unwrap();
-        assert!(cached.is_done());
+        assert!(cached.result.is_some());
         assert_eq!(cached.result.as_ref().unwrap().app_proto, Some(AppProto::Tls));
     }
 
