@@ -31,7 +31,7 @@ use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::pipeline::wrappers::{NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
-use crate::query_server::QueryHandler;
+use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::CaManager;
 use tokio_util::sync::CancellationToken;
 
@@ -90,17 +90,16 @@ async fn main() {
     tokio::spawn(events::init_event_queue());
     let nat_engine = build_test_nat();
 
-    let query_handler = QueryHandler {
-        tcp_tracker: Arc::clone(&tcp_session_tracker),
-        nat_engine: Arc::clone(&nat_engine),
-        policy_store: Arc::clone(&policy_store),
-    };
-
-    tokio::spawn(query_server::run(
-        query_handler,
-        config.query_socket_path.clone(),
+    let query_server = QueryServer::new(
+        QueryHandler {
+            tcp_tracker: Arc::clone(&tcp_session_tracker),
+            nat_engine: Arc::clone(&nat_engine),
+            policy_store: Arc::clone(&policy_store),
+        },
+        &config.query_socket_path,
         CancellationToken::new(),
-    ));
+    );
+    tokio::spawn(query_server.serve());
 
     let defrag = IpDefragEngine::new(DefragConfig::default());
 

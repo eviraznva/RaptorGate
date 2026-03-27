@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
-use tokio_stream::StreamExt;
 use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
@@ -20,6 +19,55 @@ use crate::proto::services::{
     GetTcpSessionsRequest, GetTcpSessionsResponse,
     ValidateRaptorlangRequest, ValidateRaptorlangResponse,
 };
+
+pub struct QueryServer {
+    handler: QueryHandler,
+    socket_path: String,
+    shutdown: CancellationToken,
+}
+
+impl QueryServer {
+    pub fn new(
+        handler: QueryHandler,
+        socket_path: impl Into<String>,
+        shutdown: CancellationToken,
+    ) -> Self {
+        Self {
+            handler,
+            socket_path: socket_path.into(),
+            shutdown,
+        }
+    }
+
+    pub async fn serve(self) {
+        if let Err(e) = prepare_socket(&self.socket_path) {
+            tracing::error!(socket = self.socket_path, error = %e, "failed to prepare query socket");
+            return;
+        }
+
+        let listener = match UnixListener::bind(&self.socket_path) {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::error!(socket = self.socket_path, error = %e, "failed to bind query socket");
+                return;
+            }
+        };
+
+        tracing::info!(socket = self.socket_path, "FirewallQueryService listening");
+
+        let incoming = UnixListenerStream::new(listener);
+
+        if let Err(e) = tonic::transport::Server::builder()
+            .add_service(FirewallQueryServiceServer::new(self.handler))
+            .serve_with_incoming_shutdown(incoming, self.shutdown.cancelled())
+            .await
+        {
+            tracing::error!(error = %e, "FirewallQueryService server error");
+        }
+
+        cleanup_socket(&self.socket_path);
+    }
+}
 
 #[derive(Clone)]
 pub struct QueryHandler {
@@ -55,35 +103,6 @@ impl FirewallQueryService for QueryHandler {
     ) -> Result<Response<GetNatBindingsResponse>, Status> {
         Err(Status::unimplemented("not yet implemented"))
     }
-}
-
-pub async fn run(handler: QueryHandler, socket_path: String, shutdown: CancellationToken) {
-    if let Err(e) = prepare_socket(socket_path.as_str()) {
-        tracing::error!(socket = socket_path, error = %e, "failed to prepare query socket");
-        return;
-    }
-
-    let listener = match UnixListener::bind(socket_path.as_str()) {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!(socket = socket_path, error = %e, "failed to bind query socket");
-            return;
-        }
-    };
-
-    tracing::info!(socket = socket_path.as_str(), "FirewallQueryService listening");
-
-    let incoming = UnixListenerStream::new(listener);
-
-    if let Err(e) = tonic::transport::Server::builder()
-        .add_service(FirewallQueryServiceServer::new(handler))
-        .serve_with_incoming_shutdown(incoming, shutdown.cancelled())
-        .await
-    {
-        tracing::error!(error = %e, "FirewallQueryService server error");
-    }
-
-    cleanup_socket(socket_path.as_str());
 }
 
 fn prepare_socket(socket_path: &str) -> std::io::Result<()> {
