@@ -1,13 +1,12 @@
 const PROTO_INCLUDE_DIRS: &[&str] = &["proto"];
 
-// Firewall is the gRPC CLIENT for event pushing (dials backend's BackendEventService).
-const EVENT_CLIENT_PROTO_FILES: &[&str] = &[
+// Both service protos share the raptorgate.services package so they must be
+// compiled together — separate calls would overwrite each other's output file.
+const SERVICE_PROTO_FILES: &[&str] = &[
     "proto/events/firewall_events.proto",
     "proto/services/event_service.proto",
+    "proto/services/query_service.proto",
 ];
-
-// Firewall is the gRPC SERVER for queries (backend dials FirewallQueryService).
-const QUERY_SERVER_PROTO_FILES: &[&str] = &["proto/services/query_service.proto"];
 
 // Control plane config retrieval — kept until control plane is fully removed.
 const CONTROL_PLANE_PROTO_FILES: &[&str] = &[
@@ -23,24 +22,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path()?);
     }
 
-    for file in EVENT_CLIENT_PROTO_FILES
-        .iter()
-        .chain(QUERY_SERVER_PROTO_FILES)
-        .chain(CONTROL_PLANE_PROTO_FILES)
-    {
+    for file in SERVICE_PROTO_FILES.iter().chain(CONTROL_PLANE_PROTO_FILES) {
         println!("cargo:rerun-if-changed={file}");
     }
     println!("cargo:rerun-if-changed=proto");
 
+    // Build client for BackendEventService (firewall dials backend to push events)
+    // and server for FirewallQueryService (backend dials firewall for queries).
     tonic_prost_build::configure()
         .build_client(true)
-        .build_server(false)
-        .compile_protos(EVENT_CLIENT_PROTO_FILES, PROTO_INCLUDE_DIRS)?;
-
-    tonic_prost_build::configure()
-        .build_client(false)
         .build_server(true)
-        .compile_protos(QUERY_SERVER_PROTO_FILES, PROTO_INCLUDE_DIRS)?;
+        .compile_protos(SERVICE_PROTO_FILES, PROTO_INCLUDE_DIRS)?;
 
     tonic_prost_build::configure()
         .build_client(true)

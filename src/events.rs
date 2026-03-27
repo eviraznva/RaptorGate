@@ -6,17 +6,61 @@ use std::time::SystemTime;
 
 use prost_types::Timestamp;
 use tokio::{select, sync::mpsc, time::{interval, Duration}};
+use tokio_stream::wrappers::ReceiverStream;
 
-use crate::{data_plane::tcp_session_tracker::EndpointIdentifier, proto::events::event_kind::Item};
+use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
 use crate::proto::events as proto;
+use crate::proto::services::backend_event_service_client::BackendEventServiceClient;
 
 const CHANNEL_CAPACITY: usize = 1024;
 const FLUSH_INTERVAL_MS: u64 = 500;
 const MAX_BATCH_SIZE: usize = 64;
 
 static EVENT_TX: OnceLock<mpsc::Sender<Event>> = OnceLock::new();
-static PROTO_TX: OnceLock<mpsc::Sender<proto::Event>> = OnceLock::new();
+static BACKEND_SINK: OnceLock<BackendEventSink> = OnceLock::new();
 static DROPPED_EVENTS: AtomicU64 = AtomicU64::new(0);
+
+pub struct BackendEventSink {
+    tx: mpsc::Sender<proto::Event>,
+}
+
+impl BackendEventSink {
+    pub async fn connect(socket_path: &str) -> Result<Self, tonic::transport::Error> {
+        let socket_path = socket_path.to_owned();
+
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
+                let path = socket_path.clone();
+                async move {
+                    let stream = tokio::net::UnixStream::connect(&path).await?;
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(stream))
+                }
+            }))
+            .await?;
+
+        let (tx, rx) = mpsc::channel::<proto::Event>(CHANNEL_CAPACITY);
+        let mut client = BackendEventServiceClient::new(channel);
+
+        tokio::spawn(async move {
+            if let Err(e) = client.push_events(ReceiverStream::new(rx)).await {
+                tracing::warn!(error = %e, "BackendEventService stream closed");
+            }
+        });
+
+        Ok(Self { tx })
+    }
+
+    pub async fn forward(&self, event: proto::Event) {
+        if self.tx.send(event).await.is_err() {
+            DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!("backend event sink closed, event dropped");
+        }
+    }
+}
+
+pub fn set_backend_sink(sink: BackendEventSink) {
+    BACKEND_SINK.set(sink).unwrap_or_else(|_| panic!("backend sink already set"));
+}
 
 pub fn emit(event: Event) {
     if let Some(tx) = EVENT_TX.get()
@@ -24,10 +68,6 @@ pub fn emit(event: Event) {
             DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
             tracing::warn!("event queue full, event dropped");
         }
-}
-
-pub fn set_backend_channel(tx: mpsc::Sender<proto::Event>) {
-    PROTO_TX.set(tx).unwrap_or_else(|_| panic!("backend channel already set"));
 }
 
 pub async fn init_event_queue() {
@@ -41,7 +81,7 @@ pub async fn init_event_queue() {
         select! {
             Some(event) = rx.recv() => {
                 if event.kind.is_immediate() {
-                    flush_batch(&mut buffer).await;
+                    flush_batch(&mut buffer).await; // flush as we want to preserve event ordering
                     dispatch(event).await;
                 } else {
                     buffer.push(event);
@@ -64,9 +104,8 @@ async fn flush_batch(buffer: &mut Vec<Event>) {
 
 async fn dispatch(event: Event) {
     tracing::debug!(kind = ?event.kind, "event dispatched");
-    if let Some(tx) = PROTO_TX.get() {
-        let proto_event: proto::Event = event.into();
-        let _ = tx.send(proto_event).await;
+    if let Some(sink) = BACKEND_SINK.get() {
+        sink.forward(event.into()).await;
     }
 }
 
@@ -114,6 +153,7 @@ fn system_time_to_proto(t: SystemTime) -> Timestamp {
 
 impl From<EventKind> for proto::EventKind {
     fn from(kind: EventKind) -> Self {
+        use proto::event_kind::Item;
         proto::EventKind {
             item: Some(match kind {
                 EventKind::TcpSessionEstabilished { src, dst } =>
