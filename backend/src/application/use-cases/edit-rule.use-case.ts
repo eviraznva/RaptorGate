@@ -4,6 +4,7 @@ import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-alr
 import { type IRaptorLangValidationService } from '../ports/raptor-lang-validation-service.interface.js';
 import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import { RULES_REPOSITORY_TOKEN } from '../../domain/repositories/rules-repository.js';
+import { EditRuleResponseDto } from '../dtos/edit-rule-response.dto.js';
 import type { IRulesRepository } from '../../domain/repositories/rules-repository.js';
 import { Priority } from '../../domain/value-objects/priority.vo.js';
 import { EditRuleDto } from '../dtos/edit-rule.dto.js';
@@ -18,7 +19,7 @@ export class EditRuleUseCase {
     private readonly raptorLangValidationService: IRaptorLangValidationService,
   ) {}
 
-  async execute(dto: EditRuleDto): Promise<void> {
+  async execute(dto: EditRuleDto): Promise<EditRuleResponseDto> {
     const rule = await this.rulesRepository.findById(dto.id);
     if (!rule) throw new EntityNotFoundException('Nat rule', dto.id);
 
@@ -52,5 +53,18 @@ export class EditRuleUseCase {
     rule.setUpdatedAt(new Date());
 
     await this.rulesRepository.save(rule);
+
+    return {
+      id: rule.getId(),
+      name: rule.getName(),
+      description: rule.getDescription(),
+      zonePairId: rule.getZonePairId(),
+      isActive: rule.getIsActive(),
+      content: rule.getContent(),
+      priority: rule.getPriority().getValue(),
+      createdAt: rule.getCreatedAt(),
+      updatedAt: rule.getUpdatedAt(),
+      createdBy: rule.getCreatedBy(),
+    };
   }
 }

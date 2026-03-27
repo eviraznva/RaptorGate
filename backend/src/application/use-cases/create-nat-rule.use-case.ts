@@ -9,6 +9,7 @@ import { NatType } from '../../domain/value-objects/nat-type.vo.js';
 import { NatRule } from '../../domain/entities/nat-rule.entity.js';
 import { CreateNatRuleDto } from '../dtos/create-nat-rule.dto.js';
 import { Inject, Injectable } from '@nestjs/common';
+import { CreateNatRuleResponseDto } from '../dtos/create-nat-rule-response.dto.js';
 
 @Injectable()
 export class CreateNatRuleUseCase {
@@ -18,7 +19,7 @@ export class CreateNatRuleUseCase {
     @Inject(TOKEN_SERVICE_TOKEN) private readonly tokenService: ITokenService,
   ) {}
 
-  async execute(dto: CreateNatRuleDto): Promise<void> {
+  async execute(dto: CreateNatRuleDto): Promise<CreateNatRuleResponseDto> {
     const claims = this.tokenService.decodeAccessToken(dto.accessToken);
     if (!claims) throw new AccessTokenIsInvalidException();
 
@@ -43,6 +44,7 @@ export class CreateNatRuleUseCase {
     if (dto.destinationIp != null)
       newNatRule.setDestinationIp(dto.destinationIp);
     if (dto.sourcePort != null) newNatRule.setSourcePort(dto.sourcePort);
+
     if (dto.destinationPort != null)
       newNatRule.setDestinationPort(dto.destinationPort);
     if (dto.translatedIp != null) newNatRule.setTranslatedIp(dto.translatedIp);
@@ -50,6 +52,21 @@ export class CreateNatRuleUseCase {
       newNatRule.setTranslatedPort(dto.translatedPort);
 
     await this.natRulesRepository.save(newNatRule, claims.sub);
+
+    return {
+      id: newNatRule.getId(),
+      type: newNatRule.getType().getValue(),
+      isActive: newNatRule.getIsActive(),
+      sourceIp: newNatRule.getSourceIp()?.getValue || null,
+      destinationIp: newNatRule.getDestinationIp()?.getValue || null,
+      sourcePort: newNatRule.getSourcePort()?.getValue || null,
+      destinationPort: newNatRule.getDestinationPort()?.getValue || null,
+      translatedIp: newNatRule.getTranslatedIp()?.getValue || null,
+      translatedPort: newNatRule.getTranslatedPort()?.getValue || null,
+      priority: newNatRule.getPriority().getValue(),
+      createdAt: newNatRule.getCreatedAt(),
+      updatedAt: newNatRule.getUpdatedAt(),
+    };
   }
 
   private validateRequiredFields(dto: CreateNatRuleDto): void {

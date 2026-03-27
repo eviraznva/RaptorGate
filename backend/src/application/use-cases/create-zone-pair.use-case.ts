@@ -3,6 +3,7 @@ import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-alr
 import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
 import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
+import { CreateZonePairResponseDto } from '../dtos/create-zone-pair-response.dto.js';
 import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
 import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
 import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
@@ -21,7 +22,7 @@ export class CreateZonePairUseCase {
     private readonly zoneRepository: IZoneRepository,
   ) {}
 
-  async execute(dto: CreateZonePairDto): Promise<void> {
+  async execute(dto: CreateZonePairDto): Promise<CreateZonePairResponseDto> {
     const claims = this.tokenService.decodeAccessToken(dto.accessToken);
     const srcZoneExists = await this.zoneRepository.findById(dto.srcZoneId);
     const dstZoneExists = await this.zoneRepository.findById(dto.dstZoneId);
@@ -55,5 +56,14 @@ export class CreateZonePairUseCase {
     );
 
     await this.zonePairRepository.save(newZonePair);
+
+    return {
+      id: newZonePair.getId(),
+      srcZoneId: newZonePair.getSrcZoneId(),
+      dstZoneId: newZonePair.getDstZoneId(),
+      defaultPolicy: newZonePair.getDefaultPolicy(),
+      createdAt: newZonePair.getCreatedAt(),
+      createdBy: newZonePair.getCreatedBy(),
+    };
   }
 }
