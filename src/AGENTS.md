@@ -101,15 +101,20 @@ Z eventami mamy 2 kwestie:
 - Eventy jakie firewall pushuje na backend, np. jakieś alerty. Rzecz bazuje na typie z protobufa:
 ```protobuf
 message Event {
-    google.protobuf.Timestamp emitted_at = 1;
-    oneof kind {
-        PolicyDrop    policy_drop    = 2;
-        NatBinding    nat_binding    = 3;
-        ConfigChanged config_changed = 4;
-        ...
-    }
+  google.protobuf.Timestamp emitted_at = 1;
+  EventKind kind = 2;
+}
+
+message EventKind {
+  oneof item {
+    TcpSessionEstablishedEvent     tcp_session_established  = 1;
+    TcpSessionRemovedEvent         tcp_session_removed      = 2;
+    TcpConnectionRejectedEvent     tcp_connection_rejected  = 3;
+    TcpSessionAbortedMidCloseEvent tcp_session_aborted      = 4;
+  }
 }
 ```
+
 Z perspektywy kodu mielibyśmy funkcję `emit`:
 ```rust
 static EVENT_SEND: OnceLock<mpsc::Sender<EventSerialized>> = OnceLock::new();
