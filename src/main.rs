@@ -8,6 +8,7 @@ mod pipeline;
 mod policy;
 mod policy_evaluator;
 mod proto;
+mod query_server;
 mod rule_tree;
 mod tls;
 
@@ -30,7 +31,9 @@ use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::pipeline::wrappers::{NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
+use crate::query_server::QueryHandler;
 use crate::tls::CaManager;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() {
@@ -86,6 +89,19 @@ async fn main() {
 
     tokio::spawn(events::init_event_queue());
     let nat_engine = build_test_nat();
+
+    let query_handler = QueryHandler {
+        tcp_tracker: Arc::clone(&tcp_session_tracker),
+        nat_engine: Arc::clone(&nat_engine),
+        policy_store: Arc::clone(&policy_store),
+    };
+
+    tokio::spawn(query_server::run(
+        query_handler,
+        config.query_socket_path.clone(),
+        CancellationToken::new(),
+    ));
+
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
     let tun = TunForwarder::get(&config);
