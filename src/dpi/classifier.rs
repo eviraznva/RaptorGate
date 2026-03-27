@@ -6,7 +6,7 @@ use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use super::context::DpiContext;
 use super::flow_key::FlowKey;
-use super::parsers::dns;
+use super::parsers::{dns, tls};
 use super::AppProto;
 
 const MAX_INSPECT_BYTES: usize = 16_384;
@@ -158,10 +158,24 @@ const CLASSIFIERS: &[Classifier] = &[
     classify_quic,
 ];
 
-// TLS: ContentType 0x16 (Handshake) + wersja 0x0301–0x0304.
+// TLS: głęboki parsing ClientHello (SNI, ECH, wersja), fallback na wzorzec nagłówka.
 fn classify_tls(buf: &[u8]) -> Option<DpiContext> {
-    (buf.len() >= 3 && buf[0] == 0x16 && buf[1] == 0x03 && (1..=4).contains(&buf[2]))
-        .then(|| DpiContext { app_proto: Some(AppProto::Tls), ..Default::default() })
+    if buf.len() < 3 || buf[0] != 0x16 || buf[1] != 0x03 || !(1..=4).contains(&buf[2]) {
+        return None;
+    }
+
+    if let Some(result) = tls::parse_tls_client_hello(buf) {
+        return Some(tls::tls_to_dpi_context(&result));
+    }
+
+    if buf.len() >= 5 {
+        let record_len = u16::from_be_bytes([buf[3], buf[4]]) as usize;
+        if buf.len() >= 5 + record_len {
+            return Some(DpiContext { app_proto: Some(AppProto::Tls), ..Default::default() });
+        }
+    }
+
+    None
 }
 
 // HTTP: rozpoznanie po prefiksie metody lub odpowiedzi.
@@ -403,7 +417,8 @@ mod tests {
         );
 
         let mut entry = DpiSessionEntry::new();
-        entry.append_payload(&[0x16, 0x03, 0x03, 0x00, 0x05]);
+        // Pełny rekord TLS (5B nagłówek + 5B payload) — fallback na bazowe rozpoznanie.
+        entry.append_payload(&[0x16, 0x03, 0x03, 0x00, 0x05, 0x01, 0x00, 0x00, 0x01, 0x00]);
         let ctx = DpiClassifier::try_classify(&entry.buffer).unwrap();
         entry.result = Some(ctx.clone());
         classifier.sessions.insert(key.clone(), entry);
