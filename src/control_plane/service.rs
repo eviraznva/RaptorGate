@@ -1,30 +1,16 @@
 use std::cmp::min;
-use std::panic;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 
-use tokio::sync::{mpsc, watch};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use crate::control_plane::api::{ControlPlaneConfig, LifecyclePhase};
 use crate::control_plane::backend_api::client::BackendApiClient;
-use crate::control_plane::backend_api::event_codec::{
-    BE_CONFIG_CHANGED, BE_HEARTBEAT_ACK, BE_RESYNC_REQUESTED, FW_HEARTBEAT, FW_METRICS,
-    current_timestamp, decode_backend_payload, encode_ca_ready, encode_firewall_event,
-    encode_policy_activated, encode_policy_failed, encode_resync_confirmed,
-};
-use crate::control_plane::backend_api::proto::raptorgate::common::{
-    FirewallMode, PolicyFailureCode,
-};
+use crate::control_plane::backend_api::proto::raptorgate::common::FirewallMode;
 use crate::control_plane::backend_api::proto::raptorgate::config::{
     ConfigRequestReason, ConfigResponse, GetConfigRequest,
 };
-use crate::control_plane::backend_api::proto::raptorgate::events::{
-    CaReadyEvent, ConfigChangedEvent, HeartbeatAck, HeartbeatEvent, PolicyActivatedEvent,
-    PolicyFailedEvent, ResyncConfirmedEvent, ResyncRequestedEvent,
-};
-use crate::control_plane::backend_api::proto::raptorgate::telemetry::MetricsBatch;
 use crate::control_plane::config::active_config::ActiveConfig;
 use crate::control_plane::error::ControlPlaneError;
 use crate::control_plane::runtime::state::StatusPublisher;
@@ -50,7 +36,7 @@ pub async fn run(
         let _ = policy_tx.send(Arc::new(override_policy));
         tracing::info!("DEV MODE: Override policy activated, entering Normal phase");
         status.set_phase(LifecyclePhase::Normal);
-        tracing::info!("DEV MODE: Control plane idle — backend connection and heartbeat disabled in override mode");
+        tracing::info!("DEV MODE: Control plane idle — backend connection disabled in override mode");
 
         shutdown.cancelled().await;
         tracing::info!("DEV MODE: Shutdown signal received, exiting");
@@ -77,28 +63,16 @@ pub async fn run(
         )
         .await
         {
-            Ok((client, next_active)) => {
+            Ok(next_active) => {
                 reconnect_backoff_ms = config.reconnect_initial_backoff_ms;
                 active_config = Some(next_active);
+                status.set_backend_connected(false);
 
-                if let Some(current) = active_config.clone() {
-                    let session_result = run_event_session(
-                        &config,
-                        &status,
-                        &policy_tx,
-                        snapshot_store.as_ref(),
-                        client,
-                        current,
-                        &shutdown,
-                    )
-                    .await?;
-
-                    active_config = Some(session_result);
-                    status.set_backend_connected(false);
-                    if !shutdown.is_cancelled() {
-                        status.set_phase(LifecyclePhase::Reconnecting);
-                    }
-                }
+                // Event session removed — control plane is legacy.
+                // Wait for shutdown or reconnect trigger.
+                shutdown.cancelled().await;
+                status.set_phase(LifecyclePhase::Stopped);
+                return Ok(());
             }
             Err(err) => {
                 tracing::warn!(error = %err, "Bootstrap failed");
@@ -201,7 +175,7 @@ async fn connect_and_bootstrap(
     policy_tx: &watch::Sender<Arc<CompiledPolicy>>,
     snapshot_store: Option<&Arc<dyn SnapshotStore>>,
     existing: Option<ActiveConfig>,
-) -> Result<(BackendApiClient, ActiveConfig), ControlPlaneError> {
+) -> Result<ActiveConfig, ControlPlaneError> {
     status.set_phase(LifecyclePhase::FetchingInitialConfig);
 
     tracing::info!(socket = %config.grpc_socket_path, "Connecting to backend...");
@@ -247,181 +221,7 @@ async fn connect_and_bootstrap(
         version = active_config.version,
         "Config loaded, entering NORMAL mode"
     );
-    Ok((client, active_config))
-}
-
-async fn run_event_session(
-    config: &ControlPlaneConfig,
-    status: &StatusPublisher,
-    policy_tx: &watch::Sender<Arc<CompiledPolicy>>,
-    snapshot_store: Option<&Arc<dyn SnapshotStore>>,
-    mut client: BackendApiClient,
-    mut active_config: ActiveConfig,
-    shutdown: &CancellationToken,
-) -> Result<ActiveConfig, ControlPlaneError> {
-    let mut stream_channels = client.open_event_stream(config.event_buffer);
-    let session_started = Instant::now();
-
-    send_heartbeat(
-        &stream_channels.outbound,
-        config,
-        FirewallMode::Normal,
-        active_config.version,
-        session_started.elapsed().as_secs(),
-    )
-    .await;
-
-    match stream_channels.opened.await {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => return Err(ControlPlaneError::ConfigFetch(err)),
-        Err(err) => return Err(ControlPlaneError::Join(err.to_string())),
-    }
-
-    if let Some(ca) = &config.ca_info {
-        let _ = stream_channels
-            .outbound
-            .send(encode_ca_ready(CaReadyEvent {
-                ca_cert_pem: ca.cert_pem.clone(),
-                fingerprint: ca.fingerprint.clone(),
-                expires_at: Some(ca.expires_at.clone()),
-            }))
-            .await;
-    }
-
-    let mut interval = tokio::time::interval(Duration::from_secs(config.heartbeat_interval_secs));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                status.set_phase(LifecyclePhase::Stopped);
-                status.set_backend_connected(false);
-                return Ok(active_config);
-            }
-            _ = interval.tick() => {
-                send_heartbeat(
-                    &stream_channels.outbound,
-                    config,
-                    FirewallMode::Normal,
-                    active_config.version,
-                    session_started.elapsed().as_secs(),
-                ).await;
-                let _ = stream_channels.outbound.send(encode_firewall_event(FW_METRICS, MetricsBatch::default())).await;
-            }
-            next_event = stream_channels.inbound.recv() => {
-                match next_event {
-                    Some(event) => {
-                        match event.r#type.as_str() {
-                            BE_HEARTBEAT_ACK => {
-                                let _ = decode_backend_payload::<HeartbeatAck>(&event);
-                            }
-                            BE_CONFIG_CHANGED => {
-                                let payload = decode_backend_payload::<ConfigChangedEvent>(&event)
-                                    .map_err(|err| ControlPlaneError::Delta(err.to_string()))?;
-                                let previous_version = active_config.version;
-                                match reconcile_config_change(
-                                    &mut client,
-                                    config,
-                                    snapshot_store,
-                                    policy_tx,
-                                    &mut active_config,
-                                    payload.correlation_id.clone(),
-                                    ConfigRequestReason::ConfigChanged,
-                                    PolicySource::Backend,
-                                ).await {
-                                    Ok(changed) => {
-                                        status.set_phase(LifecyclePhase::Normal);
-                                        status.set_mode(FirewallMode::Normal);
-                                        status.set_version(Some(active_config.version));
-                                        if changed {
-                                            let _ = stream_channels.outbound.send(encode_policy_activated(PolicyActivatedEvent {
-                                                config_id: payload.config_id,
-                                                config_version: active_config.version,
-                                                correlation_id: payload.correlation_id,
-                                                activated_at: Some(current_timestamp()),
-                                            })).await;
-                                        }
-                                        tracing::info!(from = previous_version, to = active_config.version, "Config change reconciled");
-                                    }
-                                    Err(err) => {
-                                        let _ = stream_channels.outbound.send(encode_policy_failed(PolicyFailedEvent {
-                                            config_id: payload.config_id,
-                                            config_version: active_config.version,
-                                            correlation_id: payload.correlation_id,
-                                            failure_code: PolicyFailureCode::Unspecified as i32,
-                                            failure_message: err.to_string(),
-                                            validation_errors: Vec::new(),
-                                            failed_at: Some(current_timestamp()),
-                                        })).await;
-                                        return Err(err);
-                                    }
-                                }
-                            }
-                            BE_RESYNC_REQUESTED => {
-                                let payload = decode_backend_payload::<ResyncRequestedEvent>(&event)
-                                    .map_err(|err| ControlPlaneError::Delta(err.to_string()))?;
-                                let previous_version = active_config.version;
-                                status.set_phase(LifecyclePhase::Resyncing);
-                                status.set_mode(FirewallMode::Resyncing);
-                                let changed = reconcile_config_change(
-                                    &mut client,
-                                    config,
-                                    snapshot_store,
-                                    policy_tx,
-                                    &mut active_config,
-                                    payload.correlation_id.clone(),
-                                    ConfigRequestReason::Resync,
-                                    PolicySource::Backend,
-                                ).await?;
-
-                                status.set_phase(LifecyclePhase::Normal);
-                                status.set_mode(FirewallMode::Normal);
-                                status.set_version(Some(active_config.version));
-
-                                let _ = stream_channels.outbound.send(encode_resync_confirmed(ResyncConfirmedEvent {
-                                    previous_version,
-                                    current_version: active_config.version,
-                                    correlation_id: payload.correlation_id,
-                                    no_change: !changed,
-                                    confirmed_at: Some(current_timestamp()),
-                                })).await;
-                            }
-                            other => {
-                                tracing::warn!(event_type = other, "Unknown backend event type");
-                            }
-                        }
-                    }
-                    None => return Ok(active_config),
-                }
-            }
-        }
-    }
-}
-
-async fn reconcile_config_change(
-    client: &mut BackendApiClient,
-    config: &ControlPlaneConfig,
-    snapshot_store: Option<&Arc<dyn SnapshotStore>>,
-    policy_tx: &watch::Sender<Arc<CompiledPolicy>>,
-    active_config: &mut ActiveConfig,
-    correlation_id: String,
-    reason: ConfigRequestReason,
-    source: PolicySource,
-) -> Result<bool, ControlPlaneError> {
-    let response = client
-        .get_active_config(GetConfigRequest {
-            correlation_id,
-            reason: reason as i32,
-            known_versions: Some(active_config.section_versions.clone()),
-        })
-        .await?;
-
-    let changed = response.configuration_changed;
-    let next_config = merge_response(Some(active_config.clone()), response)?;
-    persist_snapshot(snapshot_store, &next_config)?;
-    publish_active_config(policy_tx, &next_config, config.fallback_block_icmp, source)?;
-    *active_config = next_config;
-    Ok(changed)
+    Ok(active_config)
 }
 
 fn merge_response(
@@ -459,6 +259,7 @@ fn publish_fallback(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn publish_safe_deny(
     policy_tx: &watch::Sender<Arc<CompiledPolicy>>,
 ) -> Result<(), ControlPlaneError> {
@@ -475,28 +276,5 @@ fn persist_snapshot(
     if let Some(snapshot_store) = snapshot_store {
         snapshot_store.save(&active_config.to_config_response())?;
     }
-
     Ok(())
-}
-
-async fn send_heartbeat(
-    fw_tx: &mpsc::Sender<
-        crate::control_plane::backend_api::proto::raptorgate::events::FirewallEvent,
-    >,
-    config: &ControlPlaneConfig,
-    mode: FirewallMode,
-    active_config_version: u64,
-    uptime_seconds: u64,
-) {
-    let _ = fw_tx
-        .send(encode_firewall_event(
-            FW_HEARTBEAT,
-            HeartbeatEvent {
-                firewall_version: config.firewall_version.clone(),
-                mode: mode as i32,
-                active_config_version,
-                uptime_seconds,
-            },
-        ))
-        .await;
 }

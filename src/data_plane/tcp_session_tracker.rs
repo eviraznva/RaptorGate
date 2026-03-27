@@ -8,7 +8,7 @@ use ringbuffer::{AllocRingBuffer, RingBuffer};
 use thiserror::Error;
 use unordered_pair::UnorderedPair;
 
-use crate::{events::{Event, EventKind, emit}, rule_tree::types::Port};
+use crate::{events::{Event, EventKind, emit}, proto::events::TcpEndpoint, rule_tree::types::Port};
 
 pub struct TcpSessionTracker {
     sessions: Arc<DashMap<TcpIdentifier, TcpSession>>, //TODO: Transition away from using `Arc` since we want to avoid indirection, do something like in `PacketBuffer`.
@@ -511,8 +511,18 @@ pub struct TcpIdentifier {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
 pub struct EndpointIdentifier {
-    ip: IpAddr,
-    port: Port,
+    pub ip: IpAddr,
+    pub port: Port,
+}
+
+// maybe have a dedicated serializer module?
+impl From<EndpointIdentifier> for TcpEndpoint {
+    fn from(value: EndpointIdentifier) -> Self {
+        TcpEndpoint {
+            ip:   value.ip.to_string(),
+            port: u16::from(value.port) as u32,
+        }
+    }
 }
 
 #[derive(Debug)]

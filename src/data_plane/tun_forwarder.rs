@@ -35,7 +35,6 @@ impl TunForwarder {
         })
     }
 
-    /// Strips the Ethernet header and sends the IP payload to the TUN device.
     pub async fn forward(&self, ctx: &PacketContext) {
         let raw = ctx.borrow_raw();
         if raw.len() <= ETH_HDR {

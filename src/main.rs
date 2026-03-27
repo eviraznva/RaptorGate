@@ -1,14 +1,15 @@
 mod config;
 mod control_plane;
 mod data_plane;
+mod events;
 mod ip_defrag;
 mod packet_validator;
+mod pipeline;
 mod policy;
 mod policy_evaluator;
+mod proto;
 mod rule_tree;
 mod tls;
-mod pipeline;
-mod events;
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -84,7 +85,6 @@ async fn main() {
     let tcp_session_tracker = TcpSessionTracker::new();
 
     tokio::spawn(events::init_event_queue());
-
     let nat_engine = build_test_nat();
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
@@ -94,7 +94,6 @@ async fn main() {
     for e in errs {
         tracing::error!(error = %e, "interface sniffer error");
     }
-
 
     let pipeline = DataPipeline {
         head: ValidationStage,

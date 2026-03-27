@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package raptorgate.services;
+
+// Hosted by the firewall. The backend dials in with unary RPCs.
+service FirewallQueryService {
+  rpc GetTcpSessions  (GetTcpSessionsRequest)  returns (GetTcpSessionsResponse);
+  rpc ValidateConfig  (ValidateConfigRequest)  returns (ValidateConfigResponse);
+  rpc GetNatBindings  (GetNatBindingsRequest)  returns (GetNatBindingsResponse);
+}
+
+message GetTcpSessionsRequest {}
+message GetTcpSessionsResponse {}
+
+message ValidateConfigRequest {
+  string config_dsl = 1;
+}
+message ValidateConfigResponse {
+  bool   valid            = 1;
+  repeated string errors  = 2;
+}
+
+message GetNatBindingsRequest {}
+message GetNatBindingsResponse {}
