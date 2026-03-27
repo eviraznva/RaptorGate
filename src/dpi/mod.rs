@@ -1,6 +1,7 @@
 mod classifier;
 mod context;
 mod flow_key;
+pub mod parsers;
 mod proto;
 
 pub use classifier::{DpiClassifier, InspectResult};

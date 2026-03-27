@@ -968,6 +968,7 @@ dependencies = [
  "ringbuffer",
  "serde",
  "serde_json",
+ "simple-dns",
  "thiserror",
  "time",
  "tokio",
@@ -1595,6 +1596,15 @@ checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
 dependencies = [
  "errno 0.3.14",
  "libc",
+]
+
+[[package]]
+name = "simple-dns"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df350943049174c4ae8ced56c604e28270258faec12a6a48637a7655287c9ce0"
+dependencies = [
+ "bitflags 2.11.0",
 ]
 
 [[package]]

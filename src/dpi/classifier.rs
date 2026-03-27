@@ -6,6 +6,7 @@ use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use super::context::DpiContext;
 use super::flow_key::FlowKey;
+use super::parsers::dns;
 use super::AppProto;
 
 const MAX_INSPECT_BYTES: usize = 16_384;
@@ -184,15 +185,9 @@ fn classify_ssh(buf: &[u8]) -> Option<DpiContext> {
         .then(|| DpiContext { app_proto: Some(AppProto::Ssh), ..Default::default() })
 }
 
-// DNS: walidacja nagłówka — opcode ≤ 2, qdcount 1–16.
+// DNS: parsowanie nagłówka, QNAME, QTYPE i kierunku (query/response).
 fn classify_dns(buf: &[u8]) -> Option<DpiContext> {
-    if buf.len() < 12 {
-        return None;
-    }
-    let opcode = (u16::from_be_bytes([buf[2], buf[3]]) >> 11) & 0xF;
-    let qdcount = u16::from_be_bytes([buf[4], buf[5]]);
-    (opcode <= 2 && (1..=16).contains(&qdcount))
-        .then(|| DpiContext { app_proto: Some(AppProto::Dns), ..Default::default() })
+    dns::parse_dns(buf).map(|r| dns::dns_to_dpi_context(&r))
 }
 
 // FTP: banner serwera „220" lub komendy klienta.
@@ -295,17 +290,27 @@ mod tests {
 
     #[test]
     fn test_classify_dns() {
+        // Pełny pakiet DNS query: example.com, QTYPE=A
         let buf = [
-            0x12, 0x34,
-            0x01, 0x00,
-            0x00, 0x01,
-            0x00, 0x00,
-            0x00, 0x00,
-            0x00, 0x00,
+            0x12, 0x34,       // Transaction ID
+            0x01, 0x00,       // Flags: query, RD=1
+            0x00, 0x01,       // QDCOUNT=1
+            0x00, 0x00,       // ANCOUNT=0
+            0x00, 0x00,       // NSCOUNT=0
+            0x00, 0x00,       // ARCOUNT=0
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e',
+            0x03, b'c', b'o', b'm',
+            0x00,             // koniec QNAME
+            0x00, 0x01,       // QTYPE=A
+            0x00, 0x01,       // QCLASS=IN
         ];
         let result = DpiClassifier::try_classify(&buf);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().app_proto, Some(AppProto::Dns));
+        let ctx = result.unwrap();
+        assert_eq!(ctx.app_proto, Some(AppProto::Dns));
+        assert_eq!(ctx.dns_query_name.as_deref(), Some("example.com"));
+        assert_eq!(ctx.dns_query_type, Some(1));
+        assert_eq!(ctx.dns_is_response, Some(false));
     }
 
     #[test]
