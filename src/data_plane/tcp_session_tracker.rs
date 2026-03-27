@@ -8,12 +8,16 @@ use ringbuffer::{AllocRingBuffer, RingBuffer};
 use thiserror::Error;
 use unordered_pair::UnorderedPair;
 
-use crate::rule_tree::types::Port;
+use crate::{events::{Event, EventKind, emit}, rule_tree::types::Port};
 
 pub struct TcpSessionTracker {
     sessions: Arc<DashMap<TcpIdentifier, TcpSession>>, //TODO: Transition away from using `Arc` since we want to avoid indirection, do something like in `PacketBuffer`.
     buffer: Arc<PacketBuffer>,
-    timewait_timeout: Duration,
+    pub timewait_timeout: Duration,
+    pub handshake_timeout: Duration,
+    pub established_timeout: Duration,
+    pub closing_timeout: Duration,
+    pub sweep_interval: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -90,7 +94,7 @@ impl TcpPacketInfo {
         let flag_start = tcp.header_slice()[TcpOffsets::FLAGS];
         let flag_end = tcp.header_slice()[TcpOffsets::FLAGS + 1];
 
-        let raw = ((flag_start & 0x01) as u16) << 8 | (flag_end as u16);
+        let raw = u16::from(flag_start & 0x01) << 8 | u16::from(flag_end);
         let Some(flags) = TcpFlags::from_bits(raw) else { return Err(TcpSessionError::ZeroFlagPacket); /*FIXME: placeholder error*/ };
         Ok(Self {
             flags,
@@ -99,6 +103,7 @@ impl TcpPacketInfo {
             window_size: tcp.window_size(),
             src,
             dst,
+            #[allow(clippy::cast_possible_truncation)]
             payload_size: tcp.payload().len() as u16,
         })
     }
@@ -110,7 +115,63 @@ impl TcpSessionTracker {
             sessions: Arc::new(DashMap::new()),
             buffer: PacketBuffer::new(),
             timewait_timeout: TIME_WAIT_TIMEOUT,
+            handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT,
+            established_timeout: DEFAULT_ESTABLISHED_TIMEOUT,
+            closing_timeout: DEFAULT_CLOSING_TIMEOUT,
+            sweep_interval: DEFAULT_SWEEP_INTERVAL,
         })
+    }
+
+    pub fn start_cleanup_task(&self) {
+        let sessions = self.sessions.clone();
+        let handshake_timeout = self.handshake_timeout;
+        let established_timeout = self.established_timeout;
+        let closing_timeout = self.closing_timeout;
+        let sweep_interval = self.sweep_interval;
+
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(sweep_interval);
+            loop {
+                tick.tick().await;
+                let now = Instant::now();
+                let to_remove: Vec<TcpIdentifier> = sessions.iter()
+                    .filter(|entry| {
+                        let timeout = match entry.value().state {
+                            TcpSessionState::Handshake(_) => handshake_timeout,
+                            TcpSessionState::Established => established_timeout,
+                            TcpSessionState::Closing(_) => closing_timeout,
+                            TcpSessionState::TimeWait => return false,
+                            TcpSessionState::Closed => return true,
+                        };
+                        now.duration_since(entry.value().last_seen) >= timeout
+                    })
+                    .map(|e| e.key().clone())
+                    .collect();
+                for id in to_remove {
+                    Self::remove_session(&sessions, &id);
+                }
+            }
+        });
+    }
+
+    fn remove_session(sessions: &DashMap<TcpIdentifier, TcpSession>, id: &TcpIdentifier) {
+        if let Some((_, session)) = sessions.remove(id) {
+            let kind = match session.state {
+                TcpSessionState::Handshake(_) => EventKind::TcpConnectionRejected {
+                    src: session.initiator.id,
+                    dst: session.receiver.id,
+                },
+                TcpSessionState::Closing(_) => EventKind::TcpSessionAbortedMidClose {
+                    src: session.initiator.id,
+                    dst: session.receiver.id,
+                },
+                _ => EventKind::TcpSessionRemoved {
+                    src: session.initiator.id,
+                    dst: session.receiver.id,
+                },
+            };
+            emit(Event::new(kind));
+        }
     }
 
     pub fn process_packet(&self, packet: &SlicedPacket) -> Result<Option<TcpSessionState>, TcpSessionError> {
@@ -127,7 +188,7 @@ impl TcpSessionTracker {
                             ip: IpAddr::V4(header.destination_addr()),
                             port: Port::from(tcp.destination_port()),
                         };
-                        let tcp_info = TcpPacketInfo::new(&tcp, src, dst)?;
+                        let tcp_info = TcpPacketInfo::new(tcp, src, dst)?;
                         self.process_tcp(tcp_info)
                     }
                     _ => Ok(None),
@@ -194,21 +255,24 @@ impl TcpSessionTracker {
                 }
             }
         };
-
+    
         match post_action {
             PostAction::None => {},
-            PostAction::RemoveSession => { self.sessions.remove(&id); },
+            PostAction::RemoveSession => {
+                Self::remove_session(&self.sessions, &id);
+            },
             PostAction::ProcessBuffer { flags, from } => {
                 self.process_from_buffer(&id, flags, from.as_ref())?;
             },
             PostAction::ScheduleTimeWaitCleanup => { self.schedule_timewait_cleanup(&id); },
         }
-
+    
         result
     }
 
     #[allow(clippy::too_many_lines)]
     fn process_session_state(&self, session: &mut TcpSession, packet: TcpPacketInfo) -> (Result<Option<TcpSessionState>, TcpSessionError>, PostAction) {
+        session.last_seen = Instant::now();
         match session.state {
             TcpSessionState::Handshake(s) => {
                 if packet.flags.contains(TcpFlags::RST) {
@@ -236,6 +300,8 @@ impl TcpSessionTracker {
                             && packet.acknowledgment_number == session.receiver.next_expected_seq {
                                 session.initiator.next_expected_seq = session.initiator.next_expected_seq.wrapping_add(u32::from(packet.payload_size));
                                 session.state = TcpSessionState::Established;
+
+                                emit(Event::new(crate::events::EventKind::TcpSessionEstabilished { src: session.initiator.id.clone(), dst: session.receiver.id.clone() }));
 
                                 return (Ok(Some(session.state)), PostAction::ProcessBuffer { flags: None, from: None });
                     }
@@ -377,7 +443,7 @@ impl TcpSessionTracker {
             tokio::time::sleep(timeout).await;
             if let Some(entry) = sessions.get(&id) && entry.state == TcpSessionState::TimeWait {
                 drop(entry);
-                sessions.remove(&id);
+                Self::remove_session(&sessions, &id);
             }
         });
     }
@@ -466,7 +532,7 @@ impl PacketBuffer {
             waiting: DashMap::new(),
         });
 
-        let sweeper: std::sync::Weak<Self> = Arc::downgrade(&buffer);
+        let sweeper = Arc::downgrade(&buffer);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(PENDING_TIMEOUT);
             loop {
@@ -544,6 +610,10 @@ const PENDING_PACKETS_PER_SESSION: usize = 16;
 const PAYLOAD_MAX_SIZE: u32 = 1460;
 const REORDER_TOLERANCE: u32 = 3 * PAYLOAD_MAX_SIZE;
 const TIME_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_ESTABLISHED_TIMEOUT: Duration = Duration::from_secs(1800);
+const DEFAULT_CLOSING_TIMEOUT: Duration = Duration::from_secs(120);
+const DEFAULT_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 
 struct SessionPackets {
@@ -577,6 +647,7 @@ struct TcpSession {
     initiator: Endpoint,
     receiver: Endpoint,
     closing_initiator: Option<ClosingInitiator>,
+    last_seen: Instant,
 }
 
 impl TcpSession {
@@ -586,6 +657,7 @@ impl TcpSession {
             initiator,
             receiver,
             closing_initiator: None,
+            last_seen: Instant::now(),
         }
     }
 
@@ -1060,5 +1132,94 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(600)).await;
 
         assert_eq!(tracker.sessions.len(), 0, "all sessions should be cleaned up after TimeWait timeout");
+    }
+
+    // ── Sweeper eviction tests ────────────────────────────────────────────────
+
+    fn make_tracker_with_timeouts(
+        handshake_ms: u64,
+        established_ms: u64,
+        closing_ms: u64,
+        sweep_ms: u64,
+    ) -> Arc<TcpSessionTracker> {
+        let mut tracker = TcpSessionTracker::new();
+        let t = Arc::get_mut(&mut tracker).unwrap();
+        t.handshake_timeout  = Duration::from_millis(handshake_ms);
+        t.established_timeout = Duration::from_millis(established_ms);
+        t.closing_timeout    = Duration::from_millis(closing_ms);
+        t.sweep_interval     = Duration::from_millis(sweep_ms);
+        tracker.start_cleanup_task();
+        tracker
+    }
+
+    #[tokio::test]
+    async fn sweeper_evicts_stuck_handshake() {
+        let tracker = make_tracker_with_timeouts(100, 10_000, 10_000, 50);
+        let id = session_id();
+
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0)).unwrap();
+        assert!(tracker.sessions.contains_key(&id), "session should exist after SYN");
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        assert!(!tracker.sessions.contains_key(&id), "stuck handshake should be evicted after timeout");
+    }
+
+    #[tokio::test]
+    async fn sweeper_evicts_idle_established_session() {
+        let tracker = make_tracker_with_timeouts(10_000, 150, 10_000, 50);
+        let id = session_id();
+
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0)).unwrap();
+        tracker.process_tcp(make_packet(server(), client(), TcpFlags::SYN | TcpFlags::ACK, 5000, 1001, 8192, 0)).unwrap();
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::ACK, 1001, 5001, 8192, 0)).unwrap();
+
+        assert!(tracker.sessions.contains_key(&id));
+        assert_eq!(tracker.sessions.get(&id).unwrap().state, TcpSessionState::Established);
+
+        tokio::time::sleep(Duration::from_millis(350)).await;
+
+        assert!(!tracker.sessions.contains_key(&id), "idle established session should be evicted after timeout");
+    }
+
+    #[tokio::test]
+    async fn sweeper_does_not_evict_active_established_session() {
+        let tracker = make_tracker_with_timeouts(10_000, 200, 10_000, 50);
+        let id = session_id();
+
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0)).unwrap();
+        tracker.process_tcp(make_packet(server(), client(), TcpFlags::SYN | TcpFlags::ACK, 5000, 1001, 8192, 0)).unwrap();
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::ACK, 1001, 5001, 8192, 0)).unwrap();
+
+        // Refresh last_seen every 80ms — well within the 200ms timeout
+        for i in 0..4 {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            tracker.process_tcp(make_packet(
+                client(), server(), TcpFlags::ACK, 1001 + i * 10, 5001, 8192, 10,
+            )).unwrap();
+        }
+
+        assert!(tracker.sessions.contains_key(&id), "active session should not be evicted");
+    }
+
+    #[tokio::test]
+    async fn sweeper_evicts_stuck_closing_session() {
+        let tracker = make_tracker_with_timeouts(10_000, 10_000, 100, 50);
+        let id = session_id();
+
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0)).unwrap();
+        tracker.process_tcp(make_packet(server(), client(), TcpFlags::SYN | TcpFlags::ACK, 5000, 1001, 8192, 0)).unwrap();
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::ACK, 1001, 5001, 8192, 0)).unwrap();
+        // FIN starts the close — server never responds
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::FIN | TcpFlags::ACK, 1001, 5001, 8192, 0)).unwrap();
+
+        assert_eq!(
+            tracker.sessions.get(&id).unwrap().state,
+            TcpSessionState::Closing(TcpClosingState::FinSent)
+        );
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        assert!(!tracker.sessions.contains_key(&id), "stuck closing session should be evicted after timeout");
     }
 }
