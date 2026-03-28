@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     data_plane::{
+        dns_inspection::DnsInspection,
         nat::engine::NatEngine,
         packet_context::PacketContext,
         policy_store::PolicyStore,
@@ -88,6 +89,7 @@ impl Stage for NatPostroutingStage {
 }
 
 // FIXME: no ale nie hardcodujemy tego pany, to czeba sie kernela pytac
+// Kiedyś się zaimplementuje
 fn infer_out_interface(dst_ip: IpAddr) -> Option<&'static str> {
     match dst_ip {
         IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 10] => Some("eth1"),
@@ -135,6 +137,38 @@ impl Stage for TcpClassificationStage {
                 tracing::error!(error = %e, "TCP session tracking error");
                 StageOutcome::Halt
             }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct DnsInspectionStage {
+    pub inspection: Arc<DnsInspection>,
+}
+
+impl Stage for DnsInspectionStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        use etherparse::TransportSlice;
+        
+        matches!(
+            &ctx.borrow_sliced_packet().transport,
+            Some(TransportSlice::Udp(udp)) if udp.destination_port() == 53
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        use etherparse::TransportSlice;
+
+        let payload = match &ctx.borrow_sliced_packet().transport {
+            Some(TransportSlice::Udp(udp)) => udp.payload().to_vec(),
+            _ => return StageOutcome::Continue,
+        };
+
+        if self.inspection.process(&payload) {
+            tracing::debug!("DNS query blocked by domain blocklist");
+            StageOutcome::Halt
+        } else {
+            StageOutcome::Continue
         }
     }
 }
