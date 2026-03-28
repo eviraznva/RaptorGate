@@ -1,9 +1,9 @@
+import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { apiReference } from '@scalar/nestjs-api-reference';
 import { Env } from './shared/config/env.validation.js';
-import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module.js';
 import { NestFactory } from '@nestjs/core';
@@ -29,6 +29,7 @@ async function bootstrap() {
   const corsOrigin = configService.get('CORS_ORIGIN', { infer: true });
   const cookieSecret = configService.get('COOKIE_SECRET', { infer: true });
   const grpcSocketPath = configService.get('GRPC_SOCKET_PATH', { infer: true });
+  const protoRoot = join(process.cwd(), '..', 'proto');
 
   app.use(cookieParser(cookieSecret));
 
@@ -69,9 +70,11 @@ async function bootstrap() {
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.GRPC,
     options: {
-      package: ['raptorgate', 'raptorgate.config', 'raptorgate.events'],
-      protoPath: join(cwd(), '..', 'proto', 'raptorgate.proto'),
-      loader: { includeDirs: [join(cwd(), '..', 'proto')] },
+      package: 'raptorgate',
+      protoPath: join(protoRoot, 'config', 'config_grpc_service.proto'),
+      loader: {
+        includeDirs: [protoRoot],
+      },
       url: `unix://${absoluteSocketPath}`,
     },
   });

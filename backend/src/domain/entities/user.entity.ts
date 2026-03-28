@@ -1,4 +1,5 @@
 import { Role } from './role.entity.js';
+
 export class User {
   private constructor(
     private readonly id: string,
@@ -87,5 +88,13 @@ export class User {
 
   public setRefreshTokenExpiry(refreshTokenExpiry: Date | null): void {
     this.refreshTokenExpiry = refreshTokenExpiry;
+  }
+
+  public setRoles(roles: Role[]): void {
+    this.roles = roles;
+  }
+
+  public setUpdatedAt(updatedAt: Date): void {
+    this.updatedAt = updatedAt;
   }
 }
