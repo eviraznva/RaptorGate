@@ -4,10 +4,19 @@
       "id": "00000000-0000-4000-8000-000000000001",
       "username": "admin",
       "passwordHash": "$2b$12$IvZ.EXRyRNI9y7iQFoV.8emVe9hYXwK8lF.lkj.aPLmnFVUaD5KjW",
-      "refreshToken": "4891ae62-ce0d-4d54-8507-946dd16b0554",
-      "refreshTokenExpiry": "2026-03-27T20:12:54.710Z",
+      "refreshToken": "e1304352-8691-41e5-9676-f2e3fe113ca9",
+      "refreshTokenExpiry": "2026-03-28T20:49:36.626Z",
       "createdAt": "2026-03-18T21:30:42.644Z",
-      "updatedAt": "2026-03-27T19:12:54.710Z"
+      "updatedAt": "2026-03-28T19:49:36.627Z"
+    },
+    {
+      "id": "07bf1567-b7b3-44b1-8aa3-44862d48d3ed",
+      "username": "TymekToGej",
+      "passwordHash": "$2b$12$zZVdO76lOdYbnc8HtM2x3ue4fVI8cI8/of.jRzFHgNDxBQckiUR.S",
+      "refreshToken": null,
+      "refreshTokenExpiry": null,
+      "createdAt": "2026-03-28T15:45:50.501Z",
+      "updatedAt": "2026-03-28T19:47:51.973Z"
     }
   ]
 }

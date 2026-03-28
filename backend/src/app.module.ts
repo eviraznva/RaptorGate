@@ -13,6 +13,7 @@ import { validate } from './shared/config/env.validation.js';
 import { RulesModule } from './modules/rules.module.js';
 import { AuthModule } from './modules/auth.module.js';
 import { ZoneModule } from './modules/zone.module.js';
+import { UserModule } from './modules/user.module.js';
 import { AppController } from './app.controller.js';
 import { NatModule } from './modules/nat.module.js';
 import { PassportModule } from '@nestjs/passport';
@@ -36,6 +37,7 @@ import { Module } from '@nestjs/common';
     RealtimeModule,
     PassportModule,
     RulesModule,
+    UserModule,
     GrpcModule,
     AuthModule,
     ZoneModule,
