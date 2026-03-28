@@ -8,6 +8,7 @@ mod pipeline;
 mod policy;
 mod policy_evaluator;
 mod proto;
+mod query_server;
 mod rule_tree;
 mod tls;
 
@@ -31,7 +32,9 @@ use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::pipeline::wrappers::{DnsInspectionStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
+use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::CaManager;
+use tokio_util::sync::CancellationToken;
 
 static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
 
@@ -89,6 +92,18 @@ async fn main() {
 
     tokio::spawn(events::init_event_queue());
     let nat_engine = build_test_nat();
+
+    let query_server = QueryServer::new(
+        QueryHandler {
+            tcp_tracker: Arc::clone(&tcp_session_tracker),
+            nat_engine: Arc::clone(&nat_engine),
+            policy_store: Arc::clone(&policy_store),
+        },
+        &config.query_socket_path,
+        CancellationToken::new(),
+    );
+    tokio::spawn(query_server.serve());
+
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
     let tun = TunForwarder::get(&config);
