@@ -17,6 +17,8 @@ pub struct DpiContext {
     pub dns_is_response: Option<bool>,
     pub ftp_data_endpoint: Option<FtpDataEndpoint>,
     pub smtp_starttls: bool,
+    pub ssh_proto_version: Option<String>,
+    pub ssh_software: Option<String>,
 }
 
 // Dane z odpowiedzi FTP PORT/PASV/EPSV.

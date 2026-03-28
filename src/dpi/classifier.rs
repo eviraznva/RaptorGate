@@ -6,7 +6,7 @@ use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use super::context::DpiContext;
 use super::flow_key::FlowKey;
-use super::parsers::{dns, http, tls};
+use super::parsers::{dns, http, ssh, tls};
 use super::AppProto;
 
 const MAX_INSPECT_BYTES: usize = 16_384;
@@ -183,10 +183,15 @@ fn classify_http(buf: &[u8]) -> Option<DpiContext> {
     http::parse_http(buf).map(|r| http::http_to_dpi_context(&r))
 }
 
-// SSH: banner „SSH-" na początku połączenia.
+// SSH: parsowanie banneru wersji.
 fn classify_ssh(buf: &[u8]) -> Option<DpiContext> {
-    (buf.len() >= 4 && buf.starts_with(b"SSH-"))
-        .then(|| DpiContext { app_proto: Some(AppProto::Ssh), ..Default::default() })
+    if buf.len() < 4 || !buf.starts_with(b"SSH-") {
+        return None;
+    }
+    match ssh::parse_ssh(buf) {
+        Some(result) => Some(ssh::ssh_to_dpi_context(&result)),
+        None => Some(DpiContext { app_proto: Some(AppProto::Ssh), ..Default::default() }),
+    }
 }
 
 // DNS: parsowanie nagłówka, QNAME, QTYPE i kierunku (query/response).
@@ -289,7 +294,10 @@ mod tests {
         let buf = b"SSH-2.0-OpenSSH_8.9\r\n";
         let result = DpiClassifier::try_classify(buf);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().app_proto, Some(AppProto::Ssh));
+        let ctx = result.unwrap();
+        assert_eq!(ctx.app_proto, Some(AppProto::Ssh));
+        assert_eq!(ctx.ssh_proto_version.as_deref(), Some("2.0"));
+        assert_eq!(ctx.ssh_software.as_deref(), Some("OpenSSH_8.9"));
     }
 
     #[test]
