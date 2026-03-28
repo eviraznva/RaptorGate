@@ -6,7 +6,7 @@ use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use super::context::DpiContext;
 use super::flow_key::FlowKey;
-use super::parsers::{dns, tls};
+use super::parsers::{dns, http, tls};
 use super::AppProto;
 
 const MAX_INSPECT_BYTES: usize = 16_384;
@@ -158,7 +158,7 @@ const CLASSIFIERS: &[Classifier] = &[
     classify_quic,
 ];
 
-// TLS: głęboki parsing ClientHello (SNI, ECH, wersja), fallback na wzorzec nagłówka.
+// TLS: parsing ClientHello (SNI, ECH, wersja), fallback na wzorzec nagłówka.
 fn classify_tls(buf: &[u8]) -> Option<DpiContext> {
     if buf.len() < 3 || buf[0] != 0x16 || buf[1] != 0x03 || !(1..=4).contains(&buf[2]) {
         return None;
@@ -178,14 +178,9 @@ fn classify_tls(buf: &[u8]) -> Option<DpiContext> {
     None
 }
 
-// HTTP: rozpoznanie po prefiksie metody lub odpowiedzi.
+// HTTP: parsowanie nagłówków HTTP/1.1, rozpoznanie HTTP/2 preface.
 fn classify_http(buf: &[u8]) -> Option<DpiContext> {
-    const PREFIXES: &[&[u8]] = &[
-        b"GET ", b"POST", b"PUT ", b"HEAD", b"DELE",
-        b"PATC", b"OPTI", b"CONN", b"TRAC", b"HTTP",
-    ];
-    (buf.len() >= 4 && PREFIXES.iter().any(|p| buf.starts_with(p)))
-        .then(|| DpiContext { app_proto: Some(AppProto::Http), ..Default::default() })
+    http::parse_http(buf).map(|r| http::http_to_dpi_context(&r))
 }
 
 // SSH: banner „SSH-" na początku połączenia.

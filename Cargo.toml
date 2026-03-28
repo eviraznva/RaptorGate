@@ -42,6 +42,7 @@ redb = "3.1.1"
 libc = "0.2"
 simple-dns = "0.11.2"
 tls-parser = "0.12.2"
+httparse = "1.10"
 
 [build-dependencies]
 protoc-bin-vendored = "3.2.0"
