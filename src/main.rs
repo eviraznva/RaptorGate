@@ -17,9 +17,10 @@ use std::sync::Arc;
 use etherparse::NetSlice;
 use tokio::sync::Mutex;
 use ipnet::IpNet;
-
+use tracing::trace;
 use crate::config::AppConfig;
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree};
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
@@ -27,19 +28,21 @@ use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::{Chain, Stage, StageOutcome};
-use crate::pipeline::wrappers::{NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
+use crate::pipeline::wrappers::{DnsInspectionStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::tls::CaManager;
+
+static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
 
 #[tokio::main]
 async fn main() {
     type DataPipeline =
         Chain<ValidationStage,
+        Chain<DnsInspectionStage,
         Chain<NatPreroutingStage,
         Chain<PolicyEvalStage,
-        Chain<TcpClassificationStage,
-              NatPostroutingStage>>>>;
+        Chain<TcpClassificationStage, NatPostroutingStage>>>>>;
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -95,17 +98,31 @@ async fn main() {
         tracing::error!(error = %e, "interface sniffer error");
     }
 
+    let mut dns_block_tree = DomainBlockTree::new();
+
+    dns_block_tree.load_from_array(DNS_BLOCKLIST_TEMP.lines());
+
+    let dns_stats = dns_block_tree.stats();
+
+    trace!("Loaded {} blocked domains into DNS inspection tree", dns_stats.total_nodes);
+    dns_block_tree.print_tree();
+
+    let dns_inspection = DnsInspection::new(dns_block_tree);
+
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
-            head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
+           head: DnsInspectionStage { inspection: dns_inspection },
             tail: Chain {
-                head: PolicyEvalStage { policies: Arc::clone(&policy_store) },
+                head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
                 tail: Chain {
-                    head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
-                    tail: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                    head: PolicyEvalStage { policies: Arc::clone(&policy_store) },
+                    tail: Chain {
+                        head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
+                        tail: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                    },
                 },
-            },
+            }
         },
     };
 

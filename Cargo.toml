@@ -39,7 +39,7 @@ unordered-pair = "0.2.5"
 bitflags = "2.11.0"
 tokio-util = "0.7.16"
 redb = "3.1.1"
-libc = "0.2"
+rustc-hash = "2.1.2"
 ouroboros = "0.18.5"
 
 [build-dependencies]
