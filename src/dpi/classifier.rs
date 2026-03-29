@@ -6,7 +6,7 @@ use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use super::context::DpiContext;
 use super::flow_key::FlowKey;
-use super::parsers::{dns, http, ssh, tls};
+use super::parsers::{dns, ftp, http, ssh, tls};
 use super::AppProto;
 
 const MAX_INSPECT_BYTES: usize = 16_384;
@@ -199,11 +199,9 @@ fn classify_dns(buf: &[u8]) -> Option<DpiContext> {
     dns::parse_dns(buf).map(|r| dns::dns_to_dpi_context(&r))
 }
 
-// FTP: banner serwera „220" lub komendy klienta.
+// FTP: identyfikacja + ekstrakcja PORT/PASV/EPRT/EPSV.
 fn classify_ftp(buf: &[u8]) -> Option<DpiContext> {
-    const PREFIXES: &[&[u8]] = &[b"220 ", b"220-", b"USER", b"PASS", b"RETR", b"STOR"];
-    (buf.len() >= 4 && PREFIXES.iter().any(|p| buf.starts_with(p)))
-        .then(|| DpiContext { app_proto: Some(AppProto::Ftp), ..Default::default() })
+    ftp::parse_ftp(buf).map(|r| ftp::ftp_to_dpi_context(&r))
 }
 
 // SMTP: komendy EHLO/HELO/MAIL na początku sesji.
@@ -330,7 +328,20 @@ mod tests {
         let buf = b"220 Welcome to FTP server\r\n";
         let result = DpiClassifier::try_classify(buf);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().app_proto, Some(AppProto::Ftp));
+        let ctx = result.unwrap();
+        assert_eq!(ctx.app_proto, Some(AppProto::Ftp));
+        assert!(ctx.ftp_data_endpoint.is_none());
+    }
+
+    #[test]
+    fn test_classify_ftp_port() {
+        let buf = b"PORT 192,168,1,5,4,1\r\n";
+        let result = DpiClassifier::try_classify(buf);
+        assert!(result.is_some());
+        let ctx = result.unwrap();
+        assert_eq!(ctx.app_proto, Some(AppProto::Ftp));
+        let ep = ctx.ftp_data_endpoint.unwrap();
+        assert_eq!(ep.port, 1025);
     }
 
     #[test]
