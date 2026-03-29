@@ -41,6 +41,7 @@ tokio-util = "0.7.16"
 redb = "3.1.1"
 rustc-hash = "2.1.2"
 ouroboros = "0.18.5"
+mockall = "0.14.0"
 
 [build-dependencies]
 protoc-bin-vendored = "3.2.0"

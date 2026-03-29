@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
+use mockall::automock;
 use tonic::async_trait;
 
 use crate::{config::{AppConfig, DevConfig}, policy::{Policy, policy_evaluator::PolicyEvaluator}, rule_tree::{RuleTree, parsing::parse_rule_tree}};
 
 #[async_trait]
+#[automock]
 pub trait PolicySwapper {
     async fn swap_policies(&self, new_policies: Vec<Policy>) -> Result<(), anyhow::Error>; // should write to disk, thats why its async
 }
