@@ -1,4 +1,6 @@
 import { InvalidCredentialsException } from '../../domain/exceptions/invalid-credentials.exception.js';
+import { RECOVERY_TOKEN_SERVICE_TOKEN } from '../ports/recovery-token-service.interface.js';
+import type { IRecoveryTokenService } from '../ports/recovery-token-service.interface.js';
 import { USER_REPOSITORY_TOKEN } from '../../domain/repositories/user.repository.js';
 import type { IUserRepository } from '../../domain/repositories/user.repository.js';
 import { PASSWORD_HASHER_TOKEN } from '../ports/passowrd-hasher.interface.js';
@@ -17,6 +19,8 @@ export class LoginUserUseCase {
     @Inject(PASSWORD_HASHER_TOKEN)
     private readonly passwordHasher: IPasswordHasher,
     @Inject(TOKEN_SERVICE_TOKEN) private readonly tokenService: ITokenService,
+    @Inject(RECOVERY_TOKEN_SERVICE_TOKEN)
+    private readonly recoveryTokenService: IRecoveryTokenService,
   ) {}
 
   async execute(dto: LoginDto): Promise<LoginResponseDto> {
@@ -47,12 +51,35 @@ export class LoginUserUseCase {
       refreshTokenExpiry,
     );
 
-    return {
+    let recoveryToken: string | null = null;
+
+    if (user.getShowRecoveryToken()) {
+      recoveryToken = this.recoveryTokenService.createRecoveryToken(256);
+      const hashedRecoveryToken = await this.passwordHasher.hash(recoveryToken);
+      user.setRecoveryToken(hashedRecoveryToken);
+      user.setShowRecoveryToken(true);
+
+      await this.userRepository.save(user);
+    }
+
+    const loggedInUser = {
       id: user.getId(),
       username: user.getUsername(),
       createdAt: user.getCreatedAt(),
       accessToken: toknenPair.accessToken,
       refreshToken: toknenPair.refreshToken,
+      recoveryToken: user.getShowRecoveryToken() ? recoveryToken : null,
+      isFirstLogin: user.getIsFirstLogin(),
+      showRecoveryToken: user.getShowRecoveryToken(),
     };
+
+    user.setIsFirstLogin(false);
+    user.setShowRecoveryToken(false);
+
+    if (!user.getShowRecoveryToken() && !user.getIsFirstLogin()) {
+      await this.userRepository.save(user);
+    }
+
+    return loggedInUser;
   }
 }

@@ -49,6 +49,9 @@ export class CreateUserUseCase {
       passwordHash,
       null,
       null,
+      null,
+      true,
+      true,
       new Date(),
       new Date(),
     );

@@ -3,20 +3,38 @@
     {
       "id": "00000000-0000-4000-8000-000000000001",
       "username": "admin",
-      "passwordHash": "$2b$12$IvZ.EXRyRNI9y7iQFoV.8emVe9hYXwK8lF.lkj.aPLmnFVUaD5KjW",
-      "refreshToken": "e1304352-8691-41e5-9676-f2e3fe113ca9",
-      "refreshTokenExpiry": "2026-03-28T20:49:36.626Z",
+      "passwordHash": "$2b$12$gK.Bwj6Z1jwZ04xQAm8Vm.m9uP4wiO8rcF2Gl9PPyuNMKpzP7Awp2",
+      "refreshToken": "da670997-c1d1-4ba7-b9c3-152bee5baae3",
+      "refreshTokenExpiry": "2026-03-29T14:57:38.917Z",
+      "recoveryToken": "$2b$12$qBQ3y8l/MVYx5Oxe35V8HenoIjKxhPkVk2spGbiqatmRzWESHx.jW",
+      "isFirstLogin": false,
+      "showRecoveryToken": false,
       "createdAt": "2026-03-18T21:30:42.644Z",
-      "updatedAt": "2026-03-28T19:49:36.627Z"
+      "updatedAt": "2026-03-29T12:41:23.651Z"
     },
     {
-      "id": "07bf1567-b7b3-44b1-8aa3-44862d48d3ed",
-      "username": "TymekToGej",
-      "passwordHash": "$2b$12$zZVdO76lOdYbnc8HtM2x3ue4fVI8cI8/of.jRzFHgNDxBQckiUR.S",
-      "refreshToken": null,
-      "refreshTokenExpiry": null,
-      "createdAt": "2026-03-28T15:45:50.501Z",
-      "updatedAt": "2026-03-28T19:47:51.973Z"
+      "id": "055ded25-1861-427a-bd26-029ceeeeee7c",
+      "username": "jankowal",
+      "passwordHash": "$2b$12$cTWLqe9om7G3oC/JIlE58eAXsq2wfLkFII78vkMjNr1bY0QbXGNMu",
+      "refreshToken": "9e710d80-2d93-4928-ac34-0333b78c771e",
+      "refreshTokenExpiry": "2026-03-29T13:53:53.061Z",
+      "recoveryToken": null,
+      "isFirstLogin": true,
+      "showRecoveryToken": true,
+      "createdAt": "2026-03-29T12:41:49.032Z",
+      "updatedAt": "2026-03-29T12:42:05.429Z"
+    },
+    {
+      "id": "25e32ec8-1912-4e73-aa26-74cdcf8c1711",
+      "username": "Marek",
+      "passwordHash": "$2b$12$zwghmI8.csJcoB78/sYU9egThz6WE/21cP7sKPPk.8BcXGs0t7HD2",
+      "refreshToken": "ff5b8e5c-1f60-4043-aa6f-454cb775b0bf",
+      "refreshTokenExpiry": "2026-03-29T14:59:42.492Z",
+      "recoveryToken": "$2b$12$uFWPCAnDSyWLv/PmzgBUseFV/SFQkmunhDWOB8PK7HJ8SjM5mryu6",
+      "isFirstLogin": false,
+      "showRecoveryToken": false,
+      "createdAt": "2026-03-29T13:59:21.376Z",
+      "updatedAt": "2026-03-29T13:59:21.376Z"
     }
   ]
 }
