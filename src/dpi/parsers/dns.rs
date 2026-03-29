@@ -9,6 +9,9 @@ pub struct DnsParseResult {
     pub is_response: bool,
     pub query_name: Option<String>,
     pub query_type: Option<u16>,
+    pub answer_count: u16,
+    pub answer_types: Vec<u16>,
+    pub response_size: u16,
 }
 
 // Parsuje pakiet DNS i wyodrębnia nazwę domeny, typ zapytania oraz kierunek.
@@ -17,10 +20,20 @@ pub fn parse_dns(buf: &[u8]) -> Option<DnsParseResult> {
     let is_response = packet.has_flags(PacketFlag::RESPONSE);
     let question = packet.questions.first()?;
 
+    let answer_count = packet.answers.len() as u16;
+    let answer_types: Vec<u16> = packet
+        .answers
+        .iter()
+        .map(|rr| u16::from(rr.rdata.type_code()))
+        .collect();
+
     Some(DnsParseResult {
         is_response,
         query_name: Some(question.qname.to_string()),
         query_type: Some(question.qtype.into()),
+        answer_count,
+        answer_types,
+        response_size: buf.len() as u16,
     })
 }
 
@@ -31,6 +44,9 @@ pub fn dns_to_dpi_context(result: &DnsParseResult) -> DpiContext {
         dns_query_name: result.query_name.clone(),
         dns_query_type: result.query_type,
         dns_is_response: Some(result.is_response),
+        dns_answer_count: result.answer_count,
+        dns_answer_types: result.answer_types.clone(),
+        dns_response_size: result.response_size,
         ..Default::default()
     }
 }
@@ -64,16 +80,37 @@ mod tests {
     }
 
     fn build_dns_response(domain_labels: &[&str], qtype: u16) -> Vec<u8> {
+        build_dns_response_with_answers(domain_labels, qtype, &[])
+    }
+
+    // Buduje odpowiedź DNS z rekordami w sekcji Answer.
+    // Każda krotka: (typ rekordu, rdata).
+    fn build_dns_response_with_answers(
+        domain_labels: &[&str],
+        qtype: u16,
+        answers: &[(u16, &[u8])],
+    ) -> Vec<u8> {
         let mut pkt = Vec::new();
         pkt.extend_from_slice(&[0xAB, 0xCD]); // Transaction ID
         pkt.extend_from_slice(&[0x81, 0x80]); // Flags: response, RD=1, RA=1
         pkt.extend_from_slice(&[0x00, 0x01]); // QDCOUNT=1
-        pkt.extend_from_slice(&[0x00, 0x00]); // ANCOUNT=0
+        pkt.extend_from_slice(&(answers.len() as u16).to_be_bytes()); // ANCOUNT
         pkt.extend_from_slice(&[0x00, 0x00]); // NSCOUNT=0
         pkt.extend_from_slice(&[0x00, 0x00]); // ARCOUNT=0
-        pkt.extend_from_slice(&encode_name(domain_labels));
+
+        let name_bytes = encode_name(domain_labels);
+        pkt.extend_from_slice(&name_bytes);
         pkt.extend_from_slice(&qtype.to_be_bytes());
         pkt.extend_from_slice(&[0x00, 0x01]); // QCLASS=IN
+
+        for (rtype, rdata) in answers {
+            pkt.extend_from_slice(&name_bytes); // NAME
+            pkt.extend_from_slice(&rtype.to_be_bytes()); // TYPE
+            pkt.extend_from_slice(&[0x00, 0x01]); // CLASS=IN
+            pkt.extend_from_slice(&[0x00, 0x00, 0x00, 0x3C]); // TTL=60
+            pkt.extend_from_slice(&(rdata.len() as u16).to_be_bytes()); // RDLENGTH
+            pkt.extend_from_slice(rdata); // RDATA
+        }
         pkt
     }
 
@@ -84,6 +121,9 @@ mod tests {
         assert!(!result.is_response);
         assert_eq!(result.query_name.as_deref(), Some("example.com"));
         assert_eq!(result.query_type, Some(1));
+        assert_eq!(result.answer_count, 0);
+        assert!(result.answer_types.is_empty());
+        assert_eq!(result.response_size, pkt.len() as u16);
     }
 
     #[test]
@@ -176,17 +216,95 @@ mod tests {
     }
 
     #[test]
+    fn response_with_a_record() {
+        let ip: &[u8] = &[93, 184, 216, 34]; // 93.184.216.34
+        let pkt = build_dns_response_with_answers(&["example", "com"], 1, &[(1, ip)]);
+        let result = parse_dns(&pkt).unwrap();
+        assert!(result.is_response);
+        assert_eq!(result.answer_count, 1);
+        assert_eq!(result.answer_types, vec![1]);
+        assert_eq!(result.response_size, pkt.len() as u16);
+    }
+
+    #[test]
+    fn response_with_txt_record() {
+        let txt = b"\x0dhello tunnelx";
+        let pkt = build_dns_response_with_answers(&["t", "evil", "com"], 16, &[(16, txt)]);
+        let result = parse_dns(&pkt).unwrap();
+        assert_eq!(result.answer_count, 1);
+        assert_eq!(result.answer_types, vec![16]);
+    }
+
+    #[test]
+    fn response_with_multiple_answers() {
+        let ip1: &[u8] = &[1, 2, 3, 4];
+        let ip2: &[u8] = &[5, 6, 7, 8];
+        let pkt =
+            build_dns_response_with_answers(&["cdn", "example", "com"], 1, &[(1, ip1), (1, ip2)]);
+        let result = parse_dns(&pkt).unwrap();
+        assert_eq!(result.answer_count, 2);
+        assert_eq!(result.answer_types, vec![1, 1]);
+    }
+
+    #[test]
+    fn response_with_cname_and_a() {
+        // CNAME rdata = wskaźnik do nazwy (uproszczony: zakodowana nazwa)
+        let cname_rdata = encode_name(&["real", "example", "com"]);
+        let a_rdata: &[u8] = &[10, 0, 0, 1];
+        let pkt = build_dns_response_with_answers(
+            &["alias", "example", "com"],
+            1,
+            &[(5, &cname_rdata), (1, a_rdata)],
+        );
+        let result = parse_dns(&pkt).unwrap();
+        assert_eq!(result.answer_count, 2);
+        assert_eq!(result.answer_types, vec![5, 1]); // CNAME=5, A=1
+    }
+
+    #[test]
+    fn response_with_null_record() {
+        let null_data: &[u8] = &[0xDE, 0xAD, 0xBE, 0xEF];
+        let pkt =
+            build_dns_response_with_answers(&["tun", "evil", "com"], 10, &[(10, null_data)]);
+        let result = parse_dns(&pkt).unwrap();
+        assert_eq!(result.answer_count, 1);
+        assert_eq!(result.answer_types, vec![10]); // NULL=10
+    }
+
+    #[test]
+    fn response_size_grows_with_answers() {
+        let query = build_dns_query(&["example", "com"], 1);
+        let response_empty = build_dns_response(&["example", "com"], 1);
+        let response_with =
+            build_dns_response_with_answers(&["example", "com"], 1, &[(1, &[1, 2, 3, 4])]);
+
+        let q = parse_dns(&query).unwrap();
+        let r_empty = parse_dns(&response_empty).unwrap();
+        let r_with = parse_dns(&response_with).unwrap();
+
+        assert!(r_with.response_size > r_empty.response_size);
+        assert!(r_empty.response_size > 0);
+        assert!(q.response_size > 0);
+    }
+
+    #[test]
     fn to_dpi_context_maps_fields() {
         let result = DnsParseResult {
             is_response: false,
             query_name: Some("example.com".into()),
             query_type: Some(1),
+            answer_count: 2,
+            answer_types: vec![1, 1],
+            response_size: 128,
         };
         let ctx = dns_to_dpi_context(&result);
         assert_eq!(ctx.app_proto, Some(AppProto::Dns));
         assert_eq!(ctx.dns_query_name.as_deref(), Some("example.com"));
         assert_eq!(ctx.dns_query_type, Some(1));
         assert_eq!(ctx.dns_is_response, Some(false));
+        assert_eq!(ctx.dns_answer_count, 2);
+        assert_eq!(ctx.dns_answer_types, vec![1, 1]);
+        assert_eq!(ctx.dns_response_size, 128);
     }
 
     #[test]
@@ -195,9 +313,15 @@ mod tests {
             is_response: true,
             query_name: Some("test.org".into()),
             query_type: Some(28),
+            answer_count: 1,
+            answer_types: vec![28],
+            response_size: 64,
         };
         let ctx = dns_to_dpi_context(&result);
         assert_eq!(ctx.dns_is_response, Some(true));
         assert_eq!(ctx.dns_query_type, Some(28));
+        assert_eq!(ctx.dns_answer_count, 1);
+        assert_eq!(ctx.dns_answer_types, vec![28]);
+        assert_eq!(ctx.dns_response_size, 64);
     }
 }
