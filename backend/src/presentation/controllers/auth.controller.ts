@@ -9,28 +9,30 @@ import {
 } from '@nestjs/common';
 import {
   ApiError400,
-  ApiError401,
-  ApiError404,
   ApiError429,
   ApiError500,
-} from '../decorators/api-error-response.decorator.js';
+  ApiError401,
+  ApiError404,
+} from '../decorators/api-error-response.decorator';
 import {
   ApiCreatedEnvelope,
   ApiNoContentEnvelope,
-} from '../decorators/api-envelope-response.decorator.js';
-import { RefreshTokenUseCase } from '../../application/use-cases/refresh-token.use-case.js';
-import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
-import { LogoutUserUseCase } from '../../application/use-cases/logout-user.use-case.js';
-import { LoginUserUseCase } from '../../application/use-cases/login-user.use-case.js';
-import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto.js';
-import { IsPublic } from '../../infrastructure/decorators/public.decorator.js';
-import { ResponseMessage } from '../decorators/response-message.decorator.js';
-import { Cookie } from '../../infrastructure/decorators/cookie.decorator.js';
-import { LoginResponseDto } from '../dtos/login-response.dto.js';
+} from '../decorators/api-envelope-response.decorator';
+import { RecoverPasswordUseCase } from 'src/application/use-cases/recover-password.use-case';
+import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
+import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
+import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
+import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
+import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto';
+import { ResponseMessage } from '../decorators/response-message.decorator';
+import { IsPublic } from 'src/infrastructure/decorators/public.decorator';
+import { Cookie } from 'src/infrastructure/decorators/cookie.decorator';
+import { RecoveryPasswordDto } from '../dtos/recover-password.dto';
 import { ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
-import { Env } from '../../shared/config/env.validation.js';
-import { LoginDto } from '../dtos/login.dto.js';
+import { LoginResponseDto } from '../dtos/login-response.dto';
+import { Env } from 'src/shared/config/env.validation';
 import { ConfigService } from '@nestjs/config';
+import { LoginDto } from '../dtos/login.dto';
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 
@@ -42,6 +44,7 @@ export class AuthController {
     @Inject() private readonly configService: ConfigService<Env, true>,
     @Inject() private readonly logoutUserUseCase: LogoutUserUseCase,
     @Inject() private readonly loginUserUseCase: LoginUserUseCase,
+    @Inject() private readonly recoverPasswordUseCase: RecoverPasswordUseCase,
   ) {}
 
   @ApiOperation({
@@ -152,5 +155,24 @@ export class AuthController {
       maxAge: 60 * 60 * 1000,
       path: '/auth/refresh',
     });
+  }
+
+  @IsPublic()
+  @Post('recover-password')
+  @ApiOperation({
+    summary: 'Password recovery',
+    description:
+      "Recovery password using a valid recovery token. This endpoint allows users to reset their password by providing a valid recovery token, their username, and a new password. The recovery token is typically generated and sent to the user via email when they initiate a password recovery request. The user must provide the same username that was used to generate the recovery token. If the provided information is valid, the user's password will be updated to the new password.",
+  })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiBody({ type: RecoveryPasswordDto })
+  @ResponseMessage('Password recovered')
+  @ApiNoContentEnvelope()
+  @ApiError400('Validation failed or invalid recovery token')
+  @ApiError404('User not found')
+  @ApiError429('Too many requests')
+  @ApiError500('Server error while recovering password')
+  async recoverPassword(@Body() dto: RecoveryPasswordDto): Promise<void> {
+    await this.recoverPasswordUseCase.execute(dto);
   }
 }

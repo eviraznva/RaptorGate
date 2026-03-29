@@ -19,26 +19,26 @@ import {
   ApiError429,
   ApiError500,
 } from '../decorators/api-error-response.decorator';
-import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
-import { CreateUserUseCase } from 'src/application/use-cases/create-user.use-case';
 import {
   ApiCreatedEnvelope,
   ApiNoContentEnvelope,
   ApiOkEnvelope,
 } from '../decorators/api-envelope-response.decorator';
+import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
+import { GetAllUsersUseCase } from 'src/application/use-cases/get-all-users.use-case';
 import { DeleteUserUseCase } from 'src/application/use-cases/delete-user.use-case';
+import { CreateUserUseCase } from 'src/application/use-cases/create-user.use-case';
+import { EditUserUseCase } from 'src/application/use-cases/edit-user.use-case';
+import { GetAllUsersResponseDto } from '../dtos/get-all-users-response.dto';
 import { ResponseMessage } from '../decorators/response-message.decorator';
 import { CreateUserResponseDto } from '../dtos/create-user-response.dto';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
+import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
 import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Permission } from 'src/domain/enums/permissions.enum';
 import { CreateUserDto } from '../dtos/create-user.dto';
-import { Role } from 'src/domain/enums/role.enum';
 import { EditUserDto } from '../dtos/edit-user.dto';
-import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
-import { EditUserUseCase } from 'src/application/use-cases/edit-user.use-case';
-import { GetAllUsersResponseDto } from '../dtos/get-all-users-response.dto';
-import { GetAllUsersUseCase } from 'src/application/use-cases/get-all-users.use-case';
+import { Role } from 'src/domain/enums/role.enum';
 
 @ApiTags('User Management')
 @Controller('user')

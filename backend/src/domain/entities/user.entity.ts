@@ -7,6 +7,9 @@ export class User {
     private passwordHash: string,
     private refreshToken: string | null,
     private refreshTokenExpiry: Date | null,
+    private recoveryToken: string | null,
+    private isFirstLogin: boolean,
+    private showRecoveryToken: boolean,
     private readonly createdAt: Date,
     private updatedAt: Date,
     private roles: Role[],
@@ -18,6 +21,9 @@ export class User {
     passwordHash: string,
     refreshToken: string | null,
     refreshTokenExpiry: Date | null,
+    recoveryToken: string | null,
+    isFirstLogin: boolean,
+    showRecoveryToken: boolean,
     createdAt: Date,
     updatedAt: Date,
     roles: Role[] = [],
@@ -28,6 +34,9 @@ export class User {
       passwordHash,
       refreshToken,
       refreshTokenExpiry,
+      recoveryToken,
+      isFirstLogin,
+      showRecoveryToken,
       createdAt,
       updatedAt,
       roles,
@@ -66,6 +75,18 @@ export class User {
     return this.roles;
   }
 
+  public getRecoveryToken(): string | null {
+    return this.recoveryToken;
+  }
+
+  public getIsFirstLogin(): boolean {
+    return this.isFirstLogin;
+  }
+
+  public getShowRecoveryToken(): boolean {
+    return this.showRecoveryToken;
+  }
+
   public hasRole(roleName: string): boolean {
     return this.roles.some((r) => r.getName() === roleName);
   }
@@ -96,5 +117,17 @@ export class User {
 
   public setUpdatedAt(updatedAt: Date): void {
     this.updatedAt = updatedAt;
+  }
+
+  public setRecoveryToken(recoveryToken: string | null): void {
+    this.recoveryToken = recoveryToken;
+  }
+
+  public setIsFirstLogin(isFirstLogin: boolean): void {
+    this.isFirstLogin = isFirstLogin;
+  }
+
+  public setShowRecoveryToken(showRecoveryToken: boolean): void {
+    this.showRecoveryToken = showRecoveryToken;
   }
 }
