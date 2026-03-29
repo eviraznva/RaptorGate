@@ -9,12 +9,8 @@ use crate::{
         dns_inspection::DnsInspection,
         nat::engine::NatEngine,
         packet_context::PacketContext,
-        policy_store::PolicyStore,
         tcp_session_tracker::TcpSessionTracker,
-    },
-    packet_validator::validate,
-    pipeline::{Stage, StageOutcome},
-    rule_tree::{ArrivalInfo, Verdict},
+    }, packet_validator::validate, pipeline::{Stage, StageOutcome}, policy::provider::DiskPolicyProvider, rule_tree::{ArrivalInfo, Verdict}
 };
 
 #[derive(Clone)]
@@ -100,14 +96,13 @@ fn infer_out_interface(dst_ip: IpAddr) -> Option<&'static str> {
 
 #[derive(Clone)]
 pub struct PolicyEvalStage {
-    pub policies: Arc<PolicyStore>,
+    pub provider: Arc<DiskPolicyProvider>,
 }
 
 impl Stage for PolicyEvalStage {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
-        let compiled = self.policies.load();
         let arrival = ArrivalInfo::from_time(ctx.borrow_arrival_time());
-        let verdict = compiled.evaluator().evaluate(ctx.borrow_sliced_packet(), &arrival);
+        let verdict = self.provider.get_evaluator().evaluate(ctx.borrow_sliced_packet(), &arrival);
 
         match verdict {
             Verdict::Allow => StageOutcome::Continue,

@@ -1,12 +1,11 @@
 pub mod config;
-pub mod control_plane;
 pub mod data_plane;
 pub mod events;
 pub mod ip_defrag;
 pub mod packet_validator;
 pub mod pipeline;
 pub mod policy;
-pub mod policy_evaluator;
+// pub mod policy_evaluator;
 pub mod proto;
 pub mod query_server;
 pub mod rule_tree;

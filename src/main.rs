@@ -1,12 +1,10 @@
 mod config;
-mod control_plane;
 mod data_plane;
 mod events;
 mod ip_defrag;
 mod packet_validator;
 mod pipeline;
 mod policy;
-mod policy_evaluator;
 mod proto;
 mod query_server;
 mod rule_tree;
@@ -20,11 +18,9 @@ use tokio::sync::Mutex;
 use ipnet::IpNet;
 use tracing::trace;
 use crate::config::AppConfig;
-use crate::control_plane::{ControlPlane, ControlPlaneConfig};
 use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree};
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::engine::NatEngine;
-use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
@@ -32,6 +28,7 @@ use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::pipeline::wrappers::{DnsInspectionStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
+use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::CaManager;
 use tokio_util::sync::CancellationToken;
@@ -73,31 +70,17 @@ async fn main() {
         }
     };
 
-    let cp_config = ControlPlaneConfig {
-        ca_info,
-        ..ControlPlaneConfig::from(&config)
-    };
-
-    let control_plane = match ControlPlane::start(cp_config).await {
-        Ok(control_plane) => control_plane,
-        Err(err) => {
-            eprintln!("Failed to start control plane: {err}");
-            return;
-        }
-    };
-
-    let handle = control_plane.handle();
-    let (policy_store, _policy_sync_task) = PolicyStore::from_watch(handle.policy());
     let tcp_session_tracker = TcpSessionTracker::new();
+    let policy_provider = Arc::new(DiskPolicyProvider::new(&config));
 
     tokio::spawn(events::init_event_queue());
     let nat_engine = build_test_nat();
 
-    let query_server = QueryServer::new(
+    let query_server = QueryServer::<DiskPolicyProvider>::new(
         QueryHandler {
             tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
-            policy_store: Arc::clone(&policy_store),
+            policy_store: Arc::clone(&policy_provider),
         },
         &config.query_socket_path,
         CancellationToken::new(),
@@ -129,12 +112,12 @@ async fn main() {
         tail: Chain {
            head: DnsInspectionStage { inspection: dns_inspection },
             tail: Chain {
-                head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
+                head: NatPreroutingStage { engine: nat_engine.clone() },
                 tail: Chain {
-                    head: PolicyEvalStage { policies: Arc::clone(&policy_store) },
+                    head: PolicyEvalStage { provider: policy_provider },
                     tail: Chain {
-                        head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
-                        tail: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                        head: TcpClassificationStage { tracker: tcp_session_tracker },
+                        tail: NatPostroutingStage { engine: nat_engine },
                     },
                 },
             }
@@ -155,10 +138,6 @@ async fn main() {
                 }
             });
         }
-    }
-
-    if let Err(err) = control_plane.shutdown().await {
-        eprintln!("Control plane shutdown error: {err}");
     }
 }
 

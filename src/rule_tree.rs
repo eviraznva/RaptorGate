@@ -9,6 +9,7 @@ use derive_more::{Debug, Display, Error, PartialEq};
 use crate::rule_tree::matcher::Match;
 pub use matcher::MatchBuilder;
 
+#[derive(Clone, Debug)]
 pub struct RuleTree {
     name: String,
     description: String,
@@ -35,13 +36,13 @@ impl std::fmt::Display for RuleTree {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 struct Arm {
     pattern: Pattern,
     into: ArmEnd,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum ArmEnd {
     Verdict(Verdict),
     Match(Match),
