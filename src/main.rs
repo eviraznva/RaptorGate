@@ -1,6 +1,7 @@
 mod config;
 mod control_plane;
 mod data_plane;
+mod dpi;
 mod events;
 mod ip_defrag;
 mod packet_validator;
@@ -29,7 +30,8 @@ use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::{Chain, Stage, StageOutcome};
-use crate::pipeline::wrappers::{DnsInspectionStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
+use crate::dpi::DpiClassifier;
+use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::query_server::{QueryHandler, QueryServer};
@@ -45,7 +47,8 @@ async fn main() {
         Chain<DnsInspectionStage,
         Chain<NatPreroutingStage,
         Chain<PolicyEvalStage,
-        Chain<TcpClassificationStage, NatPostroutingStage>>>>>;
+        Chain<TcpClassificationStage,
+        Chain<DpiStage, NatPostroutingStage>>>>>>;
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -123,6 +126,7 @@ async fn main() {
     dns_block_tree.print_tree();
 
     let dns_inspection = DnsInspection::new(dns_block_tree);
+    let dpi_classifier = Arc::new(DpiClassifier::new());
 
     let pipeline = DataPipeline {
         head: ValidationStage,
@@ -134,7 +138,10 @@ async fn main() {
                     head: PolicyEvalStage { policies: Arc::clone(&policy_store) },
                     tail: Chain {
                         head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
-                        tail: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                        tail: Chain {
+                            head: DpiStage { classifier: Arc::clone(&dpi_classifier) },
+                            tail: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                        },
                     },
                 },
             }

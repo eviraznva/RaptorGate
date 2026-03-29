@@ -12,6 +12,7 @@ use crate::{
         policy_store::PolicyStore,
         tcp_session_tracker::TcpSessionTracker,
     },
+    dpi::{DpiClassifier, InspectResult},
     packet_validator::validate,
     pipeline::{Stage, StageOutcome},
     rule_tree::{ArrivalInfo, Verdict},
@@ -149,7 +150,7 @@ pub struct DnsInspectionStage {
 impl Stage for DnsInspectionStage {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
         use etherparse::TransportSlice;
-        
+
         matches!(
             &ctx.borrow_sliced_packet().transport,
             Some(TransportSlice::Udp(udp)) if udp.destination_port() == 53
@@ -170,5 +171,31 @@ impl Stage for DnsInspectionStage {
         } else {
             StageOutcome::Continue
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct DpiStage {
+    pub classifier: Arc<DpiClassifier>,
+}
+
+impl Stage for DpiStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        use etherparse::TransportSlice;
+        matches!(
+            &ctx.borrow_sliced_packet().transport,
+            Some(TransportSlice::Tcp(_) | TransportSlice::Udp(_))
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        match self.classifier.inspect_packet(ctx.borrow_sliced_packet()) {
+            InspectResult::Done(dpi_ctx) => {
+                tracing::debug!("DPI: classification done ctx={dpi_ctx:?}");
+            }
+            InspectResult::NeedMore => {}
+            InspectResult::Skipped => {}
+        }
+        StageOutcome::Continue
     }
 }
