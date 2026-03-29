@@ -72,7 +72,18 @@ impl DpiClassifier {
         let mut entry = self.sessions.entry(key).or_insert_with(DpiSessionEntry::new);
         let session = entry.value_mut();
 
-        if let Some(ref ctx) = session.result {
+        if let Some(ref mut ctx) = session.result {
+            if ctx.app_proto == Some(AppProto::Dns) {
+                if let Some(parsed) = dns::parse_dns(payload) {
+                    if parsed.is_response {
+                        ctx.dns_answer_count = parsed.answer_count;
+                        ctx.dns_answer_types = parsed.answer_types;
+                        ctx.dns_response_size = parsed.response_size;
+                    } else {
+                        *ctx = dns::dns_to_dpi_context(&parsed);
+                    }
+                }
+            }
             return InspectResult::Done(ctx.clone());
         }
 
@@ -450,5 +461,191 @@ mod tests {
         }
         assert!(entry.limits_exceeded());
         assert!(DpiClassifier::try_classify(&entry.buffer).is_none());
+    }
+
+    fn build_ip_udp(src_ip: [u8; 4], src_port: u16, dst_ip: [u8; 4], dst_port: u16, payload: &[u8]) -> Vec<u8> {
+        let udp_len = 8 + payload.len();
+        let ip_total = 20 + udp_len;
+
+        let mut pkt = Vec::with_capacity(ip_total);
+        pkt.push(0x45);
+        pkt.push(0x00);
+        pkt.extend_from_slice(&(ip_total as u16).to_be_bytes());
+        pkt.extend_from_slice(&[0x00, 0x01, 0x00, 0x00]);
+        pkt.push(64);
+        pkt.push(17);
+        pkt.extend_from_slice(&[0x00, 0x00]);
+        pkt.extend_from_slice(&src_ip);
+        pkt.extend_from_slice(&dst_ip);
+        pkt.extend_from_slice(&src_port.to_be_bytes());
+        pkt.extend_from_slice(&dst_port.to_be_bytes());
+        pkt.extend_from_slice(&(udp_len as u16).to_be_bytes());
+        pkt.extend_from_slice(&[0x00, 0x00]);
+        pkt.extend_from_slice(payload);
+        pkt
+    }
+
+    fn dns_query_payload(domain: &str, qtype: u16) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0x12, 0x34]);
+        buf.extend_from_slice(&[0x01, 0x00]);
+        buf.extend_from_slice(&[0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        for label in domain.split('.') {
+            buf.push(label.len() as u8);
+            buf.extend_from_slice(label.as_bytes());
+        }
+        buf.push(0x00);
+        buf.extend_from_slice(&qtype.to_be_bytes());
+        buf.extend_from_slice(&[0x00, 0x01]);
+        buf
+    }
+
+    fn dns_response_payload(domain: &str, qtype: u16, answers: &[(u16, &[u8])]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0x12, 0x34]);
+        buf.extend_from_slice(&[0x81, 0x80]);
+        buf.extend_from_slice(&[0x00, 0x01]);
+        buf.extend_from_slice(&(answers.len() as u16).to_be_bytes());
+        buf.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+
+        let mut name = Vec::new();
+        for label in domain.split('.') {
+            name.push(label.len() as u8);
+            name.extend_from_slice(label.as_bytes());
+        }
+        name.push(0x00);
+
+        buf.extend_from_slice(&name);
+        buf.extend_from_slice(&qtype.to_be_bytes());
+        buf.extend_from_slice(&[0x00, 0x01]);
+
+        for (rtype, rdata) in answers {
+            buf.extend_from_slice(&name);
+            buf.extend_from_slice(&rtype.to_be_bytes());
+            buf.extend_from_slice(&[0x00, 0x01]);
+            buf.extend_from_slice(&[0x00, 0x00, 0x00, 0x3C]);
+            buf.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+            buf.extend_from_slice(rdata);
+        }
+        buf
+    }
+
+    #[test]
+    fn test_dns_response_updates_cached_query() {
+        let classifier = DpiClassifier::new();
+        let h1: [u8; 4] = [192, 168, 10, 10];
+        let h2: [u8; 4] = [192, 168, 20, 10];
+
+        let query = dns_query_payload("example.com", 1);
+        let pkt_q = build_ip_udp(h1, 40001, h2, 53, &query);
+        let parsed_q = SlicedPacket::from_ip(&pkt_q).unwrap();
+        let r1 = classifier.inspect_packet(&parsed_q);
+
+        match &r1 {
+            InspectResult::Done(ctx) => {
+                assert_eq!(ctx.app_proto, Some(AppProto::Dns));
+                assert_eq!(ctx.dns_query_name.as_deref(), Some("example.com"));
+                assert_eq!(ctx.dns_is_response, Some(false));
+                assert_eq!(ctx.dns_answer_count, 0);
+            }
+            _ => panic!("query powinno byc Done"),
+        }
+
+        let resp = dns_response_payload("example.com", 1, &[(1, &[93, 184, 216, 34])]);
+        let pkt_r = build_ip_udp(h2, 53, h1, 40001, &resp);
+        let parsed_r = SlicedPacket::from_ip(&pkt_r).unwrap();
+        let r2 = classifier.inspect_packet(&parsed_r);
+
+        match &r2 {
+            InspectResult::Done(ctx) => {
+                assert_eq!(ctx.app_proto, Some(AppProto::Dns));
+                assert_eq!(ctx.dns_query_name.as_deref(), Some("example.com"));
+                assert_eq!(ctx.dns_query_type, Some(1));
+                assert_eq!(ctx.dns_answer_count, 1);
+                assert_eq!(ctx.dns_answer_types, vec![1]);
+                assert!(ctx.dns_response_size > 0);
+            }
+            _ => panic!("response powinno byc Done z uzupelnionym kontekstem"),
+        }
+    }
+
+    #[test]
+    fn test_dns_response_txt_tunneling() {
+        let classifier = DpiClassifier::new();
+        let h1: [u8; 4] = [10, 0, 0, 1];
+        let h2: [u8; 4] = [10, 0, 0, 2];
+
+        let query = dns_query_payload("exfil.evil.com", 16);
+        let pkt_q = build_ip_udp(h1, 50000, h2, 53, &query);
+        classifier.inspect_packet(&SlicedPacket::from_ip(&pkt_q).unwrap());
+
+        let mut big_txt = vec![200u8]; // TXT length prefix
+        big_txt.extend_from_slice(&[0x41; 200]);
+        let resp = dns_response_payload("exfil.evil.com", 16, &[(16, &big_txt)]);
+        let resp_size = resp.len() as u16;
+        let pkt_r = build_ip_udp(h2, 53, h1, 50000, &resp);
+        let r = classifier.inspect_packet(&SlicedPacket::from_ip(&pkt_r).unwrap());
+
+        match &r {
+            InspectResult::Done(ctx) => {
+                assert_eq!(ctx.dns_query_name.as_deref(), Some("exfil.evil.com"));
+                assert_eq!(ctx.dns_query_type, Some(16));
+                assert_eq!(ctx.dns_answer_count, 1);
+                assert_eq!(ctx.dns_answer_types, vec![16]);
+                assert_eq!(ctx.dns_response_size, resp_size);
+            }
+            _ => panic!("powinno byc Done"),
+        }
+    }
+
+    #[test]
+    fn test_dns_multiple_queries_same_flow() {
+        let classifier = DpiClassifier::new();
+        let h1: [u8; 4] = [192, 168, 10, 10];
+        let h2: [u8; 4] = [192, 168, 20, 10];
+
+        let q1 = dns_query_payload("first.example.com", 1);
+        let pkt1 = build_ip_udp(h1, 53, h2, 53, &q1);
+        let r1 = classifier.inspect_packet(&SlicedPacket::from_ip(&pkt1).unwrap());
+        match &r1 {
+            InspectResult::Done(ctx) => {
+                assert_eq!(ctx.dns_query_name.as_deref(), Some("first.example.com"));
+                assert_eq!(ctx.dns_query_type, Some(1));
+            }
+            _ => panic!("pierwsze query powinno byc Done"),
+        }
+
+        let resp1 = dns_response_payload("first.example.com", 1, &[(1, &[1, 2, 3, 4])]);
+        let pkt_r1 = build_ip_udp(h2, 53, h1, 53, &resp1);
+        classifier.inspect_packet(&SlicedPacket::from_ip(&pkt_r1).unwrap());
+
+        let q2 = dns_query_payload("second.example.com", 28);
+        let pkt2 = build_ip_udp(h1, 53, h2, 53, &q2);
+        let r2 = classifier.inspect_packet(&SlicedPacket::from_ip(&pkt2).unwrap());
+        match &r2 {
+            InspectResult::Done(ctx) => {
+                assert_eq!(ctx.dns_query_name.as_deref(), Some("second.example.com"));
+                assert_eq!(ctx.dns_query_type, Some(28));
+                assert_eq!(ctx.dns_answer_count, 0);
+                assert!(ctx.dns_answer_types.is_empty());
+            }
+            _ => panic!("drugie query powinno nadpisac kontekst"),
+        }
+
+        let resp2 = dns_response_payload(
+            "second.example.com", 28,
+            &[(28, &[0x26, 0x06, 0x28, 0x00, 0x02, 0x20, 0x00, 0x01,
+                      0x02, 0x48, 0x18, 0x93, 0x25, 0xc8, 0x19, 0x46])],
+        );
+        let pkt_r2 = build_ip_udp(h2, 53, h1, 53, &resp2);
+        let r3 = classifier.inspect_packet(&SlicedPacket::from_ip(&pkt_r2).unwrap());
+        match &r3 {
+            InspectResult::Done(ctx) => {
+                assert_eq!(ctx.dns_query_name.as_deref(), Some("second.example.com"));
+                assert_eq!(ctx.dns_answer_count, 1);
+                assert_eq!(ctx.dns_answer_types, vec![28]);
+            }
+            _ => panic!("response powinno uzupelnic drugie query"),
+        }
     }
 }
