@@ -12,9 +12,7 @@ use crate::{
         tcp_session_tracker::TcpSessionTracker,
     },
     dpi::{DpiClassifier, InspectResult},
-    packet_validator::validate, pipeline::{Stage, StageOutcome}, policy::provider::DiskPolicyProvider, rule_tree::{ArrivalInfo, Verdict}
-    pipeline::{Stage, StageOutcome},
-    rule_tree::{ArrivalInfo, Verdict},
+    packet_validator::validate, pipeline::{Stage, StageOutcome}, policy::provider::DiskPolicyProvider, rule_tree::{ArrivalInfo, Verdict},
 };
 use crate::data_plane::dns_inspection::DnsInspectionVerdict;
 use crate::dpi::AppProto;

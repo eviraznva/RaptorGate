@@ -19,7 +19,6 @@ use tokio::sync::Mutex;
 use ipnet::IpNet;
 use tracing::trace;
 use crate::config::AppConfig;
-use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree};
 use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree, TunnelingDetectorConfig};
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::engine::NatEngine;
