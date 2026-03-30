@@ -18,6 +18,7 @@ pub struct AppConfig {
     // gRPC / backend
     pub grpc_socket_path: String,
     pub control_plane_grpc_socket_path: String,
+    pub query_socket_path: String,
     pub firewall_version: String,
     pub heartbeat_interval_secs: u64,
 
@@ -32,7 +33,6 @@ pub struct AppConfig {
 pub struct DevConfig {
     pub policy_override: Option<String>,
 }
-
 
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
@@ -94,6 +94,9 @@ impl AppConfig {
             control_plane_grpc_socket_path: std::env::var("CONTROL_PLANE_GRPC_SOCKET_PATH")
                 .unwrap_or_else(|_| "./sockets/control-plane.sock".into()),
 
+            query_socket_path: std::env::var("QUERY_SOCKET_PATH")
+                .unwrap_or_else(|_| "./sockets/query.sock".into()),
+
             firewall_version: std::env::var("FIREWALL_VERSION")
                 .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into()),
 
@@ -110,6 +113,6 @@ impl AppConfig {
             }),
             pki_dir: std::env::var("RAPTORGATE_PKI_DIR")
                 .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
-        }
-        )}
+        })
+    }
 }

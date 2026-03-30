@@ -1,4 +1,4 @@
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
 import { z } from 'zod';
 
 export const ZoneRecordSchema = z

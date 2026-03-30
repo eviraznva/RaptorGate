@@ -1,7 +1,7 @@
 use paste::paste;
 use std::{char, fmt::Display, thread::current};
 
-use derive_more::{Add, AddAssign, Debug, Display, From, derive};
+use derive_more::{derive, Add, AddAssign, Debug, Display, From};
 use thiserror::Error;
 
 macro_rules! separating_chars {

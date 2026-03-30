@@ -1,6 +1,6 @@
-import { ROLE_PERMISSIONS } from '../src/domain/constants/role-permissions';
-import { Permission } from '../src/domain/enums/permissions.enum';
-import { Role } from '../src/domain/enums/role.enum';
+import { ROLE_PERMISSIONS } from '../src/domain/constants/role-permissions.js';
+import { Permission } from '../src/domain/enums/permissions.enum.js';
+import { Role } from '../src/domain/enums/role.enum.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as bcrypt from 'bcrypt';

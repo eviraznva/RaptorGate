@@ -1,12 +1,12 @@
 import {
   RolePermissionsFile,
   RolePermissionsFileSchema,
-} from '../schemas/role-permissions.schema';
-import { IRolePermissionsRepository } from 'src/domain/repositories/role-permissions.repository';
-import { RolePermissionsJsonMapper } from '../mappers/role-permissions-json.mapper';
-import { RolePermission } from 'src/domain/entities/role-permissions.entity';
-import { FileStore } from '../json/file-store';
-import { Mutex } from '../json/file-mutex';
+} from '../schemas/role-permissions.schema.js';
+import { IRolePermissionsRepository } from '../../../domain/repositories/role-permissions.repository.js';
+import { RolePermissionsJsonMapper } from '../mappers/role-permissions-json.mapper.js';
+import { RolePermission } from '../../../domain/entities/role-permissions.entity.js';
+import { FileStore } from '../json/file-store.js';
+import { Mutex } from '../json/file-mutex.js';
 import { Inject } from '@nestjs/common';
 import { join } from 'node:path';
 

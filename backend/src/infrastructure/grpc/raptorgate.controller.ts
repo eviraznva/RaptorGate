@@ -1,18 +1,26 @@
 import {
   RaptorGateServiceController,
   RaptorGateServiceControllerMethods,
-} from './generated/raptorgate';
+} from './generated/raptorgate.js';
+import { GetActiveConfigUseCase } from '../../application/use-cases/get-active-config.use-case.js';
 import {
   GetConfigRequest,
   ConfigResponse,
-} from './generated/config/config_service';
+} from './generated/config/config_service.js';
 import {
   FirewallEvent,
   HeartbeatEvent,
-} from './generated/events/firewall_events';
-import { GetActiveConfigUseCase } from 'src/application/use-cases/get-active-config.use-case';
-import { BackendEvent, HeartbeatAck } from './generated/events/backend_events';
-import { Controller, Inject, Logger } from '@nestjs/common';
+} from './generated/events/firewall_events.js';
+import {
+  BackendEvent,
+  HeartbeatAck,
+} from './generated/events/backend_events.js';
+import {
+  Controller,
+  Inject,
+  Logger,
+  NotImplementedException,
+} from '@nestjs/common';
 import { Observable } from 'rxjs';
 
 @Controller()
@@ -27,18 +35,13 @@ export class RaptorGateController implements RaptorGateServiceController {
     this.logger.log(
       `[GetActiveConfig] correlationId=${request.correlationId} reason=${request.reason}`,
     );
-    const activeConfig = await this.getActiveConfigUseCase.execute(
-      request.correlationId,
-      request.knownVersions,
-    );
+    const activeConfig = await this.getActiveConfigUseCase.execute();
 
     this.logger.log(
-      `[GetActiveConfig] sending version=${activeConfig.configVersion}`,
+      `[GetActiveConfig] sending version=${activeConfig.getVersionNumber()}`,
     );
 
-    return {
-      ...activeConfig,
-    };
+    throw new NotImplementedException();
   }
 
   eventStream(request: Observable<FirewallEvent>): Observable<BackendEvent> {

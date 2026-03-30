@@ -1,4 +1,4 @@
-import { IpAddress } from '../value-objects/ip-address.vo';
+import { IpAddress } from '../value-objects/ip-address.vo.js';
 
 export class Session {
   private constructor(

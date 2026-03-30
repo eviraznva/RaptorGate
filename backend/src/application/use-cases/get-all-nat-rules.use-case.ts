@@ -1,7 +1,7 @@
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
-import { NAT_RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/nat-rules.repository';
-import type { INatRulesRepository } from 'src/domain/repositories/nat-rules.repository';
-import { GetAllNatRulesDto } from '../dtos/get-all-nat-rules.dto';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
+import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
+import { GetAllNatRulesDto } from '../dtos/get-all-nat-rules.dto.js';
 import { Inject, Injectable } from '@nestjs/common';
 
 @Injectable()

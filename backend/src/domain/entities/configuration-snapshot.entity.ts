@@ -1,6 +1,6 @@
-import { ConfigSnapshotPayload } from '../value-objects/config-snapshot-payload.interface';
-import { SnapshotType } from '../value-objects/snapshot-type.vo';
-import { Checksum } from '../value-objects/checksum.vo';
+import { ConfigSnapshotPayload } from '../value-objects/config-snapshot-payload.interface.js';
+import { SnapshotType } from '../value-objects/snapshot-type.vo.js';
+import { Checksum } from '../value-objects/checksum.vo.js';
 
 export class ConfigurationSnapshot {
   private constructor(
@@ -83,6 +83,10 @@ export class ConfigurationSnapshot {
     return this.createdBy;
   }
 
+  public setPayloadJson(payloadJson: unknown): void {
+    this.payloadJson = payloadJson;
+  }
+
   public deserializePayload(): ConfigSnapshotPayload {
     const obj: unknown =
       typeof this.payloadJson === 'string'
@@ -94,7 +98,6 @@ export class ConfigurationSnapshot {
         'Invalid configuration snapshot payload: expected a JSON object.',
       );
     }
-
     return obj as ConfigSnapshotPayload;
   }
 }
