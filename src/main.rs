@@ -22,7 +22,7 @@ use ipnet::IpNet;
 use tracing::trace;
 use crate::config::AppConfig;
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
-use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree};
+use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree, TunnelingDetectorConfig};
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
@@ -44,11 +44,11 @@ static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
 async fn main() {
     type DataPipeline =
         Chain<ValidationStage,
+        Chain<DpiStage,
         Chain<DnsInspectionStage,
         Chain<NatPreroutingStage,
-        Chain<PolicyEvalStage,
         Chain<TcpClassificationStage,
-        Chain<DpiStage, NatPostroutingStage>>>>>>;
+        Chain<PolicyEvalStage, NatPostroutingStage>>>>>>;
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -125,21 +125,21 @@ async fn main() {
     trace!("Loaded {} blocked domains into DNS inspection tree", dns_stats.total_nodes);
     dns_block_tree.print_tree();
 
-    let dns_inspection = DnsInspection::new(dns_block_tree);
+    let dns_inspection = DnsInspection::new(dns_block_tree, TunnelingDetectorConfig::default());
     let dpi_classifier = Arc::new(DpiClassifier::new());
-
+    
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
-           head: DnsInspectionStage { inspection: dns_inspection },
+            head: DpiStage { classifier: Arc::clone(&dpi_classifier) },
             tail: Chain {
-                head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
+                head: DnsInspectionStage { inspection: dns_inspection },
                 tail: Chain {
-                    head: PolicyEvalStage { policies: Arc::clone(&policy_store) },
+                    head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
                     tail: Chain {
                         head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
                         tail: Chain {
-                            head: DpiStage { classifier: Arc::clone(&dpi_classifier) },
+                            head: PolicyEvalStage { policies: Arc::clone(&policy_store) },
                             tail: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
                         },
                     },
