@@ -17,6 +17,8 @@ use crate::{
     pipeline::{Stage, StageOutcome},
     rule_tree::{ArrivalInfo, Verdict},
 };
+use crate::data_plane::dns_inspection::DnsInspectionVerdict;
+use crate::dpi::AppProto;
 
 #[derive(Clone)]
 pub struct ValidationStage;
@@ -149,27 +151,29 @@ pub struct DnsInspectionStage {
 
 impl Stage for DnsInspectionStage {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        use etherparse::TransportSlice;
-
-        matches!(
-            &ctx.borrow_sliced_packet().transport,
-            Some(TransportSlice::Udp(udp)) if udp.destination_port() == 53
-        )
+        match ctx.borrow_dpi_ctx() {
+            Some(dpi_ctx) => {
+                dpi_ctx.app_proto == Some(AppProto::Dns)
+            }
+            None => false,
+        }
     }
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
-        use etherparse::TransportSlice;
-
-        let payload = match &ctx.borrow_sliced_packet().transport {
-            Some(TransportSlice::Udp(udp)) => udp.payload().to_vec(),
-            _ => return StageOutcome::Continue,
-        };
-
-        if self.inspection.process(&payload) {
-            tracing::debug!("DNS query blocked by domain blocklist");
-            StageOutcome::Halt
-        } else {
-            StageOutcome::Continue
+        let dpi_ctx = ctx.borrow_dpi_ctx().as_ref().unwrap();
+        
+        match self.inspection.process(&dpi_ctx) {
+            DnsInspectionVerdict::Allow => StageOutcome::Continue,
+            DnsInspectionVerdict::Alert(msg) => {
+                tracing::debug!(reason = %msg, "DNS inspection alert");
+                ctx.with_warnings_mut(|w| w.push(msg));
+                StageOutcome::Continue
+            }
+            DnsInspectionVerdict::Block(msg) => {
+                tracing::debug!(reason = %msg, "DNS inspection block");
+                ctx.with_warnings_mut(|w| w.push(msg));
+                StageOutcome::Halt
+            }
         }
     }
 }
@@ -182,6 +186,7 @@ pub struct DpiStage {
 impl Stage for DpiStage {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
         use etherparse::TransportSlice;
+
         matches!(
             &ctx.borrow_sliced_packet().transport,
             Some(TransportSlice::Tcp(_) | TransportSlice::Udp(_))
@@ -192,6 +197,7 @@ impl Stage for DpiStage {
         match self.classifier.inspect_packet(ctx.borrow_sliced_packet()) {
             InspectResult::Done(dpi_ctx) => {
                 tracing::debug!("DPI: classification done ctx={dpi_ctx:?}");
+                ctx.with_dpi_ctx_mut(|c| *c = Some(dpi_ctx));
             }
             InspectResult::NeedMore => {}
             InspectResult::Skipped => {}
