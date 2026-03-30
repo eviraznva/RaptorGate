@@ -1,5 +1,6 @@
 mod config;
 mod data_plane;
+mod dpi;
 mod events;
 mod ip_defrag;
 mod packet_validator;
@@ -19,13 +20,15 @@ use ipnet::IpNet;
 use tracing::trace;
 use crate::config::AppConfig;
 use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree};
+use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree, TunnelingDetectorConfig};
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::engine::NatEngine;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::{Chain, Stage, StageOutcome};
-use crate::pipeline::wrappers::{DnsInspectionStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
+use crate::dpi::DpiClassifier;
+use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
@@ -39,10 +42,11 @@ static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
 async fn main() {
     type DataPipeline =
         Chain<ValidationStage,
+        Chain<DpiStage,
         Chain<DnsInspectionStage,
         Chain<NatPreroutingStage,
-        Chain<PolicyEvalStage,
-        Chain<TcpClassificationStage, NatPostroutingStage>>>>>;
+        Chain<TcpClassificationStage,
+        Chain<PolicyEvalStage, NatPostroutingStage>>>>>>;
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -105,19 +109,23 @@ async fn main() {
     trace!("Loaded {} blocked domains into DNS inspection tree", dns_stats.total_nodes);
     dns_block_tree.print_tree();
 
-    let dns_inspection = DnsInspection::new(dns_block_tree);
-
+    let dns_inspection = DnsInspection::new(dns_block_tree, TunnelingDetectorConfig::default());
+    let dpi_classifier = Arc::new(DpiClassifier::new());
+    
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
-           head: DnsInspectionStage { inspection: dns_inspection },
+            head: DpiStage { classifier: Arc::clone(&dpi_classifier) },
             tail: Chain {
-                head: NatPreroutingStage { engine: nat_engine.clone() },
+                head: DnsInspectionStage { inspection: dns_inspection },
                 tail: Chain {
-                    head: PolicyEvalStage { provider: policy_provider },
+                    head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
                     tail: Chain {
-                        head: TcpClassificationStage { tracker: tcp_session_tracker },
-                        tail: NatPostroutingStage { engine: nat_engine },
+                        head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
+                        tail: Chain {
+                            head: PolicyEvalStage { provider: policy_provider },
+                            tail: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                        },
                     },
                 },
             }

@@ -13,6 +13,9 @@ export const UserRecordSchema = z
     passwordHash: z.string().min(1).max(255),
     refreshToken: z.string().nullable(),
     refreshTokenExpiry: nullableIsoDateTimeSchema,
+    recoveryToken: z.string().nullable(),
+    isFirstLogin: z.boolean(),
+    showRecoveryToken: z.boolean(),
     createdAt: isoDateTimeSchema,
     updatedAt: isoDateTimeSchema,
   })

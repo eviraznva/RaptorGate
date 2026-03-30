@@ -30,12 +30,14 @@ import { join } from 'node:path';
           const backendSocketPath = configService.get('GRPC_SOCKET_PATH', {
             infer: true,
           });
+
           const firewallSocketPath = configService.get(
             'FIREWALL_GRPC_SOCKET_PATH',
             {
               infer: true,
             },
           );
+
           const resolveGrpcUrl = (path: string): string =>
             path.startsWith('unix://')
               ? path

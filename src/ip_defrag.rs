@@ -124,7 +124,7 @@ struct EngineState {
 }
 
 impl IpDefragEngine {
-    pub(crate) fn new(config: DefragConfig) -> Self {
+    pub fn new(config: DefragConfig) -> Self {
         IpDefragEngine {
             state: Mutex::new(EngineState {
                 entries: HashMap::new(),

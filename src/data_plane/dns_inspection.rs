@@ -1,5 +1,9 @@
-use std::sync::Arc;
-use rustc_hash::FxHashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::dpi::DpiContext;
+use crate::dpi::parsers::dns::DnsRecordType;
 
 // Do debugowania
 #[derive(Default, Debug)]
@@ -171,82 +175,468 @@ impl DomainBlockTree {
     }
 }
 
+/// Konfiguracja progów detekcji
+#[derive(Debug, Clone)]
+pub struct TunnelingDetectorConfig {
+    /// Maks. długość pojedynczej etykiety subdomeny
+    pub max_label_length: usize,
+    /// Próg entropii Shannona (bit/znak) — powyżej → podejrzane
+    pub entropy_threshold: f32,
+    /// Okno czasowe dla liczników
+    pub window: Duration,
+    /// Maks. zapytań do jednej domeny nadrzędnej w oknie
+    pub max_queries_per_domain: usize,
+    /// Maks. unikalnych subdomen tej samej domeny nadrzędnej w oknie
+    pub max_unique_subdomains: usize,
+    /// Próg znormalizowanego score (0.0–1.0) → Alert
+    pub alert_threshold: f32,
+    /// Próg znormalizowanego score (0.0–1.0) → Block
+    pub block_threshold: f32,
+}
+
+impl Default for TunnelingDetectorConfig {
+    fn default() -> Self {
+        Self {
+            max_label_length: 40,
+            entropy_threshold: 3.5,
+            window: Duration::from_secs(60),
+            max_queries_per_domain: 100,
+            max_unique_subdomains: 20,
+            alert_threshold: 0.35,
+            block_threshold: 0.5,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum TunnelingSignal {
+    HighEntropy { label: String, entropy: f32 },
+    LongLabel { label: String, length: usize },
+    QueryRateExceeded { domain: String, count: usize },
+    UniqueSubdomainFlood { domain: String, unique: usize },
+    SuspiciousRecordType { qtype: DnsRecordType },
+}
+
+// Teoretyczne maksimum, gdy wszystkie sygnały strzelają naraz:
+// HighEntropy:          log2(64) * 10 ≈ 60  (base64 = 64 znaki, max entropia)
+// LongLabel:            20
+// QueryRateExceeded:    40
+// UniqueSubdomainFlood: 50
+// SuspiciousRecordType: 15
+//                      ---
+//                      185
+const MAX_SCORE: f32 = 185.0;
+
+impl TunnelingSignal {
+    fn score(&self) -> u32 {
+        match self {
+            Self::HighEntropy { entropy, .. }  => (*entropy * 10.0) as u32,
+            Self::LongLabel { .. }              => 20,
+            Self::QueryRateExceeded { .. }      => 40,
+            Self::UniqueSubdomainFlood { .. }   => 50,
+            Self::SuspiciousRecordType { .. }   => 15,
+        }
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            Self::HighEntropy { label, entropy } =>
+                format!("high entropy {entropy:.2} for '{label}'"),
+            Self::LongLabel { label, length } =>
+                format!("long label ({length} characters): '{label}'"),
+            Self::QueryRateExceeded { domain, count } =>
+                format!("too many queries ({count}) to '{domain}'"),
+            Self::UniqueSubdomainFlood { domain, unique } =>
+                format!("too many unique subdomains ({unique}) for '{domain}'"),
+            Self::SuspiciousRecordType { qtype } =>
+                format!("suspicious record type: {qtype:?}"),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct DomainStats {
+    queries: Vec<Instant>,
+    unique_subdomains: FxHashSet<String>,
+}
+
+impl DomainStats {
+    fn prune(&mut self, window: Duration) {
+        let cutoff = Instant::now() - window;
+
+        self.queries.retain(|t| *t > cutoff);
+
+        if self.queries.is_empty() {
+            self.unique_subdomains.clear();
+        }
+    }
+}
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DnsInspectionVerdict {
+    Allow,
+    Alert(String),
+    Block(String),
+}
+
+pub struct TunnelingDetector {
+    config: TunnelingDetectorConfig,
+    stats: FxHashMap<String, DomainStats>,
+}
+
+impl TunnelingDetector {
+    pub fn new(config: TunnelingDetectorConfig) -> Self {
+        Self {
+            config,
+            stats: FxHashMap::default(),
+        }
+    }
+
+    /// Analizuje zapytanie DNS i zwraca werdykt.
+    /// Znormalizowany score jest w przedziale 0.0–1.0.
+    pub fn inspect(&mut self, fqdn: &str, qtype: &DnsRecordType) -> DnsInspectionVerdict {
+        let signals = self.collect_signals(fqdn, qtype);
+
+        if signals.is_empty() {
+            return DnsInspectionVerdict::Allow;
+        }
+
+        let raw_score: u32 = signals.iter().map(|s| s.score()).sum();
+
+        // Clamp do 1.0 — raw_score może przekroczyć MAX_SCORE gdy wiele
+        // etykiet ma wysoką entropię jednocześnie (każda dodaje osobny sygnał)
+        let normalized = (raw_score as f32 / MAX_SCORE).min(1.0);
+
+        let reason = signals.iter().map(|s| s.describe())
+            .collect::<Vec<_>>().join("; ");
+
+        if normalized >= self.config.block_threshold {
+            DnsInspectionVerdict::Block(format!(
+                "DNS tunneling detected (score={normalized:.2}): {reason}"
+            ))
+        } else if normalized >= self.config.alert_threshold {
+            DnsInspectionVerdict::Alert(format!(
+                "DNS tunneling suspected (score={normalized:.2}): {reason}"
+            ))
+        } else {
+            DnsInspectionVerdict::Allow
+        }
+    }
+
+    fn collect_signals(&mut self, fqdn: &str, qtype: &DnsRecordType) -> Vec<TunnelingSignal> {
+        let mut signals = Vec::new();
+
+        let fqdn = fqdn.trim_end_matches('.').to_lowercase();
+
+        let labels: Vec<&str> = fqdn.split('.').collect();
+
+        let parent_domain = Self::extract_parent_domain(&labels);
+
+        let subdomain_labels = if labels.len() > 2 { &labels[..labels.len() - 2] } else { &[] };
+
+        // --- Per-etykieta ---
+        for label in subdomain_labels {
+            if label.len() > self.config.max_label_length {
+                signals.push(TunnelingSignal::LongLabel {
+                    label: label.to_string(),
+                    length: label.len(),
+                });
+            }
+
+            let entropy = Self::shannon_entropy(label);
+
+            if entropy > self.config.entropy_threshold {
+                signals.push(TunnelingSignal::HighEntropy {
+                    label: label.to_string(),
+                    entropy,
+                });
+            }
+        }
+
+        // --- Typ rekordu ---
+        if Self::is_suspicious_record_type(qtype) {
+            signals.push(TunnelingSignal::SuspiciousRecordType {
+                qtype: qtype.clone(),
+            });
+        }
+
+        // --- Statystyki per-domena ---
+        let stats = self.stats.entry(parent_domain.clone()).or_default();
+        
+        stats.prune(self.config.window);
+        stats.queries.push(Instant::now());
+
+        if !subdomain_labels.is_empty() {
+            stats.unique_subdomains.insert(subdomain_labels.join("."));
+        }
+
+        if stats.queries.len() > self.config.max_queries_per_domain {
+            signals.push(TunnelingSignal::QueryRateExceeded {
+                domain: parent_domain.clone(),
+                count: stats.queries.len(),
+            });
+        }
+
+        if stats.unique_subdomains.len() > self.config.max_unique_subdomains {
+            signals.push(TunnelingSignal::UniqueSubdomainFlood {
+                domain: parent_domain.clone(),
+                unique: stats.unique_subdomains.len(),
+            });
+        }
+
+        signals
+    }
+
+    fn is_suspicious_record_type(qtype: &DnsRecordType) -> bool {
+        matches!(qtype, DnsRecordType::Txt | DnsRecordType::Null | DnsRecordType::Mx)
+    }
+
+    fn shannon_entropy(s: &str) -> f32 {
+        if s.is_empty() {
+            return 0.0;
+        }
+
+        let mut freq = [0u32; 256];
+
+        for byte in s.bytes() {
+            freq[byte as usize] += 1;
+        }
+
+        let len = s.len() as f32;
+
+        freq.iter()
+            .filter(|&&c| c > 0)
+            .map(|&c| {
+                let p = c as f32 / len;
+
+                -p * p.log2()
+            }).sum()
+    }
+
+    fn extract_parent_domain(labels: &[&str]) -> String {
+        if labels.len() >= 2 {
+            labels[labels.len() - 2..].join(".")
+        } else {
+            labels.join(".")
+        }
+    }
+}
+
 /// Inspektor DNS — przechowuje listę blokowanych domen i sprawdza payloady UDP.
 pub struct DnsInspection {
     blocklist: DomainBlockTree,
+    tunneling_detector: Mutex<TunnelingDetector>,
 }
 
 impl DnsInspection {
-    pub fn new(blocklist: DomainBlockTree) -> Arc<Self> {
-        Arc::new(Self { blocklist })
+    pub fn new(blocklist: DomainBlockTree, tunneling_detector_config: TunnelingDetectorConfig) -> Arc<Self> {
+        Arc::new(Self {
+            blocklist,
+            tunneling_detector: Mutex::new(TunnelingDetector::new(tunneling_detector_config)),
+        })
     }
 
-    /// Sprawdza payload UDP pod kątem DNS query.
-    /// Zwraca `true` jeśli zapytana domena jest na liście blokowanych.
-    pub fn process(&self, dns_payload: &[u8]) -> bool {
-        match Self::extract_query_domain(dns_payload) {
-            Some(domain) => self.blocklist.is_blocked(&domain),
-            None => false,
+    /// Sprawdza kontekst DPI pod kątem zablokowanej domeny DNS.
+    /// Najpierw sprawdza blocklist, następnie wykrywanie tunelowania.
+    pub fn process(&self, dpi_ctx: &DpiContext) -> DnsInspectionVerdict {
+        let (Some(domain), Some(qtype)) = (&dpi_ctx.dns_query_name, &dpi_ctx.dns_query_type) else {
+            return DnsInspectionVerdict::Allow;
+        };
+
+        if self.blocklist.is_blocked(domain) {
+            return DnsInspectionVerdict::Block(format!("Domain '{domain}' is blocked by blocklist"));
+        }
+
+        self.tunneling_detector.lock().unwrap().inspect(domain, qtype)
+    }
+}
+
+#[cfg(test)]
+mod tunneling_detector_tests {
+    use super::*;
+
+    fn detector_sensitive() -> TunnelingDetector {
+        TunnelingDetector::new(TunnelingDetectorConfig {
+            alert_threshold: 0.05,
+            block_threshold: 0.3,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn clean_domain_allow() {
+        let mut d = detector_sensitive();
+        assert_eq!(d.inspect("example.com", &DnsRecordType::A), DnsInspectionVerdict::Allow);
+    }
+
+    #[test]
+    fn high_entropy_label_triggers_signal() {
+        let mut d = detector_sensitive();
+        // 16 unikalnych znaków → entropia = log2(16) = 4.0, powyżej progu 3.5
+        let verdict = d.inspect("abcdefghijklmnop.example.com", &DnsRecordType::A);
+        assert!(matches!(verdict, DnsInspectionVerdict::Alert(_) | DnsInspectionVerdict::Block(_)));
+    }
+
+    #[test]
+    fn long_label_triggers_signal() {
+        let mut d = detector_sensitive();
+        let long = "a".repeat(41);
+        let fqdn = format!("{long}.example.com");
+        let verdict = d.inspect(&fqdn, &DnsRecordType::A);
+        assert!(matches!(verdict, DnsInspectionVerdict::Alert(_) | DnsInspectionVerdict::Block(_)));
+    }
+
+    #[test]
+    fn suspicious_record_type_txt() {
+        let mut d = detector_sensitive();
+        let verdict = d.inspect("sub.example.com", &DnsRecordType::Txt);
+        assert!(matches!(verdict, DnsInspectionVerdict::Alert(_) | DnsInspectionVerdict::Block(_)));
+    }
+
+    #[test]
+    fn suspicious_record_type_null() {
+        let mut d = detector_sensitive();
+        let verdict = d.inspect("sub.example.com", &DnsRecordType::Null);
+        assert!(matches!(verdict, DnsInspectionVerdict::Alert(_) | DnsInspectionVerdict::Block(_)));
+    }
+
+    #[test]
+    fn suspicious_record_type_mx() {
+        let mut d = detector_sensitive();
+        let verdict = d.inspect("sub.example.com", &DnsRecordType::Mx);
+        assert!(matches!(verdict, DnsInspectionVerdict::Alert(_) | DnsInspectionVerdict::Block(_)));
+    }
+
+    #[test]
+    fn safe_record_types_no_signal() {
+        let mut d = detector_sensitive();
+        assert_eq!(d.inspect("example.com", &DnsRecordType::A),    DnsInspectionVerdict::Allow);
+        assert_eq!(d.inspect("example.com", &DnsRecordType::Aaaa), DnsInspectionVerdict::Allow);
+        assert_eq!(d.inspect("example.com", &DnsRecordType::Cname), DnsInspectionVerdict::Allow);
+    }
+
+    #[test]
+    fn query_rate_exceeded_triggers_signal() {
+        let mut d = TunnelingDetector::new(TunnelingDetectorConfig {
+            max_queries_per_domain: 3,
+            alert_threshold: 0.1,
+            block_threshold: 0.9,
+            ..Default::default()
+        });
+        for _ in 0..5 {
+            d.inspect("sub.example.com", &DnsRecordType::A);
+        }
+        let verdict = d.inspect("sub.example.com", &DnsRecordType::A);
+        assert!(matches!(verdict, DnsInspectionVerdict::Alert(_) | DnsInspectionVerdict::Block(_)));
+    }
+
+    #[test]
+    fn unique_subdomain_flood_triggers_signal() {
+        let mut d = TunnelingDetector::new(TunnelingDetectorConfig {
+            max_unique_subdomains: 3,
+            alert_threshold: 0.1,
+            block_threshold: 0.9,
+            ..Default::default()
+        });
+        for i in 0..5u32 {
+            d.inspect(&format!("sub{i}.example.com"), &DnsRecordType::A);
+        }
+        let verdict = d.inspect("sub99.example.com", &DnsRecordType::A);
+        assert!(matches!(verdict, DnsInspectionVerdict::Alert(_) | DnsInspectionVerdict::Block(_)));
+    }
+
+    #[test]
+    fn block_threshold_returns_block() {
+        let mut d = TunnelingDetector::new(TunnelingDetectorConfig {
+            block_threshold: 0.0,
+            alert_threshold: 0.0,
+            ..Default::default()
+        });
+        let verdict = d.inspect("sub.example.com", &DnsRecordType::Txt);
+        assert!(matches!(verdict, DnsInspectionVerdict::Block(_)));
+    }
+
+    #[test]
+    fn fqdn_trailing_dot_handled() {
+        let mut d = detector_sensitive();
+        assert_eq!(d.inspect("example.com.", &DnsRecordType::A), DnsInspectionVerdict::Allow);
+    }
+
+    #[test]
+    fn fqdn_case_insensitive() {
+        let mut d = detector_sensitive();
+        assert_eq!(d.inspect("EXAMPLE.COM", &DnsRecordType::A), DnsInspectionVerdict::Allow);
+    }
+}
+
+#[cfg(test)]
+mod dns_inspection_process_tests {
+    use super::*;
+    use crate::dpi::DpiContext;
+    use crate::dpi::AppProto;
+
+    fn make_inspection() -> std::sync::Arc<DnsInspection> {
+        let mut bl = DomainBlockTree::new();
+        bl.insert("blocked.com");
+        DnsInspection::new(bl, TunnelingDetectorConfig {
+            alert_threshold: 0.1,
+            block_threshold: 0.3,
+            ..Default::default()
+        })
+    }
+
+    fn ctx(name: Option<&str>, qtype: Option<DnsRecordType>) -> DpiContext {
+        DpiContext {
+            app_proto: Some(AppProto::Dns),
+            dns_query_name: name.map(str::to_string),
+            dns_query_type: qtype,
+            ..Default::default()
         }
     }
 
-    /// Wyciąga nazwę domeny z pierwszej sekcji Question pakietu DNS.
-    /// Zwraca `None` jeśli payload nie jest poprawnym DNS query.
-    fn extract_query_domain(payload: &[u8]) -> Option<String> {
-        if payload.len() < 12 {
-            return None;
-        }
+    #[test]
+    fn no_query_name_allow() {
+        let ins = make_inspection();
+        assert_eq!(ins.process(&ctx(None, Some(DnsRecordType::A))), DnsInspectionVerdict::Allow);
+    }
 
-        // Bit QR (bit 15 w flags) musi być 0 — query, nie response
-        let flags = u16::from_be_bytes([payload[2], payload[3]]);
-        if flags & 0x8000 != 0 {
-            return None;
-        }
+    #[test]
+    fn no_query_type_allow() {
+        let ins = make_inspection();
+        assert_eq!(ins.process(&ctx(Some("example.com"), None)), DnsInspectionVerdict::Allow);
+    }
 
-        // QDCOUNT musi być >= 1
-        let qdcount = u16::from_be_bytes([payload[4], payload[5]]);
+    #[test]
+    fn blocklisted_domain_returns_block() {
+        let ins = make_inspection();
+        let verdict = ins.process(&ctx(Some("blocked.com"), Some(DnsRecordType::A)));
+        assert!(matches!(verdict, DnsInspectionVerdict::Block(_)));
+    }
 
-        if qdcount == 0 {
-            return None;
-        }
+    #[test]
+    fn clean_domain_a_record_allow() {
+        let ins = make_inspection();
+        assert_eq!(
+            ins.process(&ctx(Some("example.com"), Some(DnsRecordType::A))),
+            DnsInspectionVerdict::Allow
+        );
+    }
 
-        // Parsowanie nazwy domeny zaczynając od bajtu 12 (po 12-bajtowym nagłówku)
-        let mut pos = 12usize;
-        let mut labels: Vec<String> = Vec::new();
+    #[test]
+    fn blocklist_takes_priority_over_tunneling() {
+        // blocked.com na blocklist — powinno zwrócić Block zanim dojdzie do TunnelingDetector
+        let ins = make_inspection();
+        let verdict = ins.process(&ctx(Some("blocked.com"), Some(DnsRecordType::Txt)));
+        assert!(matches!(verdict, DnsInspectionVerdict::Block(msg) if msg.contains("blocklist")));
+    }
 
-        loop {
-            if pos >= payload.len() {
-                return None;
-            }
-
-            let len = payload[pos] as usize;
-
-            if len == 0 {
-                break;
-            }
-
-            // Wskaźnik kompresji (top 2 bity = 11) — nieoczekiwany w sekcji Question
-            if len & 0xC0 == 0xC0 {
-                return None;
-            }
-
-            pos += 1;
-
-            if pos + len > payload.len() {
-                return None;
-            }
-
-            let label = std::str::from_utf8(&payload[pos..pos + len]).ok()?;
-            labels.push(label.to_string());
-
-            pos += len;
-        }
-
-        if labels.is_empty() {
-            return None;
-        }
-
-        Some(labels.join("."))
+    #[test]
+    fn tunneling_signal_on_suspicious_subdomain() {
+        let ins = make_inspection();
+        // wysoka entropia (16 unikalnych znaków) + TXT → wyraźny sygnał tunelowania
+        let verdict = ins.process(&ctx(Some("abcdefghijklmnop.example.com"), Some(DnsRecordType::Txt)));
+        assert!(matches!(verdict, DnsInspectionVerdict::Alert(_) | DnsInspectionVerdict::Block(_)));
     }
 }
 
