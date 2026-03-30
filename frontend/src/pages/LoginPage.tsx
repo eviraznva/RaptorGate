@@ -1,11 +1,30 @@
 import { useState } from "react"
 import { motion } from "framer-motion"
 import Navbar from "../components/Navbar"
+import { useAuth } from "../auth/AuthContext"
+import { useNavigate } from "react-router-dom"
+import { loginRequest } from "../api/auth"
 
 export default function LoginPage() {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [macStatus] = useState("AUTHORIZED")
+
+  const { login } = useAuth()
+  const navigate = useNavigate()
+
+  const handleLogin = async () => {
+    try {
+      const res = await loginRequest(username, password)
+
+      login(res.accessToken)
+
+      navigate("/dashboard")
+    } catch (err) {
+      console.error("Login failed", err)
+      alert("Login failed")
+    }
+  }
 
   return (
     <div className="min-h-screen bg-[#0c0c0c] flex flex-col text-[#f5f5f5]">
@@ -116,6 +135,7 @@ export default function LoginPage() {
               </div>
 
               <button
+                onClick={handleLogin}
                 className="w-full bg-[#06b6d4] text-black py-3 tracking-widest font-medium hover:bg-[#0891b2] transition"
               >
                 AUTHENTICATE

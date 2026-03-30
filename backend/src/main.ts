@@ -26,25 +26,33 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService<Env, true>);
   const httpPort = configService.get('PORT', { infer: true });
-  const corsOrigin = configService.get('CORS_ORIGIN', { infer: true });
   const cookieSecret = configService.get('COOKIE_SECRET', { infer: true });
   const grpcSocketPath = configService.get('GRPC_SOCKET_PATH', { infer: true });
   const protoRoot = join(process.cwd(), '..', 'proto');
 
+  // 🔐 COOKIE PARSER
   app.use(cookieParser(cookieSecret));
 
+  // 🔥🔥🔥 KLUCZOWE DLA FRONTENDU
   app.enableCors({
-    origin: corsOrigin,
-    credentials: true,
+    origin: [
+      'http://localhost:5173', // Vite
+      'http://localhost:3000', // docs
+    ],
+    credentials: true, // 🔥 MUSI BYĆ
   });
 
+  // 🔥 DEV FIX – trust proxy (ważne przy cookies + https)
+  const server = app.getHttpAdapter().getInstance();
+  server.set('trust proxy', 1);
+
+  // 🔧 SOCKET CLEANUP
   const absoluteSocketPath = join(process.cwd(), grpcSocketPath);
   if (existsSync(absoluteSocketPath)) {
     logger.log('Cleaning up stale socket file...');
 
     try {
       unlinkSync(absoluteSocketPath);
-
       logger.log(`Socket cleaned: ${absoluteSocketPath}`);
     } catch (err) {
       const error = err as Error;
@@ -79,6 +87,7 @@ async function bootstrap() {
     },
   });
 
+  // 🔐 VALIDATION
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -91,11 +100,12 @@ async function bootstrap() {
     }),
   );
 
+  // 📄 SWAGGER
   const config = new DocumentBuilder()
     .setTitle('RaptorGateApi')
     .addBearerAuth(
       { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
-      'bearer', // <- nazwa schematu
+      'bearer',
     )
     .addSecurityRequirements('bearer')
     .setDescription('The RaptorGateApi API')
@@ -103,23 +113,17 @@ async function bootstrap() {
     .addTag('RaptorGateApi')
     .build();
 
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
-
-  SwaggerModule.setup('api', app, documentFactory);
-
   const document = SwaggerModule.createDocument(app, config);
+
+  SwaggerModule.setup('api', app, document);
+
   app.use(
     '/reference',
     apiReference({
       theme: 'default',
       content: document,
       darkMode: true,
-      hideClientButton: false,
-      hideModels: false,
-      hideDownloadButton: false,
-      hideTestRequestButton: false,
       layout: 'modern',
-      searchHotKey: 'k',
       defaultHttpClient: {
         targetKey: 'js',
         clientKey: 'fetch',
@@ -128,17 +132,9 @@ async function bootstrap() {
         preferredSecurityScheme: 'bearer',
         securitySchemes: {
           bearer: {
-            token: process.env.DOCS_BEARER_TOKEN ?? '', // <- auto podstawi token
+            token: process.env.DOCS_BEARER_TOKEN ?? '',
           },
         },
-      },
-      showSidebar: true,
-      defaultOpenAllTags: true,
-      hideSearch: false,
-      favicon: '/favicon.ico',
-      metaData: {
-        title: 'RaptorGate API Documentation',
-        description: 'Interactive API reference for RaptorGate',
       },
     }),
   );
@@ -146,14 +142,13 @@ async function bootstrap() {
   await app.startAllMicroservices();
 
   logger.log(`gRPC server listening on ${grpcUrl}`);
-  logger.log(`Package: raptorgate.config`);
   logger.log(`Proto: ${protoPath}`);
 
   await app.listen(httpPort);
 
-  logger.log(`HTTP server listening on http://localhost:${httpPort}`);
-  logger.log(`API Documentation: http://localhost:${httpPort}/api`);
-  logger.log(`API Reference: http://localhost:${httpPort}/reference`);
+  logger.log(`HTTP server listening on https://localhost:${httpPort}`);
+  logger.log(`API: https://localhost:${httpPort}/api`);
+  logger.log(`Docs: https://localhost:${httpPort}/reference`);
 }
 
 bootstrap();
