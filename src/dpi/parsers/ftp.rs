@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr};
 
-use crate::dpi::context::{DpiContext, FtpDataEndpoint};
+use crate::dpi::context::{DpiContext, FtpDataEndpoint, FtpRewriteKind};
 use crate::dpi::AppProto;
 
 // Wynik parsowania sesji FTP z ekstrakcją PORT/PASV.
@@ -66,12 +66,14 @@ fn try_parse_port(line: &[u8], offset: usize) -> Option<FtpDataEndpoint> {
     if !line.starts_with(b"PORT ") {
         return None;
     }
-    let (ip, port) = parse_host_port_csv(std::str::from_utf8(&line[5..]).ok()?.trim())?;
+    let value = std::str::from_utf8(&line[5..]).ok()?.trim_end();
+    let (ip, port) = parse_host_port_csv(value)?;
     Some(FtpDataEndpoint {
         ip: IpAddr::V4(ip),
         port,
-        payload_offset: offset,
-        payload_len: line.len(),
+        payload_offset: offset + 5,
+        payload_len: value.len(),
+        rewrite_kind: FtpRewriteKind::Port,
     })
 }
 
@@ -87,8 +89,9 @@ fn try_parse_pasv(line: &[u8], offset: usize) -> Option<FtpDataEndpoint> {
     Some(FtpDataEndpoint {
         ip: IpAddr::V4(ip),
         port,
-        payload_offset: offset,
-        payload_len: line.len(),
+        payload_offset: offset + open + 1,
+        payload_len: close - open - 1,
+        rewrite_kind: FtpRewriteKind::Pasv,
     })
 }
 
@@ -97,10 +100,10 @@ fn try_parse_eprt(line: &[u8], offset: usize) -> Option<FtpDataEndpoint> {
     if !line.starts_with(b"EPRT ") {
         return None;
     }
-    let args = std::str::from_utf8(&line[5..]).ok()?.trim();
+    let args = std::str::from_utf8(&line[5..]).ok()?.trim_end();
     let d = args.as_bytes().first().copied()?;
     let parts: Vec<&str> = args.split(d as char).collect();
-    if parts.len() < 4 {
+    if parts.len() < 5 {
         return None;
     }
     let ip: IpAddr = parts[2].parse().ok()?;
@@ -108,8 +111,9 @@ fn try_parse_eprt(line: &[u8], offset: usize) -> Option<FtpDataEndpoint> {
     Some(FtpDataEndpoint {
         ip,
         port,
-        payload_offset: offset,
-        payload_len: line.len(),
+        payload_offset: offset + 5,
+        payload_len: args.len(),
+        rewrite_kind: FtpRewriteKind::Eprt { delimiter: d },
     })
 }
 
@@ -131,8 +135,9 @@ fn try_parse_epsv(line: &[u8], offset: usize) -> Option<FtpDataEndpoint> {
     Some(FtpDataEndpoint {
         ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         port,
-        payload_offset: offset,
-        payload_len: line.len(),
+        payload_offset: offset + open + 1,
+        payload_len: inner.len(),
+        rewrite_kind: FtpRewriteKind::Epsv { delimiter: d },
     })
 }
 
@@ -175,8 +180,9 @@ mod tests {
         let ep = r.data_endpoint.unwrap();
         assert_eq!(ep.ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)));
         assert_eq!(ep.port, 1025);
-        assert_eq!(ep.payload_offset, 0);
-        assert_eq!(ep.payload_len, buf.len());
+        assert_eq!(ep.payload_offset, 5);
+        assert_eq!(ep.payload_len, b"192,168,1,5,4,1".len());
+        assert_eq!(ep.rewrite_kind, FtpRewriteKind::Port);
     }
 
     #[test]
@@ -186,6 +192,7 @@ mod tests {
         let ep = r.data_endpoint.unwrap();
         assert_eq!(ep.ip, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
         assert_eq!(ep.port, 39 * 256 + 5);
+        assert_eq!(ep.rewrite_kind, FtpRewriteKind::Pasv);
     }
 
     #[test]
@@ -195,6 +202,7 @@ mod tests {
         let ep = r.data_endpoint.unwrap();
         assert_eq!(ep.ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
         assert_eq!(ep.port, 6446);
+        assert_eq!(ep.rewrite_kind, FtpRewriteKind::Eprt { delimiter: b'|' });
     }
 
     #[test]
@@ -204,6 +212,7 @@ mod tests {
         let ep = r.data_endpoint.unwrap();
         assert_eq!(ep.ip, "::1".parse::<IpAddr>().unwrap());
         assert_eq!(ep.port, 6446);
+        assert_eq!(ep.rewrite_kind, FtpRewriteKind::Eprt { delimiter: b'|' });
     }
 
     #[test]
@@ -213,6 +222,7 @@ mod tests {
         let ep = r.data_endpoint.unwrap();
         assert_eq!(ep.ip, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         assert_eq!(ep.port, 6446);
+        assert_eq!(ep.rewrite_kind, FtpRewriteKind::Epsv { delimiter: b'|' });
     }
 
     #[test]
@@ -222,7 +232,7 @@ mod tests {
         let ep = r.data_endpoint.unwrap();
         assert_eq!(ep.ip, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)));
         assert_eq!(ep.port, 21);
-        assert_eq!(ep.payload_offset, 29);
+        assert_eq!(ep.payload_offset, 34);
     }
 
     #[test]
@@ -275,6 +285,7 @@ mod tests {
                 port: 2000,
                 payload_offset: 0,
                 payload_len: 25,
+                rewrite_kind: FtpRewriteKind::Port,
             }),
         };
         let ctx = ftp_to_dpi_context(&result);

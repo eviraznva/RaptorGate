@@ -1,30 +1,34 @@
-use std::collections::HashMap;
-use std::net::IpAddr;
 use std::sync::Arc;
+use std::net::IpAddr;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use etherparse::{Ipv4Header, NetSlice, SlicedPacket, TcpHeader, TransportSlice, UdpHeader};
+use crate::data_plane::nat::bindings::{BindingTable, PortStore};
+use crate::data_plane::nat::packet::{apply_translation, parse_flow_tuple_from_ethernet, same_ip_family};
 
-use crate::data_plane::nat::bindings::BindingTable;
-use crate::data_plane::nat::port_store::PortStore;
-use crate::data_plane::nat::types::flow_tuple::FlowTuple;
-use crate::data_plane::nat::types::flow_tuple::L4Proto;
-use crate::data_plane::nat::types::nat_binding::{NatBinding, NatBindingDirection};
-use crate::data_plane::nat::types::nat_outcome::NatOutcome;
-use crate::data_plane::nat::types::nat_stage::NatStage;
-use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
+use crate::data_plane::nat::types::{
+    FlowTuple, L4Proto, NatBinding, NatBindingDirection, NatOutcome, NatStage,
+};
+
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::nat::port_range::PortRange;
+use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
+
+/// Ten moduł implementuje silnik NAT odpowiedzialny za stosowanie reguł NAT, zarządzanie powiązaniami (bindings) i translację adresów/portów w pakietach sieciowych.
 
 pub struct NatEngine {
-    nat_rules: Option<Arc<NatRules>>,
-    bindings: BindingTable,
-    port_store: PortStore,
-    interface_ips: HashMap<String, IpAddr>,
+    nat_rules: Option<Arc<NatRules>>, // Reguły NAT
+    bindings: BindingTable,           // Tabela powiązań NAT
+    port_store: PortStore,            // Zarządzanie pulą portów
+    interface_ips: HashMap<String, Vec<IpAddr>>, // Adresy IP interfejsów
 }
 
 impl NatEngine {
-    pub fn new(nat_rules: &Option<Arc<NatRules>>, interface_ips: HashMap<String, IpAddr>) -> Self {
+    /// Tworzy nowy silnik NAT
+    pub fn new(
+        nat_rules: &Option<Arc<NatRules>>,
+        interface_ips: HashMap<String, Vec<IpAddr>>,
+    ) -> Self {
         Self {
             nat_rules: nat_rules.clone(),
             bindings: BindingTable::new(),
@@ -33,6 +37,22 @@ impl NatEngine {
         }
     }
 
+    /// Wyszukuje oryginalny adres źródłowy na podstawie publicznego IP
+    pub fn lookup_original_src(&self, public_ip: &IpAddr) -> Option<IpAddr> {
+        self.bindings.find_private_ip_by_public(*public_ip)
+    }
+
+    /// Dodaje nowe powiązanie NAT
+    pub fn insert_binding(&mut self, binding: NatBinding) {
+        self.bindings.insert(binding);
+    }
+
+    /// Zwraca kolejny dostępny identyfikator powiązania
+    pub fn next_binding_id(&mut self) -> u64 {
+        self.bindings.next_binding_id()
+    }
+
+    /// Przetwarza pakiet na etapie PREROUTING (np. DNAT)
     pub fn process_prerouting(
         &mut self,
         data: &mut [u8],
@@ -49,6 +69,7 @@ impl NatEngine {
         )
     }
 
+    /// Przetwarza pakiet na etapie POSTROUTING (np. SNAT, MASQUERADE)
     pub fn process_postrouting(
         &mut self,
         data: &mut [u8],
@@ -65,6 +86,7 @@ impl NatEngine {
         )
     }
 
+    /// Główna logika przetwarzania pakietu na danym etapie NAT
     fn process_stage(
         &mut self,
         data: &mut [u8],
@@ -76,34 +98,38 @@ impl NatEngine {
     ) -> NatOutcome {
         self.bindings.expire_old_bindings(&mut self.port_store);
 
-        let flow_tuple = {
-            let packet = match SlicedPacket::from_ethernet(data) {
-                Ok(p) => p,
-                Err(_) => return NatOutcome::NoMatch,
-            };
-            match Self::parse_flow_tuple(&packet) {
-                Some(t) => t,
-                None => return NatOutcome::NoMatch,
-            }
+        let flow = match parse_flow_tuple_from_ethernet(data) {
+            Some(flow) => flow,
+            None => return NatOutcome::NoMatch,
         };
 
-        if let Some((binding_id, direction)) = self.bindings.lookup(&flow_tuple) {
-            let translation = self.bindings.get(binding_id).map(|b| match direction {
-                NatBindingDirection::Forward => b.translated_forward.clone(),
-                NatBindingDirection::Reply => b.translated_reply.clone(),
-            });
-            if let Some(ref t) = translation {
-                Self::apply_rewrite(data, &flow_tuple, t);
-            }
-            return NatOutcome::AppliedExisting {
-                binding_id,
-                direction,
-            };
+        if !can_translate_flow(&flow) {
+            return NatOutcome::NoMatch;
         }
 
+        // Sprawdzenie, czy istnieje już powiązanie dla tego flow
+        if let Some((binding_id, direction)) = self.bindings.lookup(&flow) {
+            let translation = self.bindings.get(binding_id).map(|binding| match direction {
+                NatBindingDirection::Forward => binding.translated_forward.clone(),
+                NatBindingDirection::Reply => binding.translated_reply.clone(),
+            });
+
+            if let Some(translation) = translation {
+                if apply_translation(data, &flow, &translation) {
+                    return NatOutcome::AppliedExisting {
+                        binding_id,
+                        direction,
+                    };
+                }
+            }
+
+            return NatOutcome::NoMatch;
+        }
+
+        // Szukanie pasującej reguły NAT
         let Some(rule) = self.find_matching_rule(
             stage,
-            &flow_tuple,
+            &flow,
             in_interface,
             out_interface,
             in_zone,
@@ -112,125 +138,29 @@ impl NatEngine {
             return NatOutcome::NoMatch;
         };
 
-        let Some(binding) = self.create_binding(&rule, &flow_tuple) else {
+        // Tworzenie nowego powiązania NAT
+        let Some(binding) = self.create_binding(&rule, &flow) else {
             return NatOutcome::NoMatch;
         };
 
         let binding_id = binding.binding_id;
+
         let rule_id = binding.rule_id.clone();
-        let translation = binding.translated_forward.clone();
+
+        let translated = binding.translated_forward.clone();
+
+        if !apply_translation(data, &flow, &translated) {
+            return NatOutcome::NoMatch;
+        }
 
         self.bindings.insert(binding);
-
-        Self::apply_rewrite(data, &flow_tuple, &translation);
-
         NatOutcome::Created {
             binding_id,
             rule_id,
         }
     }
 
-    fn parse_flow_tuple(packet: &SlicedPacket) -> Option<FlowTuple> {
-        let (src_ip, dst_ip) = match &packet.net {
-            Some(NetSlice::Ipv4(ipv4)) => {
-                let h = ipv4.header();
-                (
-                    IpAddr::V4(h.source_addr()),
-                    IpAddr::V4(h.destination_addr()),
-                )
-            }
-            _ => return None,
-        };
-
-        let (proto, src_port, dst_port) = match &packet.transport {
-            Some(TransportSlice::Tcp(tcp)) => {
-                (L4Proto::Tcp, tcp.source_port(), tcp.destination_port())
-            }
-            Some(TransportSlice::Udp(udp)) => {
-                (L4Proto::Udp, udp.source_port(), udp.destination_port())
-            }
-            Some(TransportSlice::Icmpv4(_)) => (L4Proto::Icmp, 0u16, 0u16),
-            _ => return None,
-        };
-
-        Some(FlowTuple {
-            src_ip,
-            dst_ip,
-            src_port,
-            dst_port,
-            proto,
-        })
-    }
-
-    fn apply_rewrite(data: &mut [u8], original: &FlowTuple, translated: &FlowTuple) {
-        const ETH: usize = 14;
-
-        let Ok((mut ipv4, _)) = Ipv4Header::from_slice(&data[ETH..]) else {
-            return;
-        };
-
-        let ihl = ipv4.header_len();
-        let tp = ETH + ihl;
-
-        if let (true, IpAddr::V4(v4)) = (original.src_ip != translated.src_ip, translated.src_ip) {
-            ipv4.source = v4.octets();
-        }
-
-        if let (true, IpAddr::V4(v4)) = (original.dst_ip != translated.dst_ip, translated.dst_ip) {
-            ipv4.destination = v4.octets();
-        }
-
-        ipv4.header_checksum = ipv4.calc_header_checksum();
-
-        match ipv4.protocol {
-            etherparse::IpNumber::TCP => {
-                let Ok((mut tcp, _)) = TcpHeader::from_slice(&data[tp..]) else {
-                    return;
-                };
-                let tcp_hdr_len = tcp.header_len();
-
-                if original.src_port != translated.src_port {
-                    tcp.source_port = translated.src_port;
-                }
-                if original.dst_port != translated.dst_port {
-                    tcp.destination_port = translated.dst_port;
-                }
-
-                tcp.checksum = tcp
-                    .calc_checksum_ipv4(&ipv4, &data[tp + tcp_hdr_len..])
-                    .unwrap_or(0);
-
-                let _ = ipv4.write(&mut std::io::Cursor::new(&mut data[ETH..]));
-                let _ = tcp.write(&mut std::io::Cursor::new(&mut data[tp..]));
-            }
-            etherparse::IpNumber::UDP => {
-                let Ok((mut udp, _)) = UdpHeader::from_slice(&data[tp..]) else {
-                    return;
-                };
-                let udp_hdr_len = UdpHeader::LEN;
-
-                if original.src_port != translated.src_port {
-                    udp.source_port = translated.src_port;
-                }
-                if original.dst_port != translated.dst_port {
-                    udp.destination_port = translated.dst_port;
-                }
-
-                if udp.checksum != 0 {
-                    udp.checksum = udp
-                        .calc_checksum_ipv4(&ipv4, &data[tp + udp_hdr_len..])
-                        .unwrap_or(0);
-                }
-
-                let _ = ipv4.write(&mut std::io::Cursor::new(&mut data[ETH..]));
-                let _ = udp.write(&mut std::io::Cursor::new(&mut data[tp..]));
-            }
-            _ => {
-                let _ = ipv4.write(&mut std::io::Cursor::new(&mut data[ETH..]));
-            }
-        }
-    }
-
+    /// Wyszukuje regułę NAT pasującą do danego flow i etapu
     fn find_matching_rule(
         &self,
         stage: NatStage,
@@ -241,47 +171,48 @@ impl NatEngine {
         out_zone: Option<&str>,
     ) -> Option<NatRule> {
         let nat_rules = self.nat_rules.as_ref()?;
-
+        
         let stage_actions: &[NatAction] = match stage {
             NatStage::Prerouting => &[NatAction::Dnat],
             NatStage::Postrouting => &[NatAction::Snat, NatAction::Pat, NatAction::Masquerade],
         };
 
-        nat_rules
-            .rules()
-            .iter()
+        nat_rules.rules().iter()
             .find(|rule| {
                 if !stage_actions.contains(&rule.action()) {
                     return false;
                 }
-
-                if let Some(ri) = rule.in_interface() {
-                    if in_interface != Some(ri) {
+                
+                if let Some(rule_in) = rule.in_interface() {
+                    if in_interface != Some(rule_in) {
                         return false;
                     }
                 }
-                if let Some(ri) = rule.out_interface() {
-                    if out_interface != Some(ri) {
+                
+                if let Some(rule_out) = rule.out_interface() {
+                    if out_interface != Some(rule_out) {
                         return false;
                     }
                 }
-                if let Some(rz) = rule.in_zone() {
-                    if in_zone != Some(rz) {
+                
+                if let Some(rule_zone) = rule.in_zone() {
+                    if in_zone != Some(rule_zone) {
                         return false;
                     }
                 }
-                if let Some(rz) = rule.out_zone() {
-                    if out_zone != Some(rz) {
+                
+                if let Some(rule_zone) = rule.out_zone() {
+                    if out_zone != Some(rule_zone) {
                         return false;
                     }
                 }
-
+                
                 if let Some(cidr) = rule.src_cidr() {
                     if !cidr.contains(&flow.src_ip) {
                         return false;
                     }
                 }
-                // For DNAT, dst_cidr is the translation target (not a match condition)
+                
                 if rule.action() != NatAction::Dnat {
                     if let Some(cidr) = rule.dst_cidr() {
                         if !cidr.contains(&flow.dst_ip) {
@@ -289,60 +220,49 @@ impl NatEngine {
                         }
                     }
                 }
-
+                
                 if let Some(rule_proto) = rule.protocol() {
-                    let flow_proto = match flow.proto {
-                        L4Proto::Tcp => NatProtocol::Tcp,
-                        L4Proto::Udp => NatProtocol::Udp,
-                        L4Proto::Icmp => NatProtocol::Icmp,
-                    };
-                    if rule_proto != flow_proto {
+                    if flow_nat_protocol(flow.proto) != rule_proto {
                         return false;
                     }
                 }
-
-                // For DNAT, src_port is the translation target port (not a match condition)
+                
                 if rule.action() != NatAction::Dnat {
-                    if let Some(port) = rule.src_port() {
-                        if flow.src_port != port {
+                    if let Some(src_port) = rule.src_port() {
+                        if flow.src_port != src_port {
                             return false;
                         }
                     }
                 }
-                if let Some(port) = rule.dst_port() {
-                    if flow.dst_port != port {
+                
+                if let Some(dst_port) = rule.dst_port() {
+                    if flow.dst_port != dst_port {
                         return false;
                     }
                 }
 
                 true
-            })
-            .cloned()
+            }).cloned()
     }
 
-    fn create_binding(
-        &mut self,
-        rule: &NatRule,
-        original_forward: &FlowTuple,
-    ) -> Option<NatBinding> {
+    /// Tworzy nowe powiązanie NAT na podstawie reguły i flow
+    fn create_binding(&mut self, rule: &NatRule, original_forward: &FlowTuple) -> Option<NatBinding> {
+        let timeout = binding_timeout_for(original_forward.proto);
+        
         let binding_id = self.bindings.next_binding_id();
-        let now = Instant::now();
-
-        let timeout = match original_forward.proto {
-            L4Proto::Tcp => Duration::from_secs(7200),
-            L4Proto::Udp => Duration::from_secs(300),
-            L4Proto::Icmp => Duration::from_secs(60),
-        };
 
         let (translated_forward, allocated_port) = match rule.action() {
             NatAction::Snat | NatAction::Pat | NatAction::Masquerade => {
-                let public_ip = self.interface_ips.get(rule.out_interface()?).copied()?;
-
+                let public_ip = self.interface_ip_for(
+                    rule.out_interface()?,
+                    original_forward.src_ip,
+                )?;
+                
                 let port = self.port_store.add(
                     public_ip,
                     original_forward.proto,
                     original_forward.src_port,
-                    rule.src_port().map(|p| PortRange::new(p, p)),
+                    rule.src_port().map(|port| PortRange::new(port, port)),
                 )?;
 
                 (
@@ -353,20 +273,22 @@ impl NatEngine {
                         dst_port: original_forward.dst_port,
                         proto: original_forward.proto,
                     },
-                    Some(port),
+                    original_forward.proto.has_ports().then_some(port),
                 )
             }
             NatAction::Dnat => {
                 let dst_ip = rule.dst_cidr()?.addr();
-                // src_port is repurposed for DNAT as the target port; dst_port is the match condition
-                let dst_port = rule.src_port().unwrap_or(original_forward.dst_port);
+                
+                if !same_ip_family(dst_ip, original_forward.dst_ip) {
+                    return None;
+                }
 
                 (
                     FlowTuple {
                         src_ip: original_forward.src_ip,
                         src_port: original_forward.src_port,
                         dst_ip,
-                        dst_port,
+                        dst_port: rule.src_port().unwrap_or(original_forward.dst_port),
                         proto: original_forward.proto,
                     },
                     None,
@@ -374,17 +296,67 @@ impl NatEngine {
             }
         };
 
-        Some(NatBinding {
+        Some(build_binding(
             binding_id,
-            rule_id: rule.id().to_string(),
-            original_forward: original_forward.clone(),
-            translated_forward: translated_forward.clone(),
-            original_reply: translated_forward.reversed(),
-            translated_reply: original_forward.reversed(),
+            rule.id().to_string(),
+            original_forward.clone(),
+            translated_forward,
             allocated_port,
-            created_at: now,
-            last_seen: now,
-            expires_at: now + timeout,
-        })
+            timeout,
+        ))
     }
+
+    /// Zwraca adres IP interfejsu o tej samej rodzinie co podany adres
+    fn interface_ip_for(&self, interface: &str, same_family_as: IpAddr) -> Option<IpAddr> {
+        self.interface_ips.get(interface)?.iter().copied()
+            .find(|candidate| same_ip_family(*candidate, same_family_as))
+    }
+}
+
+/// Buduje strukturę powiązania NAT
+pub(crate) fn build_binding(
+    binding_id: u64,
+    rule_id: String,
+    original_forward: FlowTuple,
+    translated_forward: FlowTuple,
+    allocated_port: Option<u16>,
+    timeout: Duration,
+) -> NatBinding {
+    let now = Instant::now();
+    
+    NatBinding {
+        binding_id,
+        rule_id,
+        original_reply: translated_forward.reversed(),
+        translated_reply: original_forward.reversed(),
+        original_forward,
+        translated_forward,
+        allocated_port,
+        created_at: now,
+        last_seen: now,
+        expires_at: now + timeout,
+    }
+}
+
+/// Zwraca timeout powiązania w zależności od protokołu
+pub(crate) fn binding_timeout_for(proto: L4Proto) -> Duration {
+    match proto {
+        L4Proto::Tcp => Duration::from_secs(7200),
+        L4Proto::Udp => Duration::from_secs(300),
+        L4Proto::Icmp => Duration::from_secs(60),
+    }
+}
+
+/// Mapuje L4Proto na NatProtocol
+fn flow_nat_protocol(proto: L4Proto) -> NatProtocol {
+    match proto {
+        L4Proto::Tcp => NatProtocol::Tcp,
+        L4Proto::Udp => NatProtocol::Udp,
+        L4Proto::Icmp => NatProtocol::Icmp,
+    }
+}
+
+/// Sprawdza, czy dany flow może być translantowany (np. nie translantujemy ICMPv6)
+fn can_translate_flow(flow: &FlowTuple) -> bool {
+    !(flow.proto == L4Proto::Icmp && matches!(flow.src_ip, IpAddr::V6(_)))
 }

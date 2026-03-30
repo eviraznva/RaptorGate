@@ -22,13 +22,29 @@ pub struct PacketContext {
 
 impl PacketContext {
     pub fn from_raw(raw: Vec<u8>, src_interface: Arc<str>) -> Result<Self, packet::SliceError> {
+        Self::from_raw_full(
+            raw,
+            src_interface,
+            Vec::new(),
+            SystemTime::now(),
+            None,
+        )
+    }
+
+    pub fn from_raw_full(
+        raw: Vec<u8>,
+        src_interface: Arc<str>,
+        warnings: Vec<String>,
+        arrival_time: SystemTime,
+        dpi_ctx: Option<DpiContext>,
+    ) -> Result<Self, packet::SliceError> {
         PacketContextTryBuilder {
             src_interface,
-            warnings: Vec::new(),
-            arrival_time: SystemTime::now(),
+            warnings,
+            arrival_time,
             raw,
             sliced_packet_builder: |raw| SlicedPacket::from_ethernet(raw),
-            dpi_ctx: None,
+            dpi_ctx,
         }
         .try_build()
     }

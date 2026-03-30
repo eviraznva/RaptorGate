@@ -7,7 +7,7 @@ use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
-use crate::data_plane::nat::engine::NatEngine;
+use crate::data_plane::nat::NatEngine;
 use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::policy::compiler;

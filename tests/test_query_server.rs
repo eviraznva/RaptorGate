@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ngfw::data_plane::nat::engine::NatEngine;
+use ngfw::data_plane::nat::NatEngine;
 use ngfw::data_plane::policy_store::PolicyStore;
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::compiler;
