@@ -6,7 +6,7 @@ const ALL_PROTO_FILES: &[&str] = &[
     "proto/services/query_service.proto",
     "proto/common/common.proto",
     "proto/config/config_models.proto",
-    "proto/config/config_service.proto",
+    // "proto/config/config_service.proto",
     "proto/control/validation_service.proto",
 ];
 
