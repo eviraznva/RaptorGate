@@ -15,6 +15,12 @@ pub struct PortStore {
 impl PortStore {
     /// Tworzy nowy PortStore z domyślną pulą portów PAT
     pub fn new(default_pat_pool: PortRange) -> Self {
+        tracing::trace!(
+            pool_start = default_pat_pool.start(),
+            pool_end = default_pat_pool.end(),
+            "nat port store initialized"
+        );
+        
         Self {
             leased_ports: HashSet::new(),
             default_pat_pool,
@@ -32,6 +38,7 @@ impl PortStore {
         pool: Option<PortRange>,
     ) -> Option<u16> {
         if !proto.has_ports() {
+            tracing::trace!(%public_ip, ?proto, original_port, "nat port allocation skipped for portless protocol");
             return Some(original_port);
         }
 
@@ -39,11 +46,21 @@ impl PortStore {
         
         if !self.leased_ports.contains(&preferred) {
             self.leased_ports.insert(preferred);
+            tracing::debug!(%public_ip, ?proto, port = original_port, "nat port allocation reused original port");
             
             return Some(original_port);
         }
 
         let pool = pool.unwrap_or(self.default_pat_pool);
+        
+        tracing::trace!(
+            %public_ip,
+            ?proto,
+            original_port,
+            pool_start = pool.start(),
+            pool_end = pool.end(),
+            "nat port allocation searching fallback pool"
+        );
         
         for port in pool.start()..=pool.end() {
             let candidate = (public_ip, proto, port);
@@ -51,20 +68,28 @@ impl PortStore {
             if !self.leased_ports.contains(&candidate) {
                 self.leased_ports.insert(candidate);
                 
+                tracing::debug!(%public_ip, ?proto, allocated_port = port, "nat port allocation leased fallback port");
+                
                 return Some(port);
             }
         }
 
+        tracing::warn!(%public_ip, ?proto, original_port, "nat port allocation exhausted");
+        
         None
     }
 
     /// Zwalnia port przypisany do danego adresu IP i protokołu
     pub fn delete(&mut self, public_ip: IpAddr, proto: L4Proto, port: u16) {
+        tracing::trace!(%public_ip, ?proto, port, "nat port allocation released");
+        
         self.leased_ports.remove(&(public_ip, proto, port));
     }
 
     /// Czyści wszystkie przydzielone porty
     pub fn clear(&mut self) {
+        tracing::debug!(leased_count = self.leased_ports.len(), "nat port store clear");
+        
         self.leased_ports.clear();
     }
 }

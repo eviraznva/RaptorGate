@@ -29,6 +29,13 @@ impl NatEngine {
         nat_rules: &Option<Arc<NatRules>>,
         interface_ips: HashMap<String, Vec<IpAddr>>,
     ) -> Self {
+
+        tracing::debug!(
+            nat_rule_count = nat_rules.as_ref().map_or(0, |rules| rules.rules().len()),
+            interface_count = interface_ips.len(),
+            "nat engine initialized"
+        );
+
         Self {
             nat_rules: nat_rules.clone(),
             bindings: BindingTable::new(),
@@ -39,17 +46,33 @@ impl NatEngine {
 
     /// Wyszukuje oryginalny adres źródłowy na podstawie publicznego IP
     pub fn lookup_original_src(&self, public_ip: &IpAddr) -> Option<IpAddr> {
-        self.bindings.find_private_ip_by_public(*public_ip)
+        let private_ip = self.bindings.find_private_ip_by_public(*public_ip);
+
+        tracing::trace!(%public_ip, ?private_ip, "nat lookup original source");
+
+        private_ip
     }
 
     /// Dodaje nowe powiązanie NAT
     pub fn insert_binding(&mut self, binding: NatBinding) {
+        tracing::debug!(
+            binding_id = binding.binding_id,
+            rule_id = %binding.rule_id,
+            original = ?binding.original_forward,
+            translated = ?binding.translated_forward,
+            "nat insert binding"
+        );
+
         self.bindings.insert(binding);
     }
 
     /// Zwraca kolejny dostępny identyfikator powiązania
     pub fn next_binding_id(&mut self) -> u64 {
-        self.bindings.next_binding_id()
+        let binding_id = self.bindings.next_binding_id();
+
+        tracing::trace!(binding_id, "nat next binding id");
+
+        binding_id
     }
 
     /// Przetwarza pakiet na etapie PREROUTING (np. DNAT)
@@ -96,16 +119,31 @@ impl NatEngine {
         in_zone: Option<&str>,
         out_zone: Option<&str>,
     ) -> NatOutcome {
+        tracing::trace!(
+            ?stage,
+            in_interface,
+            out_interface,
+            in_zone,
+            out_zone,
+            packet_len = data.len(),
+            "nat processing stage"
+        );
         self.bindings.expire_old_bindings(&mut self.port_store);
 
         let flow = match parse_flow_tuple_from_ethernet(data) {
             Some(flow) => flow,
-            None => return NatOutcome::NoMatch,
+            None => {
+                tracing::trace!(?stage, "nat skipping packet: unable to parse flow tuple");
+                return NatOutcome::NoMatch;
+            }
         };
 
         if !can_translate_flow(&flow) {
+            tracing::trace!(?stage, ?flow, "nat skipping unsupported flow");
             return NatOutcome::NoMatch;
         }
+
+        tracing::trace!(?stage, ?flow, "nat parsed flow");
 
         // Sprawdzenie, czy istnieje już powiązanie dla tego flow
         if let Some((binding_id, direction)) = self.bindings.lookup(&flow) {
@@ -116,12 +154,29 @@ impl NatEngine {
 
             if let Some(translation) = translation {
                 if apply_translation(data, &flow, &translation) {
+                    tracing::debug!(
+                        ?stage,
+                        ?flow,
+                        binding_id,
+                        ?direction,
+                        translated = ?translation,
+                        "nat applied existing binding"
+                    );
+
                     return NatOutcome::AppliedExisting {
                         binding_id,
                         direction,
                     };
                 }
             }
+
+            tracing::warn!(
+                ?stage,
+                ?flow,
+                binding_id,
+                ?direction,
+                "nat binding matched but packet rewrite failed"
+            );
 
             return NatOutcome::NoMatch;
         }
@@ -135,11 +190,27 @@ impl NatEngine {
             in_zone,
             out_zone,
         ) else {
+            tracing::trace!(?stage, ?flow, "nat no matching rule");
             return NatOutcome::NoMatch;
         };
 
+        tracing::debug!(
+            ?stage,
+            ?flow,
+            rule_id = %rule.id(),
+            action = ?rule.action(),
+            "nat matched rule"
+        );
+
         // Tworzenie nowego powiązania NAT
         let Some(binding) = self.create_binding(&rule, &flow) else {
+            tracing::debug!(
+                ?stage,
+                ?flow,
+                rule_id = %rule.id(),
+                "nat failed to create binding"
+            );
+
             return NatOutcome::NoMatch;
         };
 
@@ -150,9 +221,27 @@ impl NatEngine {
         let translated = binding.translated_forward.clone();
 
         if !apply_translation(data, &flow, &translated) {
+            tracing::warn!(
+                ?stage,
+                ?flow,
+                binding_id,
+                rule_id = %rule_id,
+                translated = ?translated,
+                "nat created binding but packet rewrite failed"
+            );
+
             return NatOutcome::NoMatch;
         }
 
+        tracing::debug!(
+            ?stage,
+            ?flow,
+            binding_id,
+            rule_id = %rule_id,
+            translated = ?translated,
+            "nat created new binding"
+        );
+        
         self.bindings.insert(binding);
         NatOutcome::Created {
             binding_id,
@@ -177,7 +266,7 @@ impl NatEngine {
             NatStage::Postrouting => &[NatAction::Snat, NatAction::Pat, NatAction::Masquerade],
         };
 
-        nat_rules.rules().iter()
+        let matched = nat_rules.rules().iter()
             .find(|rule| {
                 if !stage_actions.contains(&rule.action()) {
                     return false;
@@ -242,11 +331,30 @@ impl NatEngine {
                 }
 
                 true
-            }).cloned()
+            }).cloned();
+
+        if let Some(rule) = matched.as_ref() {
+            tracing::trace!(
+                ?stage,
+                ?flow,
+                rule_id = %rule.id(),
+                action = ?rule.action(),
+                "nat rule selected"
+            );
+        }
+
+        matched
     }
 
     /// Tworzy nowe powiązanie NAT na podstawie reguły i flow
     fn create_binding(&mut self, rule: &NatRule, original_forward: &FlowTuple) -> Option<NatBinding> {
+        tracing::trace!(
+            rule_id = %rule.id(),
+            action = ?rule.action(),
+            original = ?original_forward,
+            "nat creating binding"
+        );
+        
         let timeout = binding_timeout_for(original_forward.proto);
         
         let binding_id = self.bindings.next_binding_id();
@@ -280,6 +388,13 @@ impl NatEngine {
                 let dst_ip = rule.dst_cidr()?.addr();
                 
                 if !same_ip_family(dst_ip, original_forward.dst_ip) {
+                    tracing::debug!(
+                        rule_id = %rule.id(),
+                        original_dst = %original_forward.dst_ip,
+                        translated_dst = %dst_ip,
+                        "nat rejected dnat binding due to mixed address families"
+                    );
+                    
                     return None;
                 }
 
@@ -296,20 +411,40 @@ impl NatEngine {
             }
         };
 
-        Some(build_binding(
+        let binding = build_binding(
             binding_id,
             rule.id().to_string(),
             original_forward.clone(),
             translated_forward,
             allocated_port,
             timeout,
-        ))
+        );
+        
+        tracing::trace!(
+            binding_id = binding.binding_id,
+            rule_id = %binding.rule_id,
+            original = ?binding.original_forward,
+            translated = ?binding.translated_forward,
+            allocated_port = binding.allocated_port,
+            "nat binding created"
+        );
+        
+        Some(binding)
     }
 
     /// Zwraca adres IP interfejsu o tej samej rodzinie co podany adres
     fn interface_ip_for(&self, interface: &str, same_family_as: IpAddr) -> Option<IpAddr> {
-        self.interface_ips.get(interface)?.iter().copied()
-            .find(|candidate| same_ip_family(*candidate, same_family_as))
+        let selected = self.interface_ips.get(interface)?.iter().copied()
+            .find(|candidate| same_ip_family(*candidate, same_family_as));
+        
+        tracing::trace!(
+            interface,
+            same_family_as = %same_family_as,
+            ?selected,
+            "nat resolved interface address"
+        );
+        
+        selected
     }
 }
 
@@ -323,8 +458,8 @@ pub(crate) fn build_binding(
     timeout: Duration,
 ) -> NatBinding {
     let now = Instant::now();
-    
-    NatBinding {
+
+    let binding = NatBinding {
         binding_id,
         rule_id,
         original_reply: translated_forward.reversed(),
@@ -335,7 +470,18 @@ pub(crate) fn build_binding(
         created_at: now,
         last_seen: now,
         expires_at: now + timeout,
-    }
+    };
+    
+    tracing::trace!(
+        binding_id = binding.binding_id,
+        rule_id = %binding.rule_id,
+        original = ?binding.original_forward,
+        translated = ?binding.translated_forward,
+        timeout_secs = timeout.as_secs(),
+        "nat built binding"
+    );
+    
+    binding
 }
 
 /// Zwraca timeout powiązania w zależności od protokołu

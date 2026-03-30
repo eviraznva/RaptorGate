@@ -45,14 +45,18 @@ pub(crate) struct ParsedPacket {
 
 /// Parsuje flow tuple z ramki ethernetowej
 pub(crate) fn parse_flow_tuple_from_ethernet(data: &[u8]) -> Option<FlowTuple> {
-    Some(parse_packet(data)?.flow)
+    let flow = parse_packet(data).map(|packet| packet.flow);
+    
+    tracing::trace!(packet_len = data.len(), ?flow, "nat parsed flow tuple from ethernet");
+    
+    flow
 }
 
 /// Zwraca adresy IP źródłowy i docelowy z ramki ethernetowej
 pub(crate) fn packet_endpoints_from_ethernet(data: &[u8]) -> Option<(IpAddr, IpAddr)> {
     let packet = SlicedPacket::from_ethernet(data).ok()?;
-    
-    match &packet.net {
+
+    let endpoints = match &packet.net {
         Some(NetSlice::Ipv4(ipv4)) => Some((
             IpAddr::V4(ipv4.header().source_addr()),
             IpAddr::V4(ipv4.header().destination_addr()),
@@ -62,14 +66,22 @@ pub(crate) fn packet_endpoints_from_ethernet(data: &[u8]) -> Option<(IpAddr, IpA
             IpAddr::V6(ipv6.header().destination_addr()),
         )),
         _ => None,
-    }
+    };
+    
+    tracing::trace!(packet_len = data.len(), ?endpoints, "nat extracted packet endpoints");
+    
+    endpoints
 }
 
 /// Zwraca zakres bajtów payloadu warstwy transportowej
 pub(crate) fn transport_payload_range(data: &[u8]) -> Option<Range<usize>> {
     let parsed = parse_packet(data)?;
+
+    let range = parsed.payload_offset..parsed.payload_offset + parsed.payload_len;
     
-    Some(parsed.payload_offset..parsed.payload_offset + parsed.payload_len)
+    tracing::trace!(packet_len = data.len(), payload_range = ?range, "nat resolved transport payload range");
+    
+    Some(range)
 }
 
 /// Zmienia adresy i porty w pakiecie zgodnie z translacją NAT
@@ -80,12 +92,18 @@ pub(crate) fn apply_translation(
 ) -> bool {
     let parsed = match parse_packet(data) {
         Some(parsed) => parsed,
-        None => return false,
+        None => {
+            tracing::trace!("nat apply translation skipped: packet parse failed");
+            return false;
+        }
     };
+
+    tracing::trace!(original = ?original, translated = ?translated, "nat applying packet translation");
     
     let mut ip_headers = parsed.ip_headers.clone();
     
     if !rewrite_network_addresses(&mut ip_headers, original, translated) {
+        tracing::trace!(original = ?original, translated = ?translated, "nat apply translation rejected by ip family mismatch");
         return false;
     }
 
@@ -129,8 +147,13 @@ pub(crate) fn apply_translation(
 pub(crate) fn refresh_after_payload_resize(data: &mut [u8]) -> bool {
     let parsed = match parse_packet(data) {
         Some(parsed) => parsed,
-        None => return false,
+        None => {
+            tracing::trace!("nat refresh after payload resize skipped: packet parse failed");
+            return false;
+        }
     };
+
+    tracing::trace!(packet_len = data.len(), flow = ?parsed.flow, "nat refreshing packet after payload resize");
     
     let payload_range = parsed.payload_offset..parsed.payload_offset + parsed.payload_len;
     
@@ -168,6 +191,7 @@ fn parse_packet(data: &[u8]) -> Option<ParsedPacket> {
     let packet = SlicedPacket::from_ethernet(data).ok()?;
     
     if packet.is_ip_payload_fragmented() {
+        tracing::trace!("nat packet parsing skipped fragmented packet");
         return None;
     }
 
@@ -220,7 +244,7 @@ fn parse_packet(data: &[u8]) -> Option<ParsedPacket> {
 
     let transport_header_len = transport.header_len();
     
-    Some(ParsedPacket {
+    let parsed = ParsedPacket {
         flow: FlowTuple {
             src_ip,
             dst_ip,
@@ -233,7 +257,11 @@ fn parse_packet(data: &[u8]) -> Option<ParsedPacket> {
         transport_offset,
         payload_offset: transport_offset + transport_header_len,
         payload_len,
-    })
+    };
+    
+    tracing::trace!(flow = ?parsed.flow, payload_len = parsed.payload_len, "nat parsed packet metadata");
+    
+    Some(parsed)
 }
 
 /// Zmienia adresy IP w nagłówkach IP na przetłumaczone
@@ -330,6 +358,7 @@ fn compute_udp_checksum(header: &UdpHeader, ip_headers: &IpHeaders, payload: &[u
 /// Zapisuje nagłówki IP do bufora pakietu
 fn write_ip_headers(data: &mut [u8], ip_headers: &mut IpHeaders, transport_len: usize) -> bool {
     if ip_headers.set_payload_len(transport_len).is_err() {
+        tracing::warn!(transport_len, "nat failed to update ip payload length");
         return false;
     }
 
@@ -340,10 +369,19 @@ fn write_ip_headers(data: &mut [u8], ip_headers: &mut IpHeaders, transport_len: 
     let header_len = ip_headers.header_len();
     
     if data.len() < ETH_HEADER_LEN + header_len {
+        tracing::warn!(buffer_len = data.len(), header_len, "nat failed to write ip headers: buffer too short");
         return false;
     }
 
-    ip_headers.write(&mut Cursor::new(&mut data[ETH_HEADER_LEN..ETH_HEADER_LEN + header_len])).is_ok()
+    let written = ip_headers
+        .write(&mut Cursor::new(&mut data[ETH_HEADER_LEN..ETH_HEADER_LEN + header_len]))
+        .is_ok();
+    
+    if !written {
+        tracing::warn!("nat failed to serialize ip headers");
+    }
+    
+    written
 }
 
 /// Zapisuje nagłówek TCP do bufora pakietu
@@ -351,23 +389,37 @@ fn write_tcp_header(data: &mut [u8], transport_offset: usize, tcp: &TcpHeader) -
     let header_len = tcp.header_len();
     
     if data.len() < transport_offset + header_len {
+        tracing::warn!(buffer_len = data.len(), transport_offset, header_len, "nat failed to write tcp header: buffer too short");
         return false;
     }
 
-    tcp.write(&mut Cursor::new(
+    let written = tcp.write(&mut Cursor::new(
         &mut data[transport_offset..transport_offset + header_len],
-    )).is_ok()
+    )).is_ok();
+    
+    if !written {
+        tracing::warn!("nat failed to serialize tcp header");
+    }
+    
+    written
 }
 
 /// Zapisuje nagłówek UDP do bufora pakietu
 fn write_udp_header(data: &mut [u8], transport_offset: usize, udp: &UdpHeader) -> bool {
     if data.len() < transport_offset + UdpHeader::LEN {
+        tracing::warn!(buffer_len = data.len(), transport_offset, header_len = UdpHeader::LEN, "nat failed to write udp header: buffer too short");
         return false;
     }
 
-    udp.write(&mut Cursor::new(
+    let written = udp.write(&mut Cursor::new(
         &mut data[transport_offset..transport_offset + UdpHeader::LEN],
-    )).is_ok()
+    )).is_ok();
+    
+    if !written {
+        tracing::warn!("nat failed to serialize udp header");
+    }
+    
+    written
 }
 
 /// Sprawdza czy oba adresy IP są tego samego typu (IPv4/IPv6)

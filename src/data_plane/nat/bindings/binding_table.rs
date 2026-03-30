@@ -20,6 +20,8 @@ pub struct BindingTable {
 impl BindingTable {
     /// Tworzy nową pustą tabelę powiązań NAT
     pub fn new() -> Self {
+        tracing::trace!("nat binding table initialized");
+
         Self {
             bindings: HashMap::new(),
             forward_index: HashMap::new(),
@@ -33,6 +35,8 @@ impl BindingTable {
         let next = self.next_binding_id;
         
         self.next_binding_id += 1;
+
+        tracing::trace!(binding_id = next, "nat binding table reserved id");
         
         next
     }
@@ -42,6 +46,9 @@ impl BindingTable {
         if let Some(binding_id) = self.forward_index.get(tuple).copied() {
             if let Some(binding) = self.bindings.get_mut(&binding_id) {
                 binding.last_seen = Instant::now();
+
+                tracing::trace!(?tuple, binding_id, "nat binding forward lookup hit");
+
                 return Some((binding_id, NatBindingDirection::Forward));
             }
         }
@@ -49,9 +56,14 @@ impl BindingTable {
         if let Some(binding_id) = self.reply_index.get(tuple).copied() {
             if let Some(binding) = self.bindings.get_mut(&binding_id) {
                 binding.last_seen = Instant::now();
+
+                tracing::trace!(?tuple, binding_id, "nat binding reply lookup hit");
+
                 return Some((binding_id, NatBindingDirection::Reply));
             }
         }
+
+        tracing::trace!(?tuple, "nat binding lookup miss");
 
         None
     }
@@ -59,6 +71,14 @@ impl BindingTable {
     /// Dodaje nowe powiązanie NAT do tabeli i indeksów
     pub fn insert(&mut self, binding: NatBinding) {
         let binding_id = binding.binding_id;
+        
+        tracing::debug!(
+            binding_id,
+            rule_id = %binding.rule_id,
+            original = ?binding.original_forward,
+            translated = ?binding.translated_forward,
+            "nat binding table insert"
+        );
         
         self.forward_index
             .insert(binding.original_forward.clone(), binding_id);
@@ -76,13 +96,19 @@ impl BindingTable {
 
     /// Wyszukuje prywatny adres IP na podstawie publicznego IP (np. do SNAT)
     pub fn find_private_ip_by_public(&self, public_ip: IpAddr) -> Option<IpAddr> {
-        self.bindings.values()
+        let private_ip = self.bindings.values()
             .find(|binding| binding.translated_forward.src_ip == public_ip)
-            .map(|binding| binding.original_forward.src_ip)
+            .map(|binding| binding.original_forward.src_ip);
+        
+        tracing::trace!(%public_ip, ?private_ip, "nat binding reverse public ip lookup");
+        
+        private_ip
     }
 
     /// Czyści wszystkie powiązania i indeksy
     pub fn clear(&mut self) {
+        tracing::debug!(binding_count = self.bindings.len(), "nat binding table clear");
+
         self.bindings.clear();
         self.forward_index.clear();
         self.reply_index.clear();
@@ -99,6 +125,10 @@ impl BindingTable {
                 (binding.expires_at <= now).then_some(*binding_id)
             }).collect();
 
+        if !expired.is_empty() {
+            tracing::debug!(expired_count = expired.len(), "nat expiring bindings");
+        }
+
         for binding_id in expired {
             self.remove(binding_id, port_store);
         }
@@ -107,6 +137,13 @@ impl BindingTable {
     /// Usuwa powiązanie o podanym ID oraz zwalnia port
     fn remove(&mut self, binding_id: u64, port_store: &mut PortStore) {
         if let Some(binding) = self.bindings.remove(&binding_id) {
+            tracing::debug!(
+                binding_id,
+                rule_id = %binding.rule_id,
+                allocated_port = binding.allocated_port,
+                "nat binding table remove"
+            );
+            
             self.forward_index.remove(&binding.original_forward);
             self.reply_index.remove(&binding.original_reply);
 
