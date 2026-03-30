@@ -1,10 +1,10 @@
-import { IUserRepository } from 'src/domain/repositories/user.repository';
-import { UsersFile, UsersFileSchema } from '../schemas/users.schema';
-import { UserJsonMapper } from '../mappers/user-json.mapper';
-import { User } from 'src/domain/entities/user.entity';
+import { IUserRepository } from '../../../domain/repositories/user.repository.js';
+import { UsersFile, UsersFileSchema } from '../schemas/users.schema.js';
+import { UserJsonMapper } from '../mappers/user-json.mapper.js';
+import { User } from '../../../domain/entities/user.entity.js';
 import { Inject, Injectable } from '@nestjs/common';
-import { FileStore } from '../json/file-store';
-import { Mutex } from '../json/file-mutex';
+import { FileStore } from '../json/file-store.js';
+import { Mutex } from '../json/file-mutex.js';
 import { join } from 'node:path';
 
 @Injectable()

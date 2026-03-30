@@ -3,7 +3,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub(crate) enum InvalidReason {
-    #[error("TTL is zero")]
+    #[error("TTL or hop-limit is zero")]
     TtlZero,
     #[error("invalid IPv4 header checksum")]
     BadIpv4Checksum,
@@ -17,52 +17,82 @@ pub(crate) enum InvalidReason {
 
 // Sprawdza czy pakiet jest poprawny: TTL, suma kontrolna IPv4 i L4.
 pub(crate) fn validate(packet: &SlicedPacket) -> Result<(), InvalidReason> {
-    let ipv4 = match &packet.net {
-        Some(NetSlice::Ipv4(ipv4)) => ipv4,
-        _ => return Ok(()),
-    };
-
-    let ip_header = ipv4.header().to_header();
-
-    if ip_header.time_to_live == 0 {
-        return Err(InvalidReason::TtlZero);
-    }
-
-    if ip_header.calc_header_checksum() != ip_header.header_checksum {
-        return Err(InvalidReason::BadIpv4Checksum);
-    }
-
     if packet.is_ip_payload_fragmented() {
         return Ok(());
     }
 
-    match &packet.transport {
-        Some(TransportSlice::Tcp(tcp)) => {
-            let tcp_header = tcp.to_header();
-            match tcp_header.calc_checksum_ipv4(&ip_header, tcp.payload()) {
-                Ok(expected) if expected != tcp_header.checksum => {
-                    return Err(InvalidReason::BadTcpChecksum);
+    match &packet.net {
+        Some(NetSlice::Ipv4(ipv4)) => {
+            let ip_header = ipv4.header().to_header();
+            if ip_header.time_to_live == 0 {
+                return Err(InvalidReason::TtlZero);
+            }
+            if ip_header.calc_header_checksum() != ip_header.header_checksum {
+                return Err(InvalidReason::BadIpv4Checksum);
+            }
+
+            match &packet.transport {
+                Some(TransportSlice::Tcp(tcp)) => {
+                    let tcp_header = tcp.to_header();
+                    match tcp_header.calc_checksum_ipv4(&ip_header, tcp.payload()) {
+                        Ok(expected) if expected != tcp_header.checksum => {
+                            return Err(InvalidReason::BadTcpChecksum);
+                        }
+                        Err(_) => return Err(InvalidReason::MalformedPacket),
+                        _ => {}
+                    }
                 }
-                Err(_) => return Err(InvalidReason::MalformedPacket),
+                Some(TransportSlice::Udp(udp)) => {
+                    let udp_header = udp.to_header();
+                    if udp_header.checksum != 0 {
+                        match udp_header.calc_checksum_ipv4(&ip_header, udp.payload()) {
+                            Ok(expected) if expected != udp_header.checksum => {
+                                return Err(InvalidReason::BadUdpChecksum);
+                            }
+                            Err(_) => return Err(InvalidReason::MalformedPacket),
+                            _ => {}
+                        }
+                    }
+                }
                 _ => {}
             }
-        }
-        Some(TransportSlice::Udp(udp)) => {
-            let udp_header = udp.to_header();
-            if udp_header.checksum != 0 {
-                match udp_header.calc_checksum_ipv4(&ip_header, udp.payload()) {
-                    Ok(expected) if expected != udp_header.checksum => {
-                        return Err(InvalidReason::BadUdpChecksum);
-                    }
-                    Err(_) => return Err(InvalidReason::MalformedPacket),
-                    _ => {}
-                }
-            }
-        }
-        _ => {}
-    }
 
-    Ok(())
+            Ok(())
+        }
+        Some(NetSlice::Ipv6(ipv6)) => {
+            let ip_header = ipv6.header().to_header();
+            if ip_header.hop_limit == 0 {
+                return Err(InvalidReason::TtlZero);
+            }
+
+            match &packet.transport {
+                Some(TransportSlice::Tcp(tcp)) => {
+                    let tcp_header = tcp.to_header();
+                    match tcp_header.calc_checksum_ipv6(&ip_header, tcp.payload()) {
+                        Ok(expected) if expected != tcp_header.checksum => {
+                            return Err(InvalidReason::BadTcpChecksum);
+                        }
+                        Err(_) => return Err(InvalidReason::MalformedPacket),
+                        _ => {}
+                    }
+                }
+                Some(TransportSlice::Udp(udp)) => {
+                    let udp_header = udp.to_header();
+                    match udp_header.calc_checksum_ipv6(&ip_header, udp.payload()) {
+                        Ok(expected) if expected != udp_header.checksum => {
+                            return Err(InvalidReason::BadUdpChecksum);
+                        }
+                        Err(_) => return Err(InvalidReason::MalformedPacket),
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]

@@ -1,14 +1,12 @@
 use derive_more::Debug;
 use nonempty::NonEmpty;
 
-use crate::{
-    frame::{Hour, Octet, Weekday},
-    rule_tree::{
-        Arm, ArmEnd, FieldValue, IpVer, MatchKind, Operation, Pattern, RuleError, RuleTree, Verdict,
-    },
+use crate::rule_tree::{
+    Arm, ArmEnd, FieldValue, Hour, IpVer, MatchKind, Octet, Operation, Pattern, RuleError,
+    RuleTree, Verdict, Weekday,
 };
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Match {
     kind: MatchKind,
     arms: NonEmpty<Box<Arm>>,

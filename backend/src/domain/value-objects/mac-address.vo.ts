@@ -1,4 +1,4 @@
-import { MacAddressIsInvalidException } from '../exceptions/mac-address-is-invalid.exception';
+import { MacAddressIsInvalidException } from '../exceptions/mac-address-is-invalid.exception.js';
 
 export class MacAddress {
   private readonly value: string;

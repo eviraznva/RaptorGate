@@ -1,5 +1,5 @@
-import type { TokenPayload } from 'src/application/ports/token-service.interface';
-import { Env } from 'src/shared/config/env.validation';
+import type { TokenPayload } from '../../application/ports/token-service.interface.js';
+import { Env } from '../../shared/config/env.validation.js';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
@@ -11,7 +11,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get('JWT_SECRET'),
+      secretOrKey: configService.get('JWT_SECRET', {
+        infer: true,
+      }),
     });
   }
 

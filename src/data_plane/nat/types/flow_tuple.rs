@@ -1,18 +1,13 @@
 use std::net::IpAddr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum L4Proto {
-    Tcp,
-    Udp,
-    Icmp,
-}
+use super::l4_proto::L4Proto;
 
-impl L4Proto {
-    pub fn has_ports(self) -> bool {
-        matches!(self, L4Proto::Tcp | L4Proto::Udp)
-    }
-}
-
+/// Struktura reprezentująca flow tuple połączenia sieciowego:
+/// - src_ip: adres IP źródłowy
+/// - dst_ip: adres IP docelowy
+/// - src_port: port źródłowy
+/// - dst_port: port docelowy
+/// - proto: protokół warstwy 4 (TCP/UDP/ICMP)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FlowTuple {
     pub src_ip: IpAddr,
@@ -23,6 +18,7 @@ pub struct FlowTuple {
 }
 
 impl FlowTuple {
+    /// Zwraca nowy FlowTuple z zamienionymi stronami (przydatne do obsługi odpowiedzi)
     pub fn reversed(&self) -> Self {
         Self {
             src_ip: self.dst_ip,

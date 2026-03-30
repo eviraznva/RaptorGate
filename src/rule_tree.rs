@@ -1,12 +1,15 @@
 pub mod matcher;
 pub mod parsing;
+pub mod types;
 
-use arc_swap::docs::patterns;
+pub use types::{ArrivalInfo, Hour, IPError, IpGlobbable, IpVer, Octet, Port, Protocol, Weekday};
+
 use derive_more::{Debug, Display, Error, PartialEq};
 
-use crate::{frame::{Hour, IpGlobbable, IpVer, Port, Protocol, Weekday}, rule_tree::matcher::Match};
+use crate::rule_tree::matcher::Match;
 pub use matcher::MatchBuilder;
 
+#[derive(Clone, Debug)]
 pub struct RuleTree {
     name: String,
     description: String,
@@ -25,17 +28,21 @@ impl RuleTree {
 
 impl std::fmt::Display for RuleTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RuleTree: {}, description: {}", self.name, self.description)
+        write!(
+            f,
+            "RuleTree: {}, description: {}",
+            self.name, self.description
+        )
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 struct Arm {
     pattern: Pattern,
     into: ArmEnd,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum ArmEnd {
     Verdict(Verdict),
     Match(Match),
@@ -100,7 +107,8 @@ impl Pattern {
             (Pattern::Wildcard, _) => Ok(()),
 
             (Pattern::Equal(_), _) => Ok(()),
-            (Pattern::Comparison(..),
+            (
+                Pattern::Comparison(..),
                 MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour | MatchKind::DayOfWeek,
             ) => Ok(()),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
@@ -110,8 +118,7 @@ impl Pattern {
                     pattern.validate_for(kind)?;
                 }
                 Ok(())
-            }
-            // (Pattern::Or(_), _) => Err(RuleError::InvalidPattern(self.clone())),
+            } // (Pattern::Or(_), _) => Err(RuleError::InvalidPattern(self.clone())),
         }
     }
 }
@@ -174,7 +181,6 @@ pub enum RuleError {
 }
 #[cfg(test)]
 mod tests {
-    use crate::frame::Octet;
 
     use super::*;
 

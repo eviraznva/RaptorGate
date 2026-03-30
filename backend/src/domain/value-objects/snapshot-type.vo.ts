@@ -1,4 +1,4 @@
-import { SnapshotTypeIsInvalidException } from '../exceptions/snapshot-type-is-invalid.exception';
+import { SnapshotTypeIsInvalidException } from '../exceptions/snapshot-type-is-invalid.exception.js';
 
 export type SnapshotTypeType = 'manual_import' | 'rollback_point' | 'auto_save';
 

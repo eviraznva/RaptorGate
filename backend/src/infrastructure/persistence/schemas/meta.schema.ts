@@ -1,5 +1,5 @@
+import { isoDateTimeSchema } from './_common.js';
 import { z } from 'zod';
-import { isoDateTimeSchema } from './_common';
 
 export const MetaSchema = z
   .object({

@@ -1,22 +1,22 @@
 import {
+  RolePermissionsFile,
+  RolePermissionsFileSchema,
+} from '../schemas/role-permissions.schema.js';
+import {
   PermissionsFile,
   PermissionsFileSchema,
-} from '../schemas/permissions.schema';
+} from '../schemas/permissions.schema.js';
 import {
   UserRolesFile,
   UserRolesFileSchema,
-} from '../schemas/user-roles.schema';
-import {
-  RolePermissionsFile,
-  RolePermissionsFileSchema,
-} from '../schemas/role-permissions.schema';
-import { IRoleRepository } from 'src/domain/repositories/role.repository';
-import { RolesFile, RolesFileSchema } from '../schemas/roles.schema';
-import { RoleJsonMapper } from '../mappers/role-json.mapper';
-import { Role } from 'src/domain/entities/role.entity';
+} from '../schemas/user-roles.schema.js';
+import { IRoleRepository } from '../../../domain/repositories/role.repository.js';
+import { RolesFile, RolesFileSchema } from '../schemas/roles.schema.js';
+import { RoleJsonMapper } from '../mappers/role-json.mapper.js';
+import { Role } from '../../../domain/entities/role.entity.js';
 import { Inject, Injectable } from '@nestjs/common';
-import { FileStore } from '../json/file-store';
-import { Mutex } from '../json/file-mutex';
+import { FileStore } from '../json/file-store.js';
+import { Mutex } from '../json/file-mutex.js';
 import { join } from 'node:path';
 
 @Injectable()

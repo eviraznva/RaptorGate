@@ -1,5 +1,5 @@
-import { Permission } from '../enums/permissions.enum';
-import { Role } from '../enums/role.enum';
+import { Permission } from '../enums/permissions.enum.js';
+import { Role } from '../enums/role.enum.js';
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   [Role.Viewer]: [

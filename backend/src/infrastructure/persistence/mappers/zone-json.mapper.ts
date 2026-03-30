@@ -1,7 +1,9 @@
-import { Zone } from 'src/domain/entities/zone.entity';
-import { ZoneRecord } from '../schemas/zones.schema';
+import { Zone } from '../../../domain/entities/zone.entity.js';
+import { ZoneRecord } from '../schemas/zones.schema.js';
+import { Logger } from '@nestjs/common';
 
 export class ZoneJsonMapper {
+  private static readonly logger = new Logger(ZoneJsonMapper.name);
   constructor() {}
 
   static toDomain(record: ZoneRecord): Zone {

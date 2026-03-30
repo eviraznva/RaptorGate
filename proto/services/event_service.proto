@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package raptorgate.services;
+
+import "events/firewall_events.proto";
+import "google/protobuf/empty.proto";
+
+// Hosted by the backend. The firewall dials in and streams events.
+service BackendEventService {
+  rpc PushEvents(stream raptorgate.events.Event) returns (google.protobuf.Empty);
+}

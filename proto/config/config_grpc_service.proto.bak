@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package raptorgate;
+
+import "config/config_service.proto";
+
+// Legacy service — hosted by backend, firewall is the client.
+// To be removed when the control plane is replaced.
+service RaptorGateService {
+  rpc GetActiveConfig(raptorgate.config.GetConfigRequest)
+      returns (raptorgate.config.ConfigResponse);
+}
