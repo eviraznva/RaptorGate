@@ -6,7 +6,7 @@ use crate::rule_tree::{
     RuleTree, Verdict, Weekday,
 };
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Match {
     kind: MatchKind,
     arms: NonEmpty<Box<Arm>>,

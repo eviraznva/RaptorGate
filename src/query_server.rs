@@ -8,27 +8,25 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
 use crate::data_plane::nat::engine::NatEngine;
-use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
-use crate::policy::compiler;
+use crate::policy::Policy;
+use crate::policy::provider::PolicySwapper;
 use crate::proto::services::firewall_query_service_server::{
     FirewallQueryService, FirewallQueryServiceServer,
 };
 use crate::proto::services::{
-    GetNatBindingsRequest, GetNatBindingsResponse,
-    GetTcpSessionsRequest, GetTcpSessionsResponse,
-    ValidateRaptorlangRequest, ValidateRaptorlangResponse,
+    GetNatBindingsRequest, GetNatBindingsResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, SwapConfigRequest, SwapConfigResponse
 };
 
-pub struct QueryServer {
-    handler: QueryHandler,
+pub struct QueryServer<PolicySwap> where PolicySwap: PolicySwapper + Send + Sync {
+    handler: QueryHandler<PolicySwap>,
     socket_path: String,
     shutdown: CancellationToken,
 }
 
-impl QueryServer {
+impl<PolicySwap> QueryServer<PolicySwap> where PolicySwap: PolicySwapper + Send + Sync + 'static {
     pub fn new(
-        handler: QueryHandler,
+        handler: QueryHandler<PolicySwap>,
         socket_path: impl Into<String>,
         shutdown: CancellationToken,
     ) -> Self {
@@ -70,14 +68,14 @@ impl QueryServer {
 }
 
 #[derive(Clone)]
-pub struct QueryHandler {
+pub struct QueryHandler<PolicySwap> where PolicySwap: PolicySwapper {
     pub tcp_tracker: Arc<TcpSessionTracker>,
     pub nat_engine: Arc<Mutex<NatEngine>>,
-    pub policy_store: Arc<PolicyStore>,
+    pub policy_store: Arc<PolicySwap>,
 }
 
 #[tonic::async_trait]
-impl FirewallQueryService for QueryHandler {
+impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: PolicySwapper + Send + Sync + 'static {
     async fn get_tcp_sessions(
         &self,
         _request: Request<GetTcpSessionsRequest>,
@@ -85,14 +83,29 @@ impl FirewallQueryService for QueryHandler {
         Err(Status::unimplemented("not yet implemented"))
     }
 
-    async fn validate_config(
+    async fn swap_config(
         &self,
-        request: Request<ValidateRaptorlangRequest>,
-    ) -> Result<Response<ValidateRaptorlangResponse>, Status> {
-        let dsl = request.into_inner().raptorlang;
-        let response = match compiler::compile_override(&dsl) {
-            Ok(_) => ValidateRaptorlangResponse { error: None },
-            Err(err) => ValidateRaptorlangResponse { error: Some(err.to_string()) },
+        request: Request<SwapConfigRequest>
+    ) -> Result<Response<SwapConfigResponse>, Status> {
+        let rules = request.into_inner().rules;
+        let mut policies = Vec::with_capacity(rules.len());
+
+        for rule in rules {
+            match Policy::try_from(rule) {
+                Ok(policy) => policies.push(policy),
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to parse policy from SwapConfigRequest");
+                    return Err(Status::invalid_argument(format!("failed to parse policy: {err}")));
+                }
+            }
+        }
+        
+        let response = match self.policy_store.swap_policies(policies).await {
+            Ok(()) => SwapConfigResponse { },
+            Err(err) => {
+                tracing::error!(error = %err, "failed to swap policies");
+                return Err(Status::internal(format!("failed to swap policies: {err}")));
+            }
         };
         Ok(Response::new(response))
     }
@@ -113,6 +126,7 @@ fn prepare_socket(socket_path: &str) -> std::io::Result<()> {
     if path.exists() {
         std::fs::remove_file(path)?;
     }
+
     Ok(())
 }
 
