@@ -21,13 +21,13 @@ use tracing::trace;
 use crate::config::AppConfig;
 use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree, TunnelingDetectorConfig};
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
-use crate::data_plane::nat::engine::NatEngine;
+use crate::data_plane::nat::NatEngine;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::dpi::DpiClassifier;
-use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
+use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, FtpAlgStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
@@ -45,7 +45,8 @@ async fn main() {
         Chain<DnsInspectionStage,
         Chain<NatPreroutingStage,
         Chain<TcpClassificationStage,
-        Chain<PolicyEvalStage, NatPostroutingStage>>>>>>;
+        Chain<PolicyEvalStage,
+        Chain<NatPostroutingStage, FtpAlgStage>>>>>>>; 
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -122,8 +123,11 @@ async fn main() {
                     tail: Chain {
                         head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
                         tail: Chain {
-                            head: PolicyEvalStage { provider: policy_provider },
-                            tail: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                            head: PolicyEvalStage { provider: Arc::clone(&policy_provider) },
+                            tail: Chain {
+                                head: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                                tail: FtpAlgStage { engine: Arc::clone(&nat_engine) },
+                            },
                         },
                     },
                 },
@@ -135,7 +139,10 @@ async fn main() {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {
             let pipeline = pipeline.clone();
             tokio::spawn(async move {
-                if !matches!(&ctx.borrow_sliced_packet().net, Some(NetSlice::Ipv4(_))) { // we should support Ipv6 and ARP at some point
+                if !matches!(
+                    &ctx.borrow_sliced_packet().net,
+                    Some(NetSlice::Ipv4(_) | NetSlice::Ipv6(_))
+                ) {
                     return;
                 }
                 let result: StageOutcome = pipeline.process(&mut ctx).await;
@@ -150,8 +157,20 @@ async fn main() {
 
 fn build_test_nat() -> Arc<Mutex<NatEngine>> {
     let interface_ips = HashMap::from([
-        ("eth1".to_string(), "192.168.10.254".parse::<IpAddr>().unwrap()),
-        ("eth2".to_string(), "192.168.20.254".parse::<IpAddr>().unwrap()),
+        (
+            "eth1".to_string(),
+            vec![
+                "192.168.10.254".parse::<IpAddr>().unwrap(),
+                "fd10::fe".parse::<IpAddr>().unwrap(),
+            ],
+        ),
+        (
+            "eth2".to_string(),
+            vec![
+                "192.168.20.254".parse::<IpAddr>().unwrap(),
+                "fd20::fe".parse::<IpAddr>().unwrap(),
+            ],
+        ),
     ]);
 
     let rules = NatRules::new(vec![

@@ -25,6 +25,20 @@ pub struct DpiContext {
     pub ssh_software: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FtpRewriteKind {
+    Port,
+    Pasv,
+    Eprt { delimiter: u8 },
+    Epsv { delimiter: u8 },
+}
+
+impl FtpRewriteKind {
+    pub fn is_active_command(self) -> bool {
+        matches!(self, Self::Port | Self::Eprt { .. })
+    }
+}
+
 // Dane z odpowiedzi FTP PORT/PASV/EPSV.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FtpDataEndpoint {
@@ -32,4 +46,5 @@ pub struct FtpDataEndpoint {
     pub port: u16,
     pub payload_offset: usize,
     pub payload_len: usize,
+    pub rewrite_kind: FtpRewriteKind,
 }

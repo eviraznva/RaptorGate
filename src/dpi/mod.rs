@@ -5,6 +5,6 @@ pub mod parsers;
 mod proto;
 
 pub use classifier::{DpiClassifier, InspectResult};
-pub use context::DpiContext;
+pub use context::{DpiContext, FtpDataEndpoint, FtpRewriteKind};
 pub use flow_key::FlowKey;
 pub use proto::AppProto;

@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use crate::{
     data_plane::{
         dns_inspection::DnsInspection,
-        nat::engine::NatEngine,
+        nat::NatEngine,
         packet_context::PacketContext,
         tcp_session_tracker::TcpSessionTracker,
     },
@@ -22,7 +22,10 @@ pub struct ValidationStage;
 
 impl Stage for ValidationStage {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        matches!(&ctx.borrow_sliced_packet().net, Some(NetSlice::Ipv4(_)))
+        matches!(
+            &ctx.borrow_sliced_packet().net,
+            Some(NetSlice::Ipv4(_) | NetSlice::Ipv6(_))
+        )
     }
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
@@ -68,6 +71,7 @@ impl Stage for NatPostroutingStage {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let dst_ip = match &ctx.borrow_sliced_packet().net {
             Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
+            Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
             _ => return StageOutcome::Continue,
         };
 
@@ -88,12 +92,72 @@ impl Stage for NatPostroutingStage {
     }
 }
 
+#[derive(Clone)]
+pub struct FtpAlgStage {
+    pub engine: Arc<Mutex<NatEngine>>,
+}
+
+impl Stage for FtpAlgStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        matches!(
+            ctx.borrow_dpi_ctx(),
+            Some(dpi_ctx)
+                if dpi_ctx.app_proto == Some(AppProto::Ftp)
+                    && dpi_ctx.ftp_data_endpoint.is_some()
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let Some(dpi_ctx) = ctx.borrow_dpi_ctx().clone() else {
+            return StageOutcome::Continue;
+        };
+        
+        let original_len = ctx.borrow_raw().len();
+        
+        let mut raw_copy = ctx.borrow_raw().to_vec();
+
+        {
+            let mut engine = self.engine.lock().await;
+            engine.process_ftp_alg(&mut raw_copy, &dpi_ctx);
+        }
+
+        if raw_copy.len() != original_len {
+            let src_interface = ctx.borrow_src_interface().clone();
+            let arrival_time = *ctx.borrow_arrival_time();
+            let warnings = ctx.with_warnings_mut(std::mem::take);
+            let dpi_ctx = ctx.with_dpi_ctx_mut(|dpi| dpi.take());
+
+            match PacketContext::from_raw_full(
+                raw_copy,
+                src_interface,
+                warnings,
+                arrival_time,
+                dpi_ctx,
+            ) {
+                Ok(new_ctx) => *ctx = new_ctx,
+                Err(_) => return StageOutcome::Halt,
+            }
+        } else {
+            // Safety: the backing allocation and length stay unchanged here.
+            // We only overwrite bytes in-place after mutating a cloned buffer.
+            unsafe {
+                let ptr = ctx.borrow_raw().as_ptr().cast_mut();
+                std::ptr::copy_nonoverlapping(raw_copy.as_ptr(), ptr, raw_copy.len());
+            }
+        }
+
+        StageOutcome::Continue
+    }
+}
+
 // FIXME: no ale nie hardcodujemy tego pany, to czeba sie kernela pytac
 // Kiedyś się zaimplementuje
 fn infer_out_interface(dst_ip: IpAddr) -> Option<&'static str> {
     match dst_ip {
         IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 10] => Some("eth1"),
         IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 20] => Some("eth2"),
+        IpAddr::V6(ip) if ip.segments()[0] == 0xfd10 => Some("eth1"),
+        IpAddr::V6(ip) if ip.segments()[0] == 0xfd20 => Some("eth2"),
         _ => None,
     }
 }
