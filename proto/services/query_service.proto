@@ -1,23 +1,24 @@
 syntax = "proto3";
 
 package raptorgate.services;
+import "config/config_models.proto";
 
 // Hosted by the firewall. The backend dials in with unary RPCs.
 service FirewallQueryService {
-  rpc GetTcpSessions  (GetTcpSessionsRequest)  returns (GetTcpSessionsResponse);
-  rpc ValidateConfig  (ValidateRaptorlangRequest)  returns (ValidateRaptorlangResponse);
-  rpc GetNatBindings  (GetNatBindingsRequest)  returns (GetNatBindingsResponse);
+  rpc GetTcpSessions  (GetTcpSessionsRequest) returns (GetTcpSessionsResponse);
+  rpc SwapConfig  (SwapConfigRequest) returns (SwapConfigResponse);
+  rpc GetNatBindings  (GetNatBindingsRequest) returns (GetNatBindingsResponse);
 }
 
 message GetTcpSessionsRequest {}
 message GetTcpSessionsResponse {}
 
-message ValidateRaptorlangRequest {
-  string raptorlang = 1;
+message SwapConfigRequest {
+  repeated config.Rule rules = 1;
 }
 
-message ValidateRaptorlangResponse {
-  optional string error = 1;
+message SwapConfigResponse {
+  // optional string error = 1;
 }
 
 message GetNatBindingsRequest {}

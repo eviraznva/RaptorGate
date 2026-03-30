@@ -28,7 +28,7 @@ impl BackendEventSink {
     pub async fn connect(socket_path: &str) -> Result<Self, tonic::transport::Error> {
         let socket_path = socket_path.to_owned();
 
-        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")? // TODO: get this from appconfig
             .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
                 let path = socket_path.clone();
                 async move {

@@ -4,14 +4,14 @@ use crate::data_plane::packet_context::PacketContext;
 
 pub trait Stage: Send + Sync {
     fn is_applicable(&self, ctx: &PacketContext) -> bool { true }
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome;
+    fn process(&self, ctx: &mut PacketContext) -> impl std::future::Future<Output = StageOutcome> + Send;
 }
 
 pub enum StageOutcome { Continue, Halt }
 
 #[derive(Clone)]
-pub struct Chain<A: Stage, B: Stage> { pub head: A, pub tail: B }
-impl<A: Stage, B: Stage> Stage for Chain<A, B> {
+pub struct Chain<A: Stage + Clone, B: Stage + Clone> { pub head: A, pub tail: B }
+impl<A, B> Stage for Chain<A, B> where A: Stage + Clone, B: Stage + Clone {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let outcome = if self.head.is_applicable(ctx) {
             self.head.process(ctx).await

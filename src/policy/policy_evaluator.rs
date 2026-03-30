@@ -8,7 +8,7 @@ use crate::rule_tree::{
     TreeWalker, Verdict,
 };
 
-pub(crate) struct PolicyEvaluator {
+pub struct PolicyEvaluator {
     rules: RuleTree,
     orphaned_verdict: Verdict,
 }
