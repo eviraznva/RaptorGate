@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package raptorgate.events;
+
+import "common/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Koperta zdarzenia wysyłanego przez Backend → Firewall przez EventStream.
+//
+// Znane wartości pola `type`:
+//   "be.heartbeat_ack"    — HeartbeatAck
+//   "be.config_changed"   — ConfigChangedEvent
+//   "be.resync_requested" — ResyncRequestedEvent
+// ─────────────────────────────────────────────────────────────────────────────
+message BackendEvent {
+  // UUID v7.
+  string event_id = 1;
+
+  // Identyfikator typu eventu — determinuje jak deserializować payload.
+  string type = 2;
+
+  // Serializowana wiadomość protobuf odpowiadająca danemu typowi.
+  bytes payload = 3;
+
+  google.protobuf.Timestamp ts = 4;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Payloady
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Typ: "be.heartbeat_ack"
+//
+// Potwierdzenie odebrania HeartbeatEvent.
+message HeartbeatAck {
+  google.protobuf.Timestamp received_at = 1;
+}
+
+// Typ: "be.config_changed"
+//
+// Wysyłany gdy administrator zastosował nową konfigurację lub wykonał rollback.
+// Firewall powinien zareagować wywołując GetActiveConfig z known_versions
+// aby pobrać tylko zmienione sekcje (delta).
+message ConfigChangedEvent {
+  string config_id      = 1;
+  uint64 new_version    = 2;
+  string correlation_id = 3;
+  common.ConfigChangeType change_type = 4;
+  google.protobuf.Timestamp changed_at = 5;
+}
+
+// Typ: "be.resync_requested"
+//
+// Wysyłany gdy backend wraca po awarii i wykrywa że firewall działa
+// w trybie awaryjnym (FIREWALL_MODE_EMERGENCY w HeartbeatEvent).
+// Firewall wywołuje GetActiveConfig z known_versions — jeśli wersja jest
+// aktualna, odpowiada ResyncConfirmedEvent z no_change=true.
+message ResyncRequestedEvent {
+  string correlation_id = 1;
+  string reason         = 2;
+  google.protobuf.Timestamp requested_at = 3;
+}
