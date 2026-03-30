@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ngfw::data_plane::nat::NatEngine;
-use ngfw::data_plane::policy_store::PolicyStore;
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::{Policy, parse_rule_tree};
 use ngfw::policy::provider::MockPolicySwapper;
@@ -11,7 +10,6 @@ use ngfw::proto::config::Rule;
 use ngfw::proto::services::SwapConfigRequest;
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::query_server::{QueryHandler, QueryServer};
-use ngfw::rule_tree::RuleTree;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;

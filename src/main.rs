@@ -22,7 +22,6 @@ use crate::config::AppConfig;
 use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree, TunnelingDetectorConfig};
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::NatEngine;
-use crate::data_plane::policy_store::PolicyStore;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
@@ -124,7 +123,7 @@ async fn main() {
                     tail: Chain {
                         head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
                         tail: Chain {
-                            head: PolicyEvalStage { policies: Arc::clone(&policy_store) },
+                            head: PolicyEvalStage { provider: Arc::clone(&policy_provider) },
                             tail: Chain {
                                 head: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
                                 tail: FtpAlgStage { engine: Arc::clone(&nat_engine) },
