@@ -1,6 +1,6 @@
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
-import { RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/rules-repository';
-import type { IRulesRepository } from 'src/domain/repositories/rules-repository';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { RULES_REPOSITORY_TOKEN } from '../../domain/repositories/rules-repository.js';
+import type { IRulesRepository } from '../../domain/repositories/rules-repository.js';
 import { Inject, Injectable } from '@nestjs/common';
 
 @Injectable()

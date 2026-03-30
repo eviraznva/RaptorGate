@@ -1,22 +1,23 @@
+import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { apiReference } from '@scalar/nestjs-api-reference';
-import { Logger, ValidationPipe } from '@nestjs/common';
-import { Env } from './shared/config/env.validation';
+import { Env } from './shared/config/env.validation.js';
 import { ConfigService } from '@nestjs/config';
+import { AppModule } from './app.module.js';
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
-import { AppModule } from './app.module';
 import { cwd } from 'node:process';
 import { join } from 'node:path';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+  const certsDir = join(cwd(), 'devCerts');
 
   const httpsOptions = {
-    key: readFileSync('/home/szymon/RaptorGate/backend/devCerts/key.pem'),
-    cert: readFileSync('/home/szymon/RaptorGate/backend/devCerts/cert.pem'),
+    key: readFileSync(join(certsDir, 'key.pem')),
+    cert: readFileSync(join(certsDir, 'cert.pem')),
   };
 
   const app = await NestFactory.create(AppModule, {
@@ -27,6 +28,7 @@ async function bootstrap() {
   const httpPort = configService.get('PORT', { infer: true });
   const cookieSecret = configService.get('COOKIE_SECRET', { infer: true });
   const grpcSocketPath = configService.get('GRPC_SOCKET_PATH', { infer: true });
+  const protoRoot = join(process.cwd(), '..', 'proto');
 
   // 🔐 COOKIE PARSER
   app.use(cookieParser(cookieSecret));
@@ -76,10 +78,12 @@ async function bootstrap() {
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.GRPC,
     options: {
-      package: ['raptorgate', 'raptorgate.config', 'raptorgate.events'],
-      protoPath: join(cwd(), '..', 'proto', 'raptorgate.proto'),
-      loader: { includeDirs: [join(cwd(), '..', 'proto')] },
-      url: grpcUrl,
+      package: 'raptorgate',
+      protoPath: join(protoRoot, 'config', 'config_grpc_service.proto'),
+      loader: {
+        includeDirs: [protoRoot],
+      },
+      url: `unix://${absoluteSocketPath}`,
     },
   });
 
@@ -89,6 +93,10 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      exceptionFactory: (errors) => {
+        const first = Object.values(errors[0]?.constraints ?? {})[0];
+        return new BadRequestException(first ?? 'Validation failed');
+      },
     }),
   );
 

@@ -1,5 +1,5 @@
-import { IPasswordHasher } from 'src/application/ports/passowrd-hasher.interface';
-import { Env } from 'src/shared/config/env.validation';
+import { IPasswordHasher } from '../../application/ports/passowrd-hasher.interface.js';
+import { Env } from '../../shared/config/env.validation.js';
 import { ConfigService } from '@nestjs/config';
 import { Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';

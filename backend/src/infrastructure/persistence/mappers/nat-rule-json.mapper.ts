@@ -1,9 +1,9 @@
-import { NatRule } from 'src/domain/entities/nat-rule.entity';
-import { IpAddress } from 'src/domain/value-objects/ip-address.vo';
-import { NatType } from 'src/domain/value-objects/nat-type.vo';
-import { Port } from 'src/domain/value-objects/port.vo';
-import { Priority } from 'src/domain/value-objects/priority.vo';
-import { NatRuleRecord } from '../schemas/nat-rules.schema';
+import { IpAddress } from '../../../domain/value-objects/ip-address.vo.js';
+import { Priority } from '../../../domain/value-objects/priority.vo.js';
+import { NatType } from '../../../domain/value-objects/nat-type.vo.js';
+import { NatRule } from '../../../domain/entities/nat-rule.entity.js';
+import { Port } from '../../../domain/value-objects/port.vo.js';
+import { NatRuleRecord } from '../schemas/nat-rules.schema.js';
 
 export class NatRuleJsonMapper {
   static toDomain(record: NatRuleRecord): NatRule {

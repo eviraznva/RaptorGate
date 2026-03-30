@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
-use ring::digest::{SHA256, digest};
+use ring::digest::{digest, SHA256};
 use time::OffsetDateTime;
 
 use crate::tls::cert_storage;

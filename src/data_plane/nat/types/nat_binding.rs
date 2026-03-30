@@ -2,11 +2,9 @@ use std::time::Instant;
 
 use crate::data_plane::nat::types::flow_tuple::FlowTuple;
 
-#[derive(Debug, Clone, Copy)]
-pub enum NatBindingDirection {
-    Forward,
-    Reply,
-}
+/// Struktura reprezentująca powiązanie NAT:
+/// Przechowuje informacje o translacji dla danego połączenia,
+/// w tym oryginalne i przetłumaczone, przydzielony port oraz czasy utworzenia i wygaśnięcia powiązania.
 
 #[derive(Debug, Clone)]
 pub struct NatBinding {

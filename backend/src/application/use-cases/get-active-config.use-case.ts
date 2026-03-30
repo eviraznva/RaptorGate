@@ -1,10 +1,8 @@
-import { mapPayloadToConfigResponse } from 'src/infrastructure/persistence/mappers/config-payload.mapper';
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from 'src/domain/repositories/config-snapshot.repository';
-import type { IConfigSnapshotRepository } from 'src/domain/repositories/config-snapshot.repository';
-import { ConfigSectionVersions } from 'src/infrastructure/grpc/generated/config/config_models';
-import { ConfigResponse } from 'src/infrastructure/grpc/generated/config/config_service';
-import { Inject, Injectable } from '@nestjs/common';
+import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
+import type { IConfigSnapshotRepository } from '../../domain/repositories/config-snapshot.repository.js';
+import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
 import { RpcException } from '@nestjs/microservices';
+import { Inject, Injectable } from '@nestjs/common';
 import { status } from '@grpc/grpc-js';
 
 @Injectable()
@@ -13,10 +11,7 @@ export class GetActiveConfigUseCase {
     @Inject(CONFIG_SNAPSHOT_REPOSITORY_TOKEN)
     private readonly repository: IConfigSnapshotRepository,
   ) {}
-  async execute(
-    correlationId: string,
-    knownVersions: ConfigSectionVersions | undefined,
-  ): Promise<ConfigResponse> {
+  async execute(): Promise<ConfigurationSnapshot> {
     const snapshot = await this.repository.findActiveSnapshot();
 
     if (!snapshot) {
@@ -28,12 +23,6 @@ export class GetActiveConfigUseCase {
 
     const payload = snapshot.deserializePayload();
 
-    return mapPayloadToConfigResponse(
-      payload,
-      correlationId,
-      snapshot.getVersionNumber(),
-      snapshot.getChecksum().getValue(),
-      knownVersions,
-    );
+    return snapshot;
   }
 }

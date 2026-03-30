@@ -1,4 +1,4 @@
-import { UserRole } from '../entities/user-roles.entity';
+import { UserRole } from '../entities/user-roles.entity.js';
 
 export interface IUserRolesRepository {
   findAll(): Promise<UserRole[]>;

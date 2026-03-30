@@ -1,7 +1,9 @@
-import { JsonConfigSnapshotRepository } from '../persistence/repositories/json-config-snapshot.repository';
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from 'src/domain/repositories/config-snapshot.repository';
-import { GetActiveConfigUseCase } from 'src/application/use-cases/get-active-config.use-case';
-import { RaptorGateController } from './raptorgate.controller';
+import { JsonConfigSnapshotRepository } from '../persistence/repositories/json-config-snapshot.repository.js';
+import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
+import { GetActiveConfigUseCase } from '../../application/use-cases/get-active-config.use-case.js';
+import { RaptorGateController } from './raptorgate.controller.js';
+import { FileStore } from '../persistence/json/file-store.js';
+import { Mutex } from '../persistence/json/file-mutex.js';
 import { Module } from '@nestjs/common';
 
 @Module({
@@ -9,6 +11,8 @@ import { Module } from '@nestjs/common';
   controllers: [RaptorGateController],
   providers: [
     GetActiveConfigUseCase,
+    FileStore,
+    Mutex,
     {
       provide: CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
       useClass: JsonConfigSnapshotRepository,

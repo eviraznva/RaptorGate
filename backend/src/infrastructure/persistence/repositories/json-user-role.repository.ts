@@ -1,12 +1,12 @@
+import { IUserRolesRepository } from '../../../domain/repositories/user-roles.repository.js';
 import {
   UserRolesFile,
   UserRolesFileSchema,
-} from '../schemas/user-roles.schema';
-import { IUserRolesRepository } from 'src/domain/repositories/user-roles.repository';
-import { UserRoleJsonMapper } from '../mappers/user-role-jsom.mapper';
-import { UserRole } from 'src/domain/entities/user-roles.entity';
-import { FileStore } from '../json/file-store';
-import { Mutex } from '../json/file-mutex';
+} from '../schemas/user-roles.schema.js';
+import { UserRole } from '../../../domain/entities/user-roles.entity.js';
+import { UserRoleJsonMapper } from '../mappers/user-role-jsom.mapper.js';
+import { FileStore } from '../json/file-store.js';
+import { Mutex } from '../json/file-mutex.js';
 import { Inject } from '@nestjs/common';
 import { join } from 'node:path';
 

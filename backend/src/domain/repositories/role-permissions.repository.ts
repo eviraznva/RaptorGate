@@ -1,4 +1,4 @@
-import { RolePermission } from '../entities/role-permissions.entity';
+import { RolePermission } from '../entities/role-permissions.entity.js';
 
 export interface IRolePermissionsRepository {
   save(rolePermission: RolePermission): Promise<void>;

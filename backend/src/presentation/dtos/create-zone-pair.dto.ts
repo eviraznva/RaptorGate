@@ -1,4 +1,4 @@
-import type { ZonePairPolicy } from 'src/domain/entities/zone-pair.entity';
+import type { ZonePairPolicy } from '../../domain/entities/zone-pair.entity.js';
 import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 

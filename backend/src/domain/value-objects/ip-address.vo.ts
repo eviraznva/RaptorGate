@@ -1,4 +1,4 @@
-import { IpAddressIsInvalidException } from '../exceptions/ip-address-is-invalid.exception';
+import { IpAddressIsInvalidException } from '../exceptions/ip-address-is-invalid.exception.js';
 
 export class IpAddress {
   private readonly value: string;

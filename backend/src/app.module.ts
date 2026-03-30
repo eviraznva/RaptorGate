@@ -1,18 +1,22 @@
-import { RolesPermissionsGuard } from './infrastructure/adapters/roles-permissions.guard';
-import { DomainExceptionFilter } from './presentation/filters/domain-exception.filter';
-import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard';
-import { ConfigSnapshotModule } from './modules/config-snapshot.module';
-import { JwtStrategy } from './infrastructure/adapters/jwt.strategy';
-import { ZonePairsModule } from './modules/zone-pairs.module';
-import { validate } from './shared/config/env.validation';
-import { RulesModule } from './modules/rules.module';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
-import { ThrottlerModule } from '@nestjs/throttler';
-import { AuthModule } from './modules/auth.module';
-import { ZoneModule } from './modules/zone.module';
+import { SuccessEnvelopeInterceptor } from './presentation/interceptors/success-envelope.interceptor.js';
+import { HttpExceptionEnvelopeFilter } from './presentation/filters/http-exception-envelope.filter.js';
+import { RolesPermissionsGuard } from './infrastructure/adapters/roles-permissions.guard.js';
+import { ConfigSnapshotModule } from './modules/config-snapshot.module.js';
+import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard.js';
+import { JwtStrategy } from './infrastructure/adapters/jwt.strategy.js';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { GrpcModule } from './infrastructure/grpc/grpc.module.js';
+import { ZonePairsModule } from './modules/zone-pairs.module.js';
+import { RealtimeModule } from './modules/realtime.module.js';
+import { validate } from './shared/config/env.validation.js';
+import { RulesModule } from './modules/rules.module.js';
+import { AuthModule } from './modules/auth.module.js';
+import { ZoneModule } from './modules/zone.module.js';
+import { UserModule } from './modules/user.module.js';
+import { AppController } from './app.controller.js';
+import { NatModule } from './modules/nat.module.js';
 import { PassportModule } from '@nestjs/passport';
-import { AppController } from './app.controller';
-import { NatModule } from './modules/nat.module';
 import { ConfigModule } from '@nestjs/config';
 import { Module } from '@nestjs/common';
 
@@ -30,8 +34,11 @@ import { Module } from '@nestjs/common';
     ]),
     ConfigSnapshotModule,
     ZonePairsModule,
+    RealtimeModule,
     PassportModule,
     RulesModule,
+    UserModule,
+    GrpcModule,
     AuthModule,
     ZoneModule,
     NatModule,
@@ -41,7 +48,9 @@ import { Module } from '@nestjs/common';
     JwtStrategy,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesPermissionsGuard },
-    { provide: APP_FILTER, useClass: DomainExceptionFilter },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_FILTER, useClass: HttpExceptionEnvelopeFilter },
+    { provide: APP_INTERCEPTOR, useClass: SuccessEnvelopeInterceptor },
   ],
 })
 export class AppModule {}

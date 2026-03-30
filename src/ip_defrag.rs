@@ -7,8 +7,11 @@ use std::time::{Duration, Instant};
 
 use etherparse::{Ipv4Header, Ipv4HeaderSlice, NetSlice, SlicedPacket};
 
+use crate::data_plane::interface_sniffer::RawPacket;
+use crate::data_plane::packet_context::PacketContext;
+
 // Limity i czasy życia używane przez silnik (ochrona przed DoS).
-pub(crate) struct DefragConfig {
+pub struct DefragConfig {
     pub fragment_timeout: Duration,
     pub max_datagrams: usize,
     pub max_fragments_per_datagram: usize,
@@ -103,7 +106,7 @@ impl ReassemblyEntry {
 }
 
 // Wynik przetworzenia fragmentu przez silnik.
-pub(crate) enum DefragResult {
+pub enum DefragResult {
     Pending,
     Complete(Vec<u8>),
     CompleteWithAnomaly(Vec<u8>, Vec<String>),
@@ -121,12 +124,49 @@ struct EngineState {
 }
 
 impl IpDefragEngine {
-    pub(crate) fn new(config: DefragConfig) -> Self {
+    pub fn new(config: DefragConfig) -> Self {
         IpDefragEngine {
             state: Mutex::new(EngineState {
                 entries: HashMap::new(),
             }),
             config,
+        }
+    }
+
+    /// Takes a raw captured packet, reassembles it if fragmented, and returns
+    /// a fully parsed `PacketContext` once a complete packet is available.
+    /// Returns `None` if the packet is a pending fragment or was dropped.
+    pub fn process_raw(&self, packet: RawPacket) -> Option<PacketContext> {
+        let RawPacket { raw, iface } = packet;
+
+        let sliced = match SlicedPacket::from_ethernet(&raw) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::debug!("failed to parse captured packet: {e}");
+                return None;
+            }
+        };
+
+        if !sliced.is_ip_payload_fragmented() {
+            drop(sliced);
+            return PacketContext::from_raw(raw, iface).ok();
+        }
+
+        let result = self.process(&sliced);
+        drop(sliced);
+
+        match result {
+            DefragResult::Pending => None,
+            DefragResult::Dropped(reason) => {
+                tracing::debug!("defrag dropped packet: {reason}");
+                None
+            }
+            DefragResult::Complete(eth_frame) => PacketContext::from_raw(eth_frame, iface).ok(),
+            DefragResult::CompleteWithAnomaly(eth_frame, anomalies) => {
+                let mut ctx = PacketContext::from_raw(eth_frame, iface).ok()?;
+                ctx.with_warnings_mut(|warnings| warnings.extend(anomalies));
+                Some(ctx)
+            }
         }
     }
 

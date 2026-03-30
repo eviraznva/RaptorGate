@@ -1,10 +1,10 @@
-import { IZoneRepository } from 'src/domain/repositories/zone.repository';
-import { ZonesFile, ZonesFileSchema } from '../schemas/zones.schema';
-import { ZoneJsonMapper } from '../mappers/zone-json.mapper';
-import { Zone } from 'src/domain/entities/zone.entity';
+import { IZoneRepository } from '../../../domain/repositories/zone.repository.js';
+import { ZonesFile, ZonesFileSchema } from '../schemas/zones.schema.js';
+import { ZoneJsonMapper } from '../mappers/zone-json.mapper.js';
+import { Zone } from '../../../domain/entities/zone.entity.js';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { FileStore } from '../json/file-store';
-import { Mutex } from '../json/file-mutex';
+import { FileStore } from '../json/file-store.js';
+import { Mutex } from '../json/file-mutex.js';
 import { join } from 'node:path';
 
 @Injectable()
@@ -38,6 +38,16 @@ export class JsonZoneRepository implements IZoneRepository {
 
     await this.mutex.runExclusive(async () => {
       await this.fileStore.writeJsonAtomic(this.filePath, zones);
+    });
+  }
+
+  async overwriteAll(zones: Zone[]): Promise<void> {
+    const toZones = zones.map((zone) =>
+      ZoneJsonMapper.toRecord(zone, crypto.randomUUID()),
+    );
+
+    await this.mutex.runExclusive(async () => {
+      await this.fileStore.writeJsonAtomic(this.filePath, { items: toZones });
     });
   }
 
