@@ -1,7 +1,7 @@
 import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { apiReference } from '@scalar/nestjs-api-reference';
 import { Env } from './shared/config/env.validation.js';
 import { ConfigService } from '@nestjs/config';
@@ -9,7 +9,7 @@ import { AppModule } from './app.module.js';
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 import { cwd } from 'node:process';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -48,6 +48,8 @@ async function bootstrap() {
 
   // 🔧 SOCKET CLEANUP
   const absoluteSocketPath = join(process.cwd(), grpcSocketPath);
+  mkdirSync(dirname(absoluteSocketPath), { recursive: true });
+
   if (existsSync(absoluteSocketPath)) {
     logger.log('Cleaning up stale socket file...');
 
@@ -67,23 +69,17 @@ async function bootstrap() {
   }
 
   const grpcUrl = `unix://${absoluteSocketPath}`;
-  const protoPath = join(
-    process.cwd(),
-    '..',
-    'proto',
-    'config',
-    'config_service.proto',
-  );
+  const protoPath = join(protoRoot, 'services', 'event_service.proto');
 
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.GRPC,
     options: {
-      package: 'raptorgate',
-      protoPath: join(protoRoot, 'config', 'config_grpc_service.proto'),
+      package: 'raptorgate.services',
+      protoPath,
       loader: {
         includeDirs: [protoRoot],
       },
-      url: `unix://${absoluteSocketPath}`,
+      url: grpcUrl,
     },
   });
 

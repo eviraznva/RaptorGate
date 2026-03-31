@@ -18,7 +18,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "proto:generate": "bun scripts/generate-proto.ts",
+    "proto:generate": "bun scripts/proto-generate.ts",
     "test:integration:grpc": "RUN_FIREWALL_INTEGRATION=1 jest --testPathPatterns=raptorgate-grpc.integration --verbose --forceExit"
   },
   "dependencies": {

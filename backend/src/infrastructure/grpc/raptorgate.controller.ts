@@ -1,101 +1,39 @@
 import {
-  RaptorGateServiceController,
-  RaptorGateServiceControllerMethods,
-} from './generated/raptorgate.js';
-import { GetActiveConfigUseCase } from '../../application/use-cases/get-active-config.use-case.js';
-import {
-  GetConfigRequest,
-  ConfigResponse,
-} from './generated/config/config_service.js';
-import {
-  FirewallEvent,
-  HeartbeatEvent,
-} from './generated/events/firewall_events.js';
-import {
-  BackendEvent,
-  HeartbeatAck,
-} from './generated/events/backend_events.js';
-import {
-  Controller,
-  Inject,
-  Logger,
-  NotImplementedException,
-} from '@nestjs/common';
+  BackendEventServiceController,
+  BackendEventServiceControllerMethods,
+} from './generated/services/event_service.js';
+import { Controller, Logger } from '@nestjs/common';
+import { Event } from './generated/events/firewall_events.js';
 import { Observable } from 'rxjs';
 
 @Controller()
-@RaptorGateServiceControllerMethods()
-export class RaptorGateController implements RaptorGateServiceController {
+@BackendEventServiceControllerMethods()
+export class RaptorGateController implements BackendEventServiceController {
   private readonly logger = new Logger(RaptorGateController.name);
-  constructor(
-    @Inject() private readonly getActiveConfigUseCase: GetActiveConfigUseCase,
-  ) {}
 
-  async getActiveConfig(request: GetConfigRequest): Promise<ConfigResponse> {
-    this.logger.log(
-      `[GetActiveConfig] correlationId=${request.correlationId} reason=${request.reason}`,
-    );
-    const activeConfig = await this.getActiveConfigUseCase.execute();
+  async pushEvents(request: Observable<Event>): Promise<void> {
+    this.logger.log('[PushEvents] Firewall connected');
 
-    this.logger.log(
-      `[GetActiveConfig] sending version=${activeConfig.getVersionNumber()}`,
-    );
-
-    throw new NotImplementedException();
-  }
-
-  eventStream(request: Observable<FirewallEvent>): Observable<BackendEvent> {
-    return new Observable<BackendEvent>((subscriber) => {
-      this.logger.log('[EventStream] Firewall connected');
+    return new Promise<void>((resolve, reject) => {
       const sub = request.subscribe({
-        next: (envelope) => {
-          this.logger.debug(
-            `[EventStream] Received event type=${envelope.type}`,
-          );
+        next: (event) => {
+          const eventKind = event.kind?.item?.$case ?? 'unknown';
 
-          switch (envelope.type) {
-            case 'fw.heartbeat': {
-              const nowMs = Date.now();
-              // Zdekoduj payload jako HeartbeatEvent
-              const heartbeat = HeartbeatEvent.decode(envelope.payload);
-              this.logger.debug(
-                heartbeat,
-                '[EventStream] Decoded HeartbeatEvent',
-              );
-              // Zakoduj odpowiedź HeartbeatAck jako payload
-              const ackPayload = HeartbeatAck.encode({
-                receivedAt: {
-                  seconds: Math.floor(nowMs / 1000),
-                  nanos: (nowMs % 1000) * 1_000_000,
-                },
-              }).finish();
-              subscriber.next({
-                eventId: crypto.randomUUID(),
-                type: 'be.heartbeat_ack',
-                payload: Buffer.from(ackPayload),
-              });
-              break;
-            }
-            default: {
-              this.logger.warn(
-                `[EventStream] Unknown event type: ${envelope.type}`,
-              );
-              break;
-            }
-            // case 'fw.alert': ...
-            // case 'fw.policy_activated': ...
-          }
+          this.logger.debug(`[PushEvents] Received event kind=${eventKind}`);
         },
-        error: (err) => {
-          this.logger.error(`[EventStream] Error in event stream: ${err}`);
-          return subscriber.error(err);
+        error: (error) => {
+          const reason = error instanceof Error ? error.message : String(error);
+
+          this.logger.error(`[PushEvents] Stream error: ${reason}`);
+          sub.unsubscribe();
+          reject(error);
         },
         complete: () => {
-          this.logger.debug('[EventStream] Connection closed by client');
-          return subscriber.complete();
+          this.logger.debug('[PushEvents] Stream closed by client');
+          sub.unsubscribe();
+          resolve();
         },
       });
-      return () => sub.unsubscribe();
     });
   }
 }
