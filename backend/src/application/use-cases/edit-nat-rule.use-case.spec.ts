@@ -1,12 +1,13 @@
-import { NatConfigIsInvalidException } from 'src/domain/exceptions/nat-config-is-invalid.exception';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
-import { NAT_RULES_REPOSITORY_TOKEN } from 'src/domain/repositories/nat-rules.repository';
-import { IpAddress } from 'src/domain/value-objects/ip-address.vo';
-import { Port } from 'src/domain/value-objects/port.vo';
-import { Priority } from 'src/domain/value-objects/priority.vo';
-import { NatType } from 'src/domain/value-objects/nat-type.vo';
-import { EditNatRuleUseCase } from './edit-nat-rule.use-case';
-import { NatRule } from 'src/domain/entities/nat-rule.entity';
+import { NatConfigIsInvalidException } from '../../domain/exceptions/nat-config-is-invalid.exception.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
+import { IpAddress } from '../../domain/value-objects/ip-address.vo.js';
+import { Priority } from '../../domain/value-objects/priority.vo.js';
+import { NatType } from '../../domain/value-objects/nat-type.vo.js';
+import { NatRule } from '../../domain/entities/nat-rule.entity.js';
+import { EditNatRuleUseCase } from './edit-nat-rule.use-case.js';
+import { Port } from '../../domain/value-objects/port.vo.js';
+import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 
 describe('EditNatRuleUseCase', () => {

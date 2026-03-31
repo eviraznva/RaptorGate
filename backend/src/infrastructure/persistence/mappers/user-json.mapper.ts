@@ -1,5 +1,5 @@
-import { User } from 'src/domain/entities/user.entity';
-import { UserRecord } from '../schemas/users.schema';
+import { User } from '../../../domain/entities/user.entity.js';
+import { UserRecord } from '../schemas/users.schema.js';
 
 export class UserJsonMapper {
   static toDomain(record: UserRecord): User {
@@ -9,6 +9,9 @@ export class UserJsonMapper {
       record.passwordHash,
       record.refreshToken,
       record.refreshTokenExpiry ? new Date(record.refreshTokenExpiry) : null,
+      record.recoveryToken,
+      record.isFirstLogin,
+      record.showRecoveryToken,
       new Date(record.createdAt),
       new Date(record.updatedAt),
       [],
@@ -22,6 +25,9 @@ export class UserJsonMapper {
       passwordHash: user.getPasswordHash(),
       refreshToken: user.getRefreshToken(),
       refreshTokenExpiry: user.getRefreshTokenExpiry()?.toISOString() ?? null,
+      recoveryToken: user.getRecoveryToken(),
+      isFirstLogin: user.getIsFirstLogin(),
+      showRecoveryToken: user.getShowRecoveryToken(),
       createdAt: user.getCreatedAt().toISOString(),
       updatedAt: user.getUpdatedAt().toISOString(),
     };

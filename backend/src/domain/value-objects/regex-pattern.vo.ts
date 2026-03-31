@@ -1,4 +1,4 @@
-import { RegexPatternIsInvalidException } from '../exceptions/regex-pattern-is-invalid.exception';
+import { RegexPatternIsInvalidException } from '../exceptions/regex-pattern-is-invalid.exception.js';
 
 export class RegexPattern {
   private readonly value: string;

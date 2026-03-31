@@ -1,4 +1,4 @@
-import { NatRule } from '../entities/nat-rule.entity';
+import { NatRule } from '../entities/nat-rule.entity.js';
 
 export interface INatRulesRepository {
   save(natRule: NatRule, createdBy?: string): Promise<void>;
@@ -10,6 +10,7 @@ export interface INatRulesRepository {
   findByDestinationIp(destinationIp: string): Promise<NatRule[]>;
   findBySourcePort(sourcePort: number): Promise<NatRule[]>;
   findByDestinationPort(destinationPort: number): Promise<NatRule[]>;
+  overwriteAll(natRules: NatRule[]): Promise<void>;
   delete(id: string): Promise<void>;
 }
 

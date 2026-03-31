@@ -1,5 +1,5 @@
-import { UserSource } from '../value-objects/user-source.vo';
-import { Email } from '../value-objects/email.vo';
+import { UserSource } from '../value-objects/user-source.vo.js';
+import { Email } from '../value-objects/email.vo.js';
 
 export class IdentityUser {
   private constructor(

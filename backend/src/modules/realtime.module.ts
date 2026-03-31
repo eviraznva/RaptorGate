@@ -1,5 +1,5 @@
-import { DummyRealtimeStreamService } from 'src/infrastructure/adapters/dummy-realtime-stream.service';
-import { RealtimeGateway } from 'src/infrastructure/adapters/dummy-realtime-gateway';
+import { DummyRealtimeStreamService } from '../infrastructure/adapters/dummy-realtime-stream.service.js';
+import { RealtimeGateway } from '../infrastructure/adapters/dummy-realtime-gateway.js';
 import { Module } from '@nestjs/common';
 
 @Module({

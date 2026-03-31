@@ -1,4 +1,4 @@
-import { UserSourceIsInvalidException } from '../exceptions/user-source-is-invalid.exception';
+import { UserSourceIsInvalidException } from '../exceptions/user-source-is-invalid.exception.js';
 
 export type UserSourceType = 'radius' | 'active_directory' | 'local';
 

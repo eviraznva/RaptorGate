@@ -41,19 +41,6 @@ enum IdentitySource {
   IDENTITY_SOURCE_ACTIVE_DIRECTORY = 3;
 }
 
-// Tryb działania procesu firewalla — raportowany w HeartbeatEvent.
-enum FirewallMode {
-  FIREWALL_MODE_UNSPECIFIED = 0;
-  // Konfiguracja pobrana od backendu, firewall działa normalnie.
-  FIREWALL_MODE_NORMAL      = 1;
-  // Backend był niedostępny przy starcie; firewall działa na lokalnym snapshotcie Redb.
-  FIREWALL_MODE_EMERGENCY   = 2;
-  // Brak snapshotu Redb; firewall blokuje cały ruch produkcyjny.
-  FIREWALL_MODE_SAFE_DENY   = 3;
-  // Trwa resynchronizacja z backendem.
-  FIREWALL_MODE_RESYNCING   = 4;
-}
-
 enum AlertSource {
   ALERT_SOURCE_UNSPECIFIED = 0;
 

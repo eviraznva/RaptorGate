@@ -1,4 +1,4 @@
-import { PriorityIsInvalidException } from '../exceptions/priority-is-invalid.exception';
+import { PriorityIsInvalidException } from '../exceptions/priority-is-invalid.exception.js';
 
 export class Priority {
   private readonly value: number;

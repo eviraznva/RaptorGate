@@ -1,10 +1,10 @@
 import {
   ZONE_REPOSITORY_TOKEN,
   type IZoneRepository,
-} from 'src/domain/repositories/zone.repository';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
-import { ZONE_PAIR_REPOSITORY_TOKEN } from 'src/domain/repositories/zone-pair.repository';
-import type { IZonePairRepository } from 'src/domain/repositories/zone-pair.repository';
+} from '../../domain/repositories/zone.repository.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
+import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
 import { Inject, Injectable } from '@nestjs/common';
 
 @Injectable()

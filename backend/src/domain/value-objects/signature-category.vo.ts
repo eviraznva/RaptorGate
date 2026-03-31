@@ -1,4 +1,4 @@
-import { IpsSignatureCategoryIsInvalidException } from '../exceptions/ips-signature-category-is-invalid.exception';
+import { IpsSignatureCategoryIsInvalidException } from '../exceptions/ips-signature-category-is-invalid.exception.js';
 
 export type IpsSignatureCategoryType =
   | 'sqli'

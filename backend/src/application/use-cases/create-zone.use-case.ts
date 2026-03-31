@@ -1,11 +1,12 @@
-import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
-import { EntityAlreadyExistsException } from 'src/domain/exceptions/entity-already-exists-exception';
-import { ZONE_REPOSITORY_TOKEN } from 'src/domain/repositories/zone.repository';
-import type { IZoneRepository } from 'src/domain/repositories/zone.repository';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface';
-import type { ITokenService } from '../ports/token-service.interface';
-import { CreateZoneDto } from '../dtos/create-zone.dto';
-import { Zone } from 'src/domain/entities/zone.entity';
+import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
+import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-already-exists-exception.js';
+import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
+import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
+import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
+import { CreateZoneResponseDto } from '../dtos/create-zone-response.dto.js';
+import type { ITokenService } from '../ports/token-service.interface.js';
+import { Zone } from '../../domain/entities/zone.entity.js';
+import { CreateZoneDto } from '../dtos/create-zone.dto.js';
 import { Inject } from '@nestjs/common';
 
 export class CreateZoneUseCase {
@@ -15,7 +16,7 @@ export class CreateZoneUseCase {
     @Inject(TOKEN_SERVICE_TOKEN) private readonly tokenService: ITokenService,
   ) {}
 
-  async execute(dto: CreateZoneDto): Promise<void> {
+  async execute(dto: CreateZoneDto): Promise<CreateZoneResponseDto> {
     const findExisting = await this.zoneRepository.findByName(dto.name);
     if (findExisting)
       throw new EntityAlreadyExistsException('zone', 'name', dto.name);
@@ -33,5 +34,14 @@ export class CreateZoneUseCase {
     );
 
     await this.zoneRepository.save(newZone, claims.sub);
+
+    return {
+      id: newZone.getId(),
+      name: newZone.getName(),
+      description: newZone.getDescription(),
+      isActive: newZone.getIsActive(),
+      createdAt: newZone.getCreatedAt(),
+      createdBy: newZone.getCreatedBy(),
+    };
   }
 }

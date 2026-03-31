@@ -1,5 +1,5 @@
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
 import { z } from 'zod';
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
 
 export const IpsSignatureRecordSchema = z
   .object({
@@ -14,7 +14,9 @@ export const IpsSignatureRecordSchema = z
   })
   .strict();
 
-export const IpsSignaturesFileSchema = tableFileSchema(IpsSignatureRecordSchema);
+export const IpsSignaturesFileSchema = tableFileSchema(
+  IpsSignatureRecordSchema,
+);
 
 export type IpsSignatureRecord = z.infer<typeof IpsSignatureRecordSchema>;
 export type IpsSignaturesFile = z.infer<typeof IpsSignaturesFileSchema>;

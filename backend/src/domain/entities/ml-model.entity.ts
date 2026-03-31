@@ -1,5 +1,5 @@
-import { SemanticVersion } from '../value-objects/semantic-version.vo';
-import { Checksum } from '../value-objects/checksum.vo';
+import { SemanticVersion } from '../value-objects/semantic-version.vo.js';
+import { Checksum } from '../value-objects/checksum.vo.js';
 
 export class MlModel {
   private constructor(
