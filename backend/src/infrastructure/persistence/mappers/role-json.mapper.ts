@@ -1,7 +1,7 @@
-import { Permission } from 'src/domain/entities/permission.entity';
-import { PermissionRecord } from '../schemas/permissions.schema';
-import { Role } from 'src/domain/entities/role.entity';
-import { RoleRecord } from '../schemas/roles.schema';
+import { Permission } from '../../../domain/entities/permission.entity.js';
+import { PermissionRecord } from '../schemas/permissions.schema.js';
+import { Role } from '../../../domain/entities/role.entity.js';
+import { RoleRecord } from '../schemas/roles.schema.js';
 
 export class RoleJsonMapper {
   static toDomain(role: RoleRecord, permissions: PermissionRecord[]): Role {

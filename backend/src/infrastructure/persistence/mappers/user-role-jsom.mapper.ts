@@ -1,5 +1,5 @@
-import { UserRole } from 'src/domain/entities/user-roles.entity';
-import { UserRoleRecord } from '../schemas/user-roles.schema';
+import { UserRole } from '../../../domain/entities/user-roles.entity.js';
+import { UserRoleRecord } from '../schemas/user-roles.schema.js';
 
 export class UserRoleJsonMapper {
   constructor() {}

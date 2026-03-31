@@ -1,5 +1,5 @@
-import { RolePermission } from 'src/domain/entities/role-permissions.entity';
-import { RolePermissionRecord } from '../schemas/role-permissions.schema';
+import { RolePermission } from '../../../domain/entities/role-permissions.entity.js';
+import { RolePermissionRecord } from '../schemas/role-permissions.schema.js';
 
 export class RolePermissionsJsonMapper {
   constructor() {}

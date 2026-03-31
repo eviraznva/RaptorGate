@@ -1,6 +1,6 @@
-import { ZONE_PAIR_REPOSITORY_TOKEN } from 'src/domain/repositories/zone-pair.repository';
-import type { IZonePairRepository } from 'src/domain/repositories/zone-pair.repository';
-import { GetAllZonePairsDto } from '../dtos/get-all-zone-pairs.dto';
+import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
+import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
+import { GetAllZonePairsDto } from '../dtos/get-all-zone-pairs.dto.js';
 import { Inject, Injectable } from '@nestjs/common';
 
 @Injectable()

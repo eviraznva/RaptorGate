@@ -1,5 +1,5 @@
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
 import { z } from 'zod';
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
 
 export const NatRuleRecordSchema = z
   .object({

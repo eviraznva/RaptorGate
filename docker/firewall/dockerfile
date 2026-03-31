@@ -13,6 +13,11 @@ RUN curl -fsSL https://github.com/protocolbuffers/protobuf/releases/download/v29
 
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
+
+RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
+RUN cargo test --no-run
+RUN rm -rf src
+
 COPY src ./src
 
 RUN cargo test -- --skip tls::

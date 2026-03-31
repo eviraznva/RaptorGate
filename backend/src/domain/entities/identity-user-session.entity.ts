@@ -1,5 +1,5 @@
-import { MacAddress } from '../value-objects/mac-address.vo';
-import { IpAddress } from '../value-objects/ip-address.vo';
+import { MacAddress } from '../value-objects/mac-address.vo.js';
+import { IpAddress } from '../value-objects/ip-address.vo.js';
 
 export class IdentityUserSession {
   private constructor(

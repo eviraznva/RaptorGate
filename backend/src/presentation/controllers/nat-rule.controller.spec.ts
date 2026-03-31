@@ -1,9 +1,10 @@
-import { CreateNatRuleUseCase } from 'src/application/use-cases/create-nat-rule.use-case';
-import { GetAllNatRulesUseCase } from 'src/application/use-cases/get-all-nat-rules.use-case';
-import { DeleteNatRuleUseCase } from 'src/application/use-cases/delete-nat-rule.use-case';
-import { EditNatRuleUseCase } from 'src/application/use-cases/edit-nat-rule.use-case';
-import { NatRuleController } from './nat-rule.controller';
+import { GetAllNatRulesUseCase } from '../../application/use-cases/get-all-nat-rules.use-case.js';
+import { CreateNatRuleUseCase } from '../../application/use-cases/create-nat-rule.use-case.js';
+import { DeleteNatRuleUseCase } from '../../application/use-cases/delete-nat-rule.use-case.js';
+import { EditNatRuleUseCase } from '../../application/use-cases/edit-nat-rule.use-case.js';
+import { NatRuleController } from './nat-rule.controller.js';
 import { Test, TestingModule } from '@nestjs/testing';
+import { jest } from '@jest/globals';
 
 describe('NatRuleController', () => {
   let controller: NatRuleController;

@@ -1,5 +1,5 @@
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
 import { z } from 'zod';
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common';
 
 export const ZoneInterfaceRecordSchema = z
   .object({
@@ -11,7 +11,9 @@ export const ZoneInterfaceRecordSchema = z
   })
   .strict();
 
-export const ZoneInterfacesFileSchema = tableFileSchema(ZoneInterfaceRecordSchema);
+export const ZoneInterfacesFileSchema = tableFileSchema(
+  ZoneInterfaceRecordSchema,
+);
 
 export type ZoneInterfaceRecord = z.infer<typeof ZoneInterfaceRecordSchema>;
 export type ZoneInterfacesFile = z.infer<typeof ZoneInterfacesFileSchema>;

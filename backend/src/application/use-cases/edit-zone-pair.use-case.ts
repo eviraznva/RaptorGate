@@ -1,11 +1,12 @@
-import { ZONE_PAIR_REPOSITORY_TOKEN } from 'src/domain/repositories/zone-pair.repository';
-import type { IZonePairRepository } from 'src/domain/repositories/zone-pair.repository';
-import { ZONE_REPOSITORY_TOKEN } from 'src/domain/repositories/zone.repository';
-import type { IZoneRepository } from 'src/domain/repositories/zone.repository';
-import { EditZonePairDto } from '../dtos/edit-zone-pair.dto';
+import { AtLeastOneFieldRequiredException } from '../../domain/exceptions/at-least-one-field-required.exception.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
+import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
+import { EditZonePairResponseDto } from '../dtos/edit-zone-pair-response.dto.js';
+import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
+import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
+import { EditZonePairDto } from '../dtos/edit-zone-pair.dto.js';
 import { Injectable, Inject } from '@nestjs/common';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
-import { AtLeastOneFieldRequiredException } from 'src/domain/exceptions/at-least-one-field-required.exception';
 
 @Injectable()
 export class EditZonePairUseCase {
@@ -16,7 +17,7 @@ export class EditZonePairUseCase {
     private readonly zoneRepository: IZoneRepository,
   ) {}
 
-  async execute(dto: EditZonePairDto): Promise<void> {
+  async execute(dto: EditZonePairDto): Promise<EditZonePairResponseDto> {
     const zonePairExists = await this.zonePairRepository.findById(dto.id);
     if (!zonePairExists) throw new EntityNotFoundException('Zone pair', dto.id);
 
@@ -48,5 +49,14 @@ export class EditZonePairUseCase {
       zonePairExists.setDefaultPolicy(dto.defaultPolicy);
 
     await this.zonePairRepository.save(zonePairExists);
+
+    return {
+      id: zonePairExists.getId(),
+      srcZoneId: zonePairExists.getSrcZoneId(),
+      dstZoneId: zonePairExists.getDstZoneId(),
+      defaultPolicy: zonePairExists.getDefaultPolicy(),
+      createdAt: zonePairExists.getCreatedAt(),
+      createdBy: zonePairExists.getCreatedBy(),
+    };
   }
 }

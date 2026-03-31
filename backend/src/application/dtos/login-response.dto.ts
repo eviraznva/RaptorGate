@@ -4,4 +4,7 @@ export class LoginResponseDto {
   createdAt: Date;
   accessToken: string;
   refreshToken: string;
+  recoveryToken: string | null;
+  isFirstLogin: boolean;
+  showRecoveryToken: boolean;
 }

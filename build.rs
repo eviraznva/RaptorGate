@@ -1,27 +1,21 @@
 const PROTO_INCLUDE_DIRS: &[&str] = &["proto"];
 
-const BACKEND_PROTO_FILES: &[&str] = &[
+const ALL_PROTO_FILES: &[&str] = &[
+    "proto/events/firewall_events.proto",
+    "proto/services/event_service.proto",
+    "proto/services/query_service.proto",
     "proto/common/common.proto",
     "proto/config/config_models.proto",
-    "proto/config/config_service.proto",
-    "proto/events/backend_events.proto",
-    "proto/events/firewall_events.proto",
-    "proto/telemetry/telemetry_models.proto",
-    "proto/raptorgate.proto",
+    // "proto/config/config_service.proto",
+    "proto/control/validation_service.proto",
 ];
-
-const CONTROL_PLANE_PROTO_FILES: &[&str] = &["proto/control/validation_service.proto"];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path()?);
     }
 
-    for file in BACKEND_PROTO_FILES {
-        println!("cargo:rerun-if-changed={file}");
-    }
-
-    for file in CONTROL_PLANE_PROTO_FILES {
+    for file in ALL_PROTO_FILES {
         println!("cargo:rerun-if-changed={file}");
     }
 
@@ -29,13 +23,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tonic_prost_build::configure()
         .build_client(true)
-        .build_server(false)
-        .compile_protos(BACKEND_PROTO_FILES, PROTO_INCLUDE_DIRS)?;
-
-    tonic_prost_build::configure()
-        .build_client(false)
         .build_server(true)
-        .compile_protos(CONTROL_PLANE_PROTO_FILES, PROTO_INCLUDE_DIRS)?;
+        .compile_protos(ALL_PROTO_FILES, PROTO_INCLUDE_DIRS)?;
 
     Ok(())
 }

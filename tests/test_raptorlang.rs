@@ -1,7 +1,12 @@
 // ── Equal: IpVer ──────────────────────────────────────────
 // Mirrors: equal_ip_ver_match / equal_ip_ver_no_match
 
-use ngfw::{frame::{Hour, IpGlobbable as IP, IpVer, Octet, Port, Protocol, Weekday}, rule_tree::{ArmEnd, FieldValue, MatchKind, Operation, Pattern, Verdict, matcher::{Match, MatchBuilder}, parsing::parse_rule_tree}};
+use ngfw::rule_tree::{
+    matcher::{Match, MatchBuilder},
+    parsing::parse_rule_tree,
+    ArmEnd, ArrivalInfo, FieldValue, Hour, IpGlobbable as IP, IpVer, MatchKind, Octet, Operation,
+    Pattern, Port, Protocol, Verdict, Weekday,
+};
 
 fn assert_lower_eq(source: &str, expected: Match) {
     let actual = parse_rule_tree(source).unwrap();
@@ -16,7 +21,9 @@ fn lower_equal_ip_ver_v4() {
             MatchKind::IpVer,
             Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -28,7 +35,9 @@ fn lower_equal_ip_ver_v6() {
             MatchKind::IpVer,
             Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -43,7 +52,9 @@ fn lower_equal_protocol_tcp() {
             MatchKind::Protocol,
             Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
             ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -55,7 +66,9 @@ fn lower_equal_protocol_udp() {
             MatchKind::Protocol,
             Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
             ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -64,27 +77,41 @@ fn lower_equal_protocol_udp() {
 
 #[test]
 fn lower_equal_src_ip_match() {
-    let ip = IP::new([Octet::Value(192), Octet::Value(168), Octet::Value(1), Octet::Value(10)]);
+    let ip = IP::new([
+        Octet::Value(192),
+        Octet::Value(168),
+        Octet::Value(1),
+        Octet::Value(10),
+    ]);
     assert_lower_eq(
         r#"match src_ip { = "192.168.1.10" : verdict allow }"#,
         MatchBuilder::with_arm(
             MatchKind::SrcIp,
             Pattern::Equal(FieldValue::Ip(ip)),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
 #[test]
 fn lower_equal_src_ip_no_match() {
-    let ip = IP::new([Octet::Value(10), Octet::Value(10), Octet::Value(10), Octet::Value(10)]);
+    let ip = IP::new([
+        Octet::Value(10),
+        Octet::Value(10),
+        Octet::Value(10),
+        Octet::Value(10),
+    ]);
     assert_lower_eq(
         r#"match src_ip { = "10.10.10.10" : verdict allow }"#,
         MatchBuilder::with_arm(
             MatchKind::SrcIp,
             Pattern::Equal(FieldValue::Ip(ip)),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -93,14 +120,21 @@ fn lower_equal_src_ip_no_match() {
 
 #[test]
 fn lower_equal_dst_ip() {
-    let ip = IP::new([Octet::Value(10), Octet::Value(0), Octet::Value(0), Octet::Value(1)]);
+    let ip = IP::new([
+        Octet::Value(10),
+        Octet::Value(0),
+        Octet::Value(0),
+        Octet::Value(1),
+    ]);
     assert_lower_eq(
         r#"match dst_ip { = "10.0.0.1" : verdict allow }"#,
         MatchBuilder::with_arm(
             MatchKind::DstIp,
             Pattern::Equal(FieldValue::Ip(ip)),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -115,7 +149,9 @@ fn lower_equal_src_port_match() {
             MatchKind::SrcPort,
             Pattern::Equal(FieldValue::Port(Port::from(12345))),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -127,7 +163,9 @@ fn lower_equal_src_port_no_match() {
             MatchKind::SrcPort,
             Pattern::Equal(FieldValue::Port(Port::from(9999))),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -142,7 +180,9 @@ fn lower_equal_dst_port_allow_warn() {
             MatchKind::DstPort,
             Pattern::Equal(FieldValue::Port(Port::from(80))),
             ArmEnd::Verdict(Verdict::AllowWarn("dst port is 80".into())),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -157,7 +197,9 @@ fn lower_equal_hour_match() {
             MatchKind::Hour,
             Pattern::Equal(FieldValue::Hour(Hour::try_from(14).unwrap())),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -169,7 +211,9 @@ fn lower_equal_hour_no_match() {
             MatchKind::Hour,
             Pattern::Equal(FieldValue::Hour(Hour::try_from(3).unwrap())),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -184,7 +228,9 @@ fn lower_equal_day_of_week_wednesday() {
             MatchKind::DayOfWeek,
             Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
             ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -196,7 +242,9 @@ fn lower_equal_day_of_week_monday() {
             MatchKind::DayOfWeek,
             Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
             ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -215,7 +263,9 @@ fn lower_comparison_dst_port_greater() {
             MatchKind::DstPort,
             Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(79))),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -227,7 +277,9 @@ fn lower_comparison_dst_port_greater_at_boundary() {
             MatchKind::DstPort,
             Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -239,7 +291,9 @@ fn lower_comparison_dst_port_lesser_or_equal() {
             MatchKind::DstPort,
             Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(80))),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -252,9 +306,14 @@ fn lower_comparison_hour_greater() {
         "match hour { > 10 : verdict allow }",
         MatchBuilder::with_arm(
             MatchKind::Hour,
-            Pattern::Comparison(Operation::Greater, FieldValue::Hour(Hour::try_from(10).unwrap())),
+            Pattern::Comparison(
+                Operation::Greater,
+                FieldValue::Hour(Hour::try_from(10).unwrap()),
+            ),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -264,9 +323,14 @@ fn lower_comparison_hour_lesser_or_equal() {
         "match hour { <= 9 : verdict allow }",
         MatchBuilder::with_arm(
             MatchKind::Hour,
-            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Hour(Hour::try_from(9).unwrap())),
+            Pattern::Comparison(
+                Operation::LesserOrEqual,
+                FieldValue::Hour(Hour::try_from(9).unwrap()),
+            ),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -283,7 +347,9 @@ fn lower_comparison_day_of_week_greater() {
             MatchKind::DayOfWeek,
             Pattern::Comparison(Operation::Greater, FieldValue::DayOfWeek(Weekday::Mon)),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -293,9 +359,14 @@ fn lower_comparison_day_of_week_lesser_or_equal() {
         "match day_of_week { <= friday : verdict allow }",
         MatchBuilder::with_arm(
             MatchKind::DayOfWeek,
-            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::DayOfWeek(Weekday::Fri)),
+            Pattern::Comparison(
+                Operation::LesserOrEqual,
+                FieldValue::DayOfWeek(Weekday::Fri),
+            ),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -314,7 +385,9 @@ fn lower_or_protocol_tcp_udp() {
                 Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
             ]),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -331,7 +404,9 @@ fn lower_or_day_of_week_three_values() {
                 Pattern::Equal(FieldValue::DayOfWeek(Weekday::Fri)),
             ]),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -347,10 +422,13 @@ fn lower_multiple_arms_protocol_tcp_then_udp() {
             MatchKind::Protocol,
             Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
             ArmEnd::Verdict(Verdict::Allow),
-        ).arm(
+        )
+        .arm(
             Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
             ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -363,10 +441,13 @@ fn lower_multiple_arms_neither_tcp_nor_udp() {
             MatchKind::Protocol,
             Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
             ArmEnd::Verdict(Verdict::Allow),
-        ).arm(
+        )
+        .arm(
             Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
             ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -381,7 +462,9 @@ fn lower_src_port_equal_for_portless_frame() {
             MatchKind::SrcPort,
             Pattern::Equal(FieldValue::Port(Port::from(80))),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -394,12 +477,21 @@ fn lower_drop_warn_verdict() {
         r#"match hour { > 12 : verdict allow  <= 12 : verdict drop_warn "hour outside range" }"#,
         MatchBuilder::with_arm(
             MatchKind::Hour,
-            Pattern::Comparison(Operation::Greater, FieldValue::Hour(Hour::try_from(12).unwrap())),
+            Pattern::Comparison(
+                Operation::Greater,
+                FieldValue::Hour(Hour::try_from(12).unwrap()),
+            ),
             ArmEnd::Verdict(Verdict::Allow),
-        ).arm(
-            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Hour(Hour::try_from(12).unwrap())),
+        )
+        .arm(
+            Pattern::Comparison(
+                Operation::LesserOrEqual,
+                FieldValue::Hour(Hour::try_from(12).unwrap()),
+            ),
             ArmEnd::Verdict(Verdict::DropWarn("hour outside range".into())),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -432,22 +524,37 @@ fn lower_nested_ipver_protocol_dst_port() {
                     ArmEnd::Match(
                         MatchBuilder::with_arm(
                             MatchKind::DstPort,
-                            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(1024))),
+                            Pattern::Comparison(
+                                Operation::LesserOrEqual,
+                                FieldValue::Port(Port::from(1024)),
+                            ),
                             ArmEnd::Verdict(Verdict::Allow),
-                        ).arm(
-                            Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(1024))),
+                        )
+                        .arm(
+                            Pattern::Comparison(
+                                Operation::Greater,
+                                FieldValue::Port(Port::from(1024)),
+                            ),
                             ArmEnd::Verdict(Verdict::AllowWarn("high dst port".into())),
-                        ).build().unwrap(),
+                        )
+                        .build()
+                        .unwrap(),
                     ),
-                ).arm(
+                )
+                .arm(
                     Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
                     ArmEnd::Verdict(Verdict::Drop),
-                ).build().unwrap(),
+                )
+                .build()
+                .unwrap(),
             ),
-        ).arm(
+        )
+        .arm(
             Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
             ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -469,12 +576,17 @@ fn lower_nested_v4_udp_drop() {
                     MatchKind::Protocol,
                     Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
                     ArmEnd::Verdict(Verdict::Allow),
-                ).arm(
+                )
+                .arm(
                     Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
                     ArmEnd::Verdict(Verdict::Drop),
-                ).build().unwrap(),
+                )
+                .build()
+                .unwrap(),
             ),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -490,10 +602,13 @@ fn lower_nested_v6_drop() {
             MatchKind::IpVer,
             Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
             ArmEnd::Verdict(Verdict::Allow),
-        ).arm(
+        )
+        .arm(
             Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
             ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -505,10 +620,10 @@ fn lower_day_of_week_wildcard() {
             MatchKind::DayOfWeek,
             Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
             ArmEnd::Verdict(Verdict::Allow),
-        ).arm(
-            Pattern::Wildcard,
-            ArmEnd::Verdict(Verdict::Drop),
-        ).build().unwrap(),
+        )
+        .arm(Pattern::Wildcard, ArmEnd::Verdict(Verdict::Drop))
+        .build()
+        .unwrap(),
     );
 }
 
@@ -529,21 +644,33 @@ fn lower_nested_hour_then_day_of_week_allow() {
         }",
         MatchBuilder::with_arm(
             MatchKind::Hour,
-            Pattern::Comparison(Operation::Greater, FieldValue::Hour(Hour::try_from(8).unwrap())),
+            Pattern::Comparison(
+                Operation::Greater,
+                FieldValue::Hour(Hour::try_from(8).unwrap()),
+            ),
             ArmEnd::Match(
                 MatchBuilder::with_arm(
                     MatchKind::DayOfWeek,
                     Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
                     ArmEnd::Verdict(Verdict::Allow),
-                ).arm(
+                )
+                .arm(
                     Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
                     ArmEnd::Verdict(Verdict::Drop),
-                ).build().unwrap(),
+                )
+                .build()
+                .unwrap(),
             ),
-        ).arm(
-            Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Hour(Hour::try_from(8).unwrap())),
+        )
+        .arm(
+            Pattern::Comparison(
+                Operation::LesserOrEqual,
+                FieldValue::Hour(Hour::try_from(8).unwrap()),
+            ),
             ArmEnd::Verdict(Verdict::AllowWarn("hour outside range".into())),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -560,18 +687,26 @@ fn lower_nested_hour_wrong_day_drops() {
         }",
         MatchBuilder::with_arm(
             MatchKind::Hour,
-            Pattern::Comparison(Operation::Greater, FieldValue::Hour(Hour::try_from(8).unwrap())),
+            Pattern::Comparison(
+                Operation::Greater,
+                FieldValue::Hour(Hour::try_from(8).unwrap()),
+            ),
             ArmEnd::Match(
                 MatchBuilder::with_arm(
                     MatchKind::DayOfWeek,
                     Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
                     ArmEnd::Verdict(Verdict::Allow),
-                ).arm(
+                )
+                .arm(
                     Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
                     ArmEnd::Verdict(Verdict::Drop),
-                ).build().unwrap(),
+                )
+                .build()
+                .unwrap(),
             ),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -582,17 +717,16 @@ fn src_port_and() {
         "match src_port { &( > 80 < 90 ) : verdict allow }",
         MatchBuilder::with_arm(
             MatchKind::SrcPort,
-            Pattern::And(
-                vec![
-                    Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
-                    Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
-                ],
-            ),
+            Pattern::And(vec![
+                Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
+                Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
+            ]),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
-
 
 #[test]
 fn src_port_and_or() {
@@ -600,22 +734,19 @@ fn src_port_and_or() {
         "match src_port { |(&( > 80 < 90 ) =100) : verdict allow }",
         MatchBuilder::with_arm(
             MatchKind::SrcPort,
-            Pattern::Or(
-                vec![
-                    Pattern::And(
-                        vec![
-                        Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
-                        Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
-                        ],
-                    ),
-                    Pattern::Equal(FieldValue::Port(Port::from(100))),
-                ],
-            ),
+            Pattern::Or(vec![
+                Pattern::And(vec![
+                    Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
+                    Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(90))),
+                ]),
+                Pattern::Equal(FieldValue::Port(Port::from(100))),
+            ]),
             ArmEnd::Verdict(Verdict::Allow),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
-
 
 // ── Nested ORs ───────────────────────────────────────────
 // User-requested: an Or pattern as input to a nested match, plus an Or
@@ -645,9 +776,13 @@ fn lower_nested_or_at_outer_and_inner_levels() {
                         Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
                     ]),
                     ArmEnd::Verdict(Verdict::Allow),
-                ).build().unwrap(),
+                )
+                .build()
+                .unwrap(),
             ),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }
 
@@ -674,11 +809,19 @@ fn lower_nested_or_three_days_then_port_comparison() {
                     MatchKind::DstPort,
                     Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(1024))),
                     ArmEnd::Verdict(Verdict::DropWarn("high port on work day".into())),
-                ).arm(
-                    Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(1024))),
+                )
+                .arm(
+                    Pattern::Comparison(
+                        Operation::LesserOrEqual,
+                        FieldValue::Port(Port::from(1024)),
+                    ),
                     ArmEnd::Verdict(Verdict::Allow),
-                ).build().unwrap(),
+                )
+                .build()
+                .unwrap(),
             ),
-        ).build().unwrap(),
+        )
+        .build()
+        .unwrap(),
     );
 }

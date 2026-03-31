@@ -1,4 +1,4 @@
-import { ConfigurationSnapshot } from '../entities/configuration-snapshot.entity';
+import { ConfigurationSnapshot } from '../entities/configuration-snapshot.entity.js';
 
 export interface IConfigSnapshotRepository {
   save(configSnapshot: ConfigurationSnapshot): Promise<void>;
