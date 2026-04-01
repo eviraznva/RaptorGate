@@ -66,13 +66,10 @@ export class CreateUserUseCase {
     );
 
     const userRoles = await this.roleRepository.findByUserId(newUser.getId());
+    newUser.setRoles(userRoles);
 
     return {
-      id: newUser.getId(),
-      username: newUser.getUsername(),
-      createdAt: newUser.getCreatedAt(),
-      updatedAt: newUser.getUpdatedAt(),
-      roles: userRoles.map((r) => r.getName()),
+      user: newUser,
     };
   }
 }

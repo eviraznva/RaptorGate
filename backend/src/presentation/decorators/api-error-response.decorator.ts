@@ -1,4 +1,3 @@
-import { applyDecorators } from '@nestjs/common';
 import {
   getSchemaPath,
   ApiExtraModels,
@@ -11,6 +10,7 @@ import {
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { ErrorEnvelopeDto } from '../dtos/api-envelope.dto.js';
+import { applyDecorators } from '@nestjs/common';
 
 const err = (status: number, message: string, error: string) => ({
   allOf: [

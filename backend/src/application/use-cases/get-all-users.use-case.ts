@@ -31,18 +31,8 @@ export class GetAllUsersUseCase {
       }),
     );
 
-    const mappedUsers = userWithRoles.map((user) => {
-      return {
-        id: user.getId(),
-        username: user.getUsername(),
-        createdAt: user.getCreatedAt(),
-        updatedAt: user.getUpdatedAt(),
-        roles: user.getRoles().map((role) => role.getName()),
-      };
-    });
-
     return {
-      users: mappedUsers,
+      users: userWithRoles,
     };
   }
 }

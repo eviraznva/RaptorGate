@@ -15,7 +15,7 @@ export class CreateZoneDto {
     example: 'The main living area of the house',
   })
   @IsString()
-  description?: string | null;
+  description: string | null;
 
   @ApiProperty({
     example: true,

@@ -20,7 +20,7 @@ import {
 } from '../decorators/api-envelope-response.decorator';
 import { RecoverPasswordUseCase } from 'src/application/use-cases/recover-password.use-case';
 import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
-import { ExtractToken } from 'src/infrastructure/decorators/extract-token.decorator';
+import { ExtractToken } from 'src/presentation/decorators/auth/extract-token.decorator';
 import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
 import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
 import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto';

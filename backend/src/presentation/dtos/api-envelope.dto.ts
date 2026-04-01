@@ -7,8 +7,8 @@ export class SuccessEnvelopeDto<T = unknown> {
   @ApiProperty({ example: 'User created...' })
   message: string;
 
-  @ApiProperty({ nullable: true })
-  data: T | null;
+  @ApiProperty({ nullable: false })
+  data: T;
 }
 
 export class ErrorEnvelopeDto {

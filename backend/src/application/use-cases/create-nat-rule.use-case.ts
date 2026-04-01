@@ -53,20 +53,7 @@ export class CreateNatRuleUseCase {
 
     await this.natRulesRepository.save(newNatRule, claims.sub);
 
-    return {
-      id: newNatRule.getId(),
-      type: newNatRule.getType().getValue(),
-      isActive: newNatRule.getIsActive(),
-      sourceIp: newNatRule.getSourceIp()?.getValue || null,
-      destinationIp: newNatRule.getDestinationIp()?.getValue || null,
-      sourcePort: newNatRule.getSourcePort()?.getValue || null,
-      destinationPort: newNatRule.getDestinationPort()?.getValue || null,
-      translatedIp: newNatRule.getTranslatedIp()?.getValue || null,
-      translatedPort: newNatRule.getTranslatedPort()?.getValue || null,
-      priority: newNatRule.getPriority().getValue(),
-      createdAt: newNatRule.getCreatedAt(),
-      updatedAt: newNatRule.getUpdatedAt(),
-    };
+    return { natRule: newNatRule };
   }
 
   private validateRequiredFields(dto: CreateNatRuleDto): void {

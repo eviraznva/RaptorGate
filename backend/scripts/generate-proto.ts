@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync } from 'node:fs';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 type GenerationTarget = {
@@ -45,19 +44,32 @@ const baseOptions = [
   'useOptionals=messages',
 ];
 
+function collectProtoFiles(rootDir: string): string[] {
+  const files: string[] = [];
+
+  function visit(currentDir: string): void {
+    for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
+      const fullPath = path.join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        visit(fullPath);
+        continue;
+      }
+
+      if (entry.isFile() && entry.name.endsWith('.proto')) {
+        files.push(fullPath);
+      }
+    }
+  }
+
+  visit(rootDir);
+  return files.sort((a, b) => a.localeCompare(b));
+}
+
 const targets: GenerationTarget[] = [
   {
     outDir: path.join(generatedRoot),
-    protoFiles: [
-      path.join(protoRoot, 'common', 'common.proto'),
-      path.join(protoRoot, 'config', 'config_models.proto'),
-      path.join(protoRoot, 'config', 'config_service.proto'),
-      path.join(protoRoot, 'events', 'backend_events.proto'),
-      path.join(protoRoot, 'events', 'firewall_events.proto'),
-      path.join(protoRoot, 'control', 'validation_service.proto'),
-      path.join(protoRoot, 'telemetry', 'telemetry_models.proto'),
-      path.join(protoRoot, 'raptorgate.proto'),
-    ],
+    protoFiles: collectProtoFiles(protoRoot),
     options: [...baseOptions, 'nestJs=true', 'outputServices=default'],
   },
 ];
@@ -68,6 +80,10 @@ function prepareOutputDirectory(target: GenerationTarget): void {
 }
 
 function generateTarget(target: GenerationTarget): void {
+  if (target.protoFiles.length === 0) {
+    throw new Error(`No .proto files found under ${protoRoot}`);
+  }
+
   prepareOutputDirectory(target);
 
   const result = spawnSync(

@@ -12,9 +12,9 @@ import {
 } from '@nestjs/common';
 import {
   ApiCreatedEnvelope,
-  ApiNoContentEnvelope,
   ApiOkEnvelope,
-} from '../decorators/api-envelope-response.decorator.js';
+  ApiNoContentEnvelope,
+} from '../decorators/api-envelope-response.decorator';
 import {
   ApiError400,
   ApiError401,
@@ -23,23 +23,24 @@ import {
   ApiError409,
   ApiError429,
   ApiError500,
-} from '../decorators/api-error-response.decorator.js';
-import { RequirePermissions } from '../../infrastructure/decorators/require-permissions.decorator.js';
-import { GetAllZonePairsUseCase } from '../../application/use-cases/get-all-zone-pairs.use-case.js';
-import { CreateZonePairUseCase } from '../../application/use-cases/create-zone-pair.use-case.js';
-import { DeleteZonePairUseCase } from '../../application/use-cases/delete-zone-pair.use-case.js';
-import { EditZonePairUseCase } from '../../application/use-cases/edit-zone-pair.use-case.js';
-import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
-import { CreateZonePairResponseDto } from '../dtos/create-zone-pair-response.dto.js';
-import { EditZonePairResponseDto } from '../dtos/edit-zone-pair-response.dto.js';
-import { ResponseMessage } from '../decorators/response-message.decorator.js';
-import { Roles } from '../../infrastructure/decorators/roles.decorator.js';
-import { ZonePair } from '../../domain/entities/zone-pair.entity.js';
-import { CreateZonePairDto } from '../dtos/create-zone-pair.dto.js';
-import { Permission } from '../../domain/enums/permissions.enum.js';
-import { EditZonePairDto } from '../dtos/edit-zone-pair.dto.js';
-import { ApiBody, ApiOperation } from '@nestjs/swagger';
-import { Role } from '../../domain/enums/role.enum.js';
+} from '../decorators/api-error-response.decorator';
+import { RequirePermissions } from 'src/presentation/decorators/auth/require-permissions.decorator';
+import { GetAllZonePairsUseCase } from 'src/application/use-cases/get-all-zone-pairs.use-case';
+import { CreateZonePairUseCase } from 'src/application/use-cases/create-zone-pair.use-case';
+import { DeleteZonePairUseCase } from 'src/application/use-cases/delete-zone-pair.use-case';
+import { EditZonePairUseCase } from 'src/application/use-cases/edit-zone-pair.use-case';
+import { ExtractToken } from 'src/presentation/decorators/auth/extract-token.decorator';
+import { CreateZonePairResponseDto } from '../dtos/create-zone-pair-response.dto';
+import { ZonePairResponseMapper } from '../mappers/zone-pair-response.mapper';
+import { EditZonePairResponseDto } from '../dtos/edit-zone-pair-response.dto';
+import { ResponseMessage } from '../decorators/response-message.decorator';
+import { Roles } from 'src/presentation/decorators/auth/roles.decorator';
+import { CreateZonePairDto } from '../dtos/create-zone-pair.dto';
+import { ZonePair } from 'src/domain/entities/zone-pair.entity';
+import { Permission } from 'src/domain/enums/permissions.enum';
+import { EditZonePairDto } from '../dtos/edit-zone-pair.dto';
+import { ApiOperation, ApiBody } from '@nestjs/swagger';
+import { Role } from 'src/domain/enums/role.enum';
 
 @Controller('zone-pairs')
 export class ZonePairsController {
@@ -77,12 +78,16 @@ export class ZonePairsController {
     @Body() dto: CreateZonePairDto,
     @ExtractToken() accessToken: string,
   ): Promise<CreateZonePairResponseDto> {
-    const zonePair = await this.createZonePairUseCase.execute({
+    const result = await this.createZonePairUseCase.execute({
       ...dto,
       accessToken,
     });
 
-    return zonePair;
+    const zonePair = ZonePairResponseMapper.toDto(result.zonePair);
+
+    return {
+      zonePair,
+    };
   }
 
   @ApiOperation({
@@ -128,13 +133,15 @@ export class ZonePairsController {
     @Param('id') id: string,
     @ExtractToken() accessToken: string,
   ): Promise<EditZonePairResponseDto> {
-    const zonePair = await this.editZonePairUseCase.execute({
+    const result = await this.editZonePairUseCase.execute({
       ...dto,
       id,
       accessToken,
     });
 
-    return zonePair;
+    const zonePair = ZonePairResponseMapper.toDto(result.zonePair);
+
+    return { zonePair };
   }
 
   @ApiOperation({

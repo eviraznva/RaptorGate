@@ -24,7 +24,7 @@ import {
   ApiNoContentEnvelope,
   ApiOkEnvelope,
 } from '../decorators/api-envelope-response.decorator';
-import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
+import { RequirePermissions } from 'src/presentation/decorators/auth/require-permissions.decorator';
 import { GetAllUsersUseCase } from 'src/application/use-cases/get-all-users.use-case';
 import { DeleteUserUseCase } from 'src/application/use-cases/delete-user.use-case';
 import { CreateUserUseCase } from 'src/application/use-cases/create-user.use-case';
@@ -32,13 +32,14 @@ import { EditUserUseCase } from 'src/application/use-cases/edit-user.use-case';
 import { GetAllUsersResponseDto } from '../dtos/get-all-users-response.dto';
 import { ResponseMessage } from '../decorators/response-message.decorator';
 import { CreateUserResponseDto } from '../dtos/create-user-response.dto';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
+import { Roles } from 'src/presentation/decorators/auth/roles.decorator';
 import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
 import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Permission } from 'src/domain/enums/permissions.enum';
 import { CreateUserDto } from '../dtos/create-user.dto';
 import { EditUserDto } from '../dtos/edit-user.dto';
 import { Role } from 'src/domain/enums/role.enum';
+import { UserResponseMapper } from '../mappers/user-response.mapper';
 
 @ApiTags('User Management')
 @Controller('user')
@@ -72,8 +73,11 @@ export class UserController {
   @ApiError429('Too many requests')
   @ApiError500('Server error while creating user')
   async createUser(@Body() dto: CreateUserDto): Promise<CreateUserResponseDto> {
-    const user = await this.createUserUseCase.execute(dto);
-    return user;
+    const result = await this.createUserUseCase.execute(dto);
+
+    const user = UserResponseMapper.toDto(result.user);
+
+    return { user };
   }
 
   @ApiOperation({
@@ -96,7 +100,11 @@ export class UserController {
   @ApiError429('Too many requests')
   @ApiError500('Server error while retrieving users')
   async getAllUsers(): Promise<GetAllUsersResponseDto> {
-    return await this.getAllUsersUseCase.execute();
+    const result = await this.getAllUsersUseCase.execute();
+
+    const users = result.users.map((user) => UserResponseMapper.toDto(user));
+
+    return { users };
   }
 
   @ApiOperation({
@@ -122,8 +130,11 @@ export class UserController {
     @Body() dto: EditUserDto,
     @Param('id') id: string,
   ): Promise<EditUserResponseDto> {
-    const editedUser = await this.editUserUseCase.execute({ ...dto, id });
-    return editedUser;
+    const result = await this.editUserUseCase.execute({ ...dto, id });
+
+    const editedUser = UserResponseMapper.toDto(result.user);
+
+    return { user: editedUser };
   }
 
   @ApiOperation({

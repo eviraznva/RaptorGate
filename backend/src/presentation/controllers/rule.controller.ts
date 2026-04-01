@@ -24,22 +24,23 @@ import {
   ApiError429,
   ApiError500,
 } from '../decorators/api-error-response.decorator.js';
-import { RequirePermissions } from '../../infrastructure/decorators/require-permissions.decorator.js';
+import { RequirePermissions } from '../decorators/auth/require-permissions.decorator.js';
 import { GetAllRulesUseCase } from '../../application/use-cases/get-all-rules.use-case.js';
-import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
+import { ExtractToken } from '../decorators/auth/extract-token.decorator.js';
 import { CreateRuleUseCase } from '../../application/use-cases/create-rule.use-case.js';
 import { DeleteRuleUseCase } from '../../application/use-cases/delete-rule.use-case.js';
 import { EditRuleUseCase } from '../../application/use-cases/edit-rule.use-case.js';
-import { GetAllRulesResponseDto } from '../dtos/get-all-rules-response.dto.js';
 import { ResponseMessage } from '../decorators/response-message.decorator.js';
 import { CreateRuleResponseDto } from '../dtos/create-rule-response.dto.js';
-import { Roles } from '../../infrastructure/decorators/roles.decorator.js';
+import { Roles } from '../decorators/auth/roles.decorator.js';
 import { EditRuleResponseDto } from '../dtos/edit-rule-response.dto.js';
 import { Permission } from '../../domain/enums/permissions.enum.js';
 import { CreateRuleDto } from '../dtos/create-rule.dto.js';
 import { ApiBody, ApiOperation } from '@nestjs/swagger';
 import { EditRuleDto } from '../dtos/edit-rule.dto.js';
 import { Role } from '../../domain/enums/role.enum.js';
+import { GetAllRulesResponseDto } from '../dtos/get-all-rules-response.dto.js';
+import { RuleResponseMapper } from '../mappers/rule-response.mapper.js';
 
 @Controller('rule')
 export class RulesController {
@@ -75,12 +76,14 @@ export class RulesController {
     @Body() createRuleDto: CreateRuleDto,
     @ExtractToken() accessToken: string,
   ): Promise<CreateRuleResponseDto> {
-    const rule = await this.createRuleUseCase.execute({
+    const result = await this.createRuleUseCase.execute({
       ...createRuleDto,
       accessToken,
     });
 
-    return rule;
+    const rule = RuleResponseMapper.toDto(result.rule);
+
+    return { rule };
   }
 
   @ApiOperation({
@@ -101,7 +104,11 @@ export class RulesController {
   @ApiError500('Internal server error while retrieving firewall rules')
   async getAllRules(): Promise<GetAllRulesResponseDto> {
     const rules = await this.getAllRulesUseCase.execute();
-    return rules;
+    const mappedRules = rules.rules.map((rule) =>
+      RuleResponseMapper.toDto(rule),
+    );
+
+    return { rules: mappedRules };
   }
 
   @ApiOperation({

@@ -9,8 +9,9 @@ import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
 import type { ITokenService } from '../ports/token-service.interface.js';
 import { EditZoneResponseDto } from '../dtos/edit-zone-response.dto.js';
 import { EditZoneDto } from '../dtos/edit-zone.dto.js';
-import { Inject } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
+@Injectable()
 export class EditZoneUseCase {
   constructor(
     @Inject(ZONE_REPOSITORY_TOKEN)
