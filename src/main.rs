@@ -10,6 +10,7 @@ mod proto;
 mod query_server;
 mod rule_tree;
 mod tls;
+mod disk_store;
 
 use std::collections::HashMap;
 use std::net::IpAddr;
