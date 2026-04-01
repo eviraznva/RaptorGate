@@ -23,17 +23,18 @@ import {
   ApiError429,
   ApiError500,
 } from '../decorators/api-error-response.decorator.js';
-import { RequirePermissions } from '../../infrastructure/decorators/require-permissions.decorator.js';
+import { RequirePermissions } from '../decorators/auth/require-permissions.decorator.js';
 import { GetAllNatRulesUseCase } from '../../application/use-cases/get-all-nat-rules.use-case.js';
 import { CreateNatRuleUseCase } from '../../application/use-cases/create-nat-rule.use-case.js';
 import { DeleteNatRuleUseCase } from '../../application/use-cases/delete-nat-rule.use-case.js';
 import { EditNatRuleUseCase } from '../../application/use-cases/edit-nat-rule.use-case.js';
-import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
+import { ExtractToken } from '../decorators/auth/extract-token.decorator.js';
 import { GetAllNatRulesResponseDto } from '../dtos/get-all-nat-rules-response.dto.js';
 import { CreateNatRuleResponseDto } from '../dtos/create-nat-rule-response.dto.js';
 import { EditNatRuleResponseDto } from '../dtos/edit-nat-rule-response.dto.js';
+import { NatRuleResponseMapper } from '../mappers/nat-rule-response.mapper.js';
 import { ResponseMessage } from '../decorators/response-message.decorator.js';
-import { Roles } from '../../infrastructure/decorators/roles.decorator.js';
+import { Roles } from '../decorators/auth/roles.decorator.js';
 import { Permission } from '../../domain/enums/permissions.enum.js';
 import { CreateNatRuleDto } from '../dtos/create-nat-rule.dto.js';
 import { EditNatRuleDto } from '../dtos/edit-nat-rule.dto.js';
@@ -74,12 +75,14 @@ export class NatRuleController {
     @Body() createNatRuleDto: CreateNatRuleDto,
     @ExtractToken() accessToken: string,
   ): Promise<CreateNatRuleResponseDto> {
-    const natRule = await this.createNatRuleUseCase.execute({
+    const result = await this.createNatRuleUseCase.execute({
       ...createNatRuleDto,
       accessToken,
     });
 
-    return natRule;
+    const natRule = NatRuleResponseMapper.toDto(result.natRule);
+
+    return { natRule };
   }
 
   @ApiOperation({
@@ -99,8 +102,12 @@ export class NatRuleController {
   @ApiError429('Too many requests')
   @ApiError500('Internal server error while retrieving NAT rules')
   async getAllNatRules(): Promise<GetAllNatRulesResponseDto> {
-    const natRules = await this.getAllNatRulesUseCase.execute();
-    return natRules;
+    const result = await this.getAllNatRulesUseCase.execute();
+    const natRules = result.natRules.map((natRule) =>
+      NatRuleResponseMapper.toDto(natRule),
+    );
+
+    return { natRules };
   }
 
   @ApiOperation({
@@ -125,12 +132,14 @@ export class NatRuleController {
     @Body() dto: EditNatRuleDto,
     @Param('id') id: string,
   ): Promise<EditNatRuleResponseDto> {
-    const natRule = await this.editNatRuleUseCase.execute({
+    const result = await this.editNatRuleUseCase.execute({
       id,
       ...dto,
     });
 
-    return natRule;
+    const natRule = NatRuleResponseMapper.toDto(result.natRule);
+
+    return { natRule };
   }
 
   @ApiOperation({

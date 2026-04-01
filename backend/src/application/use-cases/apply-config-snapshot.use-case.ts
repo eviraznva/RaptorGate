@@ -10,10 +10,11 @@ import { ConfigurationSnapshot } from '../../domain/entities/configuration-snaps
 import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
 import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
 import type { IUserRolesRepository } from '../../domain/repositories/user-roles.repository.js';
+import { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
 import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
-import { RULES_REPOSITORY_TOKEN } from '../../domain/repositories/rules-repository.js';
 import type { IRulesRepository } from '../../domain/repositories/rules-repository.js';
+import { RULES_REPOSITORY_TOKEN } from '../../domain/repositories/rules-repository.js';
 import { ROLE_REPOSITORY_TOKEN } from '../../domain/repositories/role.repository.js';
 import { USER_REPOSITORY_TOKEN } from '../../domain/repositories/user.repository.js';
 import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
@@ -27,7 +28,6 @@ import type { ITokenService } from '../ports/token-service.interface.js';
 import { Checksum } from '../../domain/value-objects/checksum.vo.js';
 import { Inject, Injectable } from '@nestjs/common';
 import { hash } from 'node:crypto';
-import { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 
 @Injectable()
 export class ApplyConfigSnapshotUseCase {

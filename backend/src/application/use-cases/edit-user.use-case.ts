@@ -72,13 +72,8 @@ export class EditUserUseCase {
     );
 
     const userRoles = await this.roleRepository.findByUserId(user.getId());
+    user.setRoles(userRoles);
 
-    return {
-      id: user.getId(),
-      username: user.getUsername(),
-      createdAt: user.getCreatedAt(),
-      updatedAt: user.getUpdatedAt(),
-      roles: userRoles.map((r) => r.getName()),
-    };
+    return { user };
   }
 }

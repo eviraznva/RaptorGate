@@ -6,13 +6,13 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { REQUIRE_PERMISSIONS_KEY } from '../decorators/require-permissions.decorator.js';
+import { REQUIRE_PERMISSIONS_KEY } from '../../presentation/decorators/auth/require-permissions.decorator.js';
 import { TOKEN_SERVICE_TOKEN } from '../../application/ports/token-service.interface.js';
 import type { ITokenService } from '../../application/ports/token-service.interface.js';
 import { ROLE_REPOSITORY_TOKEN } from '../../domain/repositories/role.repository.js';
 import type { IRoleRepository } from '../../domain/repositories/role.repository.js';
+import { ROLES_KEY } from '../../presentation/decorators/auth/roles.decorator.js';
 import { Permission } from '../../domain/enums/permissions.enum.js';
-import { ROLES_KEY } from '../decorators/roles.decorator.js';
 import { Role } from '../../domain/enums/role.enum.js';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';

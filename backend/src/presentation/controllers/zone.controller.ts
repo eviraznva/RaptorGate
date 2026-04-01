@@ -10,16 +10,16 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { RequirePermissions } from '../../infrastructure/decorators/require-permissions.decorator.js';
+import { RequirePermissions } from '../decorators/auth/require-permissions.decorator.js';
 import { GetAllZonesUseCase } from '../../application/use-cases/get-all-zones.use-case.js';
-import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
+import { ExtractToken } from '../decorators/auth/extract-token.decorator.js';
 import { CreateZoneUseCase } from '../../application/use-cases/create-zone.use-case.js';
 import { DeleteZoneUseCase } from '../../application/use-cases/delete-zone.use-case.js';
 import { EditZoneUseCase } from '../../application/use-cases/edit-zone.use-case.js';
 import { GetAllZonesResponseDto } from '../dtos/get-all-zones-response.dto.js';
 import { ResponseMessage } from '../decorators/response-message.decorator.js';
 import { CreateZoneResponseDto } from '../dtos/create-zone-response.dto.js';
-import { Roles } from '../../infrastructure/decorators/roles.decorator.js';
+import { Roles } from '../decorators/auth/roles.decorator.js';
 import { EditZoneResponseDto } from '../dtos/edit-zone-response.dto.js';
 import { Permission } from '../../domain/enums/permissions.enum.js';
 import { CreateZoneDto } from '../dtos/create-zone.dto.js';
@@ -40,6 +40,7 @@ import {
   ApiError429,
   ApiError500,
 } from '../decorators/api-error-response.decorator.js';
+import { ZoneResponseMapper } from '../mappers/zone-response.mapper.js';
 
 @Controller('zones')
 export class ZoneController {
@@ -74,14 +75,14 @@ export class ZoneController {
     @Body() zoneDto: CreateZoneDto,
     @ExtractToken() accessToken: string,
   ): Promise<CreateZoneResponseDto> {
-    const zone = await this.createZoneUseCase.execute({
-      name: zoneDto.name,
-      description: zoneDto.description || null,
-      isActive: zoneDto.isActive,
+    const result = await this.createZoneUseCase.execute({
+      ...zoneDto,
       accessToken,
     });
 
-    return zone;
+    const zone = ZoneResponseMapper.toDto(result.zone);
+
+    return { zone };
   }
 
   @Get()
@@ -99,17 +100,11 @@ export class ZoneController {
   @ApiError429('Too many requests')
   @ApiError500('Internal server error while retrieving zones')
   async getAllZones(): Promise<GetAllZonesResponseDto> {
-    const { zones } = await this.getAllZonesUseCase.execute();
-    return {
-      zones: zones.map((zone) => ({
-        id: zone.getId(),
-        name: zone.getName(),
-        description: zone.getDescription(),
-        isActive: zone.getIsActive(),
-        createdAt: zone.getCreatedAt(),
-        createdBy: zone.getCreatedBy(),
-      })),
-    };
+    const result = await this.getAllZonesUseCase.execute();
+
+    const zones = result.zones.map((zone) => ZoneResponseMapper.toDto(zone));
+
+    return { zones };
   }
 
   @Put(':id')
@@ -135,20 +130,15 @@ export class ZoneController {
     @ExtractToken() accessToken: string,
     @Param('id') id: string,
   ): Promise<EditZoneResponseDto> {
-    const updatedZone = await this.editZoneUseCase.execute({
+    const result = await this.editZoneUseCase.execute({
       ...dto,
       accessToken,
       id,
     });
 
-    return {
-      id: updatedZone.zone.getId(),
-      name: updatedZone.zone.getName(),
-      description: updatedZone.zone.getDescription(),
-      isActive: updatedZone.zone.getIsActive(),
-      createdAt: updatedZone.zone.getCreatedAt(),
-      createdBy: updatedZone.zone.getCreatedBy(),
-    };
+    const updatedZone = ZoneResponseMapper.toDto(result.zone);
+
+    return { zone: updatedZone };
   }
 
   @Delete(':id')

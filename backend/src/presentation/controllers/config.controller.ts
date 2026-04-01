@@ -20,16 +20,16 @@ import {
   ApiOkEnvelope,
 } from '../decorators/api-envelope-response.decorator.js';
 import { ApplyConfigSnapshotUseCase } from '../../application/use-cases/apply-config-snapshot.use-case.js';
-import { RequirePermissions } from '../../infrastructure/decorators/require-permissions.decorator.js';
+import { RequirePermissions } from '../decorators/auth/require-permissions.decorator.js';
 import { GetConfigHistoryUseCase } from '../../application/use-cases/get-config-history.use-case.js';
 import { RollbackConfigUseCase } from '../../application/use-cases/rollback-config.use-case.js';
 import { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 import { RollbackConfigSnapshotResponseDto } from '../dtos/rollback-config-snapshot.dto.js';
-import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
+import { ExtractToken } from '../decorators/auth/extract-token.decorator.js';
 import { GetConfigHistoryResponseDto } from '../dtos/get-config-history-response.dto.js';
 import { ResponseMessage } from '../decorators/response-message.decorator.js';
 import { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.js';
-import { Roles } from '../../infrastructure/decorators/roles.decorator.js';
+import { Roles } from '../decorators/auth/roles.decorator.js';
 import { Permission } from '../../domain/enums/permissions.enum.js';
 import { ApiBody, ApiOperation } from '@nestjs/swagger';
 import { Role } from '../../domain/enums/role.enum.js';

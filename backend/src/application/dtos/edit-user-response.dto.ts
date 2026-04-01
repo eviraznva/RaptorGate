@@ -1,7 +1,5 @@
+import { User } from 'src/domain/entities/user.entity';
+
 export class EditUserResponseDto {
-  id: string;
-  username: string;
-  createdAt: Date;
-  updatedAt: Date;
-  roles: string[];
+  user: User;
 }

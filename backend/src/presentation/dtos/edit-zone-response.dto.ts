@@ -1,24 +1,17 @@
+import { ZoneItemResponseDto } from './zone-item-response.dto';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class EditZoneResponseDto {
-  @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
-  id: string;
-
-  @ApiProperty({ example: 'Living Room' })
-  name: string;
-
   @ApiProperty({
-    example: 'The main living area of the house',
-    nullable: true,
+    type: () => ZoneItemResponseDto,
+    example: {
+      id: 'c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4',
+      name: 'Bedroom',
+      description: 'The bedroom of the house',
+      isActive: true,
+      createdAt: '2026-03-19T18:36:47.226Z',
+      createdBy: '5ad2d67d-e9d9-4bfe-8708-d0c5b3138d92',
+    },
   })
-  description: string | null;
-
-  @ApiProperty({ example: true })
-  isActive: boolean;
-
-  @ApiProperty({ example: '2024-06-01T12:00:00Z' })
-  createdAt: Date;
-
-  @ApiProperty({ example: '345e4567-e89b-12d3-a456-426614174000' })
-  createdBy: string;
+  zone: ZoneItemResponseDto;
 }

@@ -7,8 +7,9 @@ import { CreateZoneResponseDto } from '../dtos/create-zone-response.dto.js';
 import type { ITokenService } from '../ports/token-service.interface.js';
 import { Zone } from '../../domain/entities/zone.entity.js';
 import { CreateZoneDto } from '../dtos/create-zone.dto.js';
-import { Inject } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
+@Injectable()
 export class CreateZoneUseCase {
   constructor(
     @Inject(ZONE_REPOSITORY_TOKEN)
@@ -35,13 +36,6 @@ export class CreateZoneUseCase {
 
     await this.zoneRepository.save(newZone, claims.sub);
 
-    return {
-      id: newZone.getId(),
-      name: newZone.getName(),
-      description: newZone.getDescription(),
-      isActive: newZone.getIsActive(),
-      createdAt: newZone.getCreatedAt(),
-      createdBy: newZone.getCreatedBy(),
-    };
+    return { zone: newZone };
   }
 }

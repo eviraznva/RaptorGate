@@ -51,12 +51,7 @@ export class EditZonePairUseCase {
     await this.zonePairRepository.save(zonePairExists);
 
     return {
-      id: zonePairExists.getId(),
-      srcZoneId: zonePairExists.getSrcZoneId(),
-      dstZoneId: zonePairExists.getDstZoneId(),
-      defaultPolicy: zonePairExists.getDefaultPolicy(),
-      createdAt: zonePairExists.getCreatedAt(),
-      createdBy: zonePairExists.getCreatedBy(),
+      zonePair: zonePairExists,
     };
   }
 }

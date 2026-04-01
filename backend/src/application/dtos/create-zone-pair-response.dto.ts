@@ -1,8 +1,5 @@
+import { ZonePair } from 'src/domain/entities/zone-pair.entity';
+
 export class CreateZonePairResponseDto {
-  id: string;
-  srcZoneId: string;
-  dstZoneId: string;
-  defaultPolicy: string;
-  createdAt: Date;
-  createdBy: string;
+  zonePair: ZonePair;
 }
