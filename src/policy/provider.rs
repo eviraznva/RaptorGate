@@ -3,6 +3,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use mockall::automock;
 use tonic::async_trait;
+use uuid::Uuid;
 
 
 use crate::{config::{AppConfig, DevConfig}, disk_store::ListDiskStore, policy::{Policy, policy_evaluator::PolicyEvaluator}, rule_tree::{RuleTree, parsing::parse_rule_tree}};
@@ -35,11 +36,11 @@ impl DiskPolicyProvider {
     pub fn new(config: &AppConfig) -> Self {
         if let Some(DevConfig { policy_override: Some(policy_override), .. }) = &config.dev_config {
             let policies = ArcSwap::new(Arc::new(vec![Policy { 
-                id: String::from("dev_policy").into(),
+                id: Uuid::now_v7().into(),
                 name: "DEV OVERRIDE".into(),
-                zone_pair_id: "dev_zone_pair".into(),
+                zone_pair_id: Uuid::now_v7().into(),
                 priority: 0,
-                rule_tree: RuleTree::new("DEV OVERRIDE".to_string(), "DEV OVERRIDE".to_string(), parse_rule_tree(policy_override).expect("COULDNT APPLY DEV POLICY OVERRIDE"))
+                rule_tree: RuleTree::new(parse_rule_tree(policy_override).expect("COULDNT APPLY DEV POLICY OVERRIDE"))
             }]));
 
             tracing::debug!("DEV MODE: Using policy override from environment variable DEV_OVERRIDE_POLICY");

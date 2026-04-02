@@ -1,6 +1,7 @@
 use derive_more::From;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::{proto::config::Rule, rule_tree::RuleTree};
 pub use crate::rule_tree::{parsing::{RaptorlangError, parse_rule_tree}};
@@ -18,7 +19,7 @@ pub struct Policy {
     pub id: PolicyId,
     pub name: String,
     // pub description: Option<String>,
-    pub zone_pair_id: String,
+    pub zone_pair_id: ZonePairId,
     // pub is_active: bool,
     pub priority: u32,
     // pub created_at: SystemTime,
@@ -29,18 +30,21 @@ pub struct Policy {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Deserialize, Serialize)]
-pub struct PolicyId(String);
+pub struct PolicyId(Uuid);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Deserialize, Serialize)]
+pub struct ZonePairId(Uuid);
 
 impl TryFrom<Rule> for Policy {
-    type Error = RaptorlangError;
+    type Error = anyhow::Error;
     fn try_from(value: Rule) -> Result<Self, Self::Error> {
-        let rule_tree = parse_rule_tree(&value.content)?;
+        let head = parse_rule_tree(&value.content)?;
         Ok(Policy {
-            id: PolicyId(value.id),
+            id: PolicyId(value.id.try_into()?),
             name: value.name.clone(),
-            zone_pair_id: value.zone_pair_id,
+            zone_pair_id: ZonePairId(value.zone_pair_id.try_into()?),
             priority: value.priority,
-            rule_tree: RuleTree::new(value.name.clone(), "TODO:".into(), rule_tree), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
+            rule_tree: RuleTree::new(head), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
         })
     }
 }

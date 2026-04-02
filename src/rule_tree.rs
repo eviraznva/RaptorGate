@@ -13,18 +13,14 @@ use derive_more::{Debug, Display, Error, PartialEq};
 use crate::{policy::parse_rule_tree, rule_tree::matcher::Match};
 pub use matcher::MatchBuilder;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Display)]
 pub struct RuleTree {
-    name: String,
-    description: String,
     pub head: Match,
 }
 
 impl Serialize for RuleTree {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut state = s.serialize_struct("RuleTree", 3)?;
-        state.serialize_field("name", &self.name)?;
-        state.serialize_field("description", &self.description)?;
+        let mut state = s.serialize_struct("RuleTree", 1)?;
         state.serialize_field("head", &self.head.to_string())?;
         state.end()
     }
@@ -42,27 +38,15 @@ impl<'de> Deserialize<'de> for RuleTree {
         let raw = Raw::deserialize(d)?;
         let tree = parse_rule_tree(&raw.head).map_err(serde::de::Error::custom)?;
 
-        Ok(RuleTree { name: raw.name, description: raw.description, head: tree })
+        Ok(RuleTree { head: tree })
     }
 }
 
 impl RuleTree {
-    pub fn new(name: String, description: String, head: Match) -> Self {
+    pub fn new(head: Match) -> Self {
         Self {
-            name,
-            description,
             head,
         }
-    }
-}
-
-impl std::fmt::Display for RuleTree {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "RuleTree: {}, description: {}",
-            self.name, self.description
-        )
     }
 }
 

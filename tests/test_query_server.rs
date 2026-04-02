@@ -76,9 +76,9 @@ async fn validate_config_happy_path_returns_no_error() {
     let resp = client
         .swap_config(SwapConfigRequest {
             rules: vec![Rule {
-                id: "rule-1".into(),
+                id: Uuid::now_v7().into(),
                 name: "correct".into(),
-                zone_pair_id: "zone-a-b".into(),
+                zone_pair_id: Uuid::now_v7().into(),
                 priority: 0,
                 content: "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } = v6: verdict drop }".into(),
             }],
@@ -98,9 +98,9 @@ async fn validate_config_error_path_returns_error_message() {
     let resp = client
         .swap_config(SwapConfigRequest {
             rules: vec![Rule {
-                id: "rule-2".into(),
+                id: Uuid::now_v7().into(),
                 name: "incorrect".into(),
-                zone_pair_id: "zone-a-b".into(),
+                zone_pair_id: Uuid::now_v7().into(),
                 priority: 1,
                 content: "this is not valid raptorlang".into(),
             }],
