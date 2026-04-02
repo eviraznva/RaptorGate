@@ -4,7 +4,8 @@ use arc_swap::ArcSwap;
 use mockall::automock;
 use tonic::async_trait;
 
-use crate::{config::{AppConfig, DevConfig}, policy::{Policy, policy_evaluator::PolicyEvaluator}, rule_tree::{RuleTree, parsing::parse_rule_tree}};
+
+use crate::{config::{AppConfig, DevConfig}, disk_store::ListDiskStore, policy::{Policy, policy_evaluator::PolicyEvaluator}, rule_tree::{RuleTree, parsing::parse_rule_tree}};
 
 #[async_trait]
 #[automock]
@@ -14,13 +15,15 @@ pub trait PolicySwapper {
 
 pub struct DiskPolicyProvider {
     policies: ArcSwap<Vec<Policy>>,
-    evaluator: PolicyEvaluator //TODO: don't bundle the evaluator with this
+    evaluator: PolicyEvaluator, //TODO: don't bundle the evaluator with this
+    store: ListDiskStore<Policy>,
 }
 
 #[async_trait]
 impl PolicySwapper for DiskPolicyProvider {
     async fn swap_policies(&self, new_policies: Vec<Policy>) -> Result<(), anyhow::Error> {
-        // TODO: write to disk, serialize with serde or something
+        // self.store.save();
+
         self.policies.swap(new_policies.into());
         Ok(())
     }
@@ -42,9 +45,9 @@ impl DiskPolicyProvider {
             tracing::debug!("DEV MODE: Using policy override from environment variable DEV_OVERRIDE_POLICY");
             let evaluator = PolicyEvaluator::new(policies.load()[0].rule_tree.clone(), crate::rule_tree::Verdict::Drop);
 
-            Self { policies, evaluator}
+            Self { policies, evaluator, store: ListDiskStore::new("policies", "/tmp/".into())}
         } else {
-            todo!("Implement DiskPolicyProvider to load policies from disk")
+            todo!()
         }
     }
 

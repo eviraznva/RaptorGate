@@ -36,6 +36,7 @@ impl<T> DiskStore<T> where T: for<'a> Deserialize<'a> + Serialize + Clone {
         Ok(deserialized)
     }
  
+    //TODO: integrate with git
     async fn save(&self, item: T) -> Result<(), StoreError> {
         let serialized = serde_json::to_string_pretty(&item)?;
         let tmp_path = self.save_dir.join(self.name.with_extension("json.tmp"));
@@ -53,7 +54,7 @@ pub struct ListDiskStore<T> {
 }
  
 impl<T> ListDiskStore<T> where T: for<'a> Deserialize<'a> + Serialize + Clone {
-    pub fn new(name: &'static str, save_dir: PathBuf) -> Self {
+    pub fn new(name: impl AsRef<Path>, save_dir: PathBuf) -> Self {
         Self { store: DiskStore::new(name, save_dir) }
     }
  
@@ -71,7 +72,7 @@ pub struct SingleDiskStore<T> {
 }
  
 impl<T> SingleDiskStore<T> where T: for<'a> Deserialize<'a> + Serialize + Clone {
-    pub fn new(name: &'static str, save_dir: PathBuf) -> Self {
+    pub fn new(name: impl AsRef<Path>, save_dir: PathBuf) -> Self {
         Self { store: DiskStore::new(name, save_dir) }
     }
     pub async fn load(&self) -> Result<SavedProperty<T>, StoreError> {

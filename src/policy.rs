@@ -1,4 +1,5 @@
 use derive_more::From;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{proto::config::Rule, rule_tree::RuleTree};
@@ -12,6 +13,7 @@ pub mod nat;
 
 
 // TODO: jak na razie to z tego co widze backend zapisuje json z regułami. To raczej powinna być w całości odpowiedzialność firewalla.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
     pub id: PolicyId,
     pub name: String,
@@ -26,7 +28,7 @@ pub struct Policy {
     pub rule_tree: RuleTree,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, From)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Deserialize, Serialize)]
 pub struct PolicyId(String);
 
 impl TryFrom<Rule> for Policy {

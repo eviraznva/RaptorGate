@@ -2,11 +2,15 @@ pub mod matcher;
 pub mod parsing;
 pub mod types;
 
+use std::fmt::Display;
+
+use serde::{Deserialize, Serialize};
 pub use types::{ArrivalInfo, Hour, IPError, IpGlobbable, IpVer, Octet, Port, Protocol, Weekday};
+use serde::ser::SerializeStruct;
 
 use derive_more::{Debug, Display, Error, PartialEq};
 
-use crate::rule_tree::matcher::Match;
+use crate::{policy::parse_rule_tree, rule_tree::matcher::Match};
 pub use matcher::MatchBuilder;
 
 #[derive(Clone, Debug)]
@@ -14,6 +18,32 @@ pub struct RuleTree {
     name: String,
     description: String,
     pub head: Match,
+}
+
+impl Serialize for RuleTree {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut state = s.serialize_struct("RuleTree", 3)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("description", &self.description)?;
+        state.serialize_field("head", &self.head.to_string())?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for RuleTree {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            name: String,
+            description: String,
+            head: String,
+        }
+
+        let raw = Raw::deserialize(d)?;
+        let tree = parse_rule_tree(&raw.head).map_err(serde::de::Error::custom)?;
+
+        Ok(RuleTree { name: raw.name, description: raw.description, head: tree })
+    }
 }
 
 impl RuleTree {
@@ -42,6 +72,19 @@ struct Arm {
     into: ArmEnd,
 }
 
+impl Arm {
+    fn fmt_indented(&self, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
+        let indent_str = "\t".repeat(indent);
+        match &self.into {
+            ArmEnd::Verdict(v) => writeln!(f, "{}{}: {}", indent_str, self.pattern, v),
+            ArmEnd::Match(m) => {
+                writeln!(f, "{}{} =>", indent_str, self.pattern)?;
+                m.fmt_indented(f, indent + 1)
+            }
+        }
+    }
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum ArmEnd {
     Verdict(Verdict),
@@ -50,24 +93,57 @@ pub enum ArmEnd {
 
 #[derive(Debug, Clone, PartialEq, Display)]
 pub enum Verdict {
+    #[display("verdict allow")]
     Allow,
+    #[display("verdict drop")]
     Drop,
+    #[display("verdict allow_warn {}", _0)]
     AllowWarn(String),
+    #[display("verdict drop_warn {}", _0)]
     DropWarn(String),
 }
 
-#[derive(Debug, Display, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     // TODO: move equal into comparision or alternatively remove comparision entirely
     Equal(FieldValue),
-    #[display("Patterns, count: {}", _0.len())]
     Or(Vec<Pattern>),
-    #[display("Patterns, count: {}", _0.len())]
     And(Vec<Pattern>),
 
-    #[display("Comparing with {}, to {}", _0, _1)]
     Comparison(Operation, FieldValue),
     Wildcard,
+}
+
+impl Display for Pattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Pattern::Equal(val) => write!(f, "= {val}"),
+            Pattern::Comparison(op, val) => write!(f, "{op} {val}"),
+            Pattern::Or(patterns) => {
+                let patterns_str = format!("|({})", 
+                    patterns
+                        .iter()
+                        .map(|p| format!("{p}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
+
+                write!(f, "{patterns_str}")
+            }
+            Pattern::And(patterns) => {
+                let patterns_str = format!("|({})", 
+                    patterns
+                        .iter()
+                        .map(|p| format!("{p}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
+
+                write!(f, "{patterns_str}")
+            }
+            Pattern::Wildcard => write!(f, "_"),
+        }
+    }
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq)]
@@ -80,7 +156,7 @@ pub enum FieldValue {
     Port(Port),
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MatchKind {
     SrcIp,
     DstIp,
@@ -92,11 +168,31 @@ pub enum MatchKind {
     DstPort,
 }
 
+impl std::fmt::Display for MatchKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            MatchKind::SrcIp    => "src_ip",
+            MatchKind::DstIp    => "dst_ip",
+            MatchKind::IpVer    => "ip_ver",
+            MatchKind::DayOfWeek => "day_of_week",
+            MatchKind::Hour     => "hour",
+            MatchKind::Protocol => "protocol",
+            MatchKind::SrcPort  => "src_port",
+            MatchKind::DstPort  => "dst_port",
+        };
+        write!(f, "{s}")
+    }
+}
+
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
+    #[display(">")]
     Greater,
+    #[display("<")]
     Lesser,
+    #[display(">=")]
     GreaterOrEqual,
+    #[display("<=")]
     LesserOrEqual,
 }
 

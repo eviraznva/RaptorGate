@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use derive_more::Debug;
 use nonempty::NonEmpty;
 
@@ -27,6 +29,24 @@ impl Match {
 
     pub(super) fn arms(&self) -> &NonEmpty<Box<Arm>> {
         &self.arms
+    }
+
+    pub(super) fn fmt_indented(&self, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
+        let indent_str = "\t".repeat(indent);
+        writeln!(f, "{}match {} {{", indent_str, self.kind)?;
+
+        for arm in &self.arms {
+            arm.fmt_indented(f, indent + 1)?;
+        }
+
+        writeln!(f, "{}}}", indent_str)?;
+        Ok(())
+    }
+}
+
+impl Display for Match {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.fmt_indented(f, 0)
     }
 }
 
