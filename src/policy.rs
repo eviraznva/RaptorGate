@@ -1,4 +1,4 @@
-use derive_more::From;
+use derive_more::{From, Into};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -29,10 +29,10 @@ pub struct Policy {
     pub rule_tree: RuleTree,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize)]
 pub struct PolicyId(Uuid);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize)]
 pub struct ZonePairId(Uuid);
 
 impl TryFrom<Rule> for Policy {

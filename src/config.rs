@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, path::PathBuf};
 
 pub struct AppConfig {
     // Packet capture
@@ -13,7 +13,7 @@ pub struct AppConfig {
     pub tun_netmask: Ipv4Addr,
 
     // Policy
-    pub block_icmp: bool,
+    pub policies_dir: PathBuf,
 
     // gRPC / backend
     pub grpc_socket_path: String,
@@ -22,8 +22,6 @@ pub struct AppConfig {
     pub firewall_version: String,
     pub heartbeat_interval_secs: u64,
 
-    // Redb snapshot
-    pub redb_snapshot_path: String,
 
     pub dev_config: Option<DevConfig>,
     // PKI — przechowywanie certyfikatu CA i zaszyfrowanego klucza prywatnego
@@ -54,6 +52,7 @@ impl AppConfig {
         }
 
         Ok(Self {
+
             capture_interfaces: std::env::var("CAPTURE_INTERFACES")
                 .unwrap_or_else(|_| "eth1,eth2".into())
                 .split(',')
@@ -83,11 +82,6 @@ impl AppConfig {
                 .parse()
                 .context("TUN_NETMASK must be a valid IPv4 address")?,
 
-            block_icmp: std::env::var("BLOCK_ICMP")
-                .unwrap_or_else(|_| "false".into())
-                .to_lowercase()
-                == "true",
-
             grpc_socket_path: std::env::var("GRPC_SOCKET_PATH")
                 .unwrap_or_else(|_| "./sockets/firewall.sock".into()),
 
@@ -105,14 +99,14 @@ impl AppConfig {
                 .parse()
                 .context("HEARTBEAT_INTERVAL_SECS must be an integer")?,
 
-            redb_snapshot_path: std::env::var("REDB_SNAPSHOT_PATH")
-                .unwrap_or_else(|_| "./.data/snapshot.redb".into()),
-
             dev_config: dev_mode.then_some(DevConfig {
                 policy_override: dev_policy,
             }),
             pki_dir: std::env::var("RAPTORGATE_PKI_DIR")
                 .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
+
+            policies_dir: std::env::var("POLICIES_DIRECTORY")
+                .unwrap_or_else(|_| "./policies".into()).into(),
         })
     }
 }

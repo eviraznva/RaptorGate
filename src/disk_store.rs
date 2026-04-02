@@ -7,9 +7,9 @@ use uuid::Uuid;
  
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct SavedProperty<T> {
-    id: Uuid,
+    pub id: Uuid,
     #[serde(flatten)]
-    contents: T,
+    pub contents: T,
 }
  
 #[derive(Deserialize, Serialize, Clone)]
