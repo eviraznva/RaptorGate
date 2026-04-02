@@ -70,7 +70,7 @@ impl std::fmt::Display for IpGlobbable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}.{}.{}.{}",
+            "\"{}.{}.{}.{}\"",
             self.octets[0], self.octets[1], self.octets[2], self.octets[3],
         )
     }

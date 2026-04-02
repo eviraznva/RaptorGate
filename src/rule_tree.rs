@@ -78,7 +78,7 @@ impl Arm {
         match &self.into {
             ArmEnd::Verdict(v) => writeln!(f, "{}{}: {}", indent_str, self.pattern, v),
             ArmEnd::Match(m) => {
-                writeln!(f, "{}{} =>", indent_str, self.pattern)?;
+                writeln!(f, "{}{}: ", indent_str, self.pattern)?;
                 m.fmt_indented(f, indent + 1)
             }
         }
@@ -97,9 +97,9 @@ pub enum Verdict {
     Allow,
     #[display("verdict drop")]
     Drop,
-    #[display("verdict allow_warn {}", _0)]
+    #[display("verdict allow_warn \"{}\"", _0)]
     AllowWarn(String),
-    #[display("verdict drop_warn {}", _0)]
+    #[display("verdict drop_warn \"{}\"", _0)]
     DropWarn(String),
 }
 
@@ -131,7 +131,7 @@ impl Display for Pattern {
                 write!(f, "{patterns_str}")
             }
             Pattern::And(patterns) => {
-                let patterns_str = format!("|({})", 
+                let patterns_str = format!("&({})", 
                     patterns
                         .iter()
                         .map(|p| format!("{p}"))
