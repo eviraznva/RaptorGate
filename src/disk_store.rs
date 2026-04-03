@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
  
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::fs::{self};
+use tokio::{fs::{self}, sync::Mutex};
 use uuid::Uuid;
  
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -21,28 +21,34 @@ struct DiskStore<T> {
     name: PathBuf,
     save_dir: PathBuf,
     marker: std::marker::PhantomData<T>,
+    pending: Mutex<()>
 }
  
 impl<T> DiskStore<T> where T: for<'a> Deserialize<'a> + Serialize + Clone {
     fn new(name: impl AsRef<Path>, save_dir: PathBuf) -> Self {
-        Self { name: name.as_ref().to_owned(), marker: std::marker::PhantomData, save_dir }
+        Self { name: name.as_ref().to_owned(), marker: std::marker::PhantomData, save_dir, pending: Mutex::new(()) }
     }
  
     async fn load(&self) -> Result<T, StoreError> {
+        let _guard = self.pending.lock().await;
         let path = self.save_dir.join(self.name.with_extension("json"));
         let serialized = fs::read_to_string(&path).await?;
- 
+
         let deserialized = serde_json::from_str::<T>(&serialized)?;
         Ok(deserialized)
     }
  
     //TODO: integrate with git
     async fn save(&self, item: T) -> Result<(), StoreError> {
+        let _guard = self.pending.lock().await;
+
         let serialized = serde_json::to_string_pretty(&item)?;
         let tmp_path = self.save_dir.join(self.name.with_extension("json.tmp"));
         let final_path = self.save_dir.join(self.name.with_extension("json"));
- 
+
         fs::write(&tmp_path, &serialized).await?;
+        // let file = fs::File::open(&tmp_path).await?;
+        // file.sync_all().await?;
         fs::rename(&tmp_path, &final_path).await?;
  
         Ok(())

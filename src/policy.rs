@@ -1,4 +1,4 @@
-use derive_more::{From, Into};
+use derive_more::{Display, From, Into};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -31,10 +31,10 @@ pub struct Policy {
     pub rule_tree: RuleTree,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct PolicyId(Uuid);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct ZonePairId(Uuid);
 
 impl Policy {
@@ -48,5 +48,15 @@ impl Policy {
             priority: value.priority,
             rule_tree: RuleTree::new(head), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
         }))
+    }
+
+    pub fn into_rule(&self, id: PolicyId) -> Rule {
+        Rule {
+            id: Uuid::from(id).into(),
+            name: self.name.clone(),
+            zone_pair_id: Uuid::from(self.zone_pair_id.clone()).into(),
+            priority: self.priority,
+            content: self.rule_tree.to_string(), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
+        }
     }
 }

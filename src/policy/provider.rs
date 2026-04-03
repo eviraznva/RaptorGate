@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, Guard};
 use mockall::automock;
 use tonic::async_trait;
 use uuid::Uuid;
@@ -12,8 +12,10 @@ use crate::{config::{AppConfig, DevConfig}, disk_store::{ListDiskStore, SavedPro
 
 #[async_trait]
 #[automock]
-pub trait PolicySwapper {
+pub trait PolicyManager {
     async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), anyhow::Error>; // should write to disk, thats why its async
+    fn get_policies(&self) -> Guard<Arc<HashMap<PolicyId, Policy>>>;
+    fn get_policy(&self, policy_id: &PolicyId) -> Option<Policy>;
 }
 
 pub struct DiskPolicyProvider {
@@ -23,7 +25,7 @@ pub struct DiskPolicyProvider {
 }
 
 #[async_trait]
-impl PolicySwapper for DiskPolicyProvider {
+impl PolicyManager for DiskPolicyProvider {
     async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), anyhow::Error> {
         let old_policies = self.policies.load();
 
@@ -49,6 +51,14 @@ impl PolicySwapper for DiskPolicyProvider {
 
         #[allow(clippy::from_iter_instead_of_collect)]
         Ok(())
+    }
+
+    fn get_policies(&self) -> Guard<Arc<HashMap<PolicyId, Policy>>> {
+        self.policies.load()
+    }
+
+    fn get_policy(&self, policy_id: &PolicyId) -> Option<Policy> {
+        self.policies.load().get(policy_id).cloned()
     }
 }
 
