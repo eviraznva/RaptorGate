@@ -76,7 +76,7 @@ async fn main() {
     };
 
     let tcp_session_tracker = TcpSessionTracker::new();
-    let policy_provider = Arc::new(DiskPolicyProvider::new(&config));
+    let policy_provider = Arc::new(DiskPolicyProvider::from_loaded(&config).await.expect("Failed to initialize policy provider"));
 
     tokio::spawn(events::init_event_queue());
     let nat_engine = build_test_nat();

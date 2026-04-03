@@ -16,7 +16,9 @@ pub mod nat;
 // TODO: jak na razie to z tego co widze backend zapisuje json z regułami. To raczej powinna być w całości odpowiedzialność firewalla.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
+    #[serde(skip_serializing)] //TODO: this is bad, ideally this shouldn't have an id at all and the id should only be used for correlation
     pub id: PolicyId,
+
     pub name: String,
     // pub description: Option<String>,
     pub zone_pair_id: ZonePairId,

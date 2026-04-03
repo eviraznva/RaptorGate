@@ -1,3 +1,5 @@
+//TODO: concretize the errors
+
 use std::{collections::HashMap, sync::Arc};
 
 use arc_swap::ArcSwap;
@@ -6,7 +8,7 @@ use tonic::async_trait;
 use uuid::Uuid;
 
 
-use crate::{config::{AppConfig, DevConfig}, disk_store::ListDiskStore, policy::{Policy, PolicyId, policy_evaluator::PolicyEvaluator}, rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict, parsing::parse_rule_tree}};
+use crate::{config::{AppConfig, DevConfig}, disk_store::{ListDiskStore, SavedProperty}, policy::{Policy, PolicyId, policy_evaluator::PolicyEvaluator}, rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict, parsing::parse_rule_tree}};
 
 #[async_trait]
 #[automock]
@@ -23,10 +25,29 @@ pub struct DiskPolicyProvider {
 #[async_trait]
 impl PolicySwapper for DiskPolicyProvider {
     async fn swap_policies(&self, new_policies: Vec<Policy>) -> Result<(), anyhow::Error> {
-        // self.store.save();
+        let old_policies = self.policies.load();
+
+        self.store.save(new_policies.iter().cloned().map(|pol| SavedProperty {
+            id: pol.id.clone().into(), contents: pol 
+        }).collect()).await?;
+
+        let loaded = self.store.load().await; // we load to check if we saved properly
+        match loaded {
+            Ok(loaded) => {
+                let map = loaded.into_iter().map(|prop| (prop.id.into(), prop.contents)).collect();
+                self.policies.swap(Arc::new(map));
+            }
+
+            Err(err) => {
+                tracing::error!(error = %err, "failed to load policies after saving new policies");
+                self.store.save(old_policies.values().cloned().map(|pol| SavedProperty {
+                    id: pol.id.clone().into(), contents: pol.clone() 
+                }).collect()).await?; // try to restore old policies, if this fails we're in a really bad state and there's not much we can do about it. TODO: emit a notification event
+                return Err(err.into());
+            }
+        }
 
         #[allow(clippy::from_iter_instead_of_collect)]
-        self.policies.swap(Arc::new(HashMap::from_iter(new_policies.into_iter().map(|pol| (pol.id.clone(), pol)))));
         Ok(())
     }
 }
