@@ -20,22 +20,23 @@ fn unique_socket() -> String {
     format!("/tmp/test-query-{}.sock", Uuid::now_v7())
 }
 
-fn make_mock_policy_swap() -> MockPolicySwapper {
-    let mut mock = MockPolicySwapper::new();
+// fn make_mock_policy_swap() -> MockPolicySwapper {
+//     let mut mock = MockPolicySwapper::new();
+//
+//     mock.expect_swap_policies()
+//         .returning(|policies: Vec<Policy>| {
+//             Box::pin(async move {
+//                 if policies.len() == 1 && policies[0].name == "correct" && policies[0].priority == 0 {
+//                     Ok(())
+//                 } else {
+//                     Err(anyhow::anyhow!("invalid raptorlang"))
+//                 }
+//             })
+//         });
+//
+//     mock
+// }
 
-    mock.expect_swap_policies()
-        .returning(|policies: Vec<Policy>| {
-            Box::pin(async move {
-                if policies.len() == 1 && policies[0].name == "correct" && policies[0].priority == 0 {
-                    Ok(())
-                } else {
-                    Err(anyhow::anyhow!("invalid raptorlang"))
-                }
-            })
-        });
-
-    mock
-}
 async fn make_handler() -> QueryHandler<DiskPolicyProvider> {
     // let policy = make_mock_policy_swap();
     unsafe {

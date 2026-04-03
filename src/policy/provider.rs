@@ -13,7 +13,7 @@ use crate::{config::{AppConfig, DevConfig}, disk_store::{ListDiskStore, SavedPro
 #[async_trait]
 #[automock]
 pub trait PolicySwapper {
-    async fn swap_policies(&self, new_policies: Vec<Policy>) -> Result<(), anyhow::Error>; // should write to disk, thats why its async
+    async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), anyhow::Error>; // should write to disk, thats why its async
 }
 
 pub struct DiskPolicyProvider {
@@ -24,11 +24,11 @@ pub struct DiskPolicyProvider {
 
 #[async_trait]
 impl PolicySwapper for DiskPolicyProvider {
-    async fn swap_policies(&self, new_policies: Vec<Policy>) -> Result<(), anyhow::Error> {
+    async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), anyhow::Error> {
         let old_policies = self.policies.load();
 
         self.store.save(new_policies.iter().cloned().map(|pol| SavedProperty {
-            id: pol.id.clone().into(), contents: pol 
+            id: pol.0.into(), contents: pol.1 
         }).collect()).await?;
 
         let loaded = self.store.load().await; // we load to check if we saved properly
@@ -40,8 +40,8 @@ impl PolicySwapper for DiskPolicyProvider {
 
             Err(err) => {
                 tracing::error!(error = %err, "failed to load policies after saving new policies");
-                self.store.save(old_policies.values().cloned().map(|pol| SavedProperty {
-                    id: pol.id.clone().into(), contents: pol.clone() 
+                self.store.save(old_policies.iter().map(|pol| SavedProperty {
+                    id: pol.0.clone().into(), contents: pol.1.clone() 
                 }).collect()).await?; // try to restore old policies, if this fails we're in a really bad state and there's not much we can do about it. TODO: emit a notification event
                 return Err(err.into());
             }
@@ -58,14 +58,13 @@ impl DiskPolicyProvider {
     pub async fn from_loaded(config: &AppConfig) -> anyhow::Result<Self> {
         if let Some(DevConfig { policy_override: Some(policy_override), .. }) = &config.dev_config {
             let dev_policy = Policy { 
-                id: Uuid::now_v7().into(),
                 name: "DEV OVERRIDE".into(),
                 zone_pair_id: Uuid::now_v7().into(),
                 priority: 0,
                 rule_tree: RuleTree::new(parse_rule_tree(policy_override).expect("COULDNT APPLY DEV POLICY OVERRIDE"))
             };
 
-            let policies = ArcSwap::new(Arc::new(HashMap::from([(dev_policy.id.clone(), dev_policy)])));
+            let policies = ArcSwap::new(Arc::new(HashMap::from([(Uuid::now_v7().into(), dev_policy)])));
             let evaluator = PolicyEvaluator::new(policies.load().values().next().unwrap().rule_tree.clone(), crate::rule_tree::Verdict::Drop);
 
             tracing::debug!("DEV MODE: Using policy override from environment variable DEV_OVERRIDE_POLICY");
@@ -87,7 +86,6 @@ impl DiskPolicyProvider {
         }
 
         let default_policy = Policy {
-            id: Uuid::now_v7().into(),
             name: "Default policy".into(),
             zone_pair_id: Uuid::now_v7().into(),
             priority: 0,
@@ -98,7 +96,7 @@ impl DiskPolicyProvider {
                     )).build()?)
         };
 
-        let policies = ArcSwap::new(Arc::new(HashMap::from([(default_policy.id.clone(), default_policy)])));
+        let policies = ArcSwap::new(Arc::new(HashMap::from([(Uuid::now_v7().into(), default_policy)])));
         let evaluator = PolicyEvaluator::new(policies.load().iter().next().unwrap().1.rule_tree.clone(), crate::rule_tree::Verdict::Drop);
 
         Ok(Self { policies, evaluator, store})

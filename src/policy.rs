@@ -16,8 +16,8 @@ pub mod nat;
 // TODO: jak na razie to z tego co widze backend zapisuje json z regułami. To raczej powinna być w całości odpowiedzialność firewalla.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
-    #[serde(skip_serializing)] //TODO: this is bad, ideally this shouldn't have an id at all and the id should only be used for correlation
-    pub id: PolicyId,
+    // #[serde(skip_serializing)] //TODO: this is bad, ideally this shouldn't have an id at all and the id should only be used for correlation
+    // pub id: PolicyId,
 
     pub name: String,
     // pub description: Option<String>,
@@ -37,16 +37,16 @@ pub struct PolicyId(Uuid);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize)]
 pub struct ZonePairId(Uuid);
 
-impl TryFrom<Rule> for Policy {
-    type Error = anyhow::Error;
-    fn try_from(value: Rule) -> Result<Self, Self::Error> {
+impl Policy {
+    pub fn try_from_rule(value: Rule) -> Result<(PolicyId, Self), anyhow::Error> {
         let head = parse_rule_tree(&value.content)?;
-        Ok(Policy {
-            id: PolicyId(value.id.try_into()?),
+        Ok((PolicyId(value.id.try_into()?),
+        Policy {
+            // id: PolicyId(value.id.try_into()?),
             name: value.name.clone(),
             zone_pair_id: ZonePairId(value.zone_pair_id.try_into()?),
             priority: value.priority,
             rule_tree: RuleTree::new(head), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
-        })
+        }))
     }
 }

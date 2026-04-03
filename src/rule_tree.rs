@@ -30,8 +30,6 @@ impl<'de> Deserialize<'de> for RuleTree {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
         struct Raw {
-            name: String,
-            description: String,
             head: String,
         }
 

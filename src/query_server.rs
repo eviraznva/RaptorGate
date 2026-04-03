@@ -91,7 +91,7 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
         let mut policies = Vec::with_capacity(rules.len());
 
         for rule in rules {
-            match Policy::try_from(rule) {
+            match Policy::try_from_rule(rule) {
                 Ok(policy) => policies.push(policy),
                 Err(err) => {
                     tracing::warn!(error = %err, "failed to parse policy from SwapConfigRequest");
@@ -107,6 +107,7 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
                 return Err(Status::internal(format!("failed to swap policies: {err}")));
             }
         };
+
         Ok(Response::new(response))
     }
 
