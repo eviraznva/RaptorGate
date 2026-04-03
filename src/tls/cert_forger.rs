@@ -7,6 +7,9 @@ use lru::LruCache;
 use rcgen::{
     CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SanType,
 };
+use rustls::crypto::ring as rustls_ring;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::sign::CertifiedKey;
 use time::OffsetDateTime;
 
 // Sfałszowany certyfikat domeny podpisany przez CA firewalla.
@@ -14,6 +17,25 @@ pub struct ForgedCert {
     pub cert_pem: String,
     pub key_pem: String,
     pub cert_der: Vec<u8>,
+}
+
+impl ForgedCert {
+    // Konwertuje do formatu rustls CertifiedKey.
+    pub fn to_certified_key(&self) -> anyhow::Result<Arc<CertifiedKey>> {
+        let cert_chain = vec![CertificateDer::from(self.cert_der.clone())];
+
+        let key_der = PrivateKeyDer::try_from(
+            rustls_pemfile::private_key(&mut self.key_pem.as_bytes())
+                .context("Failed to parse private key PEM")?
+                .context("No private key found in PEM data")?,
+        )
+        .map_err(|e| anyhow::anyhow!("Invalid private key DER: {e:?}"))?;
+
+        let signing_key = rustls_ring::sign::any_supported_type(&key_der)
+            .context("Unsupported private key type for rustls")?;
+
+        Ok(Arc::new(CertifiedKey::new(cert_chain, signing_key)))
+    }
 }
 
 // Statystyki cache certyfikatów.
