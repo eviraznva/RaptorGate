@@ -18,7 +18,6 @@ pub struct CaInfo {
 // Zarządca certyfikatu CA - ładuje istniejące CA lub generuje nowe.
 pub struct CaManager {
     ca_cert_pem: String,
-    #[allow(dead_code)]
     ca_key_pem: String,
     fingerprint: String,
     expires_at: prost_types::Timestamp,
@@ -61,6 +60,11 @@ impl CaManager {
             fingerprint: generated.fingerprint,
             expires_at: generated.expires_at,
         })
+    }
+
+    // Tworzy CertForger podpisujący certyfikaty tym CA.
+    pub fn cert_forger(&self, cache_capacity: usize) -> anyhow::Result<super::CertForger> {
+        super::CertForger::new(&self.ca_cert_pem, &self.ca_key_pem, cache_capacity)
     }
 
     // Zwraca informacje o CA do przekazania do control plane.
