@@ -63,14 +63,26 @@ async fn main() {
         }
     };
 
-    let ca_info = match CaManager::init(&config.pki_dir) {
+    let (ca_info, _tls_server_config, _tls_client_config) = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
             tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
-            Some(ca.ca_info())
+            let info = ca.ca_info();
+
+            let (server_cfg, forger) = ca
+                .build_mitm_server_config(1024)
+                .expect("Failed to build MITM server TLS config");
+            tracing::info!("MITM TLS server config ready (cert cache capacity: 1024)");
+
+            let client_cfg = tls::rustls_config::build_client_config()
+                .expect("Failed to build TLS client config");
+            tracing::info!("TLS client config ready");
+
+            let _ = forger; // forger utrzymywany przez server_cfg resolver
+            (Some(info), Some(server_cfg), Some(client_cfg))
         }
         Err(err) => {
             eprintln!("Warning: CA initialization failed: {err}");
-            None
+            (None, None, None)
         }
     };
 
