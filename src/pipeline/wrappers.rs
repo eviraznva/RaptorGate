@@ -11,7 +11,7 @@ use crate::{
         packet_context::PacketContext,
         tcp_session_tracker::TcpSessionTracker,
     },
-    dpi::{DpiClassifier, InspectResult},
+    dpi::{DpiClassifier, InspectResult, TlsAction},
     packet_validator::validate, pipeline::{Stage, StageOutcome}, policy::provider::DiskPolicyProvider, rule_tree::{ArrivalInfo, Verdict},
 };
 use crate::data_plane::dns_inspection::DnsInspectionVerdict;
@@ -263,5 +263,71 @@ impl Stage for DpiStage {
             InspectResult::Skipped => {}
         }
         StageOutcome::Continue
+    }
+}
+
+#[derive(Clone)]
+pub struct TlsInspectionStage {
+    pub enabled: bool,
+    pub bypass_domains: Arc<Vec<String>>,
+}
+
+impl TlsInspectionStage {
+    fn is_bypassed(domain: &str, bypass_list: &[String]) -> bool {
+        let domain_lower = domain.to_lowercase();
+        bypass_list.iter().any(|suffix| {
+            domain_lower == *suffix || domain_lower.ends_with(&format!(".{suffix}"))
+        })
+    }
+
+    fn decide(&self, sni: Option<&str>, ech_detected: bool) -> TlsAction {
+        if let Some(domain) = sni {
+            if Self::is_bypassed(domain, &self.bypass_domains) {
+                return TlsAction::Bypass;
+            }
+        }
+
+        // ECH bez znanego SNI — nie da sie ustalić domeny, blokuj
+        if ech_detected && sni.is_none() {
+            return TlsAction::Block;
+        }
+
+        TlsAction::Intercept
+    }
+}
+
+impl Stage for TlsInspectionStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        self.enabled && matches!(
+            ctx.borrow_dpi_ctx(),
+            Some(dpi_ctx) if dpi_ctx.app_proto == Some(AppProto::Tls)
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let (sni, ech_detected) = match ctx.borrow_dpi_ctx() {
+            Some(dpi_ctx) => (dpi_ctx.tls_sni.clone(), dpi_ctx.tls_ech_detected),
+            None => return StageOutcome::Continue,
+        };
+
+        let action = self.decide(sni.as_deref(), ech_detected);
+
+        tracing::debug!(
+            sni = sni.as_deref().unwrap_or("none"),
+            ech = ech_detected,
+            action = ?action,
+            "TLS inspection decision"
+        );
+
+        ctx.with_dpi_ctx_mut(|c| {
+            if let Some(dpi) = c.as_mut() {
+                dpi.tls_action = action;
+            }
+        });
+
+        match action {
+            TlsAction::Block => StageOutcome::Halt,
+            _ => StageOutcome::Continue,
+        }
     }
 }

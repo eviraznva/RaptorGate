@@ -27,7 +27,7 @@ use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::dpi::DpiClassifier;
-use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, FtpAlgStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
+use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, FtpAlgStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, TlsInspectionStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
@@ -42,11 +42,12 @@ async fn main() {
     type DataPipeline =
         Chain<ValidationStage,
         Chain<DpiStage,
+        Chain<TlsInspectionStage,
         Chain<DnsInspectionStage,
         Chain<NatPreroutingStage,
         Chain<TcpClassificationStage,
         Chain<PolicyEvalStage,
-        Chain<NatPostroutingStage, FtpAlgStage>>>>>>>; 
+        Chain<NatPostroutingStage, FtpAlgStage>>>>>>>>;
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -154,26 +155,31 @@ async fn main() {
     let dns_inspection = DnsInspection::new(dns_block_tree, TunnelingDetectorConfig::default());
     let dpi_classifier = Arc::new(DpiClassifier::new());
     
+    let bypass_domains = Arc::new(config.ssl_bypass_domains.clone());
+
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
             head: DpiStage { classifier: Arc::clone(&dpi_classifier) },
             tail: Chain {
-                head: DnsInspectionStage { inspection: dns_inspection },
+                head: TlsInspectionStage { enabled: config.ssl_inspection_enabled, bypass_domains },
                 tail: Chain {
-                    head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
+                    head: DnsInspectionStage { inspection: dns_inspection },
                     tail: Chain {
-                        head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
+                        head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
                         tail: Chain {
-                            head: PolicyEvalStage { provider: Arc::clone(&policy_provider) },
+                            head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
                             tail: Chain {
-                                head: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
-                                tail: FtpAlgStage { engine: Arc::clone(&nat_engine) },
+                                head: PolicyEvalStage { provider: Arc::clone(&policy_provider) },
+                                tail: Chain {
+                                    head: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                                    tail: FtpAlgStage { engine: Arc::clone(&nat_engine) },
+                                },
                             },
                         },
                     },
                 },
-            }
+            },
         },
     };
 

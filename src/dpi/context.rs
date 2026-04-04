@@ -1,6 +1,16 @@
 use super::AppProto;
 use super::parsers::dns::DnsRecordType;
 
+// Decyzja TlsInspectionStage dotycząca sesji TLS.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TlsAction {
+    #[default]
+    None,
+    Intercept,
+    Bypass,
+    Block,
+}
+
 // Metadane zebrane przez klasyfikator DPI dla pojedynczej sesji.
 // Uzupełniane inkrementalnie podczas inspekcji pierwszych pakietów.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -9,6 +19,7 @@ pub struct DpiContext {
     pub tls_sni: Option<String>,
     pub tls_ech_detected: bool,
     pub tls_version: Option<u16>,
+    pub tls_action: TlsAction,
     pub http_host: Option<String>,
     pub http_method: Option<String>,
     pub http_user_agent: Option<String>,
