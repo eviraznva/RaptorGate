@@ -1023,6 +1023,7 @@ dependencies = [
  "httparse",
  "hyper-util",
  "ipnet",
+ "libc",
  "lru",
  "mockall",
  "nonempty",

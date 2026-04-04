@@ -32,7 +32,7 @@ use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
-use crate::tls::CaManager;
+use crate::tls::{CaManager, MitmProxy, MitmProxyConfig};
 use tokio_util::sync::CancellationToken;
 
 static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
@@ -63,7 +63,7 @@ async fn main() {
         }
     };
 
-    let (ca_info, _tls_server_config, _tls_client_config) = match CaManager::init(&config.pki_dir) {
+    let (ca_info, tls_server_config, tls_client_config) = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
             tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
             let info = ca.ca_info();
@@ -77,7 +77,7 @@ async fn main() {
                 .expect("Failed to build TLS client config");
             tracing::info!("TLS client config ready");
 
-            let _ = forger; // forger utrzymywany przez server_cfg resolver
+            let _ = forger;
             (Some(info), Some(server_cfg), Some(client_cfg))
         }
         Err(err) => {
@@ -102,6 +102,36 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(query_server.serve());
+
+    if config.ssl_inspection_enabled {
+        match (&tls_server_config, &tls_client_config) {
+            (Some(server_cfg), Some(client_cfg)) => {
+                let listen_addr = config.mitm_listen_addr.parse()
+                    .expect("MITM_LISTEN_ADDR must be a valid socket address");
+
+                let proxy_config = MitmProxyConfig {
+                    listen_addr,
+                    server_config: Arc::clone(server_cfg),
+                    client_config: Arc::clone(client_cfg),
+                    bypass_domains: config.ssl_bypass_domains.clone(),
+                    cancel: CancellationToken::new(),
+                };
+
+                match MitmProxy::bind(proxy_config).await {
+                    Ok(proxy) => {
+                        tokio::spawn(proxy.serve());
+                        tracing::info!("SSL/TLS inspection enabled");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to start MITM proxy");
+                    }
+                }
+            }
+            _ => {
+                tracing::error!("SSL inspection enabled but CA/TLS config not available");
+            }
+        }
+    }
 
     let defrag = IpDefragEngine::new(DefragConfig::default());
 

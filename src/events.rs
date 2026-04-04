@@ -8,6 +8,8 @@ use prost_types::Timestamp;
 use tokio::{select, sync::mpsc, time::{interval, Duration}};
 use tokio_stream::wrappers::ReceiverStream;
 
+use std::net::SocketAddr;
+
 use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
 use crate::proto::events as proto;
 use crate::proto::services::backend_event_service_client::BackendEventServiceClient;
@@ -127,6 +129,9 @@ pub enum EventKind {
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpConnectionRejected { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionAbortedMidClose { src: EndpointIdentifier, dst: EndpointIdentifier },
+    TlsInterceptStarted { peer: SocketAddr, dst: SocketAddr, sni: Option<String> },
+    TlsHandshakeComplete { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, alpn: Option<String> },
+    TlsSessionClosed { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, bytes_up: u64, bytes_down: u64 },
 }
 
 impl EventKind {
@@ -136,7 +141,10 @@ impl EventKind {
             E::TcpSessionEstabilished { .. }
             | E::TcpSessionRemoved { .. }
             | E::TcpConnectionRejected { .. }
-            | E::TcpSessionAbortedMidClose { .. } => true,
+            | E::TcpSessionAbortedMidClose { .. }
+            | E::TlsInterceptStarted { .. }
+            | E::TlsHandshakeComplete { .. }
+            | E::TlsSessionClosed { .. } => true,
         }
     }
 }
@@ -175,6 +183,33 @@ impl From<EventKind> for proto::EventKind {
                     Item::TcpSessionAborted(proto::TcpSessionAbortedMidCloseEvent {
                         src: Some(src.into()),
                         dst: Some(dst.into()),
+                    }),
+                EventKind::TlsInterceptStarted { peer, dst, sni } =>
+                    Item::TlsInterceptStarted(proto::TlsInterceptStartedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: peer.port() as u32,
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: dst.port() as u32,
+                        sni: sni.unwrap_or_default(),
+                    }),
+                EventKind::TlsHandshakeComplete { peer, dst, sni, alpn } =>
+                    Item::TlsHandshakeComplete(proto::TlsHandshakeCompleteEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: peer.port() as u32,
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: dst.port() as u32,
+                        sni: sni.unwrap_or_default(),
+                        alpn: alpn.unwrap_or_default(),
+                    }),
+                EventKind::TlsSessionClosed { peer, dst, sni, bytes_up, bytes_down } =>
+                    Item::TlsSessionClosed(proto::TlsSessionClosedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: peer.port() as u32,
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: dst.port() as u32,
+                        sni: sni.unwrap_or_default(),
+                        bytes_up,
+                        bytes_down,
                     }),
             }),
         }

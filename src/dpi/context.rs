@@ -23,6 +23,7 @@ pub struct DpiContext {
     pub smtp_starttls: bool,
     pub ssh_proto_version: Option<String>,
     pub ssh_software: Option<String>,
+    pub decrypted: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

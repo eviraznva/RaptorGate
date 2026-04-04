@@ -26,8 +26,13 @@ pub struct AppConfig {
     pub redb_snapshot_path: String,
 
     pub dev_config: Option<DevConfig>,
-    // PKI — przechowywanie certyfikatu CA i zaszyfrowanego klucza prywatnego
+    // PKI - przechowywanie certyfikatu CA i zaszyfrowanego klucza prywatnego
     pub pki_dir: String,
+
+    // SSL/TLS inspection
+    pub ssl_inspection_enabled: bool,
+    pub mitm_listen_addr: String,
+    pub ssl_bypass_domains: Vec<String>,
 }
 
 pub struct DevConfig {
@@ -113,6 +118,21 @@ impl AppConfig {
             }),
             pki_dir: std::env::var("RAPTORGATE_PKI_DIR")
                 .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
+
+            ssl_inspection_enabled: std::env::var("SSL_INSPECTION_ENABLED")
+                .unwrap_or_else(|_| "false".into())
+                .to_lowercase()
+                == "true",
+
+            mitm_listen_addr: std::env::var("MITM_LISTEN_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:8443".into()),
+
+            ssl_bypass_domains: std::env::var("SSL_BYPASS_DOMAINS")
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect(),
         })
     }
 }
