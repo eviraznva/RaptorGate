@@ -106,7 +106,7 @@ impl AppConfig {
                 .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
 
             policies_dir: std::env::var("POLICIES_DIRECTORY")
-                .unwrap_or_else(|_| "./policies".into()).into(),
+                .unwrap_or_else(|_| "./".into()).into(),
         })
     }
 }

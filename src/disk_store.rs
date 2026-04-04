@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{self, Path, PathBuf};
  
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -61,6 +61,7 @@ pub struct ListDiskStore<T> {
  
 impl<T> ListDiskStore<T> where T: for<'a> Deserialize<'a> + Serialize + Clone {
     pub fn new(name: impl AsRef<Path>, save_dir: PathBuf) -> Self {
+        tracing::debug!("Initializing ListDiskStore with name {:?} in directory {:?}", name.as_ref(), path::absolute(&save_dir));
         Self { store: DiskStore::new(name, save_dir) }
     }
  

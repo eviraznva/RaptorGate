@@ -92,6 +92,7 @@ impl DiskPolicyProvider {
 
             let evaluator = PolicyEvaluator::new(policies.iter().next().unwrap().1.rule_tree.clone(), crate::rule_tree::Verdict::Drop);
 
+            tracing::info!("Loaded policies from disk, count: {}", policies.len());
             return Ok(Self { policies: ArcSwap::new(Arc::new(policies)), evaluator, store })
         }
 
@@ -109,6 +110,7 @@ impl DiskPolicyProvider {
         let policies = ArcSwap::new(Arc::new(HashMap::from([(Uuid::now_v7().into(), default_policy)])));
         let evaluator = PolicyEvaluator::new(policies.load().iter().next().unwrap().1.rule_tree.clone(), crate::rule_tree::Verdict::Drop);
 
+        tracing::info!("No policies found on disk, using default drop all policy.");
         Ok(Self { policies, evaluator, store})
     }
 
