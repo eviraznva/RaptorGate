@@ -13,6 +13,7 @@ use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceCl
 use ngfw::query_server::{QueryHandler, QueryServer};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use serial_test::serial;
 use uuid::Uuid;
 
 struct SharedServer {
@@ -78,6 +79,8 @@ async fn connect(socket: &str) -> FirewallQueryServiceClient<tonic::transport::C
 }
 
 #[tokio::test]
+#[serial] // has to be serial or else there's a race condition where after one test saves a new
+          // config, a second test may load the config saved by the first one.
 async fn swap_config_happy_path_returns_no_error() {
     let mut client = connect(&shared_server().socket).await;
 
@@ -96,6 +99,7 @@ async fn swap_config_happy_path_returns_no_error() {
 }
 
 #[tokio::test]
+#[serial]
 async fn swap_config_error_path_returns_error_message() {
     let mut client = connect(&shared_server().socket).await;
 
