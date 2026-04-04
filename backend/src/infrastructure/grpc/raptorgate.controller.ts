@@ -8,8 +8,8 @@ import {
   GetConfigRequest,
   ConfigResponse,
 } from './generated/config/config_service';
-import { GetActiveConfigUseCase } from 'src/application/use-cases/get-active-config.use-case';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
+import { GetActiveConfigUseCase } from '../../application/use-cases/get-active-config.use-case.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import { RpcException } from '@nestjs/microservices';
 import { status } from '@grpc/grpc-js';
 import { Observable } from 'rxjs';

@@ -24,21 +24,21 @@ import {
   ApiNoContentEnvelope,
   ApiOkEnvelope,
 } from '../decorators/api-envelope-response.decorator';
-import { RequirePermissions } from 'src/presentation/decorators/auth/require-permissions.decorator';
-import { GetAllUsersUseCase } from 'src/application/use-cases/get-all-users.use-case';
-import { DeleteUserUseCase } from 'src/application/use-cases/delete-user.use-case';
-import { CreateUserUseCase } from 'src/application/use-cases/create-user.use-case';
-import { EditUserUseCase } from 'src/application/use-cases/edit-user.use-case';
+import { RequirePermissions } from '../../presentation/decorators/auth/require-permissions.decorator.js';
+import { GetAllUsersUseCase } from '../../application/use-cases/get-all-users.use-case.js';
+import { DeleteUserUseCase } from '../../application/use-cases/delete-user.use-case.js';
+import { CreateUserUseCase } from '../../application/use-cases/create-user.use-case.js';
+import { EditUserUseCase } from '../../application/use-cases/edit-user.use-case.js';
 import { GetAllUsersResponseDto } from '../dtos/get-all-users-response.dto';
 import { ResponseMessage } from '../decorators/response-message.decorator';
 import { CreateUserResponseDto } from '../dtos/create-user-response.dto';
-import { Roles } from 'src/presentation/decorators/auth/roles.decorator';
+import { Roles } from '../../presentation/decorators/auth/roles.decorator.js';
 import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
 import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Permission } from 'src/domain/enums/permissions.enum';
+import { Permission } from '../../domain/enums/permissions.enum.js';
 import { CreateUserDto } from '../dtos/create-user.dto';
 import { EditUserDto } from '../dtos/edit-user.dto';
-import { Role } from 'src/domain/enums/role.enum';
+import { Role } from '../../domain/enums/role.enum.js';
 import { UserResponseMapper } from '../mappers/user-response.mapper';
 
 @ApiTags('User Management')

@@ -1,4 +1,4 @@
-import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
+import { ConfigurationSnapshot } from '../../../domain/entities/configuration-snapshot.entity.js';
 import { DnsBlacklistFile } from '../schemas/dns-blacklist.schema';
 import { FirewallCertificatesFile } from '../schemas/firewall-certificates.schema';
 import { IpsSignaturesFile } from '../schemas/ips-signatures.schema';
@@ -14,7 +14,7 @@ import { ZoneJsonMapper } from './zone-json.mapper';
 import { ZonePairJsonMapper } from './zone-pair-json.mapper';
 import { UsersFile } from '../schemas/users.schema';
 import { UserJsonMapper } from './user-json.mapper';
-import { ConfigSnapshotPayload } from 'src/domain/value-objects/config-snapshot-payload.interface';
+import { ConfigSnapshotPayload } from '../../../domain/value-objects/config-snapshot-payload.interface.js';
 import { Logger } from '@nestjs/common';
 
 export interface ConfigBundlePayloadSchema {

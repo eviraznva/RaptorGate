@@ -1,4 +1,4 @@
-import { NatRule } from 'src/domain/entities/nat-rule.entity';
+import { NatRule } from '../../domain/entities/nat-rule.entity.js';
 
 export class EditNatRuleResponseDto {
   natRule: NatRule;

@@ -1,5 +1,5 @@
 import { NatRuleItemResponseDto } from '../dtos/nat-rule-item-response.dto';
-import { NatRule } from 'src/domain/entities/nat-rule.entity';
+import { NatRule } from '../../domain/entities/nat-rule.entity.js';
 
 export class NatRuleResponseMapper {
   constructor() {}
