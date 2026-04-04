@@ -24,23 +24,23 @@ import {
   ApiError429,
   ApiError500,
 } from '../decorators/api-error-response.decorator';
-import { RequirePermissions } from 'src/presentation/decorators/auth/require-permissions.decorator';
-import { GetAllZonePairsUseCase } from 'src/application/use-cases/get-all-zone-pairs.use-case';
-import { CreateZonePairUseCase } from 'src/application/use-cases/create-zone-pair.use-case';
-import { DeleteZonePairUseCase } from 'src/application/use-cases/delete-zone-pair.use-case';
-import { EditZonePairUseCase } from 'src/application/use-cases/edit-zone-pair.use-case';
-import { ExtractToken } from 'src/presentation/decorators/auth/extract-token.decorator';
+import { RequirePermissions } from '../../presentation/decorators/auth/require-permissions.decorator.js';
+import { GetAllZonePairsUseCase } from '../../application/use-cases/get-all-zone-pairs.use-case.js';
+import { CreateZonePairUseCase } from '../../application/use-cases/create-zone-pair.use-case.js';
+import { DeleteZonePairUseCase } from '../../application/use-cases/delete-zone-pair.use-case.js';
+import { EditZonePairUseCase } from '../../application/use-cases/edit-zone-pair.use-case.js';
+import { ExtractToken } from '../../presentation/decorators/auth/extract-token.decorator.js';
 import { CreateZonePairResponseDto } from '../dtos/create-zone-pair-response.dto';
 import { ZonePairResponseMapper } from '../mappers/zone-pair-response.mapper';
 import { EditZonePairResponseDto } from '../dtos/edit-zone-pair-response.dto';
 import { ResponseMessage } from '../decorators/response-message.decorator';
-import { Roles } from 'src/presentation/decorators/auth/roles.decorator';
+import { Roles } from '../../presentation/decorators/auth/roles.decorator.js';
 import { CreateZonePairDto } from '../dtos/create-zone-pair.dto';
-import { ZonePair } from 'src/domain/entities/zone-pair.entity';
-import { Permission } from 'src/domain/enums/permissions.enum';
+import { ZonePair } from '../../domain/entities/zone-pair.entity.js';
+import { Permission } from '../../domain/enums/permissions.enum.js';
 import { EditZonePairDto } from '../dtos/edit-zone-pair.dto';
 import { ApiOperation, ApiBody } from '@nestjs/swagger';
-import { Role } from 'src/domain/enums/role.enum';
+import { Role } from '../../domain/enums/role.enum.js';
 
 @Controller('zone-pairs')
 export class ZonePairsController {

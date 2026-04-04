@@ -1,14 +1,14 @@
 import {
   USER_REPOSITORY_TOKEN,
   type IUserRepository,
-} from 'src/domain/repositories/user.repository';
+} from '../../domain/repositories/user.repository.js';
 import {
   ROLE_REPOSITORY_TOKEN,
   type IRoleRepository,
-} from 'src/domain/repositories/role.repository';
+} from '../../domain/repositories/role.repository.js';
 import { Inject, Injectable } from '@nestjs/common';
 import { GetAllUsersResponseDto } from '../dtos/get-all-users-response.dto';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 
 @Injectable()
 export class GetAllUsersUseCase {

@@ -1,4 +1,4 @@
-import { FirewallRule } from 'src/domain/entities/firewall-rule.entity';
+import { FirewallRule } from '../../domain/entities/firewall-rule.entity.js';
 import { RuleItemResponseDto } from '../dtos/rule-item-response.dto';
 
 export class RuleResponseMapper {

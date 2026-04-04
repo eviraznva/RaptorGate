@@ -18,19 +18,19 @@ import {
   ApiCreatedEnvelope,
   ApiNoContentEnvelope,
 } from '../decorators/api-envelope-response.decorator';
-import { RecoverPasswordUseCase } from 'src/application/use-cases/recover-password.use-case';
-import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
-import { ExtractToken } from 'src/presentation/decorators/auth/extract-token.decorator';
-import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
-import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
+import { RecoverPasswordUseCase } from '../../application/use-cases/recover-password.use-case.js';
+import { RefreshTokenUseCase } from '../../application/use-cases/refresh-token.use-case.js';
+import { ExtractToken } from '../../presentation/decorators/auth/extract-token.decorator.js';
+import { LogoutUserUseCase } from '../../application/use-cases/logout-user.use-case.js';
+import { LoginUserUseCase } from '../../application/use-cases/login-user.use-case.js';
 import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto';
 import { ResponseMessage } from '../decorators/response-message.decorator';
-import { IsPublic } from 'src/infrastructure/decorators/public.decorator';
-import { Cookie } from 'src/infrastructure/decorators/cookie.decorator';
+import { IsPublic } from '../../infrastructure/decorators/public.decorator.js';
+import { Cookie } from '../../infrastructure/decorators/cookie.decorator.js';
 import { RecoveryPasswordDto } from '../dtos/recover-password.dto';
 import { ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { LoginResponseDto } from '../dtos/login-response.dto';
-import { Env } from 'src/shared/config/env.validation';
+import { Env } from '../../shared/config/env.validation.js';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from '../dtos/login.dto';
 import { Throttle } from '@nestjs/throttler';

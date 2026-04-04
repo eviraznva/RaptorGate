@@ -15,6 +15,7 @@ import { AuthModule } from './modules/auth.module.js';
 import { ZoneModule } from './modules/zone.module.js';
 import { UserModule } from './modules/user.module.js';
 import { AppController } from './app.controller.js';
+import { SslModule } from './modules/ssl.module.js';
 import { NatModule } from './modules/nat.module.js';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule } from '@nestjs/config';
@@ -42,6 +43,7 @@ import { Module } from '@nestjs/common';
     AuthModule,
     ZoneModule,
     NatModule,
+    SslModule,
   ],
   controllers: [AppController],
   providers: [

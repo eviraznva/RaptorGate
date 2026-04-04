@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package raptorgate;
+
+import "config/config_service.proto";
+
+// This is needed for raptorgate.controller.ts file. I think it will be deleted later?
+service RaptorGateService {
+  rpc GetActiveConfig(raptorgate.config.GetConfigRequest)
+      returns (raptorgate.config.ConfigResponse);
+}

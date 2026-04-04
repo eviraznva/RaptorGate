@@ -31,6 +31,8 @@ rm -rf .router_sync/backend/dist && mkdir -p .router_sync/backend/dist
 cp -rf ../backend/dist/* .router_sync/backend/dist/
 rm -rf .router_sync/backend/devCerts && mkdir -p .router_sync/backend/devCerts
 cp -rf ../backend/devCerts/* .router_sync/backend/devCerts/
+rm -rf .router_sync/backend/data && mkdir -p .router_sync/backend/data
+cp -rf ../backend/data/* .router_sync/backend/data/
 cp -rf ../proto/* .router_sync/proto/
 cp -rf services .router_sync
 

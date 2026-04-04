@@ -5,14 +5,14 @@ import {
 import {
   type IUserRepository,
   USER_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/user.repository';
+} from '../../domain/repositories/user.repository.js';
 import {
   type IPasswordHasher,
   PASSWORD_HASHER_TOKEN,
 } from '../ports/passowrd-hasher.interface';
 import { Inject, Injectable } from '@nestjs/common';
 import { RecoveryPasswordDto } from '../dtos/recovery-password.dto';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 
 @Injectable()
 export class RecoverPasswordUseCase {

@@ -6,7 +6,7 @@ import {
   Matches,
   MaxLength,
 } from 'class-validator';
-import { Role } from 'src/domain/enums/role.enum';
+import { Role } from '../../domain/enums/role.enum.js';
 
 export class CreateUserDto {
   @ApiProperty({ example: 'jankowal' })

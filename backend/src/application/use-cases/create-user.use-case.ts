@@ -1,20 +1,20 @@
 import {
   type IUserRepository,
   USER_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/user.repository';
+} from '../../domain/repositories/user.repository.js';
 import {
   type IRoleRepository,
   ROLE_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/role.repository';
+} from '../../domain/repositories/role.repository.js';
 import {
   type IPasswordHasher,
   PASSWORD_HASHER_TOKEN,
 } from '../ports/passowrd-hasher.interface';
-import { UserAlreadyExistsException } from 'src/domain/exceptions/user-already-exitst.exception';
-import { RoleIsInvalidException } from 'src/domain/exceptions/role-is-invalid.exception';
+import { UserAlreadyExistsException } from '../../domain/exceptions/user-already-exitst.exception.js';
+import { RoleIsInvalidException } from '../../domain/exceptions/role-is-invalid.exception.js';
 import { CreateUserResponseDto } from '../dtos/create-user-response.dto';
 import { CreateUserDto } from '../dtos/create-user.dto';
-import { User } from 'src/domain/entities/user.entity';
+import { User } from '../../domain/entities/user.entity.js';
 import { Inject, Injectable } from '@nestjs/common';
 
 @Injectable()

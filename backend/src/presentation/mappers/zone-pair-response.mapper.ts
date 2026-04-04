@@ -1,5 +1,5 @@
 import { ZonePairItemResponseDto } from '../dtos/zone-pair-item-response.dto';
-import { ZonePair } from 'src/domain/entities/zone-pair.entity';
+import { ZonePair } from '../../domain/entities/zone-pair.entity.js';
 
 export class ZonePairResponseMapper {
   static toDto(zonePair: ZonePair): ZonePairItemResponseDto {
