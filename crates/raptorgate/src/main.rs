@@ -11,6 +11,7 @@ mod query_server;
 mod rule_tree;
 mod tls;
 mod disk_store;
+mod zones;
 
 use std::collections::HashMap;
 use std::net::IpAddr;

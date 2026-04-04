@@ -1,13 +1,12 @@
-const PROTO_INCLUDE_DIRS: &[&str] = &["proto"];
+const PROTO_INCLUDE_DIRS: &[&str] = &["../../proto"];
 
 const ALL_PROTO_FILES: &[&str] = &[
-    "proto/events/firewall_events.proto",
-    "proto/services/event_service.proto",
-    "proto/services/query_service.proto",
-    "proto/common/common.proto",
-    "proto/config/config_models.proto",
-    // "proto/config/config_service.proto",
-    "proto/control/validation_service.proto",
+    "../../proto/events/firewall_events.proto",
+    "../../proto/services/event_service.proto",
+    "../../proto/services/query_service.proto",
+    "../../proto/common/common.proto",
+    "../../proto/config/config_models.proto",
+    "../../proto/control/validation_service.proto",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
