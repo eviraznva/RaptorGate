@@ -32,6 +32,7 @@ cp -rf ../backend/dist/* .router_sync/backend/dist/
 rm -rf .router_sync/backend/devCerts && mkdir -p .router_sync/backend/devCerts
 cp -rf ../backend/devCerts/* .router_sync/backend/devCerts/
 cp -rf ../proto/* .router_sync/proto/
+cp -rf ./configs/* .router_sync/ngfw
 cp -rf services .router_sync
 
 vagrant rsync r1 || true

@@ -217,8 +217,6 @@ mod tests {
     #[test]
     fn wildcard_always_matches() {
         let tree = RuleTree::new(
-            "wildcard".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
                 Pattern::Wildcard,
@@ -238,8 +236,6 @@ mod tests {
     #[test]
     fn equal_ip_ver_match() {
         let tree = RuleTree::new(
-            "ipver_eq".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::IpVer,
                 Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
@@ -257,8 +253,6 @@ mod tests {
     #[test]
     fn equal_ip_ver_no_match() {
         let tree = RuleTree::new(
-            "ipver_eq_miss".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::IpVer,
                 Pattern::Equal(FieldValue::IpVer(IpVer::V6)),
@@ -278,8 +272,6 @@ mod tests {
     #[test]
     fn equal_protocol_match() {
         let tree = RuleTree::new(
-            "proto_eq".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Protocol,
                 Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
@@ -297,8 +289,6 @@ mod tests {
     #[test]
     fn equal_protocol_no_match() {
         let tree = RuleTree::new(
-            "proto_eq_miss".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Protocol,
                 Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
@@ -324,8 +314,6 @@ mod tests {
             Octet::Value(10),
         ]);
         let tree = RuleTree::new(
-            "srcip_eq".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
                 Pattern::Equal(FieldValue::Ip(ip)),
@@ -349,8 +337,6 @@ mod tests {
             Octet::Value(10),
         ]);
         let tree = RuleTree::new(
-            "srcip_eq_miss".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
                 Pattern::Equal(FieldValue::Ip(ip)),
@@ -376,8 +362,6 @@ mod tests {
             Octet::Value(1),
         ]);
         let tree = RuleTree::new(
-            "dstip_eq".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstIp,
                 Pattern::Equal(FieldValue::Ip(ip)),
@@ -397,8 +381,6 @@ mod tests {
     #[test]
     fn equal_src_port_match() {
         let tree = RuleTree::new(
-            "srcport_eq".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
                 Pattern::Equal(FieldValue::Port(Port::from(12345))),
@@ -416,8 +398,6 @@ mod tests {
     #[test]
     fn equal_src_port_no_match() {
         let tree = RuleTree::new(
-            "srcport_eq_miss".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
                 Pattern::Equal(FieldValue::Port(Port::from(9999))),
@@ -437,8 +417,6 @@ mod tests {
     #[test]
     fn equal_dst_port_match() {
         let tree = RuleTree::new(
-            "dstport_eq".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
                 Pattern::Equal(FieldValue::Port(Port::from(80))),
@@ -458,8 +436,6 @@ mod tests {
     #[test]
     fn equal_hour_match() {
         let tree = RuleTree::new(
-            "hour_eq".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Hour,
                 Pattern::Equal(FieldValue::Hour(Hour::try_from(14).unwrap())),
@@ -477,8 +453,6 @@ mod tests {
     #[test]
     fn equal_hour_no_match() {
         let tree = RuleTree::new(
-            "hour_eq_miss".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Hour,
                 Pattern::Equal(FieldValue::Hour(Hour::try_from(3).unwrap())),
@@ -498,8 +472,6 @@ mod tests {
     #[test]
     fn equal_day_of_week_match() {
         let tree = RuleTree::new(
-            "dow_eq".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DayOfWeek,
                 Pattern::Equal(FieldValue::DayOfWeek(Weekday::Wed)),
@@ -517,8 +489,6 @@ mod tests {
     #[test]
     fn equal_day_of_week_no_match() {
         let tree = RuleTree::new(
-            "dow_eq_miss".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DayOfWeek,
                 Pattern::Equal(FieldValue::DayOfWeek(Weekday::Mon)),
@@ -539,8 +509,6 @@ mod tests {
     fn glob_src_ip_wildcard_octets() {
         let pat_ip = IP::new([Octet::Value(192), Octet::Value(168), Octet::Any, Octet::Any]);
         let tree = RuleTree::new(
-            "glob_src".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
                 Pattern::Equal(FieldValue::Ip(pat_ip)),
@@ -559,8 +527,6 @@ mod tests {
     fn glob_src_ip_mismatch() {
         let pat_ip = IP::new([Octet::Value(10), Octet::Value(10), Octet::Any, Octet::Any]);
         let tree = RuleTree::new(
-            "glob_src_miss".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
                 Pattern::Equal(FieldValue::Ip(pat_ip)),
@@ -579,8 +545,6 @@ mod tests {
     fn glob_dst_ip_wildcard_octets() {
         let pat_ip = IP::new([Octet::Value(10), Octet::Any, Octet::Any, Octet::Any]);
         let tree = RuleTree::new(
-            "glob_dst".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstIp,
                 Pattern::Equal(FieldValue::Ip(pat_ip)),
@@ -598,8 +562,6 @@ mod tests {
     #[test]
     fn range_dst_port_below() {
         let tree = RuleTree::new(
-            "range_port_miss".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
                 Pattern::And(vec![
@@ -627,8 +589,6 @@ mod tests {
     #[test]
     fn range_dst_port_exact_boundary() {
         let tree = RuleTree::new(
-            "range_port_boundary".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
                 Pattern::And(vec![
@@ -652,8 +612,6 @@ mod tests {
     #[test]
     fn range_src_port_match() {
         let tree = RuleTree::new(
-            "range_srcport".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
                 Pattern::And(vec![
@@ -683,8 +641,6 @@ mod tests {
     #[test]
     fn range_hour_match() {
         let tree = RuleTree::new(
-            "range_hour".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Hour,
                 Pattern::And(vec![
@@ -712,8 +668,6 @@ mod tests {
     #[test]
     fn range_hour_outside() {
         let tree = RuleTree::new(
-            "range_hour_miss".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Hour,
                 Pattern::And(vec![
@@ -743,8 +697,6 @@ mod tests {
     #[test]
     fn comparison_dst_port_greater() {
         let tree = RuleTree::new(
-            "cmp_port_gt".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
                 Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(79))),
@@ -763,8 +715,6 @@ mod tests {
     #[test]
     fn comparison_dst_port_greater_fail() {
         let tree = RuleTree::new(
-            "cmp_port_gt_fail".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
                 Pattern::Comparison(Operation::Greater, FieldValue::Port(Port::from(80))),
@@ -783,8 +733,6 @@ mod tests {
     #[test]
     fn comparison_dst_port_greater_or_equal() {
         let tree = RuleTree::new(
-            "cmp_port_ge".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
                 Pattern::Comparison(Operation::GreaterOrEqual, FieldValue::Port(Port::from(80))),
@@ -802,8 +750,6 @@ mod tests {
     #[test]
     fn comparison_dst_port_lesser() {
         let tree = RuleTree::new(
-            "cmp_port_lt".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
                 Pattern::Comparison(Operation::Lesser, FieldValue::Port(Port::from(81))),
@@ -822,8 +768,6 @@ mod tests {
     #[test]
     fn comparison_dst_port_lesser_or_equal() {
         let tree = RuleTree::new(
-            "cmp_port_le".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DstPort,
                 Pattern::Comparison(Operation::LesserOrEqual, FieldValue::Port(Port::from(80))),
@@ -843,8 +787,6 @@ mod tests {
     #[test]
     fn comparison_hour_greater() {
         let tree = RuleTree::new(
-            "cmp_hour_gt".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Hour,
                 Pattern::Comparison(
@@ -866,8 +808,6 @@ mod tests {
     #[test]
     fn comparison_hour_lesser_fail() {
         let tree = RuleTree::new(
-            "cmp_hour_lt_fail".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Hour,
                 Pattern::Comparison(
@@ -891,8 +831,6 @@ mod tests {
     #[test]
     fn comparison_day_of_week_greater_or_equal() {
         let tree = RuleTree::new(
-            "cmp_dow_ge".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DayOfWeek,
                 Pattern::Comparison(
@@ -914,8 +852,6 @@ mod tests {
     #[test]
     fn comparison_day_of_week_lesser() {
         let tree = RuleTree::new(
-            "cmp_dow_lt".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DayOfWeek,
                 Pattern::Comparison(Operation::Lesser, FieldValue::DayOfWeek(Weekday::Fri)),
@@ -934,8 +870,6 @@ mod tests {
     #[test]
     fn comparison_day_of_week_lesser_fail() {
         let tree = RuleTree::new(
-            "cmp_dow_lt_fail".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DayOfWeek,
                 Pattern::Comparison(Operation::Lesser, FieldValue::DayOfWeek(Weekday::Mon)),
@@ -956,8 +890,6 @@ mod tests {
     #[test]
     fn or_protocol_matches_first() {
         let tree = RuleTree::new(
-            "or_proto".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Protocol,
                 Pattern::Or(vec![
@@ -979,8 +911,6 @@ mod tests {
     fn or_protocol_matches_second() {
         let raw = udp_packet([192, 168, 1, 10], [10, 0, 0, 1], 12345, 80);
         let tree = RuleTree::new(
-            "or_proto_2nd".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Protocol,
                 Pattern::Or(vec![
@@ -998,8 +928,6 @@ mod tests {
     #[test]
     fn or_protocol_no_match() {
         let tree = RuleTree::new(
-            "or_proto_miss".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Protocol,
                 Pattern::Or(vec![
@@ -1021,8 +949,6 @@ mod tests {
     #[test]
     fn or_day_of_week() {
         let tree = RuleTree::new(
-            "or_dow".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DayOfWeek,
                 Pattern::Or(vec![
@@ -1044,8 +970,6 @@ mod tests {
     #[test]
     fn combined_and_or_allow() {
         let tree = RuleTree::new(
-            "or_dow".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
                 Pattern::Or(vec![
@@ -1070,8 +994,6 @@ mod tests {
     fn combined_and_or_allow_in_nested() {
         let raw = tcp_packet([192, 168, 1, 10], [10, 0, 0, 1], 81, 80);
         let tree = RuleTree::new(
-            "or_dow".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
                 Pattern::Or(vec![
@@ -1092,8 +1014,6 @@ mod tests {
     #[test]
     fn combined_and_or_deny() {
         let tree = RuleTree::new(
-            "or_dow".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
                 Pattern::Or(vec![
@@ -1117,8 +1037,6 @@ mod tests {
     #[test]
     fn and_day_of_week() {
         let tree = RuleTree::new(
-            "or_dow".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DayOfWeek,
                 Pattern::And(vec![
@@ -1139,8 +1057,6 @@ mod tests {
     #[test]
     fn and_day_of_week_invalid() {
         let tree = RuleTree::new(
-            "or_dow".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::DayOfWeek,
                 Pattern::And(vec![
@@ -1164,8 +1080,6 @@ mod tests {
     #[test]
     fn multiple_arms_first_matches() {
         let tree = RuleTree::new(
-            "multi_arms_1st".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Protocol,
                 Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
@@ -1188,8 +1102,6 @@ mod tests {
     fn multiple_arms_second_matches() {
         let raw = udp_packet([192, 168, 1, 10], [10, 0, 0, 1], 12345, 80);
         let tree = RuleTree::new(
-            "multi_arms_2nd".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Protocol,
                 Pattern::Equal(FieldValue::Protocol(Protocol::Tcp)),
@@ -1208,8 +1120,6 @@ mod tests {
     #[test]
     fn multiple_arms_none_match() {
         let tree = RuleTree::new(
-            "multi_arms_none".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::Protocol,
                 Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
@@ -1235,8 +1145,6 @@ mod tests {
     fn icmp_frame_port_extraction_returns_none() {
         let raw = icmp_packet([192, 168, 1, 10], [10, 0, 0, 1]);
         let tree = RuleTree::new(
-            "port_none".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcPort,
                 Pattern::Equal(FieldValue::Port(Port::from(80))),
@@ -1258,8 +1166,6 @@ mod tests {
         //           → match Udp → Wildcard               → Drop
         // Match V6 → Drop
         let tree = RuleTree::new(
-            "nested".into(),
-            "complex nested rule".into(),
             MatchBuilder::with_arm(
                 MatchKind::IpVer,
                 Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
@@ -1318,8 +1224,6 @@ mod tests {
     #[test]
     fn nested_v4_tcp_high_port_allow_warn() {
         let tree = RuleTree::new(
-            "nested_high".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::IpVer,
                 Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
@@ -1371,8 +1275,6 @@ mod tests {
     #[test]
     fn nested_v4_udp_drop() {
         let tree = RuleTree::new(
-            "nested_udp".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::IpVer,
                 Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
@@ -1401,8 +1303,6 @@ mod tests {
     #[test]
     fn nested_v6_drop() {
         let tree = RuleTree::new(
-            "nested_v6".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::IpVer,
                 Pattern::Equal(FieldValue::IpVer(IpVer::V4)),
@@ -1430,8 +1330,6 @@ mod tests {
         //                                          → otherwise       → Drop
         //                         → Hour outside   → AllowWarn
         let tree = RuleTree::new(
-            "nested_complex".into(),
-            "glob+hour+day".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
                 Pattern::Equal(FieldValue::Ip(IP::new([
@@ -1486,8 +1384,6 @@ mod tests {
     #[test]
     fn nested_glob_ip_hour_in_range_wrong_day_drops() {
         let tree = RuleTree::new(
-            "nested_wrong_day".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
                 Pattern::Equal(FieldValue::Ip(IP::new([
@@ -1538,8 +1434,6 @@ mod tests {
     #[test]
     fn nested_glob_ip_hour_outside_range_drop_warn() {
         let tree = RuleTree::new(
-            "nested_late_hour".into(),
-            "".into(),
             MatchBuilder::with_arm(
                 MatchKind::SrcIp,
                 Pattern::Equal(FieldValue::Ip(IP::new([

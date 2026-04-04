@@ -70,7 +70,7 @@ impl std::fmt::Display for IpGlobbable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}.{}.{}.{}",
+            "\"{}.{}.{}.{}\"",
             self.octets[0], self.octets[1], self.octets[2], self.octets[3],
         )
     }
@@ -78,7 +78,9 @@ impl std::fmt::Display for IpGlobbable {
 
 #[derive(Debug, Clone, Copy, Display)]
 pub enum Octet {
+    #[display("*")]
     Any,
+    #[display("{}", _0)]
     Value(u8),
 }
 
@@ -93,9 +95,12 @@ impl PartialEq for Octet {
 
 #[derive(Debug, Display, Clone, Copy, PartialEq)]
 pub enum IpVer {
+    #[display("v4")]
     V4,
+    #[display("v6")]
     V6,
 }
+
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Hour(u8);
@@ -110,21 +115,39 @@ impl TryFrom<u8> for Hour {
     }
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Protocol {
     Tcp,
     Udp,
     Icmp,
 }
 
+impl std::fmt::Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Protocol::Tcp  => "tcp",
+            Protocol::Udp  => "udp",
+            Protocol::Icmp => "icmp",
+        };
+        write!(f, "{s}")
+    }
+}
+
 #[derive(Debug, Display, Clone, Copy, PartialEq, PartialOrd)]
 pub enum Weekday {
+    #[display("monday")]
     Mon,
+    #[display("tuesday")]
     Tue,
+    #[display("wednesday")]
     Wed,
+    #[display("thursday")]
     Thu,
+    #[display("friday")]
     Fri,
+    #[display("saturday")]
     Sat,
+    #[display("sunday")]
     Sun,
 }
 

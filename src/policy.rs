@@ -1,5 +1,7 @@
-use derive_more::From;
+use derive_more::{Display, From, Into};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::{proto::config::Rule, rule_tree::RuleTree};
 pub use crate::rule_tree::{parsing::{RaptorlangError, parse_rule_tree}};
@@ -12,11 +14,14 @@ pub mod nat;
 
 
 // TODO: jak na razie to z tego co widze backend zapisuje json z regułami. To raczej powinna być w całości odpowiedzialność firewalla.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
-    pub id: PolicyId,
+    // #[serde(skip_serializing)] //TODO: this is bad, ideally this shouldn't have an id at all and the id should only be used for correlation
+    // pub id: PolicyId,
+
     pub name: String,
     // pub description: Option<String>,
-    pub zone_pair_id: String,
+    pub zone_pair_id: ZonePairId,
     // pub is_active: bool,
     pub priority: u32,
     // pub created_at: SystemTime,
@@ -26,19 +31,32 @@ pub struct Policy {
     pub rule_tree: RuleTree,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, From)]
-pub struct PolicyId(String);
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
+pub struct PolicyId(Uuid);
 
-impl TryFrom<Rule> for Policy {
-    type Error = RaptorlangError;
-    fn try_from(value: Rule) -> Result<Self, Self::Error> {
-        let rule_tree = parse_rule_tree(&value.content)?;
-        Ok(Policy {
-            id: PolicyId(value.id),
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
+pub struct ZonePairId(Uuid);
+
+impl Policy {
+    pub fn try_from_rule(value: Rule) -> Result<(PolicyId, Self), anyhow::Error> {
+        let head = parse_rule_tree(&value.content)?;
+        Ok((PolicyId(value.id.try_into()?),
+        Policy {
+            // id: PolicyId(value.id.try_into()?),
             name: value.name.clone(),
-            zone_pair_id: value.zone_pair_id,
+            zone_pair_id: ZonePairId(value.zone_pair_id.try_into()?),
             priority: value.priority,
-            rule_tree: RuleTree::new(value.name.clone(), "TODO:".into(), rule_tree), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
-        })
+            rule_tree: RuleTree::new(head), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
+        }))
+    }
+
+    pub fn into_rule(&self, id: PolicyId) -> Rule {
+        Rule {
+            id: Uuid::from(id).into(),
+            name: self.name.clone(),
+            zone_pair_id: Uuid::from(self.zone_pair_id.clone()).into(),
+            priority: self.priority,
+            content: self.rule_tree.to_string(), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
+        }
     }
 }

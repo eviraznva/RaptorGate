@@ -11,3 +11,4 @@ pub mod proto;
 pub mod query_server;
 pub mod rule_tree;
 pub mod tls;
+mod disk_store;

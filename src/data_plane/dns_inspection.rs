@@ -119,7 +119,7 @@ impl DomainBlockTree {
     /// Wypisuje drzewo w czytelnej strukturze drzewa (do debugowania).
     /// Etykiety są przechowywane od TLD, więc np. `google.com` → `com → google`.
     pub fn print_tree(&self) {
-        println!("DomainBlockTree (etykiety od TLD):");
+        // println!("DomainBlockTree (etykiety od TLD):");
 
         let mut children: Vec<(&str, &LabelNode)> = self.root.children
             .iter().map(|(k, v)| (k.as_ref(), v))
@@ -128,7 +128,7 @@ impl DomainBlockTree {
         children.sort_by_key(|(k, _)| *k);
 
         for (i, (label, node)) in children.iter().enumerate() {
-            Self::print_node(label, node, "", i == children.len() - 1);
+            // Self::print_node(label, node, "", i == children.len() - 1);
         }
     }
 

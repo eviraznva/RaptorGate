@@ -6,25 +6,26 @@ use tokio::sync::Mutex;
 use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
+use uuid::Uuid;
 
 use crate::data_plane::nat::NatEngine;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
-use crate::policy::Policy;
-use crate::policy::provider::PolicySwapper;
+use crate::policy::{Policy, PolicyId};
+use crate::policy::provider::PolicyManager;
 use crate::proto::services::firewall_query_service_server::{
     FirewallQueryService, FirewallQueryServiceServer,
 };
 use crate::proto::services::{
-    GetNatBindingsRequest, GetNatBindingsResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, SwapConfigRequest, SwapConfigResponse
+    GetNatBindingsRequest, GetNatBindingsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest, GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, SwapPoliciesRequest, SwapPoliciesResponse
 };
 
-pub struct QueryServer<PolicySwap> where PolicySwap: PolicySwapper + Send + Sync {
+pub struct QueryServer<PolicySwap> where PolicySwap: PolicyManager + Send + Sync {
     handler: QueryHandler<PolicySwap>,
     socket_path: String,
     shutdown: CancellationToken,
 }
 
-impl<PolicySwap> QueryServer<PolicySwap> where PolicySwap: PolicySwapper + Send + Sync + 'static {
+impl<PolicySwap> QueryServer<PolicySwap> where PolicySwap: PolicyManager + Send + Sync + 'static {
     pub fn new(
         handler: QueryHandler<PolicySwap>,
         socket_path: impl Into<String>,
@@ -68,14 +69,14 @@ impl<PolicySwap> QueryServer<PolicySwap> where PolicySwap: PolicySwapper + Send 
 }
 
 #[derive(Clone)]
-pub struct QueryHandler<PolicySwap> where PolicySwap: PolicySwapper {
+pub struct QueryHandler<PolicySwap> where PolicySwap: PolicyManager {
     pub tcp_tracker: Arc<TcpSessionTracker>,
     pub nat_engine: Arc<Mutex<NatEngine>>,
     pub policy_store: Arc<PolicySwap>,
 }
 
 #[tonic::async_trait]
-impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: PolicySwapper + Send + Sync + 'static {
+impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: PolicyManager + Send + Sync + 'static {
     async fn get_tcp_sessions(
         &self,
         _request: Request<GetTcpSessionsRequest>,
@@ -83,31 +84,61 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
         Err(Status::unimplemented("not yet implemented"))
     }
 
-    async fn swap_config(
+    async fn swap_policies(
         &self,
-        request: Request<SwapConfigRequest>
-    ) -> Result<Response<SwapConfigResponse>, Status> {
+        request: Request<SwapPoliciesRequest>
+    ) -> Result<Response<SwapPoliciesResponse>, Status> {
         let rules = request.into_inner().rules;
         let mut policies = Vec::with_capacity(rules.len());
 
         for rule in rules {
-            match Policy::try_from(rule) {
+            match Policy::try_from_rule(rule) {
                 Ok(policy) => policies.push(policy),
                 Err(err) => {
-                    tracing::warn!(error = %err, "failed to parse policy from SwapConfigRequest");
+                    tracing::warn!(error = %err, "failed to parse policy from SwapPoliciesRequest");
                     return Err(Status::invalid_argument(format!("failed to parse policy: {err}")));
                 }
             }
         }
         
         let response = match self.policy_store.swap_policies(policies).await {
-            Ok(()) => SwapConfigResponse { },
+            Ok(()) => SwapPoliciesResponse { },
             Err(err) => {
                 tracing::error!(error = %err, "failed to swap policies");
                 return Err(Status::internal(format!("failed to swap policies: {err}")));
             }
         };
+
         Ok(Response::new(response))
+    }
+
+    async fn get_policies(
+        &self,
+        _request: Request<GetPoliciesRequest>
+    ) -> Result<Response<GetPoliciesResponse>, Status> {
+        let rules = self.policy_store.get_policies()
+            .iter()
+            .map(|(id, pol)| pol.clone().into_rule(id.clone()))
+            .collect::<Vec<_>>();
+
+        Ok(Response::new(GetPoliciesResponse {
+            rules,
+        }))
+    }
+
+    async fn get_policy(
+        &self,
+        request: Request<GetPolicyRequest>,
+    ) -> Result<Response<GetPolicyResponse>, Status> {
+        let id: PolicyId = Uuid::try_parse(&request.into_inner().id)
+            .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?
+            .into();
+        match self.policy_store.get_policy(&id) {
+            Some(policy) => Ok(Response::new(GetPolicyResponse {
+                rule: Some(policy.into_rule(id)),
+            })),
+            None => Err(Status::not_found(format!("policy with id {id} not found"))),
+        }
     }
 
     async fn get_nat_bindings(

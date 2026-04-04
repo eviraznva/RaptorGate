@@ -6,18 +6,33 @@ import "config/config_models.proto";
 // Hosted by the firewall. The backend dials in with unary RPCs.
 service FirewallQueryService {
   rpc GetTcpSessions  (GetTcpSessionsRequest) returns (GetTcpSessionsResponse);
-  rpc SwapConfig  (SwapConfigRequest) returns (SwapConfigResponse);
+  rpc SwapPolicies  (SwapPoliciesRequest) returns (SwapPoliciesResponse);
+  rpc GetPolicies (GetPoliciesRequest) returns (GetPoliciesResponse);
+  rpc GetPolicy (GetPolicyRequest) returns (GetPolicyResponse);
   rpc GetNatBindings  (GetNatBindingsRequest) returns (GetNatBindingsResponse);
 }
 
 message GetTcpSessionsRequest {}
 message GetTcpSessionsResponse {}
 
-message SwapConfigRequest {
+message SwapPoliciesRequest {
   repeated config.Rule rules = 1;
 }
 
-message SwapConfigResponse {
+message GetPoliciesRequest {}
+message GetPoliciesResponse {
+  repeated config.Rule rules = 1;
+}
+
+message GetPolicyRequest {
+  string id = 1;
+}
+
+message GetPolicyResponse {
+  config.Rule rule = 1;
+}
+
+message SwapPoliciesResponse {
   // optional string error = 1;
 }
 
