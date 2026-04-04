@@ -1,9 +1,9 @@
 import {
   CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
   type IConfigSnapshotRepository,
-} from 'src/domain/repositories/config-snapshot.repository';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
-import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
+} from '../../domain/repositories/config-snapshot.repository.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
 import { Inject, Injectable } from '@nestjs/common';
 
 @Injectable()
