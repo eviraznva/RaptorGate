@@ -6,7 +6,6 @@ pub mod mitm_proxy;
 pub mod original_dst;
 pub mod rustls_config;
 pub mod server_cert_resolver;
-pub mod server_key_storage;
 pub mod server_key_store;
 
 pub use ca_manager::{CaInfo, CaManager};

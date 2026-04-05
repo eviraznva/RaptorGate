@@ -1,13 +1,56 @@
+use std::fs;
 use std::net::{IpAddr, SocketAddr};
-use std::path::Path;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
 use dashmap::DashMap;
-use ring::digest::{digest, SHA256};
 use rustls::ServerConfig;
+
+use super::cert_storage::{decrypt_pem, encrypt_pem, read_encryption_key};
 use super::rustls_config::build_server_config_from_pem;
-use super::server_key_storage;
+
+const SERVER_KEYS_DIR: &str = "server_keys";
+
+fn key_path(pki_dir: &Path, id: &str) -> PathBuf {
+    pki_dir.join(SERVER_KEYS_DIR).join(format!("{id}.key.enc"))
+}
+
+fn save_key_to_disk(pki_dir: &Path, id: &str, key_pem: &str) -> anyhow::Result<()> {
+    let dir = pki_dir.join(SERVER_KEYS_DIR);
+    fs::create_dir_all(&dir).context("Failed to create server_keys directory")?;
+
+    let enc_key = read_encryption_key()?;
+    let encrypted = encrypt_pem(key_pem.as_bytes(), &enc_key)?;
+
+    let path = key_path(pki_dir, id);
+    fs::write(&path, &encrypted)
+        .with_context(|| format!("Failed to write server key {id}"))?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("Failed to set permissions on server key {id}"))?;
+
+    Ok(())
+}
+
+fn load_key_from_disk(pki_dir: &Path, id: &str) -> anyhow::Result<String> {
+    let path = key_path(pki_dir, id);
+    let encrypted =
+        fs::read(&path).with_context(|| format!("Failed to read server key {id}"))?;
+
+    let enc_key = read_encryption_key()?;
+    let decrypted = decrypt_pem(&encrypted, &enc_key)?;
+
+    String::from_utf8(decrypted).context("Server key contains invalid UTF-8")
+}
+
+fn delete_key_from_disk(pki_dir: &Path, id: &str) -> anyhow::Result<()> {
+    let path = key_path(pki_dir, id);
+    if path.exists() {
+        fs::remove_file(&path).with_context(|| format!("Failed to delete server key {id}"))?;
+    }
+    Ok(())
+}
 
 // Wpis inbound TLS dla jednego serwera.
 struct InboundServerEntry {
@@ -48,7 +91,7 @@ impl ServerKeyStore {
         common_name: &str,
         fingerprint: &str,
     ) -> anyhow::Result<()> {
-        server_key_storage::save_server_key(Path::new(&self.pki_dir), key_ref, key_pem)
+        save_key_to_disk(Path::new(&self.pki_dir), key_ref, key_pem)
             .with_context(|| format!("Failed to persist server key for {addr}"))?;
 
         let server_config = build_server_config_from_pem(cert_pem, key_pem)
@@ -76,7 +119,7 @@ impl ServerKeyStore {
         common_name: &str,
         fingerprint: &str,
     ) -> anyhow::Result<()> {
-        let key_pem = server_key_storage::load_server_key(Path::new(&self.pki_dir), key_ref)
+        let key_pem = load_key_from_disk(Path::new(&self.pki_dir), key_ref)
             .with_context(|| format!("Failed to load server key {key_ref}"))?;
 
         let server_config = build_server_config_from_pem(cert_pem, &key_pem)
@@ -111,7 +154,7 @@ impl ServerKeyStore {
     pub fn remove(&self, addr: SocketAddr, key_ref: &str) -> anyhow::Result<bool> {
         let removed = self.entries.remove(&addr).is_some();
         if removed {
-            server_key_storage::delete_server_key(Path::new(&self.pki_dir), key_ref)?;
+            delete_key_from_disk(Path::new(&self.pki_dir), key_ref)?;
             tracing::info!(%addr, "Inbound TLS server key removed");
         }
         Ok(removed)
@@ -252,7 +295,7 @@ mod tests {
         let (cert, key) = make_server_cert();
         let addr = test_addr();
 
-        server_key_storage::save_server_key(Path::new(&dir), "disk-ref", &key).unwrap();
+        save_key_to_disk(Path::new(&dir), "disk-ref", &key).unwrap();
 
         store
             .load(addr, &cert, "disk-ref", "test-server.local", "CC:DD")

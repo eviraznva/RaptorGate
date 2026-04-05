@@ -35,6 +35,12 @@ pub fn derive_encryption_key(machine_id: &[u8]) -> anyhow::Result<[u8; 32]> {
     Ok(key)
 }
 
+// Odczytuje machine-id i zwraca klucz szyfrowania AES-256.
+pub fn read_encryption_key() -> anyhow::Result<[u8; 32]> {
+    let machine_id = read_machine_id()?;
+    derive_encryption_key(&machine_id)
+}
+
 // Szyfruje dane kluczem AES-256-GCM; losowy nonce (12 B) poprzedza szyfrogram.
 pub fn encrypt_pem(plaintext: &[u8], key: &[u8; 32]) -> anyhow::Result<Vec<u8>> {
     let rng = SystemRandom::new();
