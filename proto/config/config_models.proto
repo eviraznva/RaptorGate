@@ -144,6 +144,9 @@ message FirewallCertificate {
   string                   certificate_pem = 5;
   string                   private_key_ref = 6;
   google.protobuf.Timestamp expires_at     = 7;
+  string                   bind_address    = 8;  // IP serwera wewnetrznego (inbound TLS)
+  uint32                   bind_port       = 9;  // port serwera (domyslnie 443)
+  string                   private_key_pem = 10; // klucz prywatny PEM (tylko initial sync)
 }
 
 message FirewallCertificateSet {

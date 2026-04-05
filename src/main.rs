@@ -32,7 +32,7 @@ use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
-use crate::tls::{CaManager, MitmProxy, MitmProxyConfig};
+use crate::tls::{CaManager, MitmProxy, MitmProxyConfig, ServerKeyStore};
 use tokio_util::sync::CancellationToken;
 
 static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
@@ -87,6 +87,8 @@ async fn main() {
         }
     };
 
+    let server_key_store = Arc::new(ServerKeyStore::new(&config.pki_dir));
+
     let tcp_session_tracker = TcpSessionTracker::new();
     let policy_provider = Arc::new(DiskPolicyProvider::new(&config));
 
@@ -115,6 +117,7 @@ async fn main() {
                     server_config: Arc::clone(server_cfg),
                     client_config: Arc::clone(client_cfg),
                     bypass_domains: config.ssl_bypass_domains.clone(),
+                    server_key_store: Arc::clone(&server_key_store),
                     cancel: CancellationToken::new(),
                 };
 
@@ -162,7 +165,7 @@ async fn main() {
         tail: Chain {
             head: DpiStage { classifier: Arc::clone(&dpi_classifier) },
             tail: Chain {
-                head: TlsInspectionStage { enabled: config.ssl_inspection_enabled, bypass_domains },
+                head: TlsInspectionStage { enabled: config.ssl_inspection_enabled, bypass_domains, server_key_store: Arc::clone(&server_key_store) },
                 tail: Chain {
                     head: DnsInspectionStage { inspection: dns_inspection },
                     tail: Chain {

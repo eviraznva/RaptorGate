@@ -18,6 +18,9 @@ message EventKind {
     TlsInterceptStartedEvent      tls_intercept_started     = 5;
     TlsHandshakeCompleteEvent      tls_handshake_complete    = 6;
     TlsSessionClosedEvent         tls_session_closed        = 7;
+    InboundTlsInterceptStartedEvent   inbound_tls_intercept_started   = 8;
+    InboundTlsHandshakeCompleteEvent  inbound_tls_handshake_complete  = 9;
+    InboundTlsSessionClosedEvent      inbound_tls_session_closed      = 10;
   }
 }
 
@@ -71,4 +74,32 @@ message TlsSessionClosedEvent {
   string sni       = 5;
   uint64 bytes_up  = 6;
   uint64 bytes_down = 7;
+}
+
+message InboundTlsInterceptStartedEvent {
+  string peer_ip       = 1;
+  uint32 peer_port     = 2;
+  string server_ip     = 3;
+  uint32 server_port   = 4;
+  string sni           = 5;
+  string common_name   = 6;
+}
+
+message InboundTlsHandshakeCompleteEvent {
+  string peer_ip       = 1;
+  uint32 peer_port     = 2;
+  string server_ip     = 3;
+  uint32 server_port   = 4;
+  string sni           = 5;
+  string alpn          = 6;
+}
+
+message InboundTlsSessionClosedEvent {
+  string peer_ip       = 1;
+  uint32 peer_port     = 2;
+  string server_ip     = 3;
+  uint32 server_port   = 4;
+  string sni           = 5;
+  uint64 bytes_up      = 6;
+  uint64 bytes_down    = 7;
 }

@@ -136,7 +136,7 @@ fn generate_ca() -> anyhow::Result<GeneratedCa> {
 }
 
 // Oblicza odcisk palca SHA-256 z bajtów DER certyfikatu w formacie XX:XX:...
-fn compute_fingerprint(der: &[u8]) -> String {
+pub fn compute_fingerprint(der: &[u8]) -> String {
     let hash = digest(&SHA256, der);
     hash.as_ref()
         .iter()

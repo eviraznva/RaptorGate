@@ -13,6 +13,7 @@ use crate::{
     },
     dpi::{DpiClassifier, InspectResult, TlsAction},
     packet_validator::validate, pipeline::{Stage, StageOutcome}, policy::provider::DiskPolicyProvider, rule_tree::{ArrivalInfo, Verdict},
+    tls::server_key_store::ServerKeyStore,
 };
 use crate::data_plane::dns_inspection::DnsInspectionVerdict;
 use crate::dpi::AppProto;
@@ -270,6 +271,7 @@ impl Stage for DpiStage {
 pub struct TlsInspectionStage {
     pub enabled: bool,
     pub bypass_domains: Arc<Vec<String>>,
+    pub server_key_store: Arc<ServerKeyStore>,
 }
 
 impl TlsInspectionStage {
@@ -280,19 +282,56 @@ impl TlsInspectionStage {
         })
     }
 
-    fn decide(&self, sni: Option<&str>, ech_detected: bool) -> TlsAction {
+    // Decyzja inspekcji: inbound (klucz serwera) vs outbound (MITM) vs bypass/block.
+    fn decide(
+        &self,
+        sni: Option<&str>,
+        ech_detected: bool,
+        dst_ip: Option<IpAddr>,
+        dst_port: u16,
+    ) -> TlsAction {
+        // Inbound: mamy klucz serwera — zawsze Intercept, pomijamy bypass/ECH
+        if let Some(ip) = dst_ip {
+            if self.server_key_store.contains(ip, dst_port) {
+                return TlsAction::Intercept;
+            }
+        }
+
+        // Outbound: bypass lista
         if let Some(domain) = sni {
             if Self::is_bypassed(domain, &self.bypass_domains) {
                 return TlsAction::Bypass;
             }
         }
 
-        // ECH bez znanego SNI — nie da sie ustalić domeny, blokuj
+        // ECH bez znanego SNI — nie da sie ustalic domeny, blokuj
         if ech_detected && sni.is_none() {
             return TlsAction::Block;
         }
 
         TlsAction::Intercept
+    }
+}
+
+// Wyciaga destination IP z naglowka pakietu.
+fn extract_dst_ip(ctx: &PacketContext) -> Option<IpAddr> {
+    match &ctx.borrow_sliced_packet().net {
+        Some(etherparse::NetSlice::Ipv4(ipv4)) => {
+            Some(IpAddr::V4(ipv4.header().destination_addr()))
+        }
+        Some(etherparse::NetSlice::Ipv6(ipv6)) => {
+            Some(IpAddr::V6(ipv6.header().destination_addr()))
+        }
+        _ => None,
+    }
+}
+
+// Wyciaga destination port z naglowka transportowego.
+fn extract_dst_port(ctx: &PacketContext) -> u16 {
+    match &ctx.borrow_sliced_packet().transport {
+        Some(etherparse::TransportSlice::Tcp(tcp)) => tcp.destination_port(),
+        Some(etherparse::TransportSlice::Udp(udp)) => udp.destination_port(),
+        _ => 0,
     }
 }
 
@@ -310,11 +349,16 @@ impl Stage for TlsInspectionStage {
             None => return StageOutcome::Continue,
         };
 
-        let action = self.decide(sni.as_deref(), ech_detected);
+        let dst_ip = extract_dst_ip(ctx);
+        let dst_port = extract_dst_port(ctx);
+
+        let action = self.decide(sni.as_deref(), ech_detected, dst_ip, dst_port);
 
         tracing::debug!(
             sni = sni.as_deref().unwrap_or("none"),
             ech = ech_detected,
+            ?dst_ip,
+            dst_port,
             action = ?action,
             "TLS inspection decision"
         );
