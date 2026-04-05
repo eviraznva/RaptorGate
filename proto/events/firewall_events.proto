@@ -15,6 +15,9 @@ message EventKind {
     TcpSessionRemovedEvent         tcp_session_removed      = 2;
     TcpConnectionRejectedEvent     tcp_connection_rejected  = 3;
     TcpSessionAbortedMidCloseEvent tcp_session_aborted      = 4;
+    TlsInterceptStartedEvent      tls_intercept_started     = 5;
+    TlsHandshakeCompleteEvent      tls_handshake_complete    = 6;
+    TlsSessionClosedEvent         tls_session_closed        = 7;
   }
 }
 
@@ -41,4 +44,31 @@ message TcpConnectionRejectedEvent {
 message TcpSessionAbortedMidCloseEvent {
   TcpEndpoint src = 1;
   TcpEndpoint dst = 2;
+}
+
+message TlsInterceptStartedEvent {
+  string peer_ip   = 1;
+  uint32 peer_port = 2;
+  string dst_ip    = 3;
+  uint32 dst_port  = 4;
+  string sni       = 5;
+}
+
+message TlsHandshakeCompleteEvent {
+  string peer_ip   = 1;
+  uint32 peer_port = 2;
+  string dst_ip    = 3;
+  uint32 dst_port  = 4;
+  string sni       = 5;
+  string alpn      = 6;
+}
+
+message TlsSessionClosedEvent {
+  string peer_ip   = 1;
+  uint32 peer_port = 2;
+  string dst_ip    = 3;
+  uint32 dst_port  = 4;
+  string sni       = 5;
+  uint64 bytes_up  = 6;
+  uint64 bytes_down = 7;
 }

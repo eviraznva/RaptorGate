@@ -27,12 +27,12 @@ use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::dpi::DpiClassifier;
-use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, FtpAlgStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
+use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, FtpAlgStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, TlsInspectionStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
-use crate::tls::CaManager;
+use crate::tls::{CaManager, MitmProxy, MitmProxyConfig};
 use tokio_util::sync::CancellationToken;
 
 static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
@@ -42,11 +42,12 @@ async fn main() {
     type DataPipeline =
         Chain<ValidationStage,
         Chain<DpiStage,
+        Chain<TlsInspectionStage,
         Chain<DnsInspectionStage,
         Chain<NatPreroutingStage,
         Chain<TcpClassificationStage,
         Chain<PolicyEvalStage,
-        Chain<NatPostroutingStage, FtpAlgStage>>>>>>>; 
+        Chain<NatPostroutingStage, FtpAlgStage>>>>>>>>;
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -63,7 +64,7 @@ async fn main() {
         }
     };
 
-    let (ca_info, _tls_server_config, _tls_client_config) = match CaManager::init(&config.pki_dir) {
+    let (ca_info, tls_server_config, tls_client_config) = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
             tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
             let info = ca.ca_info();
@@ -77,7 +78,7 @@ async fn main() {
                 .expect("Failed to build TLS client config");
             tracing::info!("TLS client config ready");
 
-            let _ = forger; // forger utrzymywany przez server_cfg resolver
+            let _ = forger;
             (Some(info), Some(server_cfg), Some(client_cfg))
         }
         Err(err) => {
@@ -103,6 +104,36 @@ async fn main() {
     );
     tokio::spawn(query_server.serve());
 
+    if config.ssl_inspection_enabled {
+        match (&tls_server_config, &tls_client_config) {
+            (Some(server_cfg), Some(client_cfg)) => {
+                let listen_addr = config.mitm_listen_addr.parse()
+                    .expect("MITM_LISTEN_ADDR must be a valid socket address");
+
+                let proxy_config = MitmProxyConfig {
+                    listen_addr,
+                    server_config: Arc::clone(server_cfg),
+                    client_config: Arc::clone(client_cfg),
+                    bypass_domains: config.ssl_bypass_domains.clone(),
+                    cancel: CancellationToken::new(),
+                };
+
+                match MitmProxy::bind(proxy_config).await {
+                    Ok(proxy) => {
+                        tokio::spawn(proxy.serve());
+                        tracing::info!("SSL/TLS inspection enabled");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to start MITM proxy");
+                    }
+                }
+            }
+            _ => {
+                tracing::error!("SSL inspection enabled but CA/TLS config not available");
+            }
+        }
+    }
+
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
     let tun = TunForwarder::get(&config);
@@ -124,26 +155,31 @@ async fn main() {
     let dns_inspection = DnsInspection::new(dns_block_tree, TunnelingDetectorConfig::default());
     let dpi_classifier = Arc::new(DpiClassifier::new());
     
+    let bypass_domains = Arc::new(config.ssl_bypass_domains.clone());
+
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
             head: DpiStage { classifier: Arc::clone(&dpi_classifier) },
             tail: Chain {
-                head: DnsInspectionStage { inspection: dns_inspection },
+                head: TlsInspectionStage { enabled: config.ssl_inspection_enabled, bypass_domains },
                 tail: Chain {
-                    head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
+                    head: DnsInspectionStage { inspection: dns_inspection },
                     tail: Chain {
-                        head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
+                        head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
                         tail: Chain {
-                            head: PolicyEvalStage { provider: Arc::clone(&policy_provider) },
+                            head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
                             tail: Chain {
-                                head: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
-                                tail: FtpAlgStage { engine: Arc::clone(&nat_engine) },
+                                head: PolicyEvalStage { provider: Arc::clone(&policy_provider) },
+                                tail: Chain {
+                                    head: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                                    tail: FtpAlgStage { engine: Arc::clone(&nat_engine) },
+                                },
                             },
                         },
                     },
                 },
-            }
+            },
         },
     };
 
