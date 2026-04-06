@@ -50,9 +50,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "logg
 tokio-rustls = "0.26"
 rustls-pemfile = "2"
 webpki-roots = "0.26"
+x509-parser = "0.16"
 
 [dev-dependencies]
-x509-parser = "0.16"
 
 [build-dependencies]
 protoc-bin-vendored = "3.2.0"

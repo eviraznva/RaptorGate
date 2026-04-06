@@ -6,6 +6,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::server::TlsStream as ServerTlsStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
+use x509_parser::extensions::{GeneralName, ParsedExtension};
 
 // Para sesji TLS: klient↔firewall i firewall↔serwer docelowy.
 pub struct DualTlsSession {
@@ -77,6 +78,31 @@ pub async fn establish_dual_session(
         server_stream,
         negotiated_alpn,
     })
+}
+
+// Wyodrębnia DNS SAN z certyfikatu serwera po zakonczonym TLS handshake.
+pub fn extract_peer_sans(stream: &ClientTlsStream<TcpStream>) -> Vec<String> {
+    let Some(certs) = stream.get_ref().1.peer_certificates() else {
+        return vec![];
+    };
+    let Some(first) = certs.first() else {
+        return vec![];
+    };
+    let Ok((_, cert)) = x509_parser::parse_x509_certificate(first.as_ref()) else {
+        return vec![];
+    };
+
+    let mut sans = Vec::new();
+    for ext in cert.extensions() {
+        if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
+            for name in &san.general_names {
+                if let GeneralName::DNSName(dns) = name {
+                    sans.push(dns.to_string());
+                }
+            }
+        }
+    }
+    sans
 }
 
 #[cfg(test)]

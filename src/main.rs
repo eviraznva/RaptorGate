@@ -64,22 +64,21 @@ async fn main() {
         }
     };
 
-    let (ca_info, tls_server_config, tls_client_config) = match CaManager::init(&config.pki_dir) {
+    let (ca_info, tls_cert_forger, tls_client_config) = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
             tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
             let info = ca.ca_info();
 
-            let (server_cfg, forger) = ca
-                .build_mitm_server_config(1024)
-                .expect("Failed to build MITM server TLS config");
-            tracing::info!("MITM TLS server config ready (cert cache capacity: 1024)");
+            let forger = Arc::new(
+                ca.cert_forger(1024).expect("Failed to create cert forger"),
+            );
+            tracing::info!("Cert forger ready (cache capacity: 1024)");
 
             let client_cfg = tls::rustls_config::build_client_config()
                 .expect("Failed to build TLS client config");
             tracing::info!("TLS client config ready");
 
-            let _ = forger;
-            (Some(info), Some(server_cfg), Some(client_cfg))
+            (Some(info), Some(forger), Some(client_cfg))
         }
         Err(err) => {
             eprintln!("Warning: CA initialization failed: {err}");
@@ -107,15 +106,15 @@ async fn main() {
     tokio::spawn(query_server.serve());
 
     if config.ssl_inspection_enabled {
-        match (&tls_server_config, &tls_client_config) {
-            (Some(server_cfg), Some(client_cfg)) => {
+        match (&tls_cert_forger, &tls_client_config) {
+            (Some(forger), Some(client_cfg)) => {
                 let listen_addr = config.mitm_listen_addr.parse()
                     .expect("MITM_LISTEN_ADDR must be a valid socket address");
 
                 let proxy_config = MitmProxyConfig {
                     listen_addr,
-                    server_config: Arc::clone(server_cfg),
                     client_config: Arc::clone(client_cfg),
+                    cert_forger: Arc::clone(forger),
                     bypass_domains: config.ssl_bypass_domains.clone(),
                     server_key_store: Arc::clone(&server_key_store),
                     cancel: CancellationToken::new(),
