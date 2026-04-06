@@ -8,7 +8,7 @@ use ngfw::data_plane::nat::NatEngine;
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::proto::config::Rule;
-use ngfw::proto::services::{GetPoliciesRequest, SwapPoliciesRequest};
+use ngfw::proto::services::{GetConfigRequest, GetPoliciesRequest, SwapConfigRequest, SwapPoliciesRequest};
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::zones::provider::ZonePairProvider;
@@ -234,4 +234,61 @@ async fn fetch_zone_pairs_returns_ok() {
         zone_pair.id,
         inner.zone_pairs.iter().map(|zp| &zp.id).collect::<Vec<_>>()
     );
+}
+
+#[tokio::test]
+#[serial(config)]
+async fn swap_config_happy_path_returns_no_error() {
+    let mut client = connect(&shared_server().socket).await;
+
+    client
+        .swap_config(SwapConfigRequest {
+            config: Some(ngfw::proto::config::AppConfig {
+                capture_interfaces: vec!["eth0".into(), "eth1".into()],
+                pcap_timeout_ms: 3000,
+                tun_device_name: "tun99".into(),
+                tun_address: "10.254.254.1".into(),
+                tun_netmask: "255.255.255.0".into(),
+                data_dir: "/tmp".into(),
+                grpc_socket_path: "./sockets/firewall.sock".into(),
+                query_socket_path: "/tmp/test-query-shared.sock".into(),
+                pki_dir: "/tmp/pki".into(),
+            }),
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[serial(config)]
+async fn get_config_returns_ok() {
+    let mut client = connect(&shared_server().socket).await;
+
+    let swapped = ngfw::proto::config::AppConfig {
+        capture_interfaces: vec!["eth3".into()],
+        pcap_timeout_ms: 7000,
+        tun_device_name: "tun42".into(),
+        tun_address: "192.168.1.1".into(),
+        tun_netmask: "255.255.0.0".into(),
+        data_dir: "/tmp".into(),
+        grpc_socket_path: "./sockets/firewall.sock".into(),
+        query_socket_path: "/tmp/test-query-shared.sock".into(),
+        pki_dir: "/tmp/pki".into(),
+    };
+
+    client
+        .swap_config(SwapConfigRequest { config: Some(swapped.clone()) })
+        .await
+        .unwrap();
+
+    let resp = client.get_config(GetConfigRequest {}).await.unwrap();
+    let inner = resp.into_inner();
+    let config = inner.config.expect("get_config returned no config");
+
+    assert_eq!(config.capture_interfaces, vec!["eth3"]);
+    assert_eq!(config.pcap_timeout_ms, 7000);
+    assert_eq!(config.tun_device_name, "tun42");
+    assert_eq!(config.tun_address, "192.168.1.1");
+    assert_eq!(config.tun_netmask, "255.255.0.0");
+    assert_eq!(config.pki_dir, "/tmp/pki");
 }
