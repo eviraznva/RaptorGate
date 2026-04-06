@@ -1,14 +1,11 @@
 use std::path::Path;
-use std::sync::Arc;
 
 use anyhow::Context;
 use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
 use ring::digest::{digest, SHA256};
-use rustls::ServerConfig;
 use time::OffsetDateTime;
 
 use crate::tls::cert_storage;
-use crate::tls::server_cert_resolver::SniForgingResolver;
 
 // Informacje o CA przekazywane do control plane.
 #[derive(Clone)]
@@ -78,17 +75,6 @@ impl CaManager {
             expires_at: self.expires_at.clone(),
         }
     }
-
-    // Buduje konfigurację TLS serwera MITM z fałszowaniem certyfikatów per domena.
-    pub fn build_mitm_server_config(
-        &self,
-        cert_cache_capacity: usize,
-    ) -> anyhow::Result<(Arc<ServerConfig>, Arc<super::CertForger>)> {
-        let forger = Arc::new(self.cert_forger(cert_cache_capacity)?);
-        let resolver = Arc::new(SniForgingResolver::new(Arc::clone(&forger)));
-        let config = super::rustls_config::build_server_config(resolver)?;
-        Ok((config, forger))
-    }
 }
 
 struct GeneratedCa {
@@ -136,7 +122,7 @@ fn generate_ca() -> anyhow::Result<GeneratedCa> {
 }
 
 // Oblicza odcisk palca SHA-256 z bajtów DER certyfikatu w formacie XX:XX:...
-fn compute_fingerprint(der: &[u8]) -> String {
+pub fn compute_fingerprint(der: &[u8]) -> String {
     let hash = digest(&SHA256, der);
     hash.as_ref()
         .iter()

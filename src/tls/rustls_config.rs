@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::WebPkiServerVerifier;
 use rustls::crypto::ring as rustls_ring;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
-use rustls::{ClientConfig, RootCertStore, ServerConfig};
+use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig};
 
-// Konfiguracja klienta TLS (firewall→serwer) z weryfikacją webpki.
+/// Konfiguracja klienta TLS z weryfikacją webpki
 pub fn build_client_config() -> anyhow::Result<Arc<ClientConfig>> {
     let mut root_store = RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -34,7 +35,7 @@ pub fn build_client_config() -> anyhow::Result<Arc<ClientConfig>> {
     Ok(Arc::new(config))
 }
 
-// Konfiguracja serwera TLS z dynamicznym resolverem certyfikatów.
+/// Konfiguracja serwera TLS z dynamicznym resolverem certyfikatów
 pub fn build_server_config(
     cert_resolver: Arc<dyn ResolvesServerCert>,
 ) -> anyhow::Result<Arc<ServerConfig>> {
@@ -47,7 +48,7 @@ pub fn build_server_config(
     Ok(Arc::new(config))
 }
 
-// Konfiguracja serwera TLS ze statycznym certyfikatem PEM (tryb inbound).
+/// Konfiguracja serwera TLS ze statycznym certyfikatem PEM dla trybu inbound
 pub fn build_server_config_from_pem(
     cert_pem: &str,
     key_pem: &str,
@@ -71,7 +72,6 @@ pub fn build_server_config_from_pem(
     Ok(Arc::new(config))
 }
 
-// Parsuje łańcuch certyfikatów z PEM.
 pub fn parse_cert_chain_pem(pem: &str) -> anyhow::Result<Vec<CertificateDer<'static>>> {
     let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut pem.as_bytes())
         .collect::<Result<Vec<_>, _>>()
@@ -81,14 +81,89 @@ pub fn parse_cert_chain_pem(pem: &str) -> anyhow::Result<Vec<CertificateDer<'sta
     Ok(certs)
 }
 
-// Parsuje klucz prywatny z PEM.
 pub fn parse_private_key_pem(pem: &str) -> anyhow::Result<PrivateKeyDer<'static>> {
     rustls_pemfile::private_key(&mut pem.as_bytes())
         .context("Failed to parse private key PEM")?
         .context("No private key found in PEM data")
 }
 
-// Resolver zwracający zawsze ten sam certyfikat (tryb inbound).
+/// Klient TLS do re-encryption w trybie inbound
+pub fn build_client_config_no_verify() -> anyhow::Result<Arc<ClientConfig>> {
+    let mut config: ClientConfig = ClientConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+        .context("Failed to set TLS protocol versions")?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerifier))
+        .with_no_client_auth();
+
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    Ok(Arc::new(config))
+}
+
+/// Konfiguracja serwera TLS ze sfałszowanym certyfikatem dla outbound MITM
+pub fn build_server_config_for_key(key: Arc<CertifiedKey>) -> anyhow::Result<Arc<ServerConfig>> {
+    let resolver = SingleCertResolver(key);
+
+    let config = ServerConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+        .context("Failed to set TLS protocol versions")?
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(resolver));
+
+    Ok(Arc::new(config))
+}
+
+#[derive(Debug)]
+struct NoVerifier;
+
+impl ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls_ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls_ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls_ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
 #[derive(Debug)]
 struct SingleCertResolver(Arc<CertifiedKey>);
 
