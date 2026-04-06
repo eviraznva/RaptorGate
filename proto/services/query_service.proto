@@ -18,6 +18,9 @@ service FirewallQueryService {
   rpc SwapZonePairs (SwapZonePairsRequest)     returns (SwapZonePairsResponse);
   rpc GetZonePairs  (GetZonePairsRequest)      returns (GetZonePairsResponse);
   rpc GetZonePair   (GetZonePairRequest)       returns (GetZonePairResponse);
+
+  rpc SwapConfig    (SwapConfigRequest)        returns (SwapConfigResponse);
+  rpc GetConfig     (GetConfigRequest)         returns (GetConfigResponse);
 }
 
 message GetTcpSessionsRequest {}
@@ -87,4 +90,18 @@ message GetZonePairRequest {
 
 message GetZonePairResponse {
   config.ZonePair zone_pair = 1;
+}
+
+// ── AppConfig ────────────────────────────────────────────────────────────────
+
+message SwapConfigRequest {
+  config.AppConfig config = 1;
+}
+
+message SwapConfigResponse {}
+
+message GetConfigRequest {}
+
+message GetConfigResponse {
+  config.AppConfig config = 1;
 }

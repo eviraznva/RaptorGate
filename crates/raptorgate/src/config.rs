@@ -1,111 +1,67 @@
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::{net::Ipv4Addr, path::PathBuf};
 
+use crate::proto::config as proto;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
-    // Packet capture
     pub capture_interfaces: Vec<String>,
     pub pcap_timeout_ms: i32,
-    pub disable_data_plane: bool,
 
-    // TUN device
     pub tun_device_name: String,
     pub tun_address: Ipv4Addr,
     pub tun_netmask: Ipv4Addr,
 
     pub data_dir: PathBuf,
 
-    // gRPC / backend
     pub grpc_socket_path: String,
-    pub control_plane_grpc_socket_path: String,
     pub query_socket_path: String,
-    pub firewall_version: String,
-    pub heartbeat_interval_secs: u64,
 
-
+    #[serde(skip)]
     pub dev_config: Option<DevConfig>,
-    // PKI — przechowywanie certyfikatu CA i zaszyfrowanego klucza prywatnego
+
     pub pki_dir: String,
 }
 
+#[derive(Clone, Debug)]
 pub struct DevConfig {
     pub policy_override: Option<String>,
 }
 
 impl AppConfig {
-    pub fn from_env() -> Result<Self> {
-        let _ = dotenvy::dotenv();
-
-        let dev_mode_raw = std::env::var("DEV_MODE").unwrap_or_else(|_| "false".into());
-        let dev_mode = dev_mode_raw.to_lowercase() == "true";
-        let dev_policy = match std::env::var("DEV_OVERRIDE_POLICY") {
-            Ok(p) => Some(p),
-            Err(std::env::VarError::NotPresent) => None,
-            Err(e) => {
-                eprintln!("WARNING: Failed to read DEV_OVERRIDE_POLICY: {}", e);
-                None
-            }
-        };
-
-        if dev_mode && dev_policy.is_none() {
-            eprintln!("WARNING: DEV_MODE is enabled but DEV_OVERRIDE_POLICY is not set. Using default policy.");
+    pub fn to_proto(&self) -> proto::AppConfig {
+        proto::AppConfig {
+            capture_interfaces: self.capture_interfaces.clone(),
+            pcap_timeout_ms: self.pcap_timeout_ms,
+            tun_device_name: self.tun_device_name.clone(),
+            tun_address: self.tun_address.to_string(),
+            tun_netmask: self.tun_netmask.to_string(),
+            data_dir: self.data_dir.to_string_lossy().into_owned(),
+            grpc_socket_path: self.grpc_socket_path.clone(),
+            query_socket_path: self.query_socket_path.clone(),
+            pki_dir: self.pki_dir.clone(),
         }
+    }
 
+    pub fn from_proto(proto_config: proto::AppConfig) -> Result<Self> {
         Ok(Self {
-
-            capture_interfaces: std::env::var("CAPTURE_INTERFACES")
-                .unwrap_or_else(|_| "eth1,eth2".into())
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
-
-            pcap_timeout_ms: std::env::var("PCAP_TIMEOUT_MS")
-                .unwrap_or_else(|_| "5000".into())
+            capture_interfaces: proto_config.capture_interfaces,
+            pcap_timeout_ms: proto_config.pcap_timeout_ms,
+            tun_device_name: proto_config.tun_device_name,
+            tun_address: proto_config
+                .tun_address
                 .parse()
-                .context("PCAP_TIMEOUT_MS must be an integer")?,
-
-            disable_data_plane: std::env::var("DISABLE_DATA_PLANE")
-                .unwrap_or_else(|_| "false".into())
-                .to_lowercase()
-                == "true",
-
-            tun_device_name: std::env::var("TUN_DEVICE_NAME").unwrap_or_else(|_| "tun0".into()),
-
-            tun_address: std::env::var("TUN_ADDRESS")
-                .unwrap_or_else(|_| "10.254.254.1".into())
+                .context("tun_address must be a valid IPv4 address")?,
+            tun_netmask: proto_config
+                .tun_netmask
                 .parse()
-                .context("TUN_ADDRESS must be a valid IPv4 address")?,
-
-            tun_netmask: std::env::var("TUN_NETMASK")
-                .unwrap_or_else(|_| "255.255.255.0".into())
-                .parse()
-                .context("TUN_NETMASK must be a valid IPv4 address")?,
-
-            grpc_socket_path: std::env::var("GRPC_SOCKET_PATH")
-                .unwrap_or_else(|_| "./sockets/firewall.sock".into()),
-
-            control_plane_grpc_socket_path: std::env::var("CONTROL_PLANE_GRPC_SOCKET_PATH")
-                .unwrap_or_else(|_| "./sockets/control-plane.sock".into()),
-
-            query_socket_path: std::env::var("QUERY_SOCKET_PATH")
-                .unwrap_or_else(|_| "./sockets/query.sock".into()),
-
-            firewall_version: std::env::var("FIREWALL_VERSION")
-                .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into()),
-
-            heartbeat_interval_secs: std::env::var("HEARTBEAT_INTERVAL_SECS")
-                .unwrap_or_else(|_| "10".into())
-                .parse()
-                .context("HEARTBEAT_INTERVAL_SECS must be an integer")?,
-
-            dev_config: dev_mode.then_some(DevConfig {
-                policy_override: dev_policy,
-            }),
-            pki_dir: std::env::var("RAPTORGATE_PKI_DIR")
-                .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
-
-            data_dir: std::env::var("POLICIES_DIRECTORY")
-                .unwrap_or_else(|_| "./".into()).into(),
+                .context("tun_netmask must be a valid IPv4 address")?,
+            data_dir: proto_config.data_dir.into(),
+            grpc_socket_path: proto_config.grpc_socket_path,
+            query_socket_path: proto_config.query_socket_path,
+            dev_config: None,
+            pki_dir: proto_config.pki_dir,
         })
     }
 }

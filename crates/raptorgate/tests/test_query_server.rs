@@ -3,7 +3,7 @@ use std::env;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use ngfw::config::AppConfig;
+use ngfw::config_provider::AppConfigProvider;
 use ngfw::data_plane::nat::NatEngine;
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::provider::DiskPolicyProvider;
@@ -37,7 +37,8 @@ fn shared_server() -> &'static SharedServer {
             // it is never dropped, so the server task is never killed.
             let rt = tokio::runtime::Runtime::new().expect("failed to build server runtime");
             rt.block_on(async move {
-                let config = AppConfig::from_env().expect("failed to load config");
+                let config_provider = Arc::new(AppConfigProvider::from_env().await.expect("failed to load config"));
+                let config = config_provider.get_config();
                 let policy = DiskPolicyProvider::from_loaded(&config)
                     .await
                     .expect("failed to load policy provider");
@@ -50,6 +51,7 @@ fn shared_server() -> &'static SharedServer {
                     policy_store: Arc::new(policy),
                     zone_store: Arc::new(zones),
                     zone_pair_store: Arc::new(zone_pairs),
+                    config_provider: Arc::clone(&config_provider),
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();

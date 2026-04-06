@@ -1,4 +1,5 @@
 mod config;
+mod config_provider;
 mod data_plane;
 mod dpi;
 mod events;
@@ -20,7 +21,7 @@ use etherparse::NetSlice;
 use tokio::sync::Mutex;
 use ipnet::IpNet;
 use tracing::trace;
-use crate::config::AppConfig;
+use crate::config_provider::AppConfigProvider;
 use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree, TunnelingDetectorConfig};
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::NatEngine;
@@ -58,13 +59,15 @@ async fn main() {
         .with_thread_names(false)
         .init();
 
-    let config = match AppConfig::from_env() {
-        Ok(config) => config,
+    let config_provider = match AppConfigProvider::from_env().await {
+        Ok(provider) => Arc::new(provider),
         Err(err) => {
-            eprintln!("Configuration error: {err}");
+            tracing::error!("Configuration error: {err}");
             return;
         }
     };
+
+    let config = config_provider.get_config();
 
     let ca_info = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
@@ -92,6 +95,7 @@ async fn main() {
             policy_store: Arc::clone(&policy_provider),
             zone_store: zones,
             zone_pair_store: zone_pairs,
+            config_provider: Arc::clone(&config_provider),
         },
         &config.query_socket_path,
         CancellationToken::new(),
