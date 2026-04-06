@@ -1,23 +1,23 @@
 syntax = "proto3";
 
 package raptorgate.services;
+
 import "config/config_models.proto";
 
-// Hosted by the firewall. The backend dials in with unary RPCs.
 service FirewallQueryService {
   rpc GetTcpSessions  (GetTcpSessionsRequest) returns (GetTcpSessionsResponse);
 
   rpc SwapPolicies  (SwapPoliciesRequest) returns (SwapPoliciesResponse);
-  rpc GetPolicies (GetPoliciesRequest) returns (GetPoliciesResponse);
-  rpc GetPolicy (GetPolicyRequest) returns (GetPolicyResponse);
-  rpc GetNatBindings  (GetNatBindingsRequest) returns (GetNatBindingsResponse);
-  
-  rpc SwapZones  (SwapZonesRequest) returns (SwapZonesResponse);
-  rpc GetZones (GetZonesRequest) returns (GetZonesResponse);
-  rpc GetZone (GetZoneRequest) returns (GetZoneResponse);
-  rpc SwapZonePairs  (SwapZonePairsRequest) returns (SwapZonePairsResponse);
-  rpc GetZonePairs (GetZonePairsRequest) returns (GetZonePairsResponse);
-  rpc GetZonePair (GetZonePairRequest) returns (GetZonePairResponse);
+  rpc GetPolicies   (GetPoliciesRequest)       returns (GetPoliciesResponse);
+  rpc GetPolicy     (GetPolicyRequest)         returns (GetPolicyResponse);
+  rpc GetNatBindings(GetNatBindingsRequest)    returns (GetNatBindingsResponse);
+
+  rpc SwapZones     (SwapZonesRequest)         returns (SwapZonesResponse);
+  rpc GetZones      (GetZonesRequest)          returns (GetZonesResponse);
+  rpc GetZone       (GetZoneRequest)           returns (GetZoneResponse);
+  rpc SwapZonePairs (SwapZonePairsRequest)     returns (SwapZonePairsResponse);
+  rpc GetZonePairs  (GetZonePairsRequest)      returns (GetZonePairsResponse);
+  rpc GetZonePair   (GetZonePairRequest)       returns (GetZonePairResponse);
 }
 
 message GetTcpSessionsRequest {}
@@ -48,9 +48,7 @@ message GetNatBindingsRequest {}
 message GetNatBindingsResponse {}
 
 message SwapZonesRequest {
-  repeated config.Zone            zones            = 1;
-  repeated config.ZoneInterface   zone_interfaces  = 2;
-  repeated config.ZonePair        zone_pairs       = 3;
+  repeated config.Zone zones = 1;
 }
 
 message SwapZonesResponse {}
@@ -58,9 +56,7 @@ message SwapZonesResponse {}
 message GetZonesRequest {}
 
 message GetZonesResponse {
-  repeated config.Zone            zones            = 1;
-  repeated config.ZoneInterface   zone_interfaces  = 2;
-  repeated config.ZonePair        zone_pairs       = 3;
+  repeated config.Zone zones = 1;
 }
 
 message GetZoneRequest {
@@ -68,12 +64,10 @@ message GetZoneRequest {
 }
 
 message GetZoneResponse {
-  config.Zone            zone            = 1;
-  config.ZoneInterface   zone_interface  = 2;
-  config.ZonePair        zone_pair       = 3;
+  config.Zone zone = 1;
 }
 
-// ── Zone Pairs ────────────────────────────────────────────────────────────────
+// Zone Pairs
 
 message SwapZonePairsRequest {
   repeated config.ZonePair zone_pairs = 1;
