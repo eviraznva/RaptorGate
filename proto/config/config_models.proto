@@ -35,6 +35,7 @@ message RuleSet {
 message Zone {
   string id   = 1;
   string name = 2;
+  repeated string interface_ids = 3;
 }
 
 message ZoneSet {

@@ -11,6 +11,7 @@ mod query_server;
 mod rule_tree;
 mod tls;
 mod disk_store;
+mod zones;
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -39,6 +40,7 @@ use tokio_util::sync::CancellationToken;
 static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() {
     type DataPipeline =
         Chain<ValidationStage,
@@ -77,6 +79,8 @@ async fn main() {
 
     let tcp_session_tracker = TcpSessionTracker::new();
     let policy_provider = Arc::new(DiskPolicyProvider::from_loaded(&config).await.expect("Failed to initialize policy provider"));
+    let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
+    let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
 
     tokio::spawn(events::init_event_queue());
     let nat_engine = build_test_nat();
@@ -86,6 +90,8 @@ async fn main() {
             tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
             policy_store: Arc::clone(&policy_provider),
+            zone_store: zones,
+            zone_pair_store: zone_pairs,
         },
         &config.query_socket_path,
         CancellationToken::new(),

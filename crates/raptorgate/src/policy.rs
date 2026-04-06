@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::{proto::config::Rule, rule_tree::RuleTree};
+use crate::{proto::config::Rule, rule_tree::RuleTree, zones::ZonePairId};
 pub use crate::rule_tree::{parsing::{RaptorlangError, parse_rule_tree}};
 
 mod policy_evaluator;
@@ -13,7 +13,6 @@ pub mod nat;
 // tonic::include_proto!("raptorgate.config");
 
 
-// TODO: jak na razie to z tego co widze backend zapisuje json z regułami. To raczej powinna być w całości odpowiedzialność firewalla.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
     // #[serde(skip_serializing)] //TODO: this is bad, ideally this shouldn't have an id at all and the id should only be used for correlation
@@ -34,9 +33,6 @@ pub struct Policy {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct PolicyId(Uuid);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
-pub struct ZonePairId(Uuid);
-
 impl Policy {
     pub fn try_from_rule(value: Rule) -> Result<(PolicyId, Self), anyhow::Error> {
         let head = parse_rule_tree(&value.content)?;
@@ -44,7 +40,7 @@ impl Policy {
         Policy {
             // id: PolicyId(value.id.try_into()?),
             name: value.name.clone(),
-            zone_pair_id: ZonePairId(value.zone_pair_id.try_into()?),
+            zone_pair_id: ZonePairId::from(Uuid::parse_str(&value.zone_pair_id)?),
             priority: value.priority,
             rule_tree: RuleTree::new(head), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
         }))

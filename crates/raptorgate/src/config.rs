@@ -12,8 +12,7 @@ pub struct AppConfig {
     pub tun_address: Ipv4Addr,
     pub tun_netmask: Ipv4Addr,
 
-    // Policy
-    pub policies_dir: PathBuf,
+    pub data_dir: PathBuf,
 
     // gRPC / backend
     pub grpc_socket_path: String,
@@ -105,7 +104,7 @@ impl AppConfig {
             pki_dir: std::env::var("RAPTORGATE_PKI_DIR")
                 .unwrap_or_else(|_| "/var/lib/raptorgate/pki".into()),
 
-            policies_dir: std::env::var("POLICIES_DIRECTORY")
+            data_dir: std::env::var("POLICIES_DIRECTORY")
                 .unwrap_or_else(|_| "./".into()).into(),
         })
     }

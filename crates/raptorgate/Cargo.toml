@@ -1,0 +1,53 @@
+[package]
+name = "ngfw"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+derive_more = {version =  "2.1.1", features = ["full"] }
+etherparse = "0.19.0"
+nonempty = "0.12.0"
+pcap = "2.4.0"
+thiserror = "2.0.18"
+tokio = { version = "1.50.0", features = ["full"] }
+tun = {version = "0.8.5", features = ["async"] }
+serde = { version = "1.0.228", features = ["derive"] }
+time = { version = "0.3.47", features = ["serde"] }
+prost = "0.14.3"
+tonic-prost = "0.14.5"
+prost-types = "0.14.3"
+uuid = { version = "1.22.0", features = ["v7", "serde"] }
+tower = "0.5"
+tracing = "0.1"
+tokio-stream = { version = "0.1", features = ["net"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tonic = "0.14.5"
+anyhow = "1.0.102"
+dotenvy = "0.15"
+serde_json = "1.0.149"
+arc-swap = "1.8.2"
+paste = "1.0.15"
+visibility = "0.1.1"
+tracing-subscriber = "0.3.23"
+ipnet = "2.12.0"
+rcgen = { version = "0.13", features = ["pem"] }
+ring = "0.17"
+dashmap = "6.1.0"
+ringbuffer = "0.16.0"
+unordered-pair = "0.2.5"
+bitflags = "2.11.0"
+tokio-util = "0.7.16"
+redb = "3.1.1"
+rustc-hash = "2.1.2"
+ouroboros = "0.18.5"
+mockall = "0.14.0"
+simple-dns = "0.11.2"
+tls-parser = "0.12.2"
+httparse = "1.10"
+
+[dev-dependencies]
+serial_test = "3.2.0"
+
+[build-dependencies]
+protoc-bin-vendored = "3.2.0"
+tonic-prost-build = "0.14.5"

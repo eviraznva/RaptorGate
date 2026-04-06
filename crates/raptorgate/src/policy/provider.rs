@@ -82,7 +82,7 @@ impl DiskPolicyProvider {
             return Ok(Self { policies, evaluator, store: ListDiskStore::new("policies", "/tmp/".into())})
         }
 
-        let store: ListDiskStore<Policy> = ListDiskStore::new("policies", config.policies_dir.clone());
+        let store: ListDiskStore<Policy> = ListDiskStore::new("policies", config.data_dir.clone());
 
         if let Ok(loaded) = store.load().await {
             #[allow(clippy::from_iter_instead_of_collect)]

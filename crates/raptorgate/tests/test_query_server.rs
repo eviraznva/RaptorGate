@@ -11,6 +11,8 @@ use ngfw::proto::config::Rule;
 use ngfw::proto::services::{GetPoliciesRequest, SwapPoliciesRequest};
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::query_server::{QueryHandler, QueryServer};
+use ngfw::zones::provider::ZonePairProvider;
+use ngfw::zones::provider::ZoneProvider;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use serial_test::serial;
@@ -39,11 +41,15 @@ fn shared_server() -> &'static SharedServer {
                 let policy = DiskPolicyProvider::from_loaded(&config)
                     .await
                     .expect("failed to load policy provider");
+                let zones = ZoneProvider::from_disk(&config).await;
+                let zone_pairs = ZonePairProvider::from_disk(&config).await;
 
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
                     nat_engine: Arc::new(Mutex::new(NatEngine::new(&None, HashMap::new()))),
                     policy_store: Arc::new(policy),
+                    zone_store: Arc::new(zones),
+                    zone_pair_store: Arc::new(zone_pairs),
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();
@@ -79,9 +85,9 @@ async fn connect(socket: &str) -> FirewallQueryServiceClient<tonic::transport::C
 }
 
 #[tokio::test]
-#[serial] // has to be serial or else there's a race condition where after one test saves a new
+#[serial(policies)] // has to be serial or else there's a race condition where after one test saves a new
           // config, a second test may load the config saved by the first one.
-async fn swap_config_happy_path_returns_no_error() {
+async fn swap_policies_happy_path_returns_no_error() {
     let mut client = connect(&shared_server().socket).await;
 
     client
@@ -99,8 +105,8 @@ async fn swap_config_happy_path_returns_no_error() {
 }
 
 #[tokio::test]
-#[serial]
-async fn swap_config_error_path_returns_error_message() {
+#[serial(policies)]
+async fn swap_policies_error_path_returns_error_message() {
     let mut client = connect(&shared_server().socket).await;
 
     let resp = client
@@ -119,6 +125,7 @@ async fn swap_config_error_path_returns_error_message() {
 }
 
 #[tokio::test]
+#[serial(policies)]
 async fn fetch_policies_returns_ok() {
     let mut client = connect(&shared_server().socket).await;
     let rule = Rule {
@@ -144,5 +151,85 @@ async fn fetch_policies_returns_ok() {
         "expected rule '{}' to be present, got: {:?}",
         rule.name,
         inner.rules.iter().map(|r| &r.name).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+#[serial(zones)]
+async fn swap_zones_happy_path_returns_no_error() {
+    let mut client = connect(&shared_server().socket).await;
+    client
+        .swap_zones(ngfw::proto::services::SwapZonesRequest {
+            zones: vec![ngfw::proto::config::Zone {
+                id: Uuid::now_v7().into(),
+                name: "swap_zone_happy".into(),
+                interface_ids: vec![],
+            }],
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[serial(zones)]
+async fn fetch_zones_returns_ok() {
+    let mut client = connect(&shared_server().socket).await;
+    let zone = ngfw::proto::config::Zone {
+        id: Uuid::now_v7().into(),
+        name: "fetch_zones_ok".into(),
+        interface_ids: vec![],
+    };
+    client
+        .swap_zones(ngfw::proto::services::SwapZonesRequest { zones: vec![zone.clone()] })
+        .await
+        .unwrap();
+    let resp = client.get_zones(ngfw::proto::services::GetZonesRequest {}).await.unwrap();
+    let inner = resp.into_inner();
+    assert!(
+        inner.zones.iter().any(|z| z.name == zone.name),
+        "expected zone '{}' to be present, got: {:?}",
+        zone.name,
+        inner.zones.iter().map(|z| &z.name).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+#[serial(zone_pairs)]
+async fn swap_zones_pairs_happy_path_returns_no_error() {
+    let mut client = connect(&shared_server().socket).await;
+    client
+        .swap_zone_pairs(ngfw::proto::services::SwapZonePairsRequest {
+            zone_pairs: vec![ngfw::proto::config::ZonePair {
+                id: Uuid::now_v7().into(),
+                src_zone_id: Uuid::now_v7().into(),
+                dst_zone_id: Uuid::now_v7().into(),
+                default_policy: Default::default(),
+            }],
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[serial(zone_pairs)]
+async fn fetch_zone_pairs_returns_ok() {
+    let mut client = connect(&shared_server().socket).await;
+    let zone_pair = ngfw::proto::config::ZonePair {
+        id: Uuid::now_v7().into(),
+        src_zone_id: Uuid::now_v7().into(),
+        dst_zone_id: Uuid::now_v7().into(),
+        default_policy: Default::default(),
+    };
+    client
+        .swap_zone_pairs(ngfw::proto::services::SwapZonePairsRequest { zone_pairs: vec![zone_pair.clone()] })
+        .await
+        .unwrap();
+    let resp = client.get_zone_pairs(ngfw::proto::services::GetZonePairsRequest {}).await.unwrap();
+    let inner = resp.into_inner();
+    assert!(
+        inner.zone_pairs.iter().any(|zp| zp.id == zone_pair.id),
+        "expected zone pair with id '{}' to be present, got: {:?}",
+        zone_pair.id,
+        inner.zone_pairs.iter().map(|zp| &zp.id).collect::<Vec<_>>()
     );
 }
