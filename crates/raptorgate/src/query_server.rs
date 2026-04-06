@@ -8,6 +8,8 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
+use crate::config::AppConfig;
+use crate::config_provider::AppConfigProvider;
 use crate::data_plane::nat::NatEngine;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::policy::{Policy, PolicyId};
@@ -16,7 +18,7 @@ use crate::proto::services::firewall_query_service_server::{
     FirewallQueryService, FirewallQueryServiceServer,
 };
 use crate::proto::services::{
-    GetNatBindingsRequest, GetNatBindingsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest, GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, SwapPoliciesRequest, SwapPoliciesResponse,
+    GetConfigRequest, GetConfigResponse, GetNatBindingsRequest, GetNatBindingsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest, GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, SwapConfigRequest, SwapConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse,
     GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse, GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse,
 };
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
@@ -79,6 +81,7 @@ pub struct QueryHandler<PolicySwap> where PolicySwap: PolicyManager {
     pub policy_store: Arc<PolicySwap>,
     pub zone_store: Arc<ZoneProvider>,
     pub zone_pair_store: Arc<ZonePairProvider>,
+    pub config_provider: Arc<AppConfigProvider>,
 }
 
 #[tonic::async_trait]
@@ -266,6 +269,32 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
             })),
             None => Err(Status::not_found(format!("zone pair with id {id} not found"))),
         }
+    }
+
+    async fn swap_config(
+        &self,
+        request: Request<SwapConfigRequest>,
+    ) -> Result<Response<SwapConfigResponse>, Status> {
+        let proto_config = request.into_inner().config
+            .ok_or_else(|| Status::invalid_argument("missing config field"))?;
+
+        let new_config = AppConfig::from_proto(proto_config)
+            .map_err(|e| Status::invalid_argument(format!("invalid config: {e}")))?;
+
+        self.config_provider.swap_config(new_config).await
+            .map_err(|e| Status::internal(format!("failed to swap config: {e}")))?;
+
+        Ok(Response::new(SwapConfigResponse {}))
+    }
+
+    async fn get_config(
+        &self,
+        _request: Request<GetConfigRequest>,
+    ) -> Result<Response<GetConfigResponse>, Status> {
+        let config = self.config_provider.get_config();
+        Ok(Response::new(GetConfigResponse {
+            config: Some(config.to_proto()),
+        }))
     }
 }
 
