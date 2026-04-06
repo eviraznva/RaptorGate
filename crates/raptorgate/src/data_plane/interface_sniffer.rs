@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::Result;
 use dashmap::DashMap;
 use pcap::Direction;
 use thiserror::Error;
@@ -7,6 +8,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::AppConfig;
+use crate::config_provider::ConfigObserver;
 
 /// Raw packet data as captured from the NIC, before parsing or reassembly.
 pub struct RawPacket {
@@ -138,4 +140,16 @@ pub enum SnifferError {
     Pcap(#[from] pcap::Error),
     #[error("interface not found: {0}")]
     InterfaceNotFound(String),
+}
+
+#[tonic::async_trait]
+impl ConfigObserver for InterfaceSniffer {
+    async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
+        tracing::info!(
+            capture_interfaces = ?new_config.capture_interfaces,
+            pcap_timeout_ms = new_config.pcap_timeout_ms,
+            "InterfaceSniffer: config changed (stub — no reinitialization yet)"
+        );
+        Ok(())
+    }
 }

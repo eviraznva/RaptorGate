@@ -1,8 +1,10 @@
 use std::sync::OnceLock;
 
+use anyhow::Result;
 use tun::AsyncDevice;
 
 use crate::config::AppConfig;
+use crate::config_provider::ConfigObserver;
 use crate::data_plane::packet_context::PacketContext;
 
 const ETH_HDR: usize = 14;
@@ -52,5 +54,18 @@ impl TunForwarder {
                 "failed to forward packet to TUN"
             );
         }
+    }
+}
+
+#[tonic::async_trait]
+impl ConfigObserver for &'static TunForwarder {
+    async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
+        tracing::info!(
+            tun_device = %new_config.tun_device_name,
+            tun_address = %new_config.tun_address,
+            tun_netmask = %new_config.tun_netmask,
+            "TunForwarder: config changed (stub — no reinitialization yet)"
+        );
+        Ok(())
     }
 }

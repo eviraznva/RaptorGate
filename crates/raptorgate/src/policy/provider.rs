@@ -2,13 +2,14 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use anyhow::Result;
 use arc_swap::{ArcSwap, Guard};
 use mockall::automock;
 use tonic::async_trait;
 use uuid::Uuid;
 
 
-use crate::{config::{AppConfig, DevConfig}, disk_store::{ListDiskStore, SavedProperty}, policy::{Policy, PolicyId, policy_evaluator::PolicyEvaluator}, rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict, parsing::parse_rule_tree}};
+use crate::{config::{AppConfig, DevConfig}, config_provider::ConfigObserver, disk_store::{ListDiskStore, SavedProperty}, policy::{Policy, PolicyId, policy_evaluator::PolicyEvaluator}, rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict, parsing::parse_rule_tree}};
 
 #[async_trait]
 #[automock]
@@ -120,5 +121,17 @@ impl DiskPolicyProvider {
 
     pub fn get_evaluator(&self) -> &PolicyEvaluator {
         &self.evaluator
+    }
+}
+
+#[tonic::async_trait]
+impl ConfigObserver for DiskPolicyProvider {
+    async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
+        tracing::info!(
+            data_dir = ?new_config.data_dir,
+            dev_mode = new_config.dev_config.is_some(),
+            "DiskPolicyProvider: config changed (stub — no reinitialization yet)"
+        );
+        Ok(())
     }
 }

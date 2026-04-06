@@ -104,13 +104,15 @@ impl AppConfigProvider {
         })
     }
 
-    pub async fn register(&self, observer: Arc<dyn ConfigObserver>) {
+    pub async fn register<T: ConfigObserver + 'static>(&self, observer: Arc<T>) {
         self.observers.lock().await.push(observer);
     }
 
+    #[allow(clippy::assigning_clones)]
     pub async fn swap_config(&self, new_config: AppConfig) -> Result<()> {
         let old = self.config.load();
         let mut new = new_config;
+
         new.dev_config = old.dev_config.clone();
 
         self.store.save(new.clone()).await

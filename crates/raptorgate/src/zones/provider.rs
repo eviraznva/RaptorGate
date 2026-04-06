@@ -1,10 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Error;
+use anyhow::Result;
 use arc_swap::ArcSwap;
 use uuid::Uuid;
 
-use crate::{config::AppConfig, disk_store::{ListDiskStore, SavedProperty}, zones::{DefaultPolicy, Zone, ZoneId, ZonePair, ZonePairId}};
+use crate::{config::AppConfig, config_provider::ConfigObserver, disk_store::{ListDiskStore, SavedProperty}, zones::{DefaultPolicy, Zone, ZoneId, ZonePair, ZonePairId}};
 
 pub struct ZonePairProvider {
     zone_pairs: ArcSwap<HashMap<ZonePairId, ZonePair>>,
@@ -73,6 +74,17 @@ impl ZonePairProvider {
     }
 }
 
+#[tonic::async_trait]
+impl ConfigObserver for ZonePairProvider {
+    async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
+        tracing::info!(
+            data_dir = ?new_config.data_dir,
+            "ZonePairProvider: config changed (stub — no reinitialization yet)"
+        );
+        Ok(())
+    }
+}
+
 pub struct ZoneProvider {
     zones: ArcSwap<HashMap<ZoneId, Zone>>,
     store: ListDiskStore<Zone>,
@@ -133,5 +145,16 @@ impl ZoneProvider {
 
     pub fn get_zone(&self, id: &ZoneId) -> Option<Zone> {
         self.zones.load().get(id).cloned()
+    }
+}
+
+#[tonic::async_trait]
+impl ConfigObserver for ZoneProvider {
+    async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
+        tracing::info!(
+            data_dir = ?new_config.data_dir,
+            "ZoneProvider: config changed (stub — no reinitialization yet)"
+        );
+        Ok(())
     }
 }
