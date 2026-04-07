@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
 use crate::proto::events as proto;
 use crate::proto::services::backend_event_service_client::BackendEventServiceClient;
+use crate::tls::inspection_relay::{Direction, InspectionMode};
 
 const CHANNEL_CAPACITY: usize = 1024;
 const FLUSH_INTERVAL_MS: u64 = 500;
@@ -135,6 +136,8 @@ pub enum EventKind {
     InboundTlsInterceptStarted { peer: SocketAddr, server: SocketAddr, sni: Option<String>, common_name: String },
     InboundTlsHandshakeComplete { peer: SocketAddr, server: SocketAddr, sni: Option<String>, alpn: Option<String> },
     InboundTlsSessionClosed { peer: SocketAddr, server: SocketAddr, sni: Option<String>, bytes_up: u64, bytes_down: u64 },
+    DecryptedTrafficClassified { peer: SocketAddr, server: SocketAddr, sni: Option<String>, app_proto: String, direction: Direction, mode: InspectionMode },
+    DecryptedIpsMatch { peer: SocketAddr, server: SocketAddr, sni: Option<String>, signature_name: String, severity: String, blocked: bool, direction: Direction, mode: InspectionMode },
 }
 
 impl EventKind {
@@ -150,7 +153,9 @@ impl EventKind {
             | E::TlsSessionClosed { .. }
             | E::InboundTlsInterceptStarted { .. }
             | E::InboundTlsHandshakeComplete { .. }
-            | E::InboundTlsSessionClosed { .. } => true,
+            | E::InboundTlsSessionClosed { .. }
+            | E::DecryptedTrafficClassified { .. }
+            | E::DecryptedIpsMatch { .. } => true,
         }
     }
 }
@@ -244,6 +249,30 @@ impl From<EventKind> for proto::EventKind {
                         sni: sni.unwrap_or_default(),
                         bytes_up,
                         bytes_down,
+                    }),
+                EventKind::DecryptedTrafficClassified { peer, server, sni, app_proto, direction, mode } =>
+                    Item::DecryptedTrafficClassified(proto::DecryptedTrafficClassifiedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: peer.port() as u32,
+                        server_ip: server.ip().to_string(),
+                        server_port: server.port() as u32,
+                        sni: sni.unwrap_or_default(),
+                        app_proto,
+                        direction: format!("{direction:?}"),
+                        mode: format!("{mode:?}"),
+                    }),
+                EventKind::DecryptedIpsMatch { peer, server, sni, signature_name, severity, blocked, direction, mode } =>
+                    Item::DecryptedIpsMatch(proto::DecryptedIpsMatchEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: peer.port() as u32,
+                        server_ip: server.ip().to_string(),
+                        server_port: server.port() as u32,
+                        sni: sni.unwrap_or_default(),
+                        signature_name,
+                        severity,
+                        blocked,
+                        direction: format!("{direction:?}"),
+                        mode: format!("{mode:?}"),
                     }),
             }),
         }

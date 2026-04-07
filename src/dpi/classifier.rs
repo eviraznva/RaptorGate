@@ -149,7 +149,7 @@ impl DpiClassifier {
         }
     }
 
-    fn try_classify(buf: &[u8]) -> Option<DpiContext> {
+    pub fn try_classify(buf: &[u8]) -> Option<DpiContext> {
         CLASSIFIERS.iter().find_map(|f| f(buf))
     }
 }

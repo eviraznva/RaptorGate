@@ -32,7 +32,7 @@ use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
-use crate::tls::{CaManager, MitmProxy, MitmProxyConfig, ServerKeyStore};
+use crate::tls::{CaManager, MitmProxy, MitmProxyConfig, NoopIpsInspector, ServerKeyStore};
 use tokio_util::sync::CancellationToken;
 
 static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
@@ -117,6 +117,7 @@ async fn main() {
                     cert_forger: Arc::clone(forger),
                     bypass_domains: config.ssl_bypass_domains.clone(),
                     server_key_store: Arc::clone(&server_key_store),
+                    ips_inspector: Arc::new(NoopIpsInspector),
                     cancel: CancellationToken::new(),
                 };
 
