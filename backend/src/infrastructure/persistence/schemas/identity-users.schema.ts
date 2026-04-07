@@ -1,27 +1,27 @@
 import {
-  isoDateTimeSchema,
-  nullableIsoDateTimeSchema,
-  tableFileSchema,
-  uuidSchema,
-} from './_common.js';
-import { z } from 'zod';
+	isoDateTimeSchema,
+	nullableIsoDateTimeSchema,
+	tableFileSchema,
+	uuidSchema,
+} from "./_common.js";
+import { z } from "zod";
 
 export const IdentityUserRecordSchema = z
-  .object({
-    id: uuidSchema,
-    username: z.string().min(1).max(128),
-    displayName: z.string().min(1).max(128),
-    source: z.string().min(1).max(16),
-    externalId: z.string().min(1).max(255),
-    email: z.string().max(255).nullable().optional(),
-    lastSeenAt: nullableIsoDateTimeSchema.optional(),
-    createdAt: isoDateTimeSchema,
-    updatedAt: isoDateTimeSchema,
-  })
-  .strict();
+	.object({
+		id: uuidSchema,
+		username: z.string().min(1).max(128),
+		displayName: z.string().min(1).max(128),
+		source: z.string().min(1).max(16),
+		externalId: z.string().min(1).max(255),
+		email: z.string().max(255).nullable().optional(),
+		lastSeenAt: nullableIsoDateTimeSchema.optional(),
+		createdAt: isoDateTimeSchema,
+		updatedAt: isoDateTimeSchema,
+	})
+	.strict();
 
 export const IdentityUsersFileSchema = tableFileSchema(
-  IdentityUserRecordSchema,
+	IdentityUserRecordSchema,
 );
 
 export type IdentityUserRecord = z.infer<typeof IdentityUserRecordSchema>;

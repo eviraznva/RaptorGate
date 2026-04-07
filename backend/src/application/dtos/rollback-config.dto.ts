@@ -1,3 +1,3 @@
 export class RollbackConfigDto {
-  id: string;
+	id: string;
 }

@@ -1,7 +1,7 @@
 export class AtLeastOneFieldRequiredException extends Error {
-  constructor() {
-    super('At least one field is required.');
+	constructor() {
+		super("At least one field is required.");
 
-    this.name = 'AtLeastOneFieldRequiredException';
-  }
+		this.name = "AtLeastOneFieldRequiredException";
+	}
 }

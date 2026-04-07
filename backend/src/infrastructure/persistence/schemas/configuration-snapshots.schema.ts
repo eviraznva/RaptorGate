@@ -1,27 +1,27 @@
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
-import { z } from 'zod';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from "./_common.js";
+import { z } from "zod";
 
 export const ConfigurationSnapshotRecordSchema = z
-  .object({
-    id: uuidSchema,
-    versionNumber: z.number().int(),
-    snapshotType: z.string().min(1).max(32),
-    checksum: z.string().min(1).max(128),
-    isActive: z.boolean(),
-    payloadJson: z.unknown(),
-    changeSummary: z.string().nullable(),
-    createdAt: isoDateTimeSchema,
-    createdBy: uuidSchema,
-  })
-  .strict();
+	.object({
+		id: uuidSchema,
+		versionNumber: z.number().int(),
+		snapshotType: z.string().min(1).max(32),
+		checksum: z.string().min(1).max(128),
+		isActive: z.boolean(),
+		payloadJson: z.unknown(),
+		changeSummary: z.string().nullable(),
+		createdAt: isoDateTimeSchema,
+		createdBy: uuidSchema,
+	})
+	.strict();
 
 export const ConfigurationSnapshotsFileSchema = tableFileSchema(
-  ConfigurationSnapshotRecordSchema,
+	ConfigurationSnapshotRecordSchema,
 );
 
 export type ConfigurationSnapshotRecord = z.infer<
-  typeof ConfigurationSnapshotRecordSchema
+	typeof ConfigurationSnapshotRecordSchema
 >;
 export type ConfigurationSnapshotsFile = z.infer<
-  typeof ConfigurationSnapshotsFileSchema
+	typeof ConfigurationSnapshotsFileSchema
 >;

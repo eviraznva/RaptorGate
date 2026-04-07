@@ -1,7 +1,9 @@
-import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
-import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
-import { GetAllZonePairsDto } from '../dtos/get-all-zone-pairs.dto.js';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable } from "@nestjs/common";
+import { EntityNotFoundException } from "src/domain/exceptions/entity-not-found-exception.js";
+import type { IZonePairRepository } from "../../domain/repositories/zone-pair.repository.js";
+import { ZONE_PAIR_REPOSITORY_TOKEN } from "../../domain/repositories/zone-pair.repository.js";
+import type { GetAllZonePairsDto } from "../dtos/get-all-zone-pairs.dto.js";
+import { GetZonePairsDto } from "../dtos/get-zone-pairs.dto.js";
 
 @Injectable()
 export class GetAllZonePairsUseCase {
@@ -10,9 +12,19 @@ export class GetAllZonePairsUseCase {
     private readonly zonePairRepository: IZonePairRepository,
   ) {}
 
-  async execute(): Promise<GetAllZonePairsDto> {
+  async execute(dto: GetZonePairsDto): Promise<GetAllZonePairsDto> {
     const zonePairs = await this.zonePairRepository.findAll();
+    if (!zonePairs) throw new EntityNotFoundException("zone pairs", "all");
+    let result = zonePairs;
 
-    return { zonePairs };
+    if (dto.defaultPolicy !== undefined)
+      result = result.filter(
+        (zonePair) => zonePair.getDefaultPolicy() === dto.defaultPolicy,
+      );
+
+    if (dto.page !== undefined && dto.limit !== undefined)
+      result = result.slice((dto.page - 1) * dto.limit, dto.page * dto.limit);
+
+    return { zonePairs: result };
   }
 }
