@@ -35,5 +35,5 @@ cp -rf ../proto/* .router_sync/proto/
 cp -rf ./configs/* .router_sync/ngfw
 cp -rf services .router_sync
 
-vagrant rsync r1 || true
+vagrant rsync r1 &&
 vagrant up --provision
