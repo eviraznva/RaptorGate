@@ -75,17 +75,17 @@ impl<T> ListDiskStore<T> where T: for<'a> Deserialize<'a> + Serialize + Clone {
 }
  
 pub struct SingleDiskStore<T> {
-    store: DiskStore<SavedProperty<T>>,
+    store: DiskStore<T>,
 }
  
 impl<T> SingleDiskStore<T> where T: for<'a> Deserialize<'a> + Serialize + Clone {
     pub fn new(name: impl AsRef<Path>, save_dir: PathBuf) -> Self {
         Self { store: DiskStore::new(name, save_dir) }
     }
-    pub async fn load(&self) -> Result<SavedProperty<T>, StoreError> {
+    pub async fn load(&self) -> Result<T, StoreError> {
         self.store.load().await
     }
-    pub async fn save(&self, item: SavedProperty<T>) -> Result<(), StoreError> {
+    pub async fn save(&self, item: T) -> Result<(), StoreError> {
         self.store.save(item).await
     }
 }
@@ -119,21 +119,18 @@ mod tests {
     async fn single_disk_store_roundtrip() -> Result<(), StoreError> {
         let name = unique_name("single");
         let store = SingleDiskStore::<ExampleType>::new(name, PathBuf::from("/tmp"));
- 
-        let item = SavedProperty {
-            id: Uuid::now_v7(),
-            contents: ExampleType {
-                name: "alpha".to_string(),
-                port: 443,
-                enabled: true,
-            },
+
+        let item = ExampleType {
+            name: "alpha".to_string(),
+            port: 443,
+            enabled: true,
         };
- 
+
         store.save(item.clone()).await?;
         let loaded = store.load().await?;
- 
+
         assert_eq!(loaded, item);
- 
+
         let _ = fs::remove_file(format!("/tmp/{name}.json")).await;
         Ok(())
     }

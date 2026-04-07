@@ -1,4 +1,5 @@
 mod config;
+mod config_provider;
 mod data_plane;
 mod dpi;
 mod events;
@@ -11,6 +12,7 @@ mod query_server;
 mod rule_tree;
 mod tls;
 mod disk_store;
+mod zones;
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -19,7 +21,7 @@ use etherparse::NetSlice;
 use tokio::sync::Mutex;
 use ipnet::IpNet;
 use tracing::trace;
-use crate::config::AppConfig;
+use crate::config_provider::AppConfigProvider;
 use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree, TunnelingDetectorConfig};
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::NatEngine;
@@ -39,6 +41,7 @@ use tokio_util::sync::CancellationToken;
 static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() {
     type DataPipeline =
         Chain<ValidationStage,
@@ -56,13 +59,15 @@ async fn main() {
         .with_thread_names(false)
         .init();
 
-    let config = match AppConfig::from_env() {
-        Ok(config) => config,
+    let config_provider = match AppConfigProvider::from_env().await {
+        Ok(provider) => Arc::new(provider),
         Err(err) => {
-            eprintln!("Configuration error: {err}");
+            tracing::error!("Configuration error: {err}");
             return;
         }
     };
+
+    let config = config_provider.get_config();
 
     let ca_info = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
@@ -77,6 +82,12 @@ async fn main() {
 
     let tcp_session_tracker = TcpSessionTracker::new();
     let policy_provider = Arc::new(DiskPolicyProvider::from_loaded(&config).await.expect("Failed to initialize policy provider"));
+    let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
+    let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
+
+    config_provider.register(Arc::clone(&policy_provider), "DiskPolicyProvider").await;
+    config_provider.register(Arc::clone(&zones), "ZoneProvider").await;
+    config_provider.register(Arc::clone(&zone_pairs), "ZonePairProvider").await;
 
     tokio::spawn(events::init_event_queue());
     let nat_engine = build_test_nat();
@@ -86,6 +97,9 @@ async fn main() {
             tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
             policy_store: Arc::clone(&policy_provider),
+            zone_store: zones,
+            zone_pair_store: zone_pairs,
+            config_provider: Arc::clone(&config_provider),
         },
         &config.query_socket_path,
         CancellationToken::new(),
@@ -94,9 +108,12 @@ async fn main() {
 
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
-    let tun = TunForwarder::get(&config);
+    let tun = TunForwarder::new(&config);
+    config_provider.register(Arc::clone(&tun), "TunForwarder").await;
 
-    let (_sniffer, mut raw_rx, errs) = InterfaceSniffer::with_sniffing(&config);
+    let (sniffer, mut raw_rx, errs) = InterfaceSniffer::with_sniffing(&config);
+    let sniffer = Arc::new(sniffer);
+    config_provider.register(Arc::clone(&sniffer), "InterfaceSniffer").await;
     for e in errs {
         tracing::error!(error = %e, "interface sniffer error");
     }
@@ -139,6 +156,7 @@ async fn main() {
     while let Some(raw_packet) = raw_rx.recv().await {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {
             let pipeline = pipeline.clone();
+            let tun = Arc::clone(&tun);
             tokio::spawn(async move {
                 if !matches!(
                     &ctx.borrow_sliced_packet().net,

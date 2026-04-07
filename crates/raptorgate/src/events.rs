@@ -2,10 +2,10 @@ use std::sync::{
     OnceLock,
     atomic::{AtomicU64, Ordering},
 };
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use prost_types::Timestamp;
-use tokio::{select, sync::mpsc, time::{interval, Duration}};
+use tokio::{select, sync::mpsc, time::interval};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
@@ -127,6 +127,8 @@ pub enum EventKind {
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpConnectionRejected { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionAbortedMidClose { src: EndpointIdentifier, dst: EndpointIdentifier },
+    TunDeviceSwapped { old_device: String, new_device: String, old_address: String, new_address: String },
+    SnifferConfigChanged { old_interfaces: Vec<String>, new_interfaces: Vec<String>, old_timeout: Duration, new_timeout: Duration },
 }
 
 impl EventKind {
@@ -136,7 +138,9 @@ impl EventKind {
             E::TcpSessionEstabilished { .. }
             | E::TcpSessionRemoved { .. }
             | E::TcpConnectionRejected { .. }
-            | E::TcpSessionAbortedMidClose { .. } => true,
+            | E::TcpSessionAbortedMidClose { .. }
+            | E::TunDeviceSwapped { .. }
+            | E::SnifferConfigChanged { .. } => true,
         }
     }
 }
@@ -148,6 +152,15 @@ fn system_time_to_proto(t: SystemTime) -> Timestamp {
         seconds: dur.as_secs() as i64,
         #[allow(clippy::cast_possible_wrap)]
         nanos:   dur.subsec_nanos() as i32,
+    }
+}
+
+fn duration_to_proto(d: Duration) -> prost_types::Duration {
+    prost_types::Duration {
+        #[allow(clippy::cast_possible_wrap)]
+        seconds: d.as_secs() as i64,
+        #[allow(clippy::cast_possible_wrap)]
+        nanos:   d.subsec_nanos() as i32,
     }
 }
 
@@ -175,6 +188,20 @@ impl From<EventKind> for proto::EventKind {
                     Item::TcpSessionAborted(proto::TcpSessionAbortedMidCloseEvent {
                         src: Some(src.into()),
                         dst: Some(dst.into()),
+                    }),
+                EventKind::TunDeviceSwapped { old_device, new_device, old_address, new_address } =>
+                    Item::TunDeviceSwapped(proto::TunDeviceSwappedEvent {
+                        old_device,
+                        new_device,
+                        old_address,
+                        new_address,
+                    }),
+                EventKind::SnifferConfigChanged { old_interfaces, new_interfaces, old_timeout, new_timeout } =>
+                    Item::SnifferConfigChanged(proto::SnifferConfigChangedEvent {
+                        old_interfaces,
+                        new_interfaces,
+                        old_timeout: Some(duration_to_proto(old_timeout)),
+                        new_timeout: Some(duration_to_proto(new_timeout)),
                     }),
             }),
         }

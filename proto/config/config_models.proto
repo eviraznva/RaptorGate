@@ -35,6 +35,7 @@ message RuleSet {
 message Zone {
   string id   = 1;
   string name = 2;
+  repeated string interface_ids = 3;
 }
 
 message ZoneSet {
@@ -192,6 +193,20 @@ message IdentityBundle {
   repeated IdentityUser               identity_users = 3;
   repeated UserGroupMember            user_group_members = 4;
   repeated IdentityManagerUserSession user_sessions = 5;
+}
+
+// ── AppConfig — runtime-swappable firewall configuration ─────────────────────
+
+message AppConfig {
+  repeated string capture_interfaces = 1;
+  int32           pcap_timeout_ms    = 2;
+  string          tun_device_name    = 3;
+  string          tun_address        = 4;
+  string          tun_netmask        = 5;
+  string          data_dir           = 6;
+  string          grpc_socket_path   = 7;
+  string          query_socket_path  = 8;
+  string          pki_dir            = 9;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
