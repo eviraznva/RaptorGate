@@ -3,6 +3,7 @@ syntax = "proto3";
 package raptorgate.events;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 
 message Event {
   google.protobuf.Timestamp emitted_at = 1;
@@ -23,12 +24,20 @@ message EventKind {
     TcpConnectionRejectedEvent     tcp_connection_rejected  = 3;
     TcpSessionAbortedMidCloseEvent tcp_session_aborted      = 4;
     TunDeviceSwappedEvent          tun_device_swapped       = 5;
+    SnifferConfigChangedEvent      sniffer_config_changed   = 6;
   }
 }
 
 message TcpEndpoint {
   string ip   = 1;
   uint32 port = 2;
+}
+
+message SnifferConfigChangedEvent {
+  repeated string old_interfaces = 1;
+  repeated string new_interfaces = 2;
+  google.protobuf.Duration old_timeout = 3;
+  google.protobuf.Duration new_timeout = 4;
 }
 
 message TcpSessionEstablishedEvent {
