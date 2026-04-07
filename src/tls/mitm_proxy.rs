@@ -10,6 +10,7 @@ use crate::dpi::parsers::tls::parse_tls_client_hello;
 use crate::events;
 use crate::tls::cert_forger::CertForger;
 use crate::tls::dual_session::{self, AcceptParams, ConnectParams};
+use crate::tls::inspection_relay::{InspectionRelay, InspectionMode, IpsInspector, SessionMeta};
 use crate::tls::original_dst;
 use crate::tls::rustls_config;
 use crate::tls::server_key_store::ServerKeyStore;
@@ -23,16 +24,18 @@ pub struct MitmProxyConfig {
     pub cert_forger: Arc<CertForger>,
     pub bypass_domains: Vec<String>,
     pub server_key_store: Arc<ServerKeyStore>,
+    pub ips_inspector: Arc<dyn IpsInspector>,
     pub cancel: CancellationToken,
 }
 
-// Proxy TLS przechwytujace ruch przez iptables TPROXY/REDIRECT.
+// Proxy TLS przechwytujące ruch przez iptables TPROXY/REDIRECT.
 pub struct MitmProxy {
     listener: TcpListener,
     client_config: Arc<ClientConfig>,
     cert_forger: Arc<CertForger>,
     bypass_domains: Arc<Vec<String>>,
     server_key_store: Arc<ServerKeyStore>,
+    inspection_relay: Arc<InspectionRelay>,
     cancel: CancellationToken,
 }
 
@@ -51,6 +54,7 @@ impl MitmProxy {
             cert_forger: config.cert_forger,
             bypass_domains: Arc::new(config.bypass_domains),
             server_key_store: config.server_key_store,
+            inspection_relay: Arc::new(InspectionRelay::new(config.ips_inspector)),
             cancel: config.cancel,
         })
     }
@@ -70,6 +74,7 @@ impl MitmProxy {
                             let cert_forger = Arc::clone(&self.cert_forger);
                             let bypass = Arc::clone(&self.bypass_domains);
                             let key_store = Arc::clone(&self.server_key_store);
+                            let relay = Arc::clone(&self.inspection_relay);
 
                             tokio::spawn(async move {
                                 if let Err(e) = handle_connection(
@@ -79,6 +84,7 @@ impl MitmProxy {
                                     cert_forger,
                                     bypass,
                                     key_store,
+                                    relay,
                                 ).await {
                                     tracing::debug!(peer = %peer_addr, error = %e, "TLS proxy connection error");
                                 }
@@ -94,7 +100,7 @@ impl MitmProxy {
     }
 }
 
-// Obsluguje przechwycone polaczenie TLS (routing inbound vs outbound).
+// Obsługuje przechwycone połączenie TLS (routing inbound vs outbound).
 async fn handle_connection(
     client_tcp: TcpStream,
     peer_addr: SocketAddr,
@@ -102,6 +108,7 @@ async fn handle_connection(
     cert_forger: Arc<CertForger>,
     bypass_domains: Arc<Vec<String>>,
     server_key_store: Arc<ServerKeyStore>,
+    relay: Arc<InspectionRelay>,
 ) -> anyhow::Result<()> {
     let original_dst = original_dst::get_original_dst(&client_tcp)
         .context("Nie udalo sie odczytac oryginalnego adresu docelowego")?;
@@ -117,6 +124,7 @@ async fn handle_connection(
             original_dst,
             sni,
             inbound_config,
+            relay,
         )
         .await;
     }
@@ -136,17 +144,19 @@ async fn handle_connection(
         sni,
         client_config,
         cert_forger,
+        relay,
     )
     .await
 }
 
-// Obsluguje polaczenie inbound (firewall terminuje TLS prawdziwym certem serwera).
+// Obsługuje połączenie inbound (firewall terminuje TLS prawdziwym certem serwera).
 async fn handle_inbound_connection(
     client_tcp: TcpStream,
     peer_addr: SocketAddr,
     server_addr: SocketAddr,
     sni: Option<String>,
     inbound_server_config: Arc<ServerConfig>,
+    relay: Arc<InspectionRelay>,
 ) -> anyhow::Result<()> {
     events::emit(events::Event::new(
         events::EventKind::InboundTlsInterceptStarted {
@@ -208,17 +218,18 @@ async fn handle_inbound_connection(
         },
     ));
 
-    // Bidirectional copy (plaintext widoczny miedzy sesjami)
-    let (mut cr, mut cw) = tokio::io::split(client_tls);
-    let (mut sr, mut sw) = tokio::io::split(server_tls);
+    // Inspekcja DPI/IPS na odszyfrowanym ruchu
+    let (cr, cw) = tokio::io::split(client_tls);
+    let (sr, sw) = tokio::io::split(server_tls);
 
-    let c2s = tokio::io::copy(&mut cr, &mut sw);
-    let s2c = tokio::io::copy(&mut sr, &mut cw);
+    let meta = SessionMeta {
+        peer: peer_addr,
+        server: server_addr,
+        sni: sni.clone(),
+        mode: InspectionMode::Inbound,
+    };
 
-    let (c2s_result, s2c_result) = tokio::join!(c2s, s2c);
-
-    let bytes_up = c2s_result.unwrap_or(0);
-    let bytes_down = s2c_result.unwrap_or(0);
+    let (bytes_up, bytes_down) = relay.relay_bidirectional(cr, sw, sr, cw, &meta).await;
 
     events::emit(events::Event::new(
         events::EventKind::InboundTlsSessionClosed {
@@ -243,6 +254,7 @@ async fn handle_outbound_connection(
     sni: Option<String>,
     client_config: Arc<ClientConfig>,
     cert_forger: Arc<CertForger>,
+    relay: Arc<InspectionRelay>,
 ) -> anyhow::Result<()> {
     let domain = sni.clone().unwrap_or_else(|| original_dst.ip().to_string());
 
@@ -312,17 +324,20 @@ async fn handle_outbound_connection(
         },
     ));
 
-    // Bidirectional relay
-    let (mut client_read, mut client_write) = tokio::io::split(client_tls);
-    let (mut server_read, mut server_write) = tokio::io::split(server_tls);
+    // Inspekcja DPI/IPS na odszyfrowanym ruchu
+    let (client_read, client_write) = tokio::io::split(client_tls);
+    let (server_read, server_write) = tokio::io::split(server_tls);
 
-    let c2s = tokio::io::copy(&mut client_read, &mut server_write);
-    let s2c = tokio::io::copy(&mut server_read, &mut client_write);
+    let meta = SessionMeta {
+        peer: peer_addr,
+        server: original_dst,
+        sni: sni.clone(),
+        mode: InspectionMode::Outbound,
+    };
 
-    let (c2s_result, s2c_result) = tokio::join!(c2s, s2c);
-
-    let bytes_up = c2s_result.unwrap_or(0);
-    let bytes_down = s2c_result.unwrap_or(0);
+    let (bytes_up, bytes_down) = relay.relay_bidirectional(
+        client_read, server_write, server_read, client_write, &meta,
+    ).await;
 
     events::emit(events::Event::new(events::EventKind::TlsSessionClosed {
         peer: peer_addr,

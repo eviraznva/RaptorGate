@@ -21,6 +21,8 @@ message EventKind {
     InboundTlsInterceptStartedEvent   inbound_tls_intercept_started   = 8;
     InboundTlsHandshakeCompleteEvent  inbound_tls_handshake_complete  = 9;
     InboundTlsSessionClosedEvent      inbound_tls_session_closed      = 10;
+    DecryptedTrafficClassifiedEvent   decrypted_traffic_classified    = 11;
+    DecryptedIpsMatchEvent            decrypted_ips_match             = 12;
   }
 }
 
@@ -102,4 +104,28 @@ message InboundTlsSessionClosedEvent {
   string sni           = 5;
   uint64 bytes_up      = 6;
   uint64 bytes_down    = 7;
+}
+
+message DecryptedTrafficClassifiedEvent {
+  string peer_ip       = 1;
+  uint32 peer_port     = 2;
+  string server_ip     = 3;
+  uint32 server_port   = 4;
+  string sni           = 5;
+  string app_proto     = 6;
+  string direction     = 7;
+  string mode          = 8;
+}
+
+message DecryptedIpsMatchEvent {
+  string peer_ip         = 1;
+  uint32 peer_port       = 2;
+  string server_ip       = 3;
+  uint32 server_port     = 4;
+  string sni             = 5;
+  string signature_name  = 6;
+  string severity        = 7;
+  bool   blocked         = 8;
+  string direction       = 9;
+  string mode            = 10;
 }
