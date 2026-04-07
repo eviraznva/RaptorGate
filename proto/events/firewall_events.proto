@@ -9,12 +9,20 @@ message Event {
   EventKind kind = 2;
 }
 
+message TunDeviceSwappedEvent {
+  string old_device = 1;
+  string new_device = 2;
+  string old_address = 3;
+  string new_address = 4;
+}
+
 message EventKind {
   oneof item {
     TcpSessionEstablishedEvent     tcp_session_established  = 1;
     TcpSessionRemovedEvent         tcp_session_removed      = 2;
     TcpConnectionRejectedEvent     tcp_connection_rejected  = 3;
     TcpSessionAbortedMidCloseEvent tcp_session_aborted      = 4;
+    TunDeviceSwappedEvent          tun_device_swapped       = 5;
   }
 }
 

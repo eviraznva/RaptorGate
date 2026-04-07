@@ -108,8 +108,8 @@ async fn main() {
 
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
-    let tun = TunForwarder::get(&config);
-    config_provider.register(Arc::from(tun)).await;
+    let tun = TunForwarder::new(&config);
+    config_provider.register(Arc::clone(&tun)).await;
 
     let (sniffer, mut raw_rx, errs) = InterfaceSniffer::with_sniffing(&config);
     let sniffer = Arc::new(sniffer);
@@ -156,6 +156,7 @@ async fn main() {
     while let Some(raw_packet) = raw_rx.recv().await {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {
             let pipeline = pipeline.clone();
+            let tun = Arc::clone(&tun);
             tokio::spawn(async move {
                 if !matches!(
                     &ctx.borrow_sliced_packet().net,

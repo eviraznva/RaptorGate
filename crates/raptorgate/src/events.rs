@@ -127,6 +127,7 @@ pub enum EventKind {
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpConnectionRejected { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionAbortedMidClose { src: EndpointIdentifier, dst: EndpointIdentifier },
+    TunDeviceSwapped { old_device: String, new_device: String, old_address: String, new_address: String },
 }
 
 impl EventKind {
@@ -136,7 +137,8 @@ impl EventKind {
             E::TcpSessionEstabilished { .. }
             | E::TcpSessionRemoved { .. }
             | E::TcpConnectionRejected { .. }
-            | E::TcpSessionAbortedMidClose { .. } => true,
+            | E::TcpSessionAbortedMidClose { .. }
+            | E::TunDeviceSwapped { .. } => true,
         }
     }
 }
@@ -175,6 +177,13 @@ impl From<EventKind> for proto::EventKind {
                     Item::TcpSessionAborted(proto::TcpSessionAbortedMidCloseEvent {
                         src: Some(src.into()),
                         dst: Some(dst.into()),
+                    }),
+                EventKind::TunDeviceSwapped { old_device, new_device, old_address, new_address } =>
+                    Item::TunDeviceSwapped(proto::TunDeviceSwappedEvent {
+                        old_device,
+                        new_device,
+                        old_address,
+                        new_address,
                     }),
             }),
         }

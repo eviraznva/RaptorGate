@@ -1,39 +1,45 @@
-use std::sync::OnceLock;
-
-use anyhow::Result;
+use anyhow::{Context, Result};
+use arc_swap::ArcSwap;
+use std::sync::Arc;
 use tun::AsyncDevice;
 
 use crate::config::AppConfig;
 use crate::config_provider::ConfigObserver;
 use crate::data_plane::packet_context::PacketContext;
+use crate::events::{Event, EventKind};
 
 const ETH_HDR: usize = 14;
 
-static FORWARDER: OnceLock<TunForwarder> = OnceLock::new();
-
 pub struct TunForwarder {
-    device: AsyncDevice,
+    device: ArcSwap<AsyncDevice>,
+    config: ArcSwap<AppConfig>,
 }
 
 impl TunForwarder {
-    pub fn get(config: &AppConfig) -> &'static Self {
-        FORWARDER.get_or_init(|| {
-            let mut tun_config = tun::Configuration::default();
-            tun_config
-                .tun_name(&config.tun_device_name)
-                .address(config.tun_address)
-                .netmask(config.tun_netmask)
-                .up();
+    fn create_device(config: &AppConfig) -> Result<AsyncDevice> {
+        let mut tun_config = tun::Configuration::default();
+        tun_config
+            .tun_name(&config.tun_device_name)
+            .address(config.tun_address)
+            .netmask(config.tun_netmask)
+            .up();
 
-            #[cfg(target_os = "linux")]
-            tun_config.platform_config(|c| {
-                c.ensure_root_privileges(true);
-            });
+        #[cfg(target_os = "linux")]
+        tun_config.platform_config(|c| {
+            c.ensure_root_privileges(true);
+        });
 
-            let device = tun::create_as_async(&tun_config)
-                .expect("failed to create TUN device");
+        tun::create_as_async(&tun_config).context("failed to create TUN device")
+    }
 
-            TunForwarder { device }
+    /// # Panics
+    /// Panics if the TUN device cannot be created with the provided configuration.
+    #[must_use]
+    pub fn new(config: &AppConfig) -> Arc<Self> {
+        let device = Self::create_device(config).expect("failed to create TUN device");
+        Arc::new(Self {
+            device: ArcSwap::new(Arc::new(device)),
+            config: ArcSwap::new(Arc::new(config.clone())),
         })
     }
 
@@ -47,7 +53,8 @@ impl TunForwarder {
             return;
         }
 
-        if let Err(e) = self.device.send(&raw[ETH_HDR..]).await {
+        let device = self.device.load();
+        if let Err(e) = device.send(&raw[ETH_HDR..]).await {
             tracing::error!(
                 iface = %ctx.borrow_src_interface(),
                 error = %e,
@@ -57,14 +64,34 @@ impl TunForwarder {
     }
 }
 
+// TODO: test this once we actually set up a proper test env in vagrant
 #[tonic::async_trait]
-impl ConfigObserver for &'static TunForwarder {
+impl ConfigObserver for TunForwarder {
     async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
+        let old_config = self.config.load();
+        let new_device = Self::create_device(new_config)
+            .context("failed to create new TUN device")?;
+
+        let old_device_name = old_config.tun_device_name.clone();
+        let new_device_name = new_config.tun_device_name.clone();
+        let old_address = old_config.tun_address.to_string();
+        let new_address = new_config.tun_address.to_string();
+
+        self.device.store(Arc::new(new_device));
+        self.config.store(Arc::new(new_config.clone()));
+
+        crate::events::emit(Event::new(EventKind::TunDeviceSwapped {
+            old_device: old_device_name,
+            new_device: new_device_name,
+            old_address,
+            new_address,
+        }));
+
         tracing::info!(
             tun_device = %new_config.tun_device_name,
             tun_address = %new_config.tun_address,
             tun_netmask = %new_config.tun_netmask,
-            "TunForwarder: config changed (stub — no reinitialization yet)"
+            "TunForwarder: device rebuilt and swapped"
         );
         Ok(())
     }
