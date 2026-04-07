@@ -4,7 +4,7 @@
       "id": "a1c6151b-e916-456d-b4f9-2d57d2075aff",
       "name": "Allow HTTPS",
       "zonePairId": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
-      "isActive": true,
+      "isActive": false,
       "content": "allow tcp any any eq 443",
       "priority": 10,
       "createdBy": "00000000-0000-4000-8000-000000000001",

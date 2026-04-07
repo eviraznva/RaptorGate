@@ -1,27 +1,27 @@
-import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { Inject, Injectable } from "@nestjs/common";
+import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
 import {
   CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
   type IConfigSnapshotRepository,
-} from '../../domain/repositories/config-snapshot.repository.js';
+} from "../../domain/repositories/config-snapshot.repository.js";
 import {
-  NAT_RULES_REPOSITORY_TOKEN,
   type INatRulesRepository,
-} from '../../domain/repositories/nat-rules.repository.js';
+  NAT_RULES_REPOSITORY_TOKEN,
+} from "../../domain/repositories/nat-rules.repository.js";
 import {
-  ZONE_PAIR_REPOSITORY_TOKEN,
-  type IZonePairRepository,
-} from '../../domain/repositories/zone-pair.repository.js';
-import {
-  RULES_REPOSITORY_TOKEN,
   type IRulesRepository,
-} from '../../domain/repositories/rules-repository.js';
+  RULES_REPOSITORY_TOKEN,
+} from "../../domain/repositories/rules-repository.js";
 import {
-  ZONE_REPOSITORY_TOKEN,
   type IZoneRepository,
-} from '../../domain/repositories/zone.repository.js';
-import { RollbackConfigDto } from '../dtos/rollback-config.dto.js';
-import { Injectable, Inject } from '@nestjs/common';
-import { RollbackConfigSnapshotResponseDto } from '../dtos/rollback-config-response.dto.js';
+  ZONE_REPOSITORY_TOKEN,
+} from "../../domain/repositories/zone.repository.js";
+import {
+  type IZonePairRepository,
+  ZONE_PAIR_REPOSITORY_TOKEN,
+} from "../../domain/repositories/zone-pair.repository.js";
+import type { RollbackConfigDto } from "../dtos/rollback-config.dto.js";
+import type { RollbackConfigSnapshotResponseDto } from "../dtos/rollback-config-response.dto.js";
 
 @Injectable()
 export class RollbackConfigUseCase {
@@ -43,7 +43,7 @@ export class RollbackConfigUseCase {
   ): Promise<RollbackConfigSnapshotResponseDto> {
     const configSnapshot = await this.configSnapshotRepository.findById(dto.id);
     if (!configSnapshot)
-      throw new EntityNotFoundException('Config snpshot', dto.id);
+      throw new EntityNotFoundException("Config snpshot", dto.id);
 
     const configBundle = configSnapshot.deserializePayload();
 

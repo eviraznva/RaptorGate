@@ -1,5 +1,5 @@
-import { Zone } from 'src/domain/entities/zone.entity';
+import { Zone } from "src/domain/entities/zone.entity";
 
 export class CreateZoneResponseDto {
-  zone: Zone;
+	zone: Zone;
 }

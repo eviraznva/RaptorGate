@@ -1,5 +1,5 @@
-import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
+import { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
 
 export class GetConfigHistoryResponseDto {
-  configHistory: ConfigurationSnapshot[];
+	configHistory: ConfigurationSnapshot[];
 }

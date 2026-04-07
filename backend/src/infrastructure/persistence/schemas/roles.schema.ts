@@ -1,13 +1,13 @@
-import { tableFileSchema, uuidSchema } from './_common.js';
-import { z } from 'zod';
+import { tableFileSchema, uuidSchema } from "./_common.js";
+import { z } from "zod";
 
 export const RoleRecordSchema = z
-  .object({
-    id: uuidSchema,
-    name: z.string().min(1).max(64),
-    description: z.string().max(255).nullable().optional(),
-  })
-  .strict();
+	.object({
+		id: uuidSchema,
+		name: z.string().min(1).max(64),
+		description: z.string().max(255).nullable().optional(),
+	})
+	.strict();
 
 export const RolesFileSchema = tableFileSchema(RoleRecordSchema);
 
