@@ -85,9 +85,9 @@ async fn main() {
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
 
-    config_provider.register(Arc::clone(&policy_provider)).await;
-    config_provider.register(Arc::clone(&zones)).await;
-    config_provider.register(Arc::clone(&zone_pairs)).await;
+    config_provider.register(Arc::clone(&policy_provider), "DiskPolicyProvider").await;
+    config_provider.register(Arc::clone(&zones), "ZoneProvider").await;
+    config_provider.register(Arc::clone(&zone_pairs), "ZonePairProvider").await;
 
     tokio::spawn(events::init_event_queue());
     let nat_engine = build_test_nat();
@@ -109,11 +109,11 @@ async fn main() {
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
     let tun = TunForwarder::new(&config);
-    config_provider.register(Arc::clone(&tun)).await;
+    config_provider.register(Arc::clone(&tun), "TunForwarder").await;
 
     let (sniffer, mut raw_rx, errs) = InterfaceSniffer::with_sniffing(&config);
     let sniffer = Arc::new(sniffer);
-    config_provider.register(Arc::clone(&sniffer)).await;
+    config_provider.register(Arc::clone(&sniffer), "InterfaceSniffer").await;
     for e in errs {
         tracing::error!(error = %e, "interface sniffer error");
     }

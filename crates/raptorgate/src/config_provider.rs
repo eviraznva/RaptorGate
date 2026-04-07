@@ -1,3 +1,4 @@
+use std::fmt;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -13,10 +14,40 @@ pub trait ConfigObserver: Send + Sync {
     async fn on_config_change(&self, new_config: &AppConfig) -> Result<()>;
 }
 
+pub struct ConfigSwapError {
+    pub original_error: anyhow::Error,
+    pub rollback_failures: Vec<(&'static str, anyhow::Error)>,
+}
+
+impl fmt::Display for ConfigSwapError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "config swap failed: {}", self.original_error)?;
+        if !self.rollback_failures.is_empty() {
+            writeln!(f, "rollback failures:")?;
+            for (name, err) in &self.rollback_failures {
+                writeln!(f, "  - {name}: {err}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for ConfigSwapError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl std::error::Error for ConfigSwapError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.original_error.as_ref())
+    }
+}
+
 pub struct AppConfigProvider {
     config: ArcSwap<AppConfig>,
     store: SingleDiskStore<AppConfig>,
-    observers: Mutex<Vec<Arc<dyn ConfigObserver>>>,
+    observers: Mutex<Vec<(Arc<dyn ConfigObserver>, &'static str)>>,
 }
 
 impl AppConfigProvider {
@@ -104,8 +135,8 @@ impl AppConfigProvider {
         })
     }
 
-    pub async fn register<T: ConfigObserver + 'static>(&self, observer: Arc<T>) {
-        self.observers.lock().await.push(observer);
+    pub async fn register<T: ConfigObserver + 'static>(&self, observer: Arc<T>, name: &'static str) {
+        self.observers.lock().await.push((observer, name));
     }
 
     #[allow(clippy::assigning_clones)]
@@ -124,9 +155,36 @@ impl AppConfigProvider {
         match loaded {
             Ok(_) => {
                 let observers = self.observers.lock().await;
-                for observer in observers.iter() {
-                    observer.on_config_change(&new).await
-                        .context("observer rejected config change")?;
+                let mut applied: Vec<usize> = Vec::new();
+
+                for (i, (observer, name)) in observers.iter().enumerate() {
+                    if let Err(e) = observer.on_config_change(&new).await {
+                        let original_error = e.context(format!("{name} rejected config change"));
+                        let mut rollback_failures = Vec::new();
+
+                        for idx in applied.iter().rev() {
+                            let (obs, obs_name) = &observers[*idx];
+                            if let Err(rollback_err) = obs.on_config_change(&old).await {
+                                rollback_failures.push((*obs_name, rollback_err));
+                            }
+                        }
+
+                        if let Err(disk_err) = self.store.save((**old).clone()).await {
+                            tracing::error!(error = %disk_err, "CRITICAL: failed to rollback AppConfig to disk after observer failure");
+                        }
+
+                        drop(observers);
+
+                        if rollback_failures.is_empty() {
+                            return Err(original_error);
+                        }
+
+                        return Err(anyhow::Error::new(ConfigSwapError {
+                            original_error,
+                            rollback_failures,
+                        }));
+                    }
+                    applied.push(i);
                 }
 
                 drop(observers);
