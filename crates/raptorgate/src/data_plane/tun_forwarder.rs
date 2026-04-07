@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use std::sync::Arc;
-use tun::AsyncDevice;
+use tun::{AbstractDevice, AsyncDevice};
 
 use crate::config::AppConfig;
 use crate::config_provider::ConfigObserver;
@@ -73,12 +73,15 @@ impl ConfigObserver for TunForwarder {
             .context("failed to create new TUN device")?;
 
         let old_device_name = old_config.tun_device_name.clone();
-        let new_device_name = new_config.tun_device_name.clone();
         let old_address = old_config.tun_address.to_string();
         let new_address = new_config.tun_address.to_string();
 
+
         self.device.store(Arc::new(new_device));
         self.config.store(Arc::new(new_config.clone()));
+
+        let new_device = self.device.load();
+        let new_device_name = new_device.as_ref().tun_name().unwrap_or("Device name fetch failed".to_owned());
 
         crate::events::emit(Event::new(EventKind::TunDeviceSwapped {
             old_device: old_device_name,
