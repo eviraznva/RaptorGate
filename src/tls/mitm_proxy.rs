@@ -9,11 +9,11 @@ use tokio_util::sync::CancellationToken;
 use crate::dpi::parsers::tls::parse_tls_client_hello;
 use crate::events;
 use crate::tls::cert_forger::CertForger;
+use crate::tls::decision_engine::TlsDecisionEngine;
 use crate::tls::dual_session::{self, AcceptParams, ConnectParams};
 use crate::tls::inspection_relay::{InspectionRelay, InspectionMode, IpsInspector, SessionMeta};
 use crate::tls::original_dst;
 use crate::tls::rustls_config;
-use crate::tls::server_key_store::ServerKeyStore;
 
 const SNI_PEEK_BUF_SIZE: usize = 4096;
 
@@ -22,8 +22,8 @@ pub struct MitmProxyConfig {
     pub listen_addr: SocketAddr,
     pub client_config: Arc<ClientConfig>,
     pub cert_forger: Arc<CertForger>,
-    pub bypass_domains: Vec<String>,
-    pub server_key_store: Arc<ServerKeyStore>,
+    pub untrust_forger: Arc<CertForger>,
+    pub decision_engine: Arc<TlsDecisionEngine>,
     pub ips_inspector: Arc<dyn IpsInspector>,
     pub cancel: CancellationToken,
 }
@@ -33,8 +33,8 @@ pub struct MitmProxy {
     listener: TcpListener,
     client_config: Arc<ClientConfig>,
     cert_forger: Arc<CertForger>,
-    bypass_domains: Arc<Vec<String>>,
-    server_key_store: Arc<ServerKeyStore>,
+    untrust_forger: Arc<CertForger>,
+    decision_engine: Arc<TlsDecisionEngine>,
     inspection_relay: Arc<InspectionRelay>,
     cancel: CancellationToken,
 }
@@ -52,8 +52,8 @@ impl MitmProxy {
             listener,
             client_config: config.client_config,
             cert_forger: config.cert_forger,
-            bypass_domains: Arc::new(config.bypass_domains),
-            server_key_store: config.server_key_store,
+            untrust_forger: config.untrust_forger,
+            decision_engine: config.decision_engine,
             inspection_relay: Arc::new(InspectionRelay::new(config.ips_inspector)),
             cancel: config.cancel,
         })
@@ -72,8 +72,8 @@ impl MitmProxy {
                         Ok((stream, peer_addr)) => {
                             let client_config = Arc::clone(&self.client_config);
                             let cert_forger = Arc::clone(&self.cert_forger);
-                            let bypass = Arc::clone(&self.bypass_domains);
-                            let key_store = Arc::clone(&self.server_key_store);
+                            let untrust_forger = Arc::clone(&self.untrust_forger);
+                            let engine = Arc::clone(&self.decision_engine);
                             let relay = Arc::clone(&self.inspection_relay);
 
                             tokio::spawn(async move {
@@ -82,8 +82,8 @@ impl MitmProxy {
                                     peer_addr,
                                     client_config,
                                     cert_forger,
-                                    bypass,
-                                    key_store,
+                                    untrust_forger,
+                                    engine,
                                     relay,
                                 ).await {
                                     tracing::debug!(peer = %peer_addr, error = %e, "TLS proxy connection error");
@@ -106,45 +106,48 @@ async fn handle_connection(
     peer_addr: SocketAddr,
     client_config: Arc<ClientConfig>,
     cert_forger: Arc<CertForger>,
-    bypass_domains: Arc<Vec<String>>,
-    server_key_store: Arc<ServerKeyStore>,
+    untrust_forger: Arc<CertForger>,
+    engine: Arc<TlsDecisionEngine>,
     relay: Arc<InspectionRelay>,
 ) -> anyhow::Result<()> {
     let original_dst = original_dst::get_original_dst(&client_tcp)
-        .context("Nie udalo sie odczytac oryginalnego adresu docelowego")?;
+        .context("Failed to read original destination address")?;
 
     let sni = peek_sni(&client_tcp).await;
 
-    // Inbound: mamy klucz serwera dla tego destination
-    if let Some(inbound_config) = server_key_store.get(original_dst) {
+    if let Some(entry) = engine.server_key_store().get_entry(original_dst) {
+        if entry.bypass {
+            tracing::debug!(peer = %peer_addr, server = %original_dst, "Inbound TLS bypass");
+            events::emit(events::Event::new(events::EventKind::InboundTlsBypassApplied {
+                peer: peer_addr,
+                server: original_dst,
+                sni,
+            }));
+            return relay_tcp_passthrough(client_tcp, original_dst).await;
+        }
         tracing::debug!(peer = %peer_addr, server = %original_dst, "Inbound TLS inspection");
         return handle_inbound_connection(
-            client_tcp,
-            peer_addr,
-            original_dst,
-            sni,
-            inbound_config,
-            relay,
+            client_tcp, peer_addr, original_dst, sni, entry.server_config, relay,
         )
         .await;
     }
 
-    // Outbound: standardowy MITM
     let domain = sni.as_deref().unwrap_or("unknown");
 
-    if is_bypassed(domain, &bypass_domains) {
-        tracing::debug!(domain, "TLS bypass - relay bez inspekcji");
+    if engine.is_domain_bypassed(domain) {
+        tracing::debug!(domain, "TLS bypass - relay without inspection");
+        events::emit(events::Event::new(events::EventKind::TlsBypassApplied {
+            peer: peer_addr,
+            dst: original_dst,
+            sni: sni.clone(),
+            domain: domain.to_string(),
+        }));
         return relay_tcp_passthrough(client_tcp, original_dst).await;
     }
 
     handle_outbound_connection(
-        client_tcp,
-        peer_addr,
-        original_dst,
-        sni,
-        client_config,
-        cert_forger,
-        relay,
+        client_tcp, peer_addr, original_dst, sni,
+        client_config, cert_forger, untrust_forger, relay,
     )
     .await
 }
@@ -245,8 +248,6 @@ async fn handle_inbound_connection(
 }
 
 // Obsluguje polaczenie outbound MITM (sfałszowany certyfikat z replikacja SAN).
-// Flow sekwencyjny: najpierw handshake z serwerem (poznajemy cert i SAN),
-// potem fałszujemy cert z pelna lista SAN, dopiero wtedy akceptujemy klienta.
 async fn handle_outbound_connection(
     client_tcp: TcpStream,
     peer_addr: SocketAddr,
@@ -254,6 +255,7 @@ async fn handle_outbound_connection(
     sni: Option<String>,
     client_config: Arc<ClientConfig>,
     cert_forger: Arc<CertForger>,
+    untrust_forger: Arc<CertForger>,
     relay: Arc<InspectionRelay>,
 ) -> anyhow::Result<()> {
     let domain = sni.clone().unwrap_or_else(|| original_dst.ip().to_string());
@@ -266,41 +268,56 @@ async fn handle_outbound_connection(
         sni: sni.clone(),
     }));
 
-    // 1. Polacz z serwerem docelowym — TLS handshake jako klient
     let server_tcp = TcpStream::connect(original_dst)
         .await
-        .context("Nie udalo sie polaczyc z serwerem docelowym")?;
+        .context("Failed to connect to destination server")?;
+
+    let (recording_config, trusted_flag) = rustls_config::build_client_config_recording()
+        .context("Failed to build recording client config")?;
 
     let server_tls = dual_session::connect_to_server(ConnectParams {
         tcp_stream: server_tcp,
-        client_config,
+        client_config: recording_config,
         server_name: domain.clone(),
     })
     .await
-    .context("TLS handshake z serwerem docelowym nie powiodl sie")?;
+    .context("TLS handshake with destination server failed")?;
 
-    // 2. Wyodrebnij SAN z certyfikatu serwera
+    let server_trusted = trusted_flag.load(std::sync::atomic::Ordering::Acquire);
     let extra_sans = dual_session::extract_peer_sans(&server_tls);
 
-    // 3. Sfalsz certyfikat z pelna lista SAN
-    let forged = cert_forger
+    let active_forger = if server_trusted { &cert_forger } else { &untrust_forger };
+
+    if !server_trusted {
+        tracing::warn!(
+            peer = %peer_addr, dst = %original_dst, domain = %domain,
+            "Server certificate untrusted, using Untrust CA"
+        );
+        events::emit(events::Event::new(events::EventKind::TlsUntrustedCertDetected {
+            peer: peer_addr,
+            dst: original_dst,
+            sni: sni.clone(),
+            domain: domain.clone(),
+        }));
+    }
+
+    let forged = active_forger
         .forge(&domain, &extra_sans)
-        .context("Nie udalo sie sfalszyc certyfikatu")?;
+        .context("Failed to forge certificate")?;
 
     let certified_key = forged
         .to_certified_key()
-        .context("Nie udalo sie skonwertowac sfalszonego certyfikatu")?;
+        .context("Failed to convert forged certificate")?;
 
     let forged_server_config = rustls_config::build_server_config_for_key(certified_key)
-        .context("Nie udalo sie zbudowac konfiguracji serwera")?;
+        .context("Failed to build server config")?;
 
-    // 4. Zaakceptuj TLS od klienta ze sfaslszowanym certyfikatem (pelnymi SAN)
     let client_tls = dual_session::accept_client_tls(AcceptParams {
         tcp_stream: client_tcp,
         server_config: forged_server_config,
     })
     .await
-    .context("TLS accept od klienta nie powiodl sie")?;
+    .context("TLS accept from client failed")?;
 
     let alpn = server_tls
         .get_ref()
@@ -312,6 +329,7 @@ async fn handle_outbound_connection(
         sni = sni.as_deref().unwrap_or("none"),
         alpn = ?alpn,
         replicated_sans = extra_sans.len(),
+        trusted = server_trusted,
         "MITM TLS sessions established"
     );
 
@@ -324,7 +342,6 @@ async fn handle_outbound_connection(
         },
     ));
 
-    // Inspekcja DPI/IPS na odszyfrowanym ruchu
     let (client_read, client_write) = tokio::io::split(client_tls);
     let (server_read, server_write) = tokio::io::split(server_tls);
 
@@ -358,14 +375,6 @@ async fn peek_sni(stream: &TcpStream) -> Option<String> {
     result.sni
 }
 
-// Sprawdza czy domena jest na liscie bypass.
-fn is_bypassed(domain: &str, bypass_list: &[String]) -> bool {
-    let domain_lower = domain.to_lowercase();
-    bypass_list.iter().any(|suffix| {
-        domain_lower == *suffix || domain_lower.ends_with(&format!(".{suffix}"))
-    })
-}
-
 // Przekazuje ruch TCP bez inspekcji TLS.
 async fn relay_tcp_passthrough(
     mut client: TcpStream,
@@ -387,43 +396,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bypass_exact_match() {
-        let list = vec!["example.com".to_string()];
-        assert!(is_bypassed("example.com", &list));
-    }
-
-    #[test]
-    fn bypass_subdomain_match() {
-        let list = vec!["example.com".to_string()];
-        assert!(is_bypassed("www.example.com", &list));
-        assert!(is_bypassed("deep.sub.example.com", &list));
-    }
-
-    #[test]
-    fn bypass_no_match() {
-        let list = vec!["example.com".to_string()];
-        assert!(!is_bypassed("notexample.com", &list));
-        assert!(!is_bypassed("example.org", &list));
-    }
-
-    #[test]
-    fn bypass_case_insensitive() {
-        let list = vec!["example.com".to_string()];
-        assert!(is_bypassed("EXAMPLE.COM", &list));
-        assert!(is_bypassed("Www.Example.COM", &list));
-    }
-
-    #[test]
-    fn bypass_empty_list() {
-        let list: Vec<String> = vec![];
-        assert!(!is_bypassed("example.com", &list));
-    }
-
-    #[test]
-    fn bypass_multiple_entries() {
-        let list = vec!["bank.com".to_string(), "gov.pl".to_string()];
-        assert!(is_bypassed("www.bank.com", &list));
-        assert!(is_bypassed("portal.gov.pl", &list));
-        assert!(!is_bypassed("example.com", &list));
+    fn peek_buf_size_enough_for_client_hello() {
+        assert!(SNI_PEEK_BUF_SIZE >= 512);
     }
 }

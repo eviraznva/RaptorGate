@@ -57,6 +57,7 @@ struct InboundServerEntry {
     server_config: Arc<ServerConfig>,
     common_name: String,
     fingerprint: String,
+    bypass: bool,
 }
 
 // Informacja o zarejestrowanym serwerze inbound (publiczne DTO).
@@ -65,6 +66,13 @@ pub struct InboundServerInfo {
     pub addr: SocketAddr,
     pub common_name: String,
     pub fingerprint: String,
+    pub bypass: bool,
+}
+
+// Wynik get_entry, ServerConfig + flaga bypass.
+pub struct InboundEntryRef {
+    pub server_config: Arc<ServerConfig>,
+    pub bypass: bool,
 }
 
 // Rejestr kluczy serwerow do inspekcji inbound TLS.
@@ -90,6 +98,7 @@ impl ServerKeyStore {
         key_ref: &str,
         common_name: &str,
         fingerprint: &str,
+        bypass: bool,
     ) -> anyhow::Result<()> {
         save_key_to_disk(Path::new(&self.pki_dir), key_ref, key_pem)
             .with_context(|| format!("Failed to persist server key for {addr}"))?;
@@ -103,10 +112,11 @@ impl ServerKeyStore {
                 server_config,
                 common_name: common_name.to_string(),
                 fingerprint: fingerprint.to_string(),
+                bypass,
             },
         );
 
-        tracing::info!(%addr, cn = common_name, "Inbound TLS server key registered");
+        tracing::info!(%addr, cn = common_name, bypass, "Inbound TLS server key registered");
         Ok(())
     }
 
@@ -118,6 +128,7 @@ impl ServerKeyStore {
         key_ref: &str,
         common_name: &str,
         fingerprint: &str,
+        bypass: bool,
     ) -> anyhow::Result<()> {
         let key_pem = load_key_from_disk(Path::new(&self.pki_dir), key_ref)
             .with_context(|| format!("Failed to load server key {key_ref}"))?;
@@ -131,10 +142,11 @@ impl ServerKeyStore {
                 server_config,
                 common_name: common_name.to_string(),
                 fingerprint: fingerprint.to_string(),
+                bypass,
             },
         );
 
-        tracing::info!(%addr, cn = common_name, "Inbound TLS server key loaded from disk");
+        tracing::info!(%addr, cn = common_name, bypass, "Inbound TLS server key loaded from disk");
         Ok(())
     }
 
@@ -143,6 +155,14 @@ impl ServerKeyStore {
         self.entries
             .get(&addr)
             .map(|entry| Arc::clone(&entry.server_config))
+    }
+
+    // Zwraca ServerConfig + bypass dla danego adresu.
+    pub fn get_entry(&self, addr: SocketAddr) -> Option<InboundEntryRef> {
+        self.entries.get(&addr).map(|entry| InboundEntryRef {
+            server_config: Arc::clone(&entry.server_config),
+            bypass: entry.bypass,
+        })
     }
 
     // Sprawdza czy adres ma zarejestrowany klucz inbound.
@@ -168,6 +188,7 @@ impl ServerKeyStore {
                 addr: *entry.key(),
                 common_name: entry.value().common_name.clone(),
                 fingerprint: entry.value().fingerprint.clone(),
+                bypass: entry.value().bypass,
             })
             .collect()
     }
@@ -216,7 +237,7 @@ mod tests {
         let addr = test_addr();
 
         store
-            .add(addr, &cert, &key, "test-ref-001", "test-server.local", "AA:BB")
+            .add(addr, &cert, &key, "test-ref-001", "test-server.local", "AA:BB", false)
             .unwrap();
 
         assert!(store.get(addr).is_some());
@@ -241,7 +262,7 @@ mod tests {
         let addr = test_addr();
 
         store
-            .add(addr, &cert, &key, "test-ref-002", "test-server.local", "AA:BB")
+            .add(addr, &cert, &key, "test-ref-002", "test-server.local", "AA:BB", false)
             .unwrap();
 
         assert!(store.contains(addr.ip(), addr.port()));
@@ -257,7 +278,7 @@ mod tests {
         let addr = test_addr();
 
         store
-            .add(addr, &cert, &key, "test-ref-003", "test-server.local", "AA:BB")
+            .add(addr, &cert, &key, "test-ref-003", "test-server.local", "AA:BB", false)
             .unwrap();
         assert!(store.get(addr).is_some());
 
@@ -277,10 +298,10 @@ mod tests {
         let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 8443);
 
         store
-            .add(addr1, &cert, &key, "ref-a", "server-a", "AA:AA")
+            .add(addr1, &cert, &key, "ref-a", "server-a", "AA:AA", false)
             .unwrap();
         store
-            .add(addr2, &cert, &key, "ref-b", "server-b", "BB:BB")
+            .add(addr2, &cert, &key, "ref-b", "server-b", "BB:BB", false)
             .unwrap();
 
         let list = store.list();
@@ -298,7 +319,7 @@ mod tests {
         save_key_to_disk(Path::new(&dir), "disk-ref", &key).unwrap();
 
         store
-            .load(addr, &cert, "disk-ref", "test-server.local", "CC:DD")
+            .load(addr, &cert, "disk-ref", "test-server.local", "CC:DD", false)
             .unwrap();
 
         assert!(store.get(addr).is_some());

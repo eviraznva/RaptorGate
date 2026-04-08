@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -162,6 +163,97 @@ impl ServerCertVerifier for NoVerifier {
             .signature_verification_algorithms
             .supported_schemes()
     }
+}
+
+// Weryfikator rejestrujący wynik walidacji bez blokowania handshake'a.
+#[derive(Debug)]
+pub struct RecordingVerifier {
+    inner: Arc<dyn ServerCertVerifier>,
+    trusted: Arc<AtomicBool>,
+}
+
+impl RecordingVerifier {
+    pub fn trusted(&self) -> bool {
+        self.trusted.load(Ordering::Acquire)
+    }
+}
+
+impl ServerCertVerifier for RecordingVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        let result = self.inner.verify_server_cert(
+            end_entity, intermediates, server_name, ocsp_response, now,
+        );
+        self.trusted.store(result.is_ok(), Ordering::Release);
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message, cert, dss,
+            &rustls_ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message, cert, dss,
+            &rustls_ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls_ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+// Klient TLS rejestrujący zaufanie certyfikatu serwera (do Forward Untrust CA).
+pub fn build_client_config_recording() -> anyhow::Result<(Arc<ClientConfig>, Arc<AtomicBool>)> {
+    let mut root_store = RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let provider = rustls_ring::default_provider();
+    let inner = WebPkiServerVerifier::builder_with_provider(
+        Arc::new(root_store),
+        Arc::new(provider),
+    )
+    .build()
+    .context("Failed to build WebPKI server verifier")?;
+
+    let trusted = Arc::new(AtomicBool::new(true));
+    let verifier = Arc::new(RecordingVerifier {
+        inner,
+        trusted: Arc::clone(&trusted),
+    });
+
+    let mut config = ClientConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+        .context("Failed to set TLS protocol versions")?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    Ok((Arc::new(config), trusted))
 }
 
 #[derive(Debug)]

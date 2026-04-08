@@ -32,7 +32,7 @@ use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
-use crate::tls::{CaManager, MitmProxy, MitmProxyConfig, NoopIpsInspector, ServerKeyStore};
+use crate::tls::{CaManager, MitmProxy, MitmProxyConfig, NoopIpsInspector, ServerKeyStore, TlsDecisionEngine};
 use tokio_util::sync::CancellationToken;
 
 static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
@@ -64,7 +64,7 @@ async fn main() {
         }
     };
 
-    let (ca_info, tls_cert_forger, tls_client_config) = match CaManager::init(&config.pki_dir) {
+    let (ca_info, tls_cert_forger, tls_untrust_forger, tls_client_config) = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
             tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
             let info = ca.ca_info();
@@ -72,21 +72,28 @@ async fn main() {
             let forger = Arc::new(
                 ca.cert_forger(1024).expect("Failed to create cert forger"),
             );
-            tracing::info!("Cert forger ready (cache capacity: 1024)");
+            let untrust = Arc::new(
+                ca.untrust_cert_forger(256).expect("Failed to create untrust cert forger"),
+            );
+            tracing::info!("Cert forgers ready (trust: 1024, untrust: 256)");
 
             let client_cfg = tls::rustls_config::build_client_config()
                 .expect("Failed to build TLS client config");
             tracing::info!("TLS client config ready");
 
-            (Some(info), Some(forger), Some(client_cfg))
+            (Some(info), Some(forger), Some(untrust), Some(client_cfg))
         }
         Err(err) => {
             eprintln!("Warning: CA initialization failed: {err}");
-            (None, None, None)
+            (None, None, None, None)
         }
     };
 
     let server_key_store = Arc::new(ServerKeyStore::new(&config.pki_dir));
+    let decision_engine = Arc::new(TlsDecisionEngine::new(
+        &config.ssl_bypass_domains,
+        Arc::clone(&server_key_store),
+    ));
 
     let tcp_session_tracker = TcpSessionTracker::new();
     let policy_provider = Arc::new(DiskPolicyProvider::new(&config));
@@ -106,8 +113,8 @@ async fn main() {
     tokio::spawn(query_server.serve());
 
     if config.ssl_inspection_enabled {
-        match (&tls_cert_forger, &tls_client_config) {
-            (Some(forger), Some(client_cfg)) => {
+        match (&tls_cert_forger, &tls_untrust_forger, &tls_client_config) {
+            (Some(forger), Some(untrust), Some(client_cfg)) => {
                 let listen_addr = config.mitm_listen_addr.parse()
                     .expect("MITM_LISTEN_ADDR must be a valid socket address");
 
@@ -115,8 +122,8 @@ async fn main() {
                     listen_addr,
                     client_config: Arc::clone(client_cfg),
                     cert_forger: Arc::clone(forger),
-                    bypass_domains: config.ssl_bypass_domains.clone(),
-                    server_key_store: Arc::clone(&server_key_store),
+                    untrust_forger: Arc::clone(untrust),
+                    decision_engine: Arc::clone(&decision_engine),
                     ips_inspector: Arc::new(NoopIpsInspector),
                     cancel: CancellationToken::new(),
                 };
@@ -158,14 +165,12 @@ async fn main() {
     let dns_inspection = DnsInspection::new(dns_block_tree, TunnelingDetectorConfig::default());
     let dpi_classifier = Arc::new(DpiClassifier::new());
     
-    let bypass_domains = Arc::new(config.ssl_bypass_domains.clone());
-
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
             head: DpiStage { classifier: Arc::clone(&dpi_classifier) },
             tail: Chain {
-                head: TlsInspectionStage { enabled: config.ssl_inspection_enabled, bypass_domains, server_key_store: Arc::clone(&server_key_store) },
+                head: TlsInspectionStage { enabled: config.ssl_inspection_enabled, decision_engine: Arc::clone(&decision_engine) },
                 tail: Chain {
                     head: DnsInspectionStage { inspection: dns_inspection },
                     tail: Chain {

@@ -175,6 +175,82 @@ pub fn load_ca(dir: &Path) -> anyhow::Result<Option<LoadedCa>> {
     }))
 }
 
+// Zapisuje zaszyfrowany klucz prywatny Untrust CA na dysk.
+pub fn save_untrust_ca(
+    dir: &Path,
+    key_pem: &str,
+    cert_pem: &str,
+    fingerprint: &str,
+    expires_at_secs: i64,
+) -> anyhow::Result<()> {
+    fs::create_dir_all(dir).context("Failed to create PKI directory")?;
+
+    let machine_id = read_machine_id()?;
+    let enc_key = derive_encryption_key(&machine_id)?;
+    let encrypted = encrypt_pem(key_pem.as_bytes(), &enc_key)?;
+
+    let key_path = dir.join("untrust_ca.key.enc");
+    let cert_path = dir.join("untrust_ca.crt");
+    let meta_path = dir.join("untrust_ca.meta.json");
+
+    fs::write(&key_path, &encrypted).context("Failed to write untrust_ca.key.enc")?;
+    fs::write(&cert_path, cert_pem).context("Failed to write untrust_ca.crt")?;
+
+    let meta = serde_json::json!({
+        "fingerprint": fingerprint,
+        "expires_at_secs": expires_at_secs,
+    });
+    fs::write(&meta_path, meta.to_string()).context("Failed to write untrust_ca.meta.json")?;
+
+    fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))
+        .context("Failed to set permissions on untrust_ca.key.enc")?;
+    fs::set_permissions(&cert_path, fs::Permissions::from_mode(0o644))
+        .context("Failed to set permissions on untrust_ca.crt")?;
+    fs::set_permissions(&meta_path, fs::Permissions::from_mode(0o644))
+        .context("Failed to set permissions on untrust_ca.meta.json")?;
+
+    Ok(())
+}
+
+// Wczytuje Untrust CA z dysku. Zwraca None gdy pliki nie istnieją.
+pub fn load_untrust_ca(dir: &Path) -> anyhow::Result<Option<LoadedCa>> {
+    let key_path = dir.join("untrust_ca.key.enc");
+    let cert_path = dir.join("untrust_ca.crt");
+    let meta_path = dir.join("untrust_ca.meta.json");
+
+    if !key_path.exists() || !cert_path.exists() || !meta_path.exists() {
+        return Ok(None);
+    }
+
+    let machine_id = read_machine_id()?;
+    let enc_key = derive_encryption_key(&machine_id)?;
+
+    let encrypted = fs::read(&key_path).context("Failed to read untrust_ca.key.enc")?;
+    let key_bytes = decrypt_pem(&encrypted, &enc_key)?;
+    let key_pem = String::from_utf8(key_bytes).context("untrust_ca.key.enc contains invalid UTF-8")?;
+
+    let cert_pem = fs::read_to_string(&cert_path).context("Failed to read untrust_ca.crt")?;
+
+    let meta_str = fs::read_to_string(&meta_path).context("Failed to read untrust_ca.meta.json")?;
+    let meta: serde_json::Value =
+        serde_json::from_str(&meta_str).context("Failed to parse untrust_ca.meta.json")?;
+
+    let fingerprint = meta["fingerprint"]
+        .as_str()
+        .context("Missing field 'fingerprint' in untrust_ca.meta.json")?
+        .to_string();
+    let expires_at_secs = meta["expires_at_secs"]
+        .as_i64()
+        .context("Missing field 'expires_at_secs' in untrust_ca.meta.json")?;
+
+    Ok(Some(LoadedCa {
+        key_pem,
+        cert_pem,
+        fingerprint,
+        expires_at_secs,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

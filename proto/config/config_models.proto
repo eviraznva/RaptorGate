@@ -147,6 +147,7 @@ message FirewallCertificate {
   string                   bind_address    = 8;  // IP serwera wewnetrznego (inbound TLS)
   uint32                   bind_port       = 9;  // port serwera (domyslnie 443)
   string                   private_key_pem = 10; // klucz prywatny PEM (tylko initial sync)
+  bool                     inspection_bypass = 11; // bypass inspekcji dla tego serwera
 }
 
 message FirewallCertificateSet {
