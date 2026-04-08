@@ -1,6 +1,8 @@
 pub mod ca_manager;
 pub mod cert_forger;
 pub mod cert_storage;
+pub mod decision_engine;
+pub mod domain_trie;
 pub mod dual_session;
 pub mod inspection_relay;
 pub mod mitm_proxy;
@@ -11,6 +13,7 @@ pub mod server_key_store;
 
 pub use ca_manager::{CaInfo, CaManager};
 pub use cert_forger::{CertForger, ForgedCert};
+pub use decision_engine::TlsDecisionEngine;
 pub use dual_session::{AcceptParams, ConnectParams, DualTlsSession};
 pub use inspection_relay::{InspectionRelay, IpsInspector, NoopIpsInspector};
 pub use mitm_proxy::{MitmProxy, MitmProxyConfig};

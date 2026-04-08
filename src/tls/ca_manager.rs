@@ -15,12 +15,15 @@ pub struct CaInfo {
     pub expires_at: prost_types::Timestamp,
 }
 
-// Zarządca certyfikatu CA - ładuje istniejące CA lub generuje nowe.
+// Zarządca certyfikatów CA, trust + untrust.
 pub struct CaManager {
     ca_cert_pem: String,
     ca_key_pem: String,
     fingerprint: String,
     expires_at: prost_types::Timestamp,
+    untrust_cert_pem: String,
+    untrust_key_pem: String,
+    untrust_fingerprint: String,
 }
 
 impl CaManager {
@@ -28,43 +31,55 @@ impl CaManager {
     pub fn init(pki_dir: &str) -> anyhow::Result<Self> {
         let dir = Path::new(pki_dir);
 
-        if let Some(loaded) = cert_storage::load_ca(dir)? {
-            tracing::info!(pki_dir, "Loaded existing CA from disk");
-            return Ok(Self {
-                ca_cert_pem: loaded.cert_pem,
-                ca_key_pem: loaded.key_pem,
-                fingerprint: loaded.fingerprint,
-                expires_at: prost_types::Timestamp {
-                    seconds: loaded.expires_at_secs,
-                    nanos: 0,
-                },
-            });
-        }
+        let (ca_cert_pem, ca_key_pem, fingerprint, expires_at) =
+            if let Some(loaded) = cert_storage::load_ca(dir)? {
+                tracing::info!(pki_dir, "Loaded existing CA from disk");
+                (
+                    loaded.cert_pem,
+                    loaded.key_pem,
+                    loaded.fingerprint,
+                    prost_types::Timestamp { seconds: loaded.expires_at_secs, nanos: 0 },
+                )
+            } else {
+                tracing::info!(pki_dir, "Generating new CA certificate");
+                let generated = generate_ca("RaptorGate CA")?;
+                cert_storage::save_ca(
+                    dir, &generated.key_pem, &generated.cert_pem,
+                    &generated.fingerprint, generated.expires_at.seconds,
+                )?;
+                tracing::info!(fingerprint = %generated.fingerprint, "New CA generated and saved");
+                (generated.cert_pem, generated.key_pem, generated.fingerprint, generated.expires_at)
+            };
 
-        tracing::info!(pki_dir, "Generating new CA certificate");
-        let generated = generate_ca()?;
-
-        cert_storage::save_ca(
-            dir,
-            &generated.key_pem,
-            &generated.cert_pem,
-            &generated.fingerprint,
-            generated.expires_at.seconds,
-        )?;
-
-        tracing::info!(fingerprint = %generated.fingerprint, "New CA generated and saved");
+        let (untrust_cert_pem, untrust_key_pem, untrust_fingerprint) =
+            if let Some(loaded) = cert_storage::load_untrust_ca(dir)? {
+                tracing::info!(pki_dir, "Loaded existing Untrust CA from disk");
+                (loaded.cert_pem, loaded.key_pem, loaded.fingerprint)
+            } else {
+                tracing::info!(pki_dir, "Generating new Untrust CA certificate");
+                let generated = generate_ca("RaptorGate Untrust CA")?;
+                cert_storage::save_untrust_ca(
+                    dir, &generated.key_pem, &generated.cert_pem,
+                    &generated.fingerprint, generated.expires_at.seconds,
+                )?;
+                tracing::info!(fingerprint = %generated.fingerprint, "Untrust CA generated and saved");
+                (generated.cert_pem, generated.key_pem, generated.fingerprint)
+            };
 
         Ok(Self {
-            ca_cert_pem: generated.cert_pem,
-            ca_key_pem: generated.key_pem,
-            fingerprint: generated.fingerprint,
-            expires_at: generated.expires_at,
+            ca_cert_pem, ca_key_pem, fingerprint, expires_at,
+            untrust_cert_pem, untrust_key_pem, untrust_fingerprint,
         })
     }
 
     // Tworzy CertForger podpisujący certyfikaty tym CA.
     pub fn cert_forger(&self, cache_capacity: usize) -> anyhow::Result<super::CertForger> {
         super::CertForger::new(&self.ca_cert_pem, &self.ca_key_pem, cache_capacity)
+    }
+
+    // Tworzy CertForger podpisujący certyfikaty Untrust CA.
+    pub fn untrust_cert_forger(&self, cache_capacity: usize) -> anyhow::Result<super::CertForger> {
+        super::CertForger::new(&self.untrust_cert_pem, &self.untrust_key_pem, cache_capacity)
     }
 
     // Zwraca informacje o CA do przekazania do control plane.
@@ -85,7 +100,7 @@ struct GeneratedCa {
 }
 
 // Generuje nową parę klucz/certyfikat CA ważną 10 lat.
-fn generate_ca() -> anyhow::Result<GeneratedCa> {
+fn generate_ca(common_name: &str) -> anyhow::Result<GeneratedCa> {
     let key_pair = KeyPair::generate().context("Failed to generate CA key pair")?;
 
     let now = OffsetDateTime::now_utc();
@@ -98,7 +113,7 @@ fn generate_ca() -> anyhow::Result<GeneratedCa> {
     params.not_after = expiry;
     params
         .distinguished_name
-        .push(DnType::CommonName, "RaptorGate CA");
+        .push(DnType::CommonName, common_name);
     params
         .distinguished_name
         .push(DnType::OrganizationName, "RaptorGate");

@@ -138,6 +138,9 @@ pub enum EventKind {
     InboundTlsSessionClosed { peer: SocketAddr, server: SocketAddr, sni: Option<String>, bytes_up: u64, bytes_down: u64 },
     DecryptedTrafficClassified { peer: SocketAddr, server: SocketAddr, sni: Option<String>, app_proto: String, direction: Direction, mode: InspectionMode },
     DecryptedIpsMatch { peer: SocketAddr, server: SocketAddr, sni: Option<String>, signature_name: String, severity: String, blocked: bool, direction: Direction, mode: InspectionMode },
+    TlsUntrustedCertDetected { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, domain: String },
+    TlsBypassApplied { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, domain: String },
+    InboundTlsBypassApplied { peer: SocketAddr, server: SocketAddr, sni: Option<String> },
 }
 
 impl EventKind {
@@ -155,7 +158,10 @@ impl EventKind {
             | E::InboundTlsHandshakeComplete { .. }
             | E::InboundTlsSessionClosed { .. }
             | E::DecryptedTrafficClassified { .. }
-            | E::DecryptedIpsMatch { .. } => true,
+            | E::DecryptedIpsMatch { .. }
+            | E::TlsUntrustedCertDetected { .. }
+            | E::TlsBypassApplied { .. }
+            | E::InboundTlsBypassApplied { .. } => true,
         }
     }
 }
@@ -273,6 +279,32 @@ impl From<EventKind> for proto::EventKind {
                         blocked,
                         direction: format!("{direction:?}"),
                         mode: format!("{mode:?}"),
+                    }),
+                EventKind::TlsUntrustedCertDetected { peer, dst, sni, domain } =>
+                    Item::TlsUntrustedCertDetected(proto::TlsUntrustedCertDetectedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: peer.port() as u32,
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: dst.port() as u32,
+                        sni: sni.unwrap_or_default(),
+                        domain,
+                    }),
+                EventKind::TlsBypassApplied { peer, dst, sni, domain } =>
+                    Item::TlsBypassApplied(proto::TlsBypassAppliedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: peer.port() as u32,
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: dst.port() as u32,
+                        sni: sni.unwrap_or_default(),
+                        domain,
+                    }),
+                EventKind::InboundTlsBypassApplied { peer, server, sni } =>
+                    Item::InboundTlsBypassApplied(proto::InboundTlsBypassAppliedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: peer.port() as u32,
+                        server_ip: server.ip().to_string(),
+                        server_port: server.port() as u32,
+                        sni: sni.unwrap_or_default(),
                     }),
             }),
         }

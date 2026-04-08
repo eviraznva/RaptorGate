@@ -7,6 +7,7 @@ pub enum TlsAction {
     #[default]
     None,
     Intercept,
+    InterceptUntrust,
     Bypass,
     Block,
 }

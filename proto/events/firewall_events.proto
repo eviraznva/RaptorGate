@@ -23,6 +23,9 @@ message EventKind {
     InboundTlsSessionClosedEvent      inbound_tls_session_closed      = 10;
     DecryptedTrafficClassifiedEvent   decrypted_traffic_classified    = 11;
     DecryptedIpsMatchEvent            decrypted_ips_match             = 12;
+    TlsUntrustedCertDetectedEvent     tls_untrusted_cert_detected     = 13;
+    TlsBypassAppliedEvent             tls_bypass_applied              = 14;
+    InboundTlsBypassAppliedEvent      inbound_tls_bypass_applied      = 15;
   }
 }
 
@@ -128,4 +131,30 @@ message DecryptedIpsMatchEvent {
   bool   blocked         = 8;
   string direction       = 9;
   string mode            = 10;
+}
+
+message TlsUntrustedCertDetectedEvent {
+  string peer_ip   = 1;
+  uint32 peer_port = 2;
+  string dst_ip    = 3;
+  uint32 dst_port  = 4;
+  string sni       = 5;
+  string domain    = 6;
+}
+
+message TlsBypassAppliedEvent {
+  string peer_ip   = 1;
+  uint32 peer_port = 2;
+  string dst_ip    = 3;
+  uint32 dst_port  = 4;
+  string sni       = 5;
+  string domain    = 6;
+}
+
+message InboundTlsBypassAppliedEvent {
+  string peer_ip       = 1;
+  uint32 peer_port     = 2;
+  string server_ip     = 3;
+  uint32 server_port   = 4;
+  string sni           = 5;
 }
