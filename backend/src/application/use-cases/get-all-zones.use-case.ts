@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { EntityNotFoundException } from "src/domain/exceptions/entity-not-found-exception.js";
+import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
 import type { IZoneRepository } from "../../domain/repositories/zone.repository.js";
 import { ZONE_REPOSITORY_TOKEN } from "../../domain/repositories/zone.repository.js";
 import type { GetAllZonesDto } from "../dtos/get-all-zones.dto.js";

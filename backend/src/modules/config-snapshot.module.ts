@@ -1,4 +1,8 @@
 import { JsonRolePermissionsRepository } from "../infrastructure/persistence/repositories/json-role-permissions.repository.js";
+import {
+	CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN,
+	GrpcConfigSnapshotPushService,
+} from "../infrastructure/adapters/grpc-config-snapshot-push.service.js";
 import { JsonConfigSnapshotRepository } from "../infrastructure/persistence/repositories/json-config-snapshot.repository.js";
 import { JsonPermissionRepository } from "../infrastructure/persistence/repositories/json-permission.repository.js";
 import { JsonUserRoleRepository } from "../infrastructure/persistence/repositories/json-user-role.repository.js";
@@ -6,6 +10,7 @@ import { JsonZonePairRepository } from "../infrastructure/persistence/repositori
 import { JsonNatRuleRepository } from "../infrastructure/persistence/repositories/json-nat-rule.repository.js";
 import { ROLE_PERMISSIONS_REPOSITORY_TOKEN } from "../domain/repositories/role-permissions.repository.js";
 import { ApplyConfigSnapshotUseCase } from "../application/use-cases/apply-config-snapshot.use-case.js";
+import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from "../application/ports/config-snapshot-push-service.interface.js";
 import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from "../domain/repositories/config-snapshot.repository.js";
 import { JsonRoleRepository } from "../infrastructure/persistence/repositories/json-role.repository.js";
 import { JsonRuleRepository } from "../infrastructure/persistence/repositories/json-rule.repository.js";
@@ -26,16 +31,58 @@ import { ZONE_REPOSITORY_TOKEN } from "../domain/repositories/zone.repository.js
 import { TokenService } from "../infrastructure/adapters/jwt-token.service.js";
 import { FileStore } from "../infrastructure/persistence/json/file-store.js";
 import { Mutex } from "../infrastructure/persistence/json/file-mutex.js";
+import { ClientsModule, Transport } from "@nestjs/microservices";
+import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { Module } from "@nestjs/common";
+import { Env } from "../shared/config/env.validation.js";
+import { join } from "node:path";
 
 @Module({
-	imports: [],
+	imports: [
+		ClientsModule.registerAsync([
+			{
+				name: CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN,
+				useFactory: (configService: ConfigService<Env, true>) => {
+					const firewallSocketPath = configService.get(
+						"FIREWALL_GRPC_SOCKET_PATH",
+						{
+							infer: true,
+						},
+					);
+
+					const grpcUrl = firewallSocketPath.startsWith("unix://")
+						? firewallSocketPath
+						: `unix://${join(process.cwd(), firewallSocketPath)}`;
+
+					return {
+						transport: Transport.GRPC,
+						options: {
+							package: "raptorgate.services",
+							protoPath: join(
+								process.cwd(),
+								"..",
+								"proto",
+								"services",
+								"config_snapshot_service.proto",
+							),
+							loader: {
+								includeDirs: [join(process.cwd(), "..", "proto")],
+							},
+							url: grpcUrl,
+						},
+					};
+				},
+				inject: [ConfigService],
+			},
+		]),
+	],
 	controllers: [ConfigController],
 	providers: [
 		ApplyConfigSnapshotUseCase,
 		GetConfigHistoryUseCase,
 		RollbackConfigUseCase,
+		GrpcConfigSnapshotPushService,
 		FileStore,
 		Mutex,
 		{
@@ -81,6 +128,10 @@ import { Module } from "@nestjs/common";
 		{
 			provide: ROLE_PERMISSIONS_REPOSITORY_TOKEN,
 			useClass: JsonRolePermissionsRepository,
+		},
+		{
+			provide: CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN,
+			useExisting: GrpcConfigSnapshotPushService,
 		},
 		JwtService,
 	],

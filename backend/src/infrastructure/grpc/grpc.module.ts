@@ -7,16 +7,16 @@ import { JsonConfigSnapshotRepository } from "../persistence/repositories/json-c
 import { RaptorGateController } from "./raptorgate.controller.js";
 
 @Module({
-	imports: [],
-	controllers: [RaptorGateController],
-	providers: [
-		GetActiveConfigUseCase,
-		FileStore,
-		Mutex,
-		{
-			provide: CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
-			useClass: JsonConfigSnapshotRepository,
-		},
-	],
+  imports: [],
+  controllers: [RaptorGateController],
+  providers: [
+    GetActiveConfigUseCase,
+    FileStore,
+    Mutex,
+    {
+      provide: CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
+      useClass: JsonConfigSnapshotRepository,
+    },
+  ],
 })
 export class GrpcModule {}

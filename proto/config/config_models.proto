@@ -5,15 +5,6 @@ package raptorgate.config;
 import "common/common.proto";
 import "google/protobuf/timestamp.proto";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Modele sekcji konfiguracji
-//
-// Każda sekcja posiada własny numer wersji (uint64). Backend inkrementuje
-// wersję sekcji przy każdej zmianie jej zawartości. Firewall przechowuje
-// znane wersje w lokalnym snapshotcie Redb i wysyła je w GetConfigRequest
-// (pole known_versions) aby pobrać tylko zmienione sekcje (delta).
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ── Reguły RaptorLang ────────────────────────────────────────────────────────
 
 message Rule {
@@ -25,7 +16,6 @@ message Rule {
 }
 
 message RuleSet {
-  uint64         version  = 1;
   string         checksum = 2;  // SHA-256 zawartości sekcji
   repeated Rule  items    = 3;
 }
@@ -39,7 +29,6 @@ message Zone {
 }
 
 message ZoneSet {
-  uint64        version = 1;
   repeated Zone items   = 2;
 }
 
@@ -51,7 +40,6 @@ message ZoneInterface {
 }
 
 message ZoneInterfaceSet {
-  uint64                  version = 1;
   repeated ZoneInterface  items   = 2;
 }
 
@@ -63,7 +51,6 @@ message ZonePair {
 }
 
 message ZonePairSet {
-  uint64             version = 1;
   repeated ZonePair  items   = 2;
 }
 
@@ -82,7 +69,6 @@ message NatRule {
 }
 
 message NatRuleSet {
-  uint64             version = 1;
   repeated NatRule   items   = 2;
 }
 
@@ -106,7 +92,6 @@ message SslBypassEntry {
 }
 
 message SslBypassSet {
-  uint64                   version = 1;
   repeated SslBypassEntry  items   = 2;
 }
 
@@ -121,14 +106,12 @@ message IpsSignature {
 }
 
 message IpsSignatureSet {
-  uint64                  version = 1;
   repeated IpsSignature   items   = 2;
 }
 
 // ── Model ML (ONNX) ──────────────────────────────────────────────────────────
 
 message MlModel {
-  uint64 version       = 1;
   string id            = 2;
   string name          = 3;
   string artifact_path = 4;
@@ -148,7 +131,6 @@ message FirewallCertificate {
 }
 
 message FirewallCertificateSet {
-  uint64                       version = 1;
   repeated FirewallCertificate items   = 2;
 }
 
@@ -188,7 +170,6 @@ message IdentityManagerUserSession {
 }
 
 message IdentityBundle {
-  uint64                              version       = 1;
   repeated UserGroup                  user_groups   = 2;
   repeated IdentityUser               identity_users = 3;
   repeated UserGroupMember            user_group_members = 4;
@@ -207,25 +188,4 @@ message AppConfig {
   string          grpc_socket_path   = 7;
   string          query_socket_path  = 8;
   string          pki_dir            = 9;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Wersje sekcji — używane w mechanizmie delty
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Wersje sekcji znane firewall owi.
-// Backend wysyła daną sekcję tylko gdy jej aktualna wersja jest wyższa
-// niż wartość podana tutaj. Wartość 0 oznacza brak sekcji — backend ją wyśle.
-message ConfigSectionVersions {
-  uint64 rules           = 1;
-  uint64 zones           = 2;
-  uint64 zone_interfaces = 3;
-  uint64 zone_pairs      = 4;
-  uint64 nat_rules       = 5;
-  uint64 dns_blacklist   = 6;
-  uint64 ssl_bypass_list = 7;
-  uint64 ips_signatures  = 8;
-  uint64 ml_model        = 9;
-  uint64 certificates    = 10;
-  uint64 identity        = 11;
 }

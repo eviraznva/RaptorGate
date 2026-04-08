@@ -20,6 +20,10 @@ import {
   type IZonePairRepository,
   ZONE_PAIR_REPOSITORY_TOKEN,
 } from "../../domain/repositories/zone-pair.repository.js";
+import {
+  CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN,
+  type IConfigSnapshotPushService,
+} from "../ports/config-snapshot-push-service.interface.js";
 import type { RollbackConfigDto } from "../dtos/rollback-config.dto.js";
 import type { RollbackConfigSnapshotResponseDto } from "../dtos/rollback-config-response.dto.js";
 
@@ -36,6 +40,8 @@ export class RollbackConfigUseCase {
     private readonly zonePairRepository: IZonePairRepository,
     @Inject(ZONE_REPOSITORY_TOKEN)
     private readonly zoneRepository: IZoneRepository,
+    @Inject(CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN)
+    private readonly configSnapshotPushService: IConfigSnapshotPushService,
   ) {}
 
   async execute(
@@ -54,6 +60,10 @@ export class RollbackConfigUseCase {
     await this.rulesRepository.overwriteAll(configBundle.bundle.rules.items);
     await this.natRulesRepository.overwriteAll(
       configBundle.bundle.nat_rules.items,
+    );
+    await this.configSnapshotPushService.pushActiveConfigSnapshot(
+      configSnapshot,
+      "rollback",
     );
 
     return {

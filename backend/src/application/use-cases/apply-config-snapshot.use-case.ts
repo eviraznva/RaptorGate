@@ -26,6 +26,8 @@ import { Checksum } from "../../domain/value-objects/checksum.vo.js";
 import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
 import type { ApplyConfigSnapshotDto } from "../dtos/apply-config-snapshot.dto.js";
 import type { ApplyConfigSnapshotResponseDto } from "../dtos/apply-config-snapshot-response.dto.js";
+import type { IConfigSnapshotPushService } from "../ports/config-snapshot-push-service.interface.js";
+import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from "../ports/config-snapshot-push-service.interface.js";
 import type { ITokenService } from "../ports/token-service.interface.js";
 import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
@@ -53,6 +55,8 @@ export class ApplyConfigSnapshotUseCase {
     private readonly rolePermissionsRepository: IRolePermissionsRepository,
     @Inject(USER_ROLES_REPOSITORY_TOKEN)
     private readonly userRolesRepository: IUserRolesRepository,
+    @Inject(CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN)
+    private readonly configSnapshotPushService: IConfigSnapshotPushService,
   ) {}
 
   async execute(
@@ -149,6 +153,13 @@ export class ApplyConfigSnapshotUseCase {
     if (currentActiveSnapshot && dto.isActive) {
       currentActiveSnapshot.setIsActive(false);
       await this.configSnapshotRepository.save(currentActiveSnapshot);
+    }
+
+    if (dto.isActive) {
+      await this.configSnapshotPushService.pushActiveConfigSnapshot(
+        newConfigSnapshot,
+        "apply",
+      );
     }
 
     return {

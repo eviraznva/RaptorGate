@@ -1,9 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { EntityNotFoundException } from "src/domain/exceptions/entity-not-found-exception.js";
-import type { IZonePairRepository } from "../../domain/repositories/zone-pair.repository.js";
-import { ZONE_PAIR_REPOSITORY_TOKEN } from "../../domain/repositories/zone-pair.repository.js";
-import type { GetAllZonePairsDto } from "../dtos/get-all-zone-pairs.dto.js";
-import { GetZonePairsDto } from "../dtos/get-zone-pairs.dto.js";
+import { EntityNotFoundException } from "src/domain/exceptions/entity-not-found-exception";
+import {
+  type IZonePairRepository,
+  ZONE_PAIR_REPOSITORY_TOKEN,
+} from "src/domain/repositories/zone-pair.repository";
+import { GetAllZonePairsDto } from "../dtos/get-all-zone-pairs.dto";
+import { GetZonePairsDto } from "../dtos/get-zone-pairs.dto";
 
 @Injectable()
 export class GetAllZonePairsUseCase {
