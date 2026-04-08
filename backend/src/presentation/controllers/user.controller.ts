@@ -9,6 +9,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
 } from "@nestjs/common";
 import { ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { CreateUserUseCase } from "src/application/use-cases/create-user.use-case";
@@ -39,6 +40,7 @@ import { CreateUserResponseDto } from "../dtos/create-user-response.dto";
 import { EditUserDto } from "../dtos/edit-user.dto";
 import { EditUserResponseDto } from "../dtos/edit-user-response.dto";
 import { GetAllUsersResponseDto } from "../dtos/get-all-users-response.dto";
+import { GetUsersQueryDto } from "../dtos/get-users-query.dto";
 import { UserResponseMapper } from "../mappers/user-response.mapper";
 
 @ApiTags("User Management")
@@ -99,8 +101,10 @@ export class UserController {
   @ApiError404("No users found")
   @ApiError429("Too many requests")
   @ApiError500("Server error while retrieving users")
-  async getAllUsers(): Promise<GetAllUsersResponseDto> {
-    const result = await this.getAllUsersUseCase.execute();
+  async getAllUsers(
+    @Query() query: GetUsersQueryDto,
+  ): Promise<GetAllUsersResponseDto> {
+    const result = await this.getAllUsersUseCase.execute(query);
 
     const users = result.users.map((user) => UserResponseMapper.toDto(user));
 
