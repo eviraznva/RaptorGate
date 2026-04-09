@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use ngfw::config_provider::AppConfigProvider;
+use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
+use ngfw::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use ngfw::data_plane::nat::NatEngine;
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::provider::DiskPolicyProvider;
@@ -44,6 +46,12 @@ fn shared_server() -> &'static SharedServer {
                     .expect("failed to load policy provider");
                 let zones = ZoneProvider::from_disk(&config).await;
                 let zone_pairs = ZonePairProvider::from_disk(&config).await;
+                let dns_inspection_store = Arc::new(
+                    DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await
+                );
+                let dns_initial_config = dns_inspection_store.get_config().clone();
+                let dns_inspection = DnsInspection::new((*dns_initial_config).clone())
+                    .expect("failed to init dns inspection");
 
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
@@ -52,6 +60,8 @@ fn shared_server() -> &'static SharedServer {
                     zone_store: Arc::new(zones),
                     zone_pair_store: Arc::new(zone_pairs),
                     config_provider: Arc::clone(&config_provider),
+                    dns_inspection_store,
+                    dns_inspection,
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();

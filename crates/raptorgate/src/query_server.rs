@@ -10,6 +10,9 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::config_provider::AppConfigProvider;
+use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
+use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
+use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::data_plane::nat::NatEngine;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::policy::{Policy, PolicyId};
@@ -18,8 +21,14 @@ use crate::proto::services::firewall_query_service_server::{
     FirewallQueryService, FirewallQueryServiceServer,
 };
 use crate::proto::services::{
-    GetConfigRequest, GetConfigResponse, GetNatBindingsRequest, GetNatBindingsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest, GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, SwapConfigRequest, SwapConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse,
-    GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse, GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse,
+    GetConfigRequest, GetConfigResponse, GetDnsInspectionConfigRequest, GetDnsInspectionConfigResponse,
+    GetNatBindingsRequest, GetNatBindingsResponse, GetPoliciesRequest, GetPoliciesResponse,
+    GetPolicyRequest, GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse,
+    SwapConfigRequest, SwapConfigResponse, SwapDnsInspectionConfigRequest,
+    SwapDnsInspectionConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse,
+    GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
+    GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse,
+    SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse,
 };
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use crate::zones::{ZoneId, ZoneInterfaceId, ZonePair, ZonePairId};
@@ -82,6 +91,10 @@ pub struct QueryHandler<PolicySwap> where PolicySwap: PolicyManager {
     pub zone_store: Arc<ZoneProvider>,
     pub zone_pair_store: Arc<ZonePairProvider>,
     pub config_provider: Arc<AppConfigProvider>,
+    /// Provider konfiguracji inspekcji DNS — zarządza trwałym przechowywaniem.
+    pub dns_inspection_store: Arc<DnsInspectionConfigProvider>,
+    /// Aktywna instancja agregatora inspekcji DNS — hot-swap przez `update_config`.
+    pub dns_inspection: Arc<DnsInspection>,
 }
 
 #[tonic::async_trait]
@@ -293,6 +306,35 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
     ) -> Result<Response<GetConfigResponse>, Status> {
         let config = self.config_provider.get_config();
         Ok(Response::new(GetConfigResponse {
+            config: Some(config.to_proto()),
+        }))
+    }
+
+    async fn swap_dns_inspection_config(
+        &self,
+        request: Request<SwapDnsInspectionConfigRequest>,
+    ) -> Result<Response<SwapDnsInspectionConfigResponse>, Status> {
+        let proto_config = request.into_inner().config
+            .ok_or_else(|| Status::invalid_argument("missing config field in request"))?;
+
+        let new_config = DnsInspectionConfig::from_proto(proto_config)
+            .map_err(|e| Status::invalid_argument(format!("invalid dns inspection config: {e}")))?;
+
+        self.dns_inspection_store.swap_config(new_config.clone()).await
+            .map_err(|e| Status::internal(format!("failed to save dns inspection config: {e}")))?;
+
+        self.dns_inspection.update_config(&new_config)
+            .map_err(|e| Status::internal(format!("failed to apply dns inspection config: {e}")))?;
+
+        Ok(Response::new(SwapDnsInspectionConfigResponse {}))
+    }
+
+    async fn get_dns_inspection_config(
+        &self,
+        _request: Request<GetDnsInspectionConfigRequest>,
+    ) -> Result<Response<GetDnsInspectionConfigResponse>, Status> {
+        let config = self.dns_inspection_store.get_config();
+        Ok(Response::new(GetDnsInspectionConfigResponse {
             config: Some(config.to_proto()),
         }))
     }
