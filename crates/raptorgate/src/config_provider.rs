@@ -1,10 +1,10 @@
 use std::fmt;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use tokio::sync::Mutex;
 use tonic::async_trait;
+use anyhow::{Context, Result};
 
 use crate::config::AppConfig;
 use crate::disk_store::SingleDiskStore;

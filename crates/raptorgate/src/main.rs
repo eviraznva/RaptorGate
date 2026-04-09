@@ -20,9 +20,10 @@ use std::sync::Arc;
 use etherparse::NetSlice;
 use tokio::sync::Mutex;
 use ipnet::IpNet;
-use tracing::trace;
 use crate::config_provider::AppConfigProvider;
-use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree, TunnelingDetectorConfig};
+use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
+use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
+use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::NatEngine;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
@@ -30,7 +31,11 @@ use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::dpi::DpiClassifier;
-use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, FtpAlgStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
+use crate::pipeline::wrappers::{
+    DnsBlockListStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
+    NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
+    TcpClassificationStage, ValidationStage,
+};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
@@ -38,19 +43,18 @@ use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::CaManager;
 use tokio_util::sync::CancellationToken;
 
-static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
-
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() {
     type DataPipeline =
         Chain<ValidationStage,
         Chain<DpiStage,
-        Chain<DnsInspectionStage,
+        Chain<DnsBlockListStage,
+        Chain<DnsTunnelingStage,
         Chain<NatPreroutingStage,
         Chain<TcpClassificationStage,
         Chain<PolicyEvalStage,
-        Chain<NatPostroutingStage, FtpAlgStage>>>>>>>; 
+        Chain<NatPostroutingStage, FtpAlgStage>>>>>>>>;
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -92,6 +96,22 @@ async fn main() {
     tokio::spawn(events::init_event_queue());
     let nat_engine = build_test_nat();
 
+    // Inicjalizacja providera konfiguracji DNS inspection.
+    let dns_inspection_store = Arc::new(
+        DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await
+    );
+    let dns_initial_config = dns_inspection_store.get_config().clone();
+
+    let dns_inspection = match DnsInspection::new((*dns_initial_config).clone()) {
+        Ok(inspection) => inspection,
+        Err(err) => {
+            tracing::error!(error = %err, "failed to initialize DNS inspection");
+            return;
+        }
+    };
+
+    let dpi_classifier = Arc::new(DpiClassifier::new());
+
     let query_server = QueryServer::<DiskPolicyProvider>::new(
         QueryHandler {
             tcp_tracker: Arc::clone(&tcp_session_tracker),
@@ -100,6 +120,8 @@ async fn main() {
             zone_store: zones,
             zone_pair_store: zone_pairs,
             config_provider: Arc::clone(&config_provider),
+            dns_inspection_store: Arc::clone(&dns_inspection_store),
+            dns_inspection: Arc::clone(&dns_inspection),
         },
         &config.query_socket_path,
         CancellationToken::new(),
@@ -118,33 +140,30 @@ async fn main() {
         tracing::error!(error = %e, "interface sniffer error");
     }
 
-    let mut dns_block_tree = DomainBlockTree::new();
+    // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
+    let dnssec_provider: Arc<dyn DnssecProvider> = Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
 
-    dns_block_tree.load_from_array(DNS_BLOCKLIST_TEMP.lines());
-
-    let dns_stats = dns_block_tree.stats();
-
-    trace!("Loaded {} blocked domains into DNS inspection tree", dns_stats.total_nodes);
-    dns_block_tree.print_tree();
-
-    let dns_inspection = DnsInspection::new(dns_block_tree, TunnelingDetectorConfig::default());
-    let dpi_classifier = Arc::new(DpiClassifier::new());
-    
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
             head: DpiStage { classifier: Arc::clone(&dpi_classifier) },
             tail: Chain {
-                head: DnsInspectionStage { inspection: dns_inspection },
+                head: DnsBlockListStage { inspection: Arc::clone(&dns_inspection) },
                 tail: Chain {
-                    head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
+                    head: DnsTunnelingStage { inspection: Arc::clone(&dns_inspection) },
                     tail: Chain {
-                        head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
+                        head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
                         tail: Chain {
-                            head: PolicyEvalStage { provider: Arc::clone(&policy_provider) },
+                            head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
                             tail: Chain {
-                                head: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
-                                tail: FtpAlgStage { engine: Arc::clone(&nat_engine) },
+                                head: PolicyEvalStage {
+                                    provider: Arc::clone(&policy_provider),
+                                    dnssec: Some(dnssec_provider),
+                                },
+                                tail: Chain {
+                                    head: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                                    tail: FtpAlgStage { engine: Arc::clone(&nat_engine) },
+                                },
                             },
                         },
                     },

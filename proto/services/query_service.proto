@@ -21,6 +21,9 @@ service FirewallQueryService {
 
   rpc SwapConfig    (SwapConfigRequest)        returns (SwapConfigResponse);
   rpc GetConfig     (GetConfigRequest)         returns (GetConfigResponse);
+
+  rpc SwapDnsInspectionConfig (SwapDnsInspectionConfigRequest) returns (SwapDnsInspectionConfigResponse);
+  rpc GetDnsInspectionConfig  (GetDnsInspectionConfigRequest)  returns (GetDnsInspectionConfigResponse);
 }
 
 message GetTcpSessionsRequest {}
@@ -104,4 +107,18 @@ message GetConfigRequest {}
 
 message GetConfigResponse {
   config.AppConfig config = 1;
+}
+
+// ── DNS Inspection Config ─────────────────────────────────────────────────────
+
+message SwapDnsInspectionConfigRequest {
+  config.DnsInspectionConfig config = 1;
+}
+
+message SwapDnsInspectionConfigResponse {}
+
+message GetDnsInspectionConfigRequest {}
+
+message GetDnsInspectionConfigResponse {
+  config.DnsInspectionConfig config = 1;
 }

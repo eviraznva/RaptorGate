@@ -6,6 +6,8 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 pub use types::{ArrivalInfo, Hour, IPError, IpGlobbable, IpVer, Octet, Port, Protocol, Weekday};
+
+use crate::data_plane::dns_inspection::types::DnssecStatus;
 use serde::ser::SerializeStruct;
 
 use derive_more::{Debug, Display, Error, PartialEq};
@@ -136,6 +138,9 @@ pub enum FieldValue {
     Hour(Hour),
     Protocol(Protocol),
     Port(Port),
+    /// Status walidacji DNSSEC — dopasowywany przez `match dns_dnssec_status { = secure : ... }`.
+    #[display("{_0}")]
+    DnssecStatus(DnssecStatus),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -148,19 +153,22 @@ pub enum MatchKind {
     Protocol,
     SrcPort,
     DstPort,
+    /// Status walidacji DNSSEC — pasuje do wartości `FieldValue::DnssecStatus`.
+    DnssecStatus,
 }
 
 impl std::fmt::Display for MatchKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            MatchKind::SrcIp    => "src_ip",
-            MatchKind::DstIp    => "dst_ip",
-            MatchKind::IpVer    => "ip_ver",
-            MatchKind::DayOfWeek => "day_of_week",
-            MatchKind::Hour     => "hour",
-            MatchKind::Protocol => "protocol",
-            MatchKind::SrcPort  => "src_port",
-            MatchKind::DstPort  => "dst_port",
+            MatchKind::SrcIp       => "src_ip",
+            MatchKind::DstIp       => "dst_ip",
+            MatchKind::IpVer       => "ip_ver",
+            MatchKind::DayOfWeek   => "day_of_week",
+            MatchKind::Hour        => "hour",
+            MatchKind::Protocol    => "protocol",
+            MatchKind::SrcPort     => "src_port",
+            MatchKind::DstPort     => "dst_port",
+            MatchKind::DnssecStatus => "dns_dnssec_status",
         };
         write!(f, "{s}")
     }
@@ -189,6 +197,10 @@ impl Pattern {
                 Pattern::Comparison(..),
                 MatchKind::SrcPort | MatchKind::DstPort | MatchKind::Hour | MatchKind::DayOfWeek,
             ) => Ok(()),
+            // DnssecStatus obsługuje tylko Equal — porównanie liczbowe nie ma sensu.
+            (Pattern::Comparison(..), MatchKind::DnssecStatus) => {
+                Err(RuleError::InvalidPattern(self.clone()))
+            }
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
             (Pattern::Or(patterns) | Pattern::And(patterns), _) => {

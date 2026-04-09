@@ -6,6 +6,7 @@ use crate::rule_tree::parsing::ast::{
     AstBody, AstMatch, AstPattern, AstValue, Spanned, Verdict as AstVerdict,
 };
 use crate::rule_tree::parsing::lexer::Position;
+use crate::data_plane::dns_inspection::types::DnssecStatus;
 use crate::rule_tree::types::{Hour, IpGlobbable, IpVer, Port, Protocol, Weekday};
 use crate::rule_tree::{
     ArmEnd, FieldValue, MatchBuilder, MatchKind, Operation, Pattern, RuleError, Verdict,
@@ -53,6 +54,7 @@ fn lower_kind(s: &Spanned<String>) -> Result<MatchKind, LowerError> {
         "protocol" => Ok(MatchKind::Protocol),
         "src_port" => Ok(MatchKind::SrcPort),
         "dst_port" => Ok(MatchKind::DstPort),
+        "dns_dnssec_status" => Ok(MatchKind::DnssecStatus),
         other => Err(LowerError::UnknownKind {
             kind: other.to_string(),
             pos: s.pos,
@@ -101,6 +103,19 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
                 "friday" => Ok(FieldValue::DayOfWeek(Weekday::Fri)),
                 "saturday" => Ok(FieldValue::DayOfWeek(Weekday::Sat)),
                 "sunday" => Ok(FieldValue::DayOfWeek(Weekday::Sun)),
+                other => Err(LowerError::UnknownValue {
+                    kind,
+                    value: other.to_string(),
+                    pos,
+                }),
+            },
+            MatchKind::DnssecStatus => match s.val.as_str() {
+                "secure"      => Ok(FieldValue::DnssecStatus(DnssecStatus::Secure)),
+                "insecure"    => Ok(FieldValue::DnssecStatus(DnssecStatus::Insecure)),
+                "bogus"       => Ok(FieldValue::DnssecStatus(DnssecStatus::Bogus)),
+                "timeout"     => Ok(FieldValue::DnssecStatus(DnssecStatus::Timeout)),
+                "error"       => Ok(FieldValue::DnssecStatus(DnssecStatus::Error)),
+                "not_checked" => Ok(FieldValue::DnssecStatus(DnssecStatus::NotChecked)),
                 other => Err(LowerError::UnknownValue {
                     kind,
                     value: other.to_string(),

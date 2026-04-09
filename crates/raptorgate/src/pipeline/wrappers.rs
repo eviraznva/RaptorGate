@@ -1,21 +1,27 @@
-use std::net::IpAddr;
 use std::sync::Arc;
+use std::net::IpAddr;
 
 use etherparse::NetSlice;
 use tokio::sync::Mutex;
 
 use crate::{
     data_plane::{
-        dns_inspection::DnsInspection,
+        dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection},
         nat::NatEngine,
         packet_context::PacketContext,
         tcp_session_tracker::TcpSessionTracker,
     },
     dpi::{DpiClassifier, InspectResult},
-    packet_validator::validate, pipeline::{Stage, StageOutcome}, policy::provider::DiskPolicyProvider, rule_tree::{ArrivalInfo, Verdict},
+    packet_validator::validate,
+    pipeline::{Stage, StageOutcome},
+    policy::provider::DiskPolicyProvider,
+    rule_tree::{ArrivalInfo, Verdict},
 };
-use crate::data_plane::dns_inspection::DnsInspectionVerdict;
+
 use crate::dpi::AppProto;
+use crate::policy::policy_evaluator::DnsEvalContext;
+use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
+use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 
 #[derive(Clone)]
 pub struct ValidationStage;
@@ -111,9 +117,9 @@ impl Stage for FtpAlgStage {
         let Some(dpi_ctx) = ctx.borrow_dpi_ctx().clone() else {
             return StageOutcome::Continue;
         };
-        
+
         let original_len = ctx.borrow_raw().len();
-        
+
         let mut raw_copy = ctx.borrow_raw().to_vec();
 
         {
@@ -162,15 +168,145 @@ fn infer_out_interface(dst_ip: IpAddr) -> Option<&'static str> {
     }
 }
 
+/// Stage sprawdzający blocklist DNS.
+///
+/// Aktywny wyłącznie dla pakietów DNS. Odczyt blocklist jest lock-free
+/// (ArcSwap epoch load + przeszukanie trie). Blokuje pakiet przez Halt
+/// jeśli domena znajduje się na liście.
+#[derive(Clone)]
+pub struct DnsBlockListStage {
+    pub inspection: Arc<DnsInspection>,
+}
+
+impl Stage for DnsBlockListStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        matches!(
+            ctx.borrow_dpi_ctx(),
+            Some(dpi_ctx) if dpi_ctx.app_proto == Some(AppProto::Dns),
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let domain = match ctx.borrow_dpi_ctx() {
+            Some(dpi_ctx) => dpi_ctx.dns_query_name.clone(),
+            None => return StageOutcome::Continue,
+        };
+
+        let Some(domain) = domain else {
+            return StageOutcome::Continue;
+        };
+
+        match self.inspection.check_blocklist(&domain) {
+            BlocklistVerdict::Allow => StageOutcome::Continue,
+            BlocklistVerdict::Block(msg) => {
+                tracing::debug!(reason = %msg, "DNS blocklist block");
+                ctx.with_warnings_mut(|w| w.push(msg));
+                StageOutcome::Halt
+            }
+        }
+    }
+}
+
+/// Stage wykrywający tunelowanie DNS.
+///
+/// Aktywny wyłącznie dla pakietów DNS. Oblicza score podejrzenia na podstawie
+/// zebranych sygnałów i wydaje werdykt samodzielnie (nie przekazuje danych do
+/// PolicyEngine). Blokuje przez Halt lub dodaje ostrzeżenie w przypadku alertu.
+#[derive(Clone)]
+pub struct DnsTunnelingStage {
+    pub inspection: Arc<DnsInspection>,
+}
+
+impl Stage for DnsTunnelingStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        matches!(
+            ctx.borrow_dpi_ctx(),
+            Some(dpi_ctx) if dpi_ctx.app_proto == Some(AppProto::Dns),
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let (domain, qtype) = match ctx.borrow_dpi_ctx() {
+            Some(dpi_ctx) => (dpi_ctx.dns_query_name.clone(), dpi_ctx.dns_query_type),
+            None => return StageOutcome::Continue,
+        };
+
+        let (Some(domain), Some(qtype)) = (domain, qtype) else {
+            return StageOutcome::Continue;
+        };
+
+        match self.inspection.inspect_tunneling(&domain, &qtype) {
+            DnsInspectionVerdict::Allow => StageOutcome::Continue,
+            DnsInspectionVerdict::Alert(msg) => {
+                tracing::debug!(reason = %msg, "DNS tunneling alert");
+                ctx.with_warnings_mut(|w| w.push(msg));
+                StageOutcome::Continue
+            }
+            DnsInspectionVerdict::Block(msg) => {
+                tracing::debug!(reason = %msg, "DNS tunneling block");
+                ctx.with_warnings_mut(|w| w.push(msg));
+                StageOutcome::Halt
+            }
+        }
+    }
+}
+
+/// Stage ewaluacji polityk.
+///
+/// Opcjonalnie przyjmuje dostawcę DNSSEC (`dnssec`) — jeśli jest obecny,
+/// dla pakietów DNS wywołuje walidację DNSSEC w `spawn_blocking` (blokujące I/O
+/// sieciowe nie może odbywać się bezpośrednio w kontekście async).
 #[derive(Clone)]
 pub struct PolicyEvalStage {
     pub provider: Arc<DiskPolicyProvider>,
+    /// Opcjonalny dostawca DNSSEC — wstrzykiwany z `DnsInspection`.
+    pub dnssec: Option<Arc<dyn DnssecProvider>>,
 }
 
 impl Stage for PolicyEvalStage {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let arrival = ArrivalInfo::from_time(ctx.borrow_arrival_time());
-        let verdict = self.provider.get_evaluator().evaluate(ctx.borrow_sliced_packet(), &arrival);
+
+        // Wyznacz status DNSSEC dla pakietów DNS (leniwie, przez spawn_blocking).
+        let dnssec_status = if let Some(provider) = &self.dnssec {
+            let is_dns = ctx.borrow_dpi_ctx()
+                .as_ref()
+                .map_or(false, |d| d.app_proto == Some(AppProto::Dns));
+
+            if is_dns {
+                let domain = ctx.borrow_dpi_ctx()
+                    .as_ref()
+                    .and_then(|d| d.dns_query_name.clone());
+                let qtype = ctx.borrow_dpi_ctx()
+                    .as_ref()
+                    .and_then(|d| d.dns_query_type);
+
+                if let Some(domain) = domain {
+                    let p = Arc::clone(provider);
+                    tokio::task::spawn_blocking(move || {
+                        p.check_domain(&domain, qtype).status
+                    })
+                    .await
+                    .ok()
+                    .map(Some)
+                    .unwrap_or(None)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let dns_ctx = dnssec_status.map(|status| DnsEvalContext {
+            dnssec_status: Some(status),
+        });
+
+        let verdict = self.provider
+            .get_evaluator()
+            .evaluate(ctx.borrow_sliced_packet(), &arrival, dns_ctx.as_ref());
 
         match verdict {
             Verdict::Allow => StageOutcome::Continue,
@@ -198,40 +334,6 @@ impl Stage for TcpClassificationStage {
             Ok(_) => StageOutcome::Continue,
             Err(e) => {
                 tracing::error!(error = %e, "TCP session tracking error");
-                StageOutcome::Halt
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct DnsInspectionStage {
-    pub inspection: Arc<DnsInspection>,
-}
-
-impl Stage for DnsInspectionStage {
-    fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        match ctx.borrow_dpi_ctx() {
-            Some(dpi_ctx) => {
-                dpi_ctx.app_proto == Some(AppProto::Dns)
-            }
-            None => false,
-        }
-    }
-
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
-        let dpi_ctx = ctx.borrow_dpi_ctx().as_ref().unwrap();
-        
-        match self.inspection.process(&dpi_ctx) {
-            DnsInspectionVerdict::Allow => StageOutcome::Continue,
-            DnsInspectionVerdict::Alert(msg) => {
-                tracing::debug!(reason = %msg, "DNS inspection alert");
-                ctx.with_warnings_mut(|w| w.push(msg));
-                StageOutcome::Continue
-            }
-            DnsInspectionVerdict::Block(msg) => {
-                tracing::debug!(reason = %msg, "DNS inspection block");
-                ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Halt
             }
         }
