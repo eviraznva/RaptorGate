@@ -31,6 +31,7 @@ pub struct DpiContext {
     pub dns_answer_count: u16,
     pub dns_answer_types: Vec<DnsRecordType>,
     pub dns_response_size: u16,
+    pub dns_has_ech_hints: bool,
     pub ftp_data_endpoint: Option<FtpDataEndpoint>,
     pub smtp_starttls: bool,
     pub ssh_proto_version: Option<String>,

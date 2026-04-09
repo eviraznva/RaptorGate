@@ -13,7 +13,7 @@ pub mod server_key_store;
 
 pub use ca_manager::{CaInfo, CaManager};
 pub use cert_forger::{CertForger, ForgedCert};
-pub use decision_engine::TlsDecisionEngine;
+pub use decision_engine::{EchTlsPolicy, TlsDecisionEngine};
 pub use dual_session::{AcceptParams, ConnectParams, DualTlsSession};
 pub use inspection_relay::{InspectionRelay, IpsInspector, NoopIpsInspector};
 pub use mitm_proxy::{MitmProxy, MitmProxyConfig};

@@ -109,6 +109,16 @@ message SslBypassSet {
   repeated SslBypassEntry  items   = 2;
 }
 
+// ── ECH mitigation ──────────────────────────────────────────────────────────
+
+message EchMitigationPolicy {
+  uint64 version          = 1;
+  bool   strip_ech_dns    = 2;
+  bool   block_all_ech    = 3;
+  bool   block_ech_no_sni = 4;
+  bool   log_ech_attempts = 5;
+}
+
 // ── Sygnatury IPS ────────────────────────────────────────────────────────────
 
 message IpsSignature {
@@ -217,4 +227,5 @@ message ConfigSectionVersions {
   uint64 ml_model        = 9;
   uint64 certificates    = 10;
   uint64 identity        = 11;
+  uint64 ech_mitigation  = 12;
 }
