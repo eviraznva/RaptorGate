@@ -15,6 +15,8 @@ pub enum DnsRecordType {
     Txt,
     Aaaa,
     Srv,
+    Svcb,
+    Https,
     Any,
     Other(u16),
 }
@@ -31,6 +33,8 @@ impl From<u16> for DnsRecordType {
             16 => Self::Txt,
             28 => Self::Aaaa,
             33 => Self::Srv,
+            64 => Self::Svcb,
+            65 => Self::Https,
             255 => Self::Any,
             other => Self::Other(other),
         }
@@ -49,6 +53,8 @@ impl From<DnsRecordType> for u16 {
             DnsRecordType::Txt => 16,
             DnsRecordType::Aaaa => 28,
             DnsRecordType::Srv => 33,
+            DnsRecordType::Svcb => 64,
+            DnsRecordType::Https => 65,
             DnsRecordType::Any => 255,
             DnsRecordType::Other(v) => v,
         }
@@ -64,6 +70,7 @@ pub struct DnsParseResult {
     pub answer_count: u16,
     pub answer_types: Vec<DnsRecordType>,
     pub response_size: u16,
+    pub dns_has_ech_hints: bool,
 }
 
 // Parsuje pakiet DNS i wyodrębnia nazwę domeny, typ zapytania oraz kierunek.
@@ -79,6 +86,9 @@ pub fn parse_dns(buf: &[u8]) -> Option<DnsParseResult> {
         .map(|rr| DnsRecordType::from(u16::from(rr.rdata.type_code())))
         .collect();
 
+    let dns_has_ech_hints = is_response
+        && answer_types.iter().any(|t| matches!(t, DnsRecordType::Https | DnsRecordType::Svcb));
+
     Some(DnsParseResult {
         is_response,
         query_name: Some(question.qname.to_string()),
@@ -86,6 +96,7 @@ pub fn parse_dns(buf: &[u8]) -> Option<DnsParseResult> {
         answer_count,
         answer_types,
         response_size: buf.len() as u16,
+        dns_has_ech_hints,
     })
 }
 
@@ -99,6 +110,7 @@ pub fn dns_to_dpi_context(result: &DnsParseResult) -> DpiContext {
         dns_answer_count: result.answer_count,
         dns_answer_types: result.answer_types.clone(),
         dns_response_size: result.response_size,
+        dns_has_ech_hints: result.dns_has_ech_hints,
         ..Default::default()
     }
 }
@@ -347,6 +359,7 @@ mod tests {
             answer_count: 2,
             answer_types: vec![DnsRecordType::A, DnsRecordType::A],
             response_size: 128,
+            dns_has_ech_hints: false,
         };
         let ctx = dns_to_dpi_context(&result);
         assert_eq!(ctx.app_proto, Some(AppProto::Dns));
@@ -367,6 +380,7 @@ mod tests {
             answer_count: 1,
             answer_types: vec![DnsRecordType::Aaaa],
             response_size: 64,
+            dns_has_ech_hints: false,
         };
         let ctx = dns_to_dpi_context(&result);
         assert_eq!(ctx.dns_is_response, Some(true));
@@ -374,5 +388,57 @@ mod tests {
         assert_eq!(ctx.dns_answer_count, 1);
         assert_eq!(ctx.dns_answer_types, vec![DnsRecordType::Aaaa]);
         assert_eq!(ctx.dns_response_size, 64);
+    }
+
+    #[test]
+    fn response_with_https_record() {
+        let rdata: &[u8] = &[0x00, 0x01, 0x00];
+        let pkt = build_dns_response_with_answers(&["example", "com"], 65, &[(65, rdata)]);
+        let result = parse_dns(&pkt).unwrap();
+        assert!(result.is_response);
+        assert_eq!(result.answer_count, 1);
+        assert_eq!(result.answer_types, vec![DnsRecordType::Https]);
+        assert!(result.dns_has_ech_hints);
+    }
+
+    #[test]
+    fn response_with_svcb_record() {
+        let rdata: &[u8] = &[0x00, 0x01, 0x00];
+        let pkt = build_dns_response_with_answers(&["example", "com"], 64, &[(64, rdata)]);
+        let result = parse_dns(&pkt).unwrap();
+        assert_eq!(result.answer_types, vec![DnsRecordType::Svcb]);
+        assert!(result.dns_has_ech_hints);
+    }
+
+    #[test]
+    fn query_https_no_ech_flag() {
+        let pkt = build_dns_query(&["example", "com"], 65);
+        let result = parse_dns(&pkt).unwrap();
+        assert!(!result.is_response);
+        assert_eq!(result.query_type, Some(DnsRecordType::Https));
+        assert!(!result.dns_has_ech_hints);
+    }
+
+    #[test]
+    fn response_a_record_no_ech() {
+        let ip: &[u8] = &[1, 2, 3, 4];
+        let pkt = build_dns_response_with_answers(&["example", "com"], 1, &[(1, ip)]);
+        let result = parse_dns(&pkt).unwrap();
+        assert!(!result.dns_has_ech_hints);
+    }
+
+    #[test]
+    fn to_dpi_context_maps_ech_hints() {
+        let result = DnsParseResult {
+            is_response: true,
+            query_name: Some("example.com".into()),
+            query_type: Some(DnsRecordType::Https),
+            answer_count: 1,
+            answer_types: vec![DnsRecordType::Https],
+            response_size: 64,
+            dns_has_ech_hints: true,
+        };
+        let ctx = dns_to_dpi_context(&result);
+        assert!(ctx.dns_has_ech_hints);
     }
 }

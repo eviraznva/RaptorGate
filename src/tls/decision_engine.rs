@@ -7,18 +7,33 @@ use crate::dpi::TlsAction;
 use crate::tls::domain_trie::DomainTrie;
 use crate::tls::server_key_store::ServerKeyStore;
 
+/// Polityka ECH na poziomie TLS.
+#[derive(Debug, Clone)]
+pub struct EchTlsPolicy {
+    pub block_ech_no_sni: bool,
+    pub block_all_ech: bool,
+}
+
+impl Default for EchTlsPolicy {
+    fn default() -> Self {
+        Self { block_ech_no_sni: true, block_all_ech: false }
+    }
+}
+
 // Jedno źródło prawdy dla decyzji inspekcji TLS (pipeline + proxy).
 pub struct TlsDecisionEngine {
     bypass_trie: ArcSwap<DomainTrie>,
     server_key_store: Arc<ServerKeyStore>,
+    ech_policy: ArcSwap<EchTlsPolicy>,
 }
 
 impl TlsDecisionEngine {
-    pub fn new(bypass_domains: &[String], server_key_store: Arc<ServerKeyStore>) -> Self {
+    pub fn new(bypass_domains: &[String], server_key_store: Arc<ServerKeyStore>, ech_policy: EchTlsPolicy) -> Self {
         let trie = DomainTrie::from_domains(bypass_domains);
         Self {
             bypass_trie: ArcSwap::new(Arc::new(trie)),
             server_key_store,
+            ech_policy: ArcSwap::new(Arc::new(ech_policy)),
         }
     }
 
@@ -47,8 +62,25 @@ impl TlsDecisionEngine {
             }
         }
 
-        if ech_detected && sni.is_none() {
-            return TlsAction::Block;
+        if ech_detected {
+            let policy = self.ech_policy.load();
+            if policy.block_all_ech {
+                return TlsAction::Block;
+            }
+            match sni {
+                Some(outer_sni) => {
+                    if trie.contains(outer_sni) {
+                        return TlsAction::Bypass;
+                    }
+                    return TlsAction::Intercept;
+                }
+                None => {
+                    if policy.block_ech_no_sni {
+                        return TlsAction::Block;
+                    }
+                    return TlsAction::Intercept;
+                }
+            }
         }
 
         TlsAction::Intercept
@@ -66,6 +98,12 @@ impl TlsDecisionEngine {
         tracing::info!(count = domains.len(), "TLS bypass list reloaded");
     }
 
+    /// Atomowa podmiana polityki ECH (hot-reload z backendu).
+    pub fn reload_ech_policy(&self, policy: EchTlsPolicy) {
+        self.ech_policy.store(Arc::new(policy));
+        tracing::info!("ECH TLS policy reloaded");
+    }
+
     pub fn server_key_store(&self) -> &Arc<ServerKeyStore> {
         &self.server_key_store
     }
@@ -78,7 +116,13 @@ mod tests {
     fn engine(domains: &[&str]) -> TlsDecisionEngine {
         let ds: Vec<String> = domains.iter().map(|s| s.to_string()).collect();
         let store = Arc::new(ServerKeyStore::new("/tmp/test-pki-decision"));
-        TlsDecisionEngine::new(&ds, store)
+        TlsDecisionEngine::new(&ds, store, EchTlsPolicy::default())
+    }
+
+    fn engine_with_ech_policy(domains: &[&str], policy: EchTlsPolicy) -> TlsDecisionEngine {
+        let ds: Vec<String> = domains.iter().map(|s| s.to_string()).collect();
+        let store = Arc::new(ServerKeyStore::new("/tmp/test-pki-decision"));
+        TlsDecisionEngine::new(&ds, store, policy)
     }
 
     #[test]
@@ -118,5 +162,37 @@ mod tests {
         let e = engine(&["example.com"]);
         assert!(e.is_domain_bypassed("sub.example.com"));
         assert!(!e.is_domain_bypassed("other.com"));
+    }
+
+    #[test]
+    fn ech_with_outer_sni_intercept() {
+        let e = engine(&["bank.com"]);
+        assert_eq!(e.decide(Some("cloudflare-ech.com"), true, None, 443), TlsAction::Intercept);
+    }
+
+    #[test]
+    fn ech_with_outer_sni_bypass() {
+        let e = engine(&["cloudflare-ech.com"]);
+        assert_eq!(e.decide(Some("cloudflare-ech.com"), true, None, 443), TlsAction::Bypass);
+    }
+
+    #[test]
+    fn ech_block_all_policy() {
+        let e = engine_with_ech_policy(&[], EchTlsPolicy { block_all_ech: true, block_ech_no_sni: true });
+        assert_eq!(e.decide(Some("example.com"), true, None, 443), TlsAction::Block);
+    }
+
+    #[test]
+    fn ech_no_sni_allowed_when_policy_off() {
+        let e = engine_with_ech_policy(&[], EchTlsPolicy { block_ech_no_sni: false, block_all_ech: false });
+        assert_eq!(e.decide(None, true, None, 443), TlsAction::Intercept);
+    }
+
+    #[test]
+    fn ech_policy_reload() {
+        let e = engine(&[]);
+        assert_eq!(e.decide(None, true, None, 443), TlsAction::Block);
+        e.reload_ech_policy(EchTlsPolicy { block_ech_no_sni: false, block_all_ech: false });
+        assert_eq!(e.decide(None, true, None, 443), TlsAction::Intercept);
     }
 }

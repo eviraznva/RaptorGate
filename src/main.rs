@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 use ipnet::IpNet;
 use tracing::trace;
 use crate::config::AppConfig;
-use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree, TunnelingDetectorConfig};
+use crate::data_plane::dns_inspection::{DnsInspection, DomainBlockTree, EchMitigationConfig, TunnelingDetectorConfig};
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::nat::NatEngine;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
@@ -32,7 +32,7 @@ use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
-use crate::tls::{CaManager, MitmProxy, MitmProxyConfig, NoopIpsInspector, ServerKeyStore, TlsDecisionEngine};
+use crate::tls::{CaManager, EchTlsPolicy, MitmProxy, MitmProxyConfig, NoopIpsInspector, ServerKeyStore, TlsDecisionEngine};
 use tokio_util::sync::CancellationToken;
 
 static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
@@ -93,6 +93,7 @@ async fn main() {
     let decision_engine = Arc::new(TlsDecisionEngine::new(
         &config.ssl_bypass_domains,
         Arc::clone(&server_key_store),
+        EchTlsPolicy::default(),
     ));
 
     let tcp_session_tracker = TcpSessionTracker::new();
@@ -162,7 +163,7 @@ async fn main() {
     trace!("Loaded {} blocked domains into DNS inspection tree", dns_stats.total_nodes);
     dns_block_tree.print_tree();
 
-    let dns_inspection = DnsInspection::new(dns_block_tree, TunnelingDetectorConfig::default());
+    let dns_inspection = DnsInspection::new(dns_block_tree, TunnelingDetectorConfig::default(), EchMitigationConfig::default());
     let dpi_classifier = Arc::new(DpiClassifier::new());
     
     let pipeline = DataPipeline {

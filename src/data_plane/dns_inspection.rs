@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use arc_swap::ArcSwap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dpi::DpiContext;
@@ -389,7 +390,7 @@ impl TunnelingDetector {
     }
 
     fn is_suspicious_record_type(qtype: &DnsRecordType) -> bool {
-        matches!(qtype, DnsRecordType::Txt | DnsRecordType::Null | DnsRecordType::Mx)
+        matches!(qtype, DnsRecordType::Txt | DnsRecordType::Null | DnsRecordType::Mx | DnsRecordType::Https | DnsRecordType::Svcb)
     }
 
     fn shannon_entropy(s: &str) -> f32 {
@@ -423,18 +424,39 @@ impl TunnelingDetector {
     }
 }
 
+/// Konfiguracja mitygacji ECH na poziomie DNS.
+#[derive(Debug, Clone)]
+pub struct EchMitigationConfig {
+    pub strip_ech_dns: bool,
+    pub log_ech_attempts: bool,
+}
+
+impl Default for EchMitigationConfig {
+    fn default() -> Self {
+        Self { strip_ech_dns: true, log_ech_attempts: true }
+    }
+}
+
 /// Inspektor DNS — przechowuje listę blokowanych domen i sprawdza payloady UDP.
 pub struct DnsInspection {
     blocklist: DomainBlockTree,
     tunneling_detector: Mutex<TunnelingDetector>,
+    ech_config: ArcSwap<EchMitigationConfig>,
 }
 
 impl DnsInspection {
-    pub fn new(blocklist: DomainBlockTree, tunneling_detector_config: TunnelingDetectorConfig) -> Arc<Self> {
+    pub fn new(blocklist: DomainBlockTree, tunneling_detector_config: TunnelingDetectorConfig, ech_config: EchMitigationConfig) -> Arc<Self> {
         Arc::new(Self {
             blocklist,
             tunneling_detector: Mutex::new(TunnelingDetector::new(tunneling_detector_config)),
+            ech_config: ArcSwap::new(Arc::new(ech_config)),
         })
+    }
+
+    /// Atomowa podmiana konfiguracji ECH (hot-reload z backendu).
+    pub fn reload_ech_config(&self, config: EchMitigationConfig) {
+        self.ech_config.store(Arc::new(config));
+        tracing::info!("ECH mitigation config reloaded");
     }
 
     /// Sprawdza kontekst DPI pod kątem zablokowanej domeny DNS.
@@ -446,6 +468,16 @@ impl DnsInspection {
 
         if self.blocklist.is_blocked(domain) {
             return DnsInspectionVerdict::Block(format!("Domain '{domain}' is blocked by blocklist"));
+        }
+
+        if dpi_ctx.dns_is_response == Some(true) && dpi_ctx.dns_has_ech_hints {
+            let cfg = self.ech_config.load();
+            if cfg.log_ech_attempts {
+                tracing::info!(domain = %domain, "ECH config detected in DNS response (HTTPS/SVCB record)");
+            }
+            if cfg.strip_ech_dns {
+                return DnsInspectionVerdict::Block(format!("ECH: DNS response for '{domain}' blocked (HTTPS/SVCB record)"));
+            }
         }
 
         self.tunneling_detector.lock().unwrap().inspect(domain, qtype)
@@ -583,7 +615,7 @@ mod dns_inspection_process_tests {
             alert_threshold: 0.1,
             block_threshold: 0.3,
             ..Default::default()
-        })
+        }, EchMitigationConfig::default())
     }
 
     fn ctx(name: Option<&str>, qtype: Option<DnsRecordType>) -> DpiContext {
@@ -634,9 +666,76 @@ mod dns_inspection_process_tests {
     #[test]
     fn tunneling_signal_on_suspicious_subdomain() {
         let ins = make_inspection();
-        // wysoka entropia (16 unikalnych znaków) + TXT → wyraźny sygnał tunelowania
         let verdict = ins.process(&ctx(Some("abcdefghijklmnop.example.com"), Some(DnsRecordType::Txt)));
         assert!(matches!(verdict, DnsInspectionVerdict::Alert(_) | DnsInspectionVerdict::Block(_)));
+    }
+
+    fn ech_response_ctx(name: &str) -> DpiContext {
+        DpiContext {
+            app_proto: Some(AppProto::Dns),
+            dns_query_name: Some(name.to_string()),
+            dns_query_type: Some(DnsRecordType::Https),
+            dns_is_response: Some(true),
+            dns_answer_count: 1,
+            dns_answer_types: vec![DnsRecordType::Https],
+            dns_has_ech_hints: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ech_dns_response_blocked_by_default() {
+        let ins = make_inspection();
+        let verdict = ins.process(&ech_response_ctx("example.com"));
+        assert!(matches!(verdict, DnsInspectionVerdict::Block(msg) if msg.contains("ECH")));
+    }
+
+    #[test]
+    fn ech_dns_response_allowed_when_disabled() {
+        let mut bl = DomainBlockTree::new();
+        bl.insert("blocked.com");
+        let ins = DnsInspection::new(bl, TunnelingDetectorConfig::default(), EchMitigationConfig { strip_ech_dns: false, log_ech_attempts: false });
+        let verdict = ins.process(&ech_response_ctx("example.com"));
+        assert_eq!(verdict, DnsInspectionVerdict::Allow);
+    }
+
+    #[test]
+    fn ech_dns_query_not_blocked() {
+        let ins = make_inspection();
+        let query_ctx = DpiContext {
+            app_proto: Some(AppProto::Dns),
+            dns_query_name: Some("example.com".to_string()),
+            dns_query_type: Some(DnsRecordType::Https),
+            dns_is_response: Some(false),
+            dns_has_ech_hints: false,
+            ..Default::default()
+        };
+        assert_eq!(ins.process(&query_ctx), DnsInspectionVerdict::Allow);
+    }
+
+    #[test]
+    fn blocklist_priority_over_ech() {
+        let ins = make_inspection();
+        let ech_ctx = DpiContext {
+            app_proto: Some(AppProto::Dns),
+            dns_query_name: Some("blocked.com".to_string()),
+            dns_query_type: Some(DnsRecordType::Https),
+            dns_is_response: Some(true),
+            dns_answer_count: 1,
+            dns_answer_types: vec![DnsRecordType::Https],
+            dns_has_ech_hints: true,
+            ..Default::default()
+        };
+        let verdict = ins.process(&ech_ctx);
+        assert!(matches!(verdict, DnsInspectionVerdict::Block(msg) if msg.contains("blocklist")));
+    }
+
+    #[test]
+    fn ech_config_reload() {
+        let ins = make_inspection();
+        assert!(matches!(ins.process(&ech_response_ctx("example.com")), DnsInspectionVerdict::Block(_)));
+        ins.reload_ech_config(EchMitigationConfig { strip_ech_dns: false, log_ech_attempts: false });
+        assert_eq!(ins.process(&ech_response_ctx("example.com")), DnsInspectionVerdict::Allow);
     }
 }
 
