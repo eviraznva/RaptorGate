@@ -204,7 +204,7 @@ message AppConfig {
   string          tun_address        = 4;
   string          tun_netmask        = 5;
   string          data_dir           = 6;
-  string          grpc_socket_path   = 7;
+  string          event_socket_path   = 7;
   string          query_socket_path  = 8;
   string          pki_dir            = 9;
 }

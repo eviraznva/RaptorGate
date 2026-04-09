@@ -91,6 +91,8 @@ def setup_ngfw_service
     # tun0 now has its final index — safe to write nftables rules by name
     nft add rule inet filter forward iif "tun0" accept
     nft add rule inet filter forward oif "tun0" accept
+
+    chown -R vagrant:vagrant /resources/ngfw/sockets
   SHELL
 end
 unless File.respond_to?(:exists?)

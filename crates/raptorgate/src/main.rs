@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use etherparse::NetSlice;
+use ngfw::events::maintain_backend_connection;
 use tokio::sync::Mutex;
 use ipnet::IpNet;
 use tracing::trace;
@@ -36,6 +37,7 @@ use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::CaManager;
+use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use tokio_util::sync::CancellationToken;
 
 static DNS_BLOCKLIST_TEMP: &str = include_str!("dnsBlockedList.txt");
@@ -82,14 +84,16 @@ async fn main() {
 
     let tcp_session_tracker = TcpSessionTracker::new();
     let policy_provider = Arc::new(DiskPolicyProvider::from_loaded(&config).await.expect("Failed to initialize policy provider"));
-    let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
-    let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
+    let zones = Arc::new(ZoneProvider::from_disk(&config).await);
+    let zone_pairs = Arc::new(ZonePairProvider::from_disk(&config).await);
 
     config_provider.register(Arc::clone(&policy_provider), "DiskPolicyProvider").await;
     config_provider.register(Arc::clone(&zones), "ZoneProvider").await;
     config_provider.register(Arc::clone(&zone_pairs), "ZonePairProvider").await;
 
     tokio::spawn(events::init_event_queue());
+    tokio::spawn(maintain_backend_connection(config.event_socket_path.clone()));
+    
     let nat_engine = build_test_nat();
 
     let query_server = QueryServer::<DiskPolicyProvider>::new(

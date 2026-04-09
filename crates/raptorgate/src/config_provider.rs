@@ -97,8 +97,8 @@ impl AppConfigProvider {
             .parse()
             .context("TUN_NETMASK must be a valid IPv4 address")?;
 
-        let grpc_socket_path = std::env::var("GRPC_SOCKET_PATH")
-            .unwrap_or_else(|_| "./sockets/firewall.sock".into());
+        let event_socket_path = std::env::var("EVENT_SOCKET_PATH")
+            .unwrap_or_else(|_| "./sockets/event.sock".into());
 
         let query_socket_path = std::env::var("QUERY_SOCKET_PATH")
             .unwrap_or_else(|_| "./sockets/query.sock".into());
@@ -116,7 +116,7 @@ impl AppConfigProvider {
             tun_address,
             tun_netmask,
             data_dir,
-            grpc_socket_path,
+            event_socket_path,
             query_socket_path,
             dev_config,
             pki_dir,

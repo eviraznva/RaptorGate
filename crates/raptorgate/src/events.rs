@@ -25,31 +25,6 @@ pub struct BackendEventSink {
 }
 
 impl BackendEventSink {
-    pub async fn connect(socket_path: &str) -> Result<Self, tonic::transport::Error> {
-        let socket_path = socket_path.to_owned();
-
-        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")? // TODO: get this from appconfig
-            .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
-                let path = socket_path.clone();
-                async move {
-                    let stream = tokio::net::UnixStream::connect(&path).await?;
-                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(stream))
-                }
-            }))
-            .await?;
-
-        let (tx, rx) = mpsc::channel::<proto::Event>(CHANNEL_CAPACITY);
-        let mut client = BackendEventServiceClient::new(channel);
-
-        tokio::spawn(async move {
-            if let Err(e) = client.push_events(ReceiverStream::new(rx)).await {
-                tracing::warn!(error = %e, "BackendEventService stream closed");
-            }
-        });
-
-        Ok(Self { tx })
-    }
-
     pub async fn forward(&self, event: proto::Event) {
         if self.tx.send(event).await.is_err() {
             DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
@@ -58,8 +33,45 @@ impl BackendEventSink {
     }
 }
 
-pub fn set_backend_sink(sink: BackendEventSink) {
-    BACKEND_SINK.set(sink).unwrap_or_else(|_| panic!("backend sink already set"));
+async fn try_connect(socket_path: &str) -> Result<BackendEventSink, tonic::transport::Error> {
+    let socket_path = socket_path.to_owned();
+
+    let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+        .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
+            let path = socket_path.clone();
+            async move {
+                let stream = tokio::net::UnixStream::connect(&path).await?;
+                Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(stream))
+            }
+        }))
+        .await?;
+
+    let (tx, rx) = mpsc::channel::<proto::Event>(CHANNEL_CAPACITY);
+    let mut client = BackendEventServiceClient::new(channel);
+
+    tokio::spawn(async move {
+        if let Err(e) = client.push_events(ReceiverStream::new(rx)).await {
+            tracing::warn!(error = %e, "BackendEventService stream closed");
+        }
+    });
+
+    Ok(BackendEventSink { tx })
+}
+
+pub async fn maintain_backend_connection(socket_path: String) {
+    loop {
+        match try_connect(&socket_path).await {
+            Ok(sink) => {
+                tracing::info!("connected to backend");
+                BACKEND_SINK.set(sink).unwrap_or_else(|_| panic!("backend sink already set"));
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "could not connect to backend, retrying...");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    }
 }
 
 pub fn emit(event: Event) {
@@ -81,7 +93,7 @@ pub async fn init_event_queue() {
         select! {
             Some(event) = rx.recv() => {
                 if event.kind.is_immediate() {
-                    flush_batch(&mut buffer).await; // flush as we want to preserve event ordering
+                    flush_batch(&mut buffer).await;
                     dispatch(event).await;
                 } else {
                     buffer.push(event);
@@ -104,8 +116,12 @@ async fn flush_batch(buffer: &mut Vec<Event>) {
 
 async fn dispatch(event: Event) {
     tracing::debug!(kind = ?event.kind, "event dispatched");
-    if let Some(sink) = BACKEND_SINK.get() {
-        sink.forward(event.into()).await;
+    match BACKEND_SINK.get() {
+        Some(sink) => sink.forward(event.into()).await,
+        None => {
+            DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(kind = ?event.kind, "no backend sink, event dropped");
+        }
     }
 }
 

@@ -15,7 +15,7 @@ pub struct AppConfig {
 
     pub data_dir: PathBuf,
 
-    pub grpc_socket_path: String,
+    pub event_socket_path: String,
     pub query_socket_path: String,
 
     #[serde(skip)]
@@ -38,7 +38,7 @@ impl AppConfig {
             tun_address: self.tun_address.to_string(),
             tun_netmask: self.tun_netmask.to_string(),
             data_dir: self.data_dir.to_string_lossy().into_owned(),
-            grpc_socket_path: self.grpc_socket_path.clone(),
+            event_socket_path: self.event_socket_path.clone(),
             query_socket_path: self.query_socket_path.clone(),
             pki_dir: self.pki_dir.clone(),
         }
@@ -58,7 +58,7 @@ impl AppConfig {
                 .parse()
                 .context("tun_netmask must be a valid IPv4 address")?,
             data_dir: proto_config.data_dir.into(),
-            grpc_socket_path: proto_config.grpc_socket_path,
+            event_socket_path: proto_config.event_socket_path,
             query_socket_path: proto_config.query_socket_path,
             dev_config: None,
             pki_dir: proto_config.pki_dir,

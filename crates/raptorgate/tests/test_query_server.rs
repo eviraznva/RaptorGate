@@ -250,7 +250,7 @@ async fn swap_config_happy_path_returns_no_error() {
                 tun_address: "10.254.254.1".into(),
                 tun_netmask: "255.255.255.0".into(),
                 data_dir: "/tmp".into(),
-                grpc_socket_path: "./sockets/firewall.sock".into(),
+                event_socket_path: "./sockets/firewall.sock".into(),
                 query_socket_path: "/tmp/test-query-shared.sock".into(),
                 pki_dir: "/tmp/pki".into(),
             }),
@@ -271,7 +271,7 @@ async fn get_config_returns_ok() {
         tun_address: "192.168.1.1".into(),
         tun_netmask: "255.255.0.0".into(),
         data_dir: "/tmp".into(),
-        grpc_socket_path: "./sockets/firewall.sock".into(),
+        event_socket_path: "./sockets/firewall.sock".into(),
         query_socket_path: "/tmp/test-query-shared.sock".into(),
         pki_dir: "/tmp/pki".into(),
     };
