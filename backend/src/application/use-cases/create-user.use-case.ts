@@ -1,21 +1,21 @@
-import {
-  type IUserRepository,
-  USER_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/user.repository';
+import { Inject, Injectable } from "@nestjs/common";
+import { User } from "src/domain/entities/user.entity";
+import { RoleIsInvalidException } from "src/domain/exceptions/role-is-invalid.exception";
+import { UserAlreadyExistsException } from "src/domain/exceptions/user-already-exitst.exception";
 import {
   type IRoleRepository,
   ROLE_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/role.repository';
+} from "src/domain/repositories/role.repository";
+import {
+  type IUserRepository,
+  USER_REPOSITORY_TOKEN,
+} from "src/domain/repositories/user.repository";
+import { CreateUserDto } from "../dtos/create-user.dto";
+import { CreateUserResponseDto } from "../dtos/create-user-response.dto";
 import {
   type IPasswordHasher,
   PASSWORD_HASHER_TOKEN,
-} from '../ports/passowrd-hasher.interface';
-import { UserAlreadyExistsException } from 'src/domain/exceptions/user-already-exitst.exception';
-import { RoleIsInvalidException } from 'src/domain/exceptions/role-is-invalid.exception';
-import { CreateUserResponseDto } from '../dtos/create-user-response.dto';
-import { CreateUserDto } from '../dtos/create-user.dto';
-import { User } from 'src/domain/entities/user.entity';
-import { Inject, Injectable } from '@nestjs/common';
+} from "../ports/passowrd-hasher.interface";
 
 @Injectable()
 export class CreateUserUseCase {

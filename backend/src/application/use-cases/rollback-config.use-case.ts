@@ -20,12 +20,12 @@ import {
   type IZonePairRepository,
   ZONE_PAIR_REPOSITORY_TOKEN,
 } from "../../domain/repositories/zone-pair.repository.js";
+import type { RollbackConfigDto } from "../dtos/rollback-config.dto.js";
+import type { RollbackConfigSnapshotResponseDto } from "../dtos/rollback-config-response.dto.js";
 import {
   CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN,
   type IConfigSnapshotPushService,
 } from "../ports/config-snapshot-push-service.interface.js";
-import type { RollbackConfigDto } from "../dtos/rollback-config.dto.js";
-import type { RollbackConfigSnapshotResponseDto } from "../dtos/rollback-config-response.dto.js";
 
 @Injectable()
 export class RollbackConfigUseCase {
