@@ -1,6 +1,10 @@
 import type { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
 
-export type ConfigSnapshotPushReason = "apply" | "rollback" | "manual_sync";
+export type ConfigSnapshotPushReason =
+  | "apply"
+  | "rollback"
+  | "manual_sync"
+  | "import";
 
 export interface IConfigSnapshotPushService {
   pushActiveConfigSnapshot(
