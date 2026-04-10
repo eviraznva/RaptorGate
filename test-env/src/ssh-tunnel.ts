@@ -96,6 +96,15 @@ async function isNgfwActive(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Remote socket cleanup
+// ---------------------------------------------------------------------------
+
+async function removeRemoteSocket(): Promise<void> {
+  await run('vagrant', ['ssh', VM_NAME, '-c', `rm -f ${TUNNEL_REMOTE_SOCKET}`], { cwd: VAGRANT_DIR });
+  console.log('[ssh-tunnel] Cleaned up stale remote socket');
+}
+
+// ---------------------------------------------------------------------------
 // SSH tunnel management
 // ---------------------------------------------------------------------------
 
@@ -164,7 +173,10 @@ async function tunnelLoop(): Promise<void> {
     // 3. Wait for ngfw service
     await waitFor(isNgfwActive, 'ngfw service to be active');
 
-    // 4. Start tunnel
+    // 4. Clean up stale socket on the VM (required for reverse tunnel to bind)
+    await removeRemoteSocket();
+
+    // 5. Start tunnel
     console.log('[ssh-tunnel] Establishing reverse SSH tunnel ...');
     tunnelProc = startTunnelProcess();
 
