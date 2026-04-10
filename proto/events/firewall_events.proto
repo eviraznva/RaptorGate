@@ -25,6 +25,7 @@ message EventKind {
     TcpSessionAbortedMidCloseEvent tcp_session_aborted      = 4;
     TunDeviceSwappedEvent          tun_device_swapped       = 5;
     SnifferConfigChangedEvent      sniffer_config_changed   = 6;
+    EventBusConnectedEvent         event_bus_connected      = 7;
   }
 }
 
@@ -32,6 +33,8 @@ message TcpEndpoint {
   string ip   = 1;
   uint32 port = 2;
 }
+
+message EventBusConnectedEvent {}
 
 message SnifferConfigChangedEvent {
   repeated string old_interfaces = 1;

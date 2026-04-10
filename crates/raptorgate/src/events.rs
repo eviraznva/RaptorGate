@@ -149,6 +149,8 @@ async fn attempt_reconnect(
         Ok(conn) => {
             tracing::info!("reconnected to backend");
             *backend = Some(conn);
+
+            emit(Event::new(EventKind::EventBusConnectedEvent {}));
             flush_batch(buffer, backend).await;
         }
         Err(e) => {
@@ -177,6 +179,7 @@ pub enum EventKind {
     TcpSessionAbortedMidClose { src: EndpointIdentifier, dst: EndpointIdentifier },
     TunDeviceSwapped { old_device: String, new_device: String, old_address: String, new_address: String },
     SnifferConfigChanged { old_interfaces: Vec<String>, new_interfaces: Vec<String>, old_timeout: Duration, new_timeout: Duration },
+    EventBusConnectedEvent {}
 }
 
 impl EventKind {
@@ -188,6 +191,7 @@ impl EventKind {
             | E::TcpConnectionRejected { .. }
             | E::TcpSessionAbortedMidClose { .. }
             | E::TunDeviceSwapped { .. }
+            | E::EventBusConnectedEvent { .. }
             | E::SnifferConfigChanged { .. } => true,
         }
     }
@@ -251,6 +255,7 @@ impl From<EventKind> for proto::EventKind {
                         old_timeout: Some(duration_to_proto(old_timeout)),
                         new_timeout: Some(duration_to_proto(new_timeout)),
                     }),
+                EventKind::EventBusConnectedEvent { .. } => Item::EventBusConnected(proto::EventBusConnectedEvent {})
             }),
         }
     }
