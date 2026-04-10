@@ -2,6 +2,7 @@ import path from 'node:path';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import { Event } from './generated/events/firewall_events';
+import { startSshTunnel } from './ssh-tunnel';
 
 // test-env/src/server.ts → __dirname = test-env/src
 // ../ = test-env/  → ../../ = repo root
@@ -64,6 +65,7 @@ function main() {
         return;
       }
       console.log(`gRPC event server listening on 0.0.0.0:${port}`);
+      startSshTunnel();
     },
   );
 }
