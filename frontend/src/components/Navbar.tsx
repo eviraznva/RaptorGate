@@ -1,16 +1,18 @@
-import { useLocation, useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom";
 
 const navItems = [
   { name: "Login", path: "/" },
   { name: "Dashboard", path: "/dashboard" },
+  { name: "DNS", path: "/dashboard/dns" },
+  { name: "IPS", path: "/dashboard/ips" },
   { name: "Policy Engine", path: "/rules" },
   { name: "Connections", path: "/connections" },
   { name: "Settings", path: "/settings" },
-]
+];
 
 export default function Navbar() {
-  const navigate = useNavigate()
-  const location = useLocation()
+  const navigate = useNavigate();
+  const location = useLocation();
 
   return (
     <div className="bg-[#e5e7eb] text-black px-6 py-2 flex gap-6 text-sm">
@@ -30,5 +32,5 @@ export default function Navbar() {
         </button>
       ))}
     </div>
-  )
+  );
 }
