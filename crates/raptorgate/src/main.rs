@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use etherparse::NetSlice;
-use ngfw::events::maintain_backend_connection;
+use crate::events::maintain_backend_connection;
 use tokio::sync::Mutex;
 use ipnet::IpNet;
 use tracing::trace;
