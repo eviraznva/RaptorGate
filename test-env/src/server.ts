@@ -1,7 +1,7 @@
 import path from 'node:path';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
-import type { Event } from './generated/events/firewall_events';
+import { Event } from './generated/events/firewall_events';
 
 // test-env/src/server.ts → __dirname = test-env/src
 // ../ = test-env/  → ../../ = repo root
@@ -23,71 +23,6 @@ const LOADER_OPTIONS = {
   includeDirs: [PROTO_ROOT],
 };
 
-function formatEvent(event: Event): string {
-  const lines: string[] = [];
-  lines.push('─'.repeat(60));
-  lines.push('  INCOMING GRPC EVENT');
-  lines.push('─'.repeat(60));
-
-  if (event.emittedAt) {
-    const ts = event.emittedAt as any;
-    const dateStr = typeof ts === 'object' && ts.seconds
-      ? new Date(Number(ts.seconds) * 1000).toISOString()
-      : String(ts);
-    lines.push(`  emitted_at : ${dateStr}`);
-  }
-
-  if (event.kind) {
-    const kind = event.kind as any;
-    // proto-loader represents oneofs as { item: "...", <camelCaseField>: {...} }
-    const item = kind.item || Object.keys(kind).find(k => typeof kind[k] === 'object' && k !== 'item');
-    const eventKey = typeof item === 'string' ? item : Object.keys(kind).find(k => typeof kind[k] === 'object');
-    const payload = eventKey ? kind[eventKey] : null;
-
-    switch (eventKey) {
-      case 'tcpSessionEstablished':
-        lines.push('  kind       : TcpSessionEstablished');
-        lines.push(`  src        : ${payload?.src?.ip ?? '?'}:${payload?.src?.port ?? '?'}`);
-        lines.push(`  dst        : ${payload?.dst?.ip ?? '?'}:${payload?.dst?.port ?? '?'}`);
-        break;
-      case 'tcpSessionRemoved':
-        lines.push('  kind       : TcpSessionRemoved');
-        lines.push(`  src        : ${payload?.src?.ip ?? '?'}:${payload?.src?.port ?? '?'}`);
-        lines.push(`  dst        : ${payload?.dst?.ip ?? '?'}:${payload?.dst?.port ?? '?'}`);
-        break;
-      case 'tcpConnectionRejected':
-        lines.push('  kind       : TcpConnectionRejected');
-        lines.push(`  src        : ${payload?.src?.ip ?? '?'}:${payload?.src?.port ?? '?'}`);
-        lines.push(`  dst        : ${payload?.dst?.ip ?? '?'}:${payload?.dst?.port ?? '?'}`);
-        break;
-      case 'tcpSessionAborted':
-        lines.push('  kind       : TcpSessionAbortedMidClose');
-        lines.push(`  src        : ${payload?.src?.ip ?? '?'}:${payload?.src?.port ?? '?'}`);
-        lines.push(`  dst        : ${payload?.dst?.ip ?? '?'}:${payload?.dst?.port ?? '?'}`);
-        break;
-      case 'tunDeviceSwapped':
-        lines.push('  kind       : TunDeviceSwapped');
-        lines.push(`  old_device : ${payload?.oldDevice ?? '?'}`);
-        lines.push(`  new_device : ${payload?.newDevice ?? '?'}`);
-        lines.push(`  old_address: ${payload?.oldAddress ?? '?'}`);
-        lines.push(`  new_address: ${payload?.newAddress ?? '?'}`);
-        break;
-      case 'snifferConfigChanged':
-        lines.push('  kind           : SnifferConfigChanged');
-        lines.push(`  old_interfaces : [${(payload?.oldInterfaces ?? []).join(', ')}]`);
-        lines.push(`  new_interfaces : [${(payload?.newInterfaces ?? []).join(', ')}]`);
-        if (payload?.oldTimeout) lines.push(`  old_timeout    : ${JSON.stringify(payload.oldTimeout)}`);
-        if (payload?.newTimeout) lines.push(`  new_timeout    : ${JSON.stringify(payload.newTimeout)}`);
-        break;
-      default:
-        lines.push(`  kind       : ${eventKey ?? 'unknown'}`);
-    }
-  }
-
-  lines.push('─'.repeat(60));
-  return lines.join('\n');
-}
-
 function main() {
   // Load proto once — share between reflection and service
   const packageDef = protoLoader.loadSync(PROTO_FILES, LOADER_OPTIONS);
@@ -99,11 +34,14 @@ function main() {
 
   server.addService(serviceDef, {
     pushEvents(
-      call: grpc.ClientReadableStream<any>,
-      callback: (err: grpc.ServiceError | null, response: {}) => void,
+		call: grpc.ServerReadableStream<any, any>,
+		callback: (err: grpc.ServiceError | null, response: {}) => void,
     ) {
       call.on('data', (rawEvent: any) => {
-        console.log(formatEvent(rawEvent));
+        // console.log(formatEvent(rawEvent));
+		const event = Event.fromJSON(rawEvent)
+
+		console.log(event);
       });
 
       call.on('error', (err: Error) => {
