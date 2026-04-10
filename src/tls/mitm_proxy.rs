@@ -13,6 +13,7 @@ use crate::tls::decision_engine::TlsDecisionEngine;
 use crate::tls::dual_session::{self, AcceptParams, ConnectParams};
 use crate::tls::inspection_relay::{InspectionRelay, InspectionMode, IpsInspector, SessionMeta};
 use crate::tls::original_dst;
+use crate::tls::pinning_detector;
 use crate::tls::rustls_config;
 
 const SNI_PEEK_BUF_SIZE: usize = 4096;
@@ -145,9 +146,20 @@ async fn handle_connection(
         return relay_tcp_passthrough(client_tcp, original_dst).await;
     }
 
+    if engine.pinning_detector().is_bypassed(peer_addr.ip(), domain) {
+        tracing::debug!(domain, peer = %peer_addr, "TLS pinning auto-bypass active");
+        events::emit(events::Event::new(events::EventKind::TlsBypassApplied {
+            peer: peer_addr,
+            dst: original_dst,
+            sni: sni.clone(),
+            domain: domain.to_string(),
+        }));
+        return relay_tcp_passthrough(client_tcp, original_dst).await;
+    }
+
     handle_outbound_connection(
         client_tcp, peer_addr, original_dst, sni,
-        client_config, cert_forger, untrust_forger, relay,
+        client_config, cert_forger, untrust_forger, engine, relay,
     )
     .await
 }
@@ -247,7 +259,6 @@ async fn handle_inbound_connection(
     Ok(())
 }
 
-// Obsluguje polaczenie outbound MITM (sfałszowany certyfikat z replikacja SAN).
 async fn handle_outbound_connection(
     client_tcp: TcpStream,
     peer_addr: SocketAddr,
@@ -256,6 +267,7 @@ async fn handle_outbound_connection(
     client_config: Arc<ClientConfig>,
     cert_forger: Arc<CertForger>,
     untrust_forger: Arc<CertForger>,
+    engine: Arc<TlsDecisionEngine>,
     relay: Arc<InspectionRelay>,
 ) -> anyhow::Result<()> {
     let domain = sni.clone().unwrap_or_else(|| original_dst.ip().to_string());
@@ -312,12 +324,35 @@ async fn handle_outbound_connection(
     let forged_server_config = rustls_config::build_server_config_for_key(certified_key)
         .context("Failed to build server config")?;
 
-    let client_tls = dual_session::accept_client_tls(AcceptParams {
+    let client_tls = match dual_session::accept_client_tls(AcceptParams {
         tcp_stream: client_tcp,
         server_config: forged_server_config,
     })
     .await
-    .context("TLS accept from client failed")?;
+    {
+        Ok(tls) => tls,
+        Err(e) => {
+            if let Some(reason) = classify_pinning_failure(&e) {
+                let activated = engine.report_pinning_failure(peer_addr.ip(), &domain, reason);
+                if activated {
+                    tracing::info!(peer = %peer_addr, domain = %domain, "Pinning auto-bypass activated");
+                    events::emit(events::Event::new(events::EventKind::PinningAutoBypassActivated {
+                        source_ip: peer_addr.ip(),
+                        domain: domain.clone(),
+                        reason: "handshake_failure".to_string(),
+                    }));
+                } else {
+                    tracing::debug!(peer = %peer_addr, domain = %domain, "Pinning failure recorded");
+                    events::emit(events::Event::new(events::EventKind::PinningFailureDetected {
+                        peer: peer_addr,
+                        dst: original_dst,
+                        sni: domain.clone(),
+                    }));
+                }
+            }
+            return Err(e).context("TLS accept from client failed");
+        }
+    };
 
     let alpn = server_tls
         .get_ref()
@@ -373,6 +408,29 @@ async fn peek_sni(stream: &TcpStream) -> Option<String> {
     let n = stream.peek(&mut buf).await.ok()?;
     let result = parse_tls_client_hello(&buf[..n])?;
     result.sni
+}
+
+/// Klasyfikuje błąd TLS jako potencjalny sygnał certificate pinningu.
+fn classify_pinning_failure(err: &anyhow::Error) -> Option<pinning_detector::PinningReason> {
+    use crate::tls::pinning_detector::PinningReason;
+
+    if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+        if io_err.kind() == std::io::ErrorKind::ConnectionReset {
+            return Some(PinningReason::TcpReset);
+        }
+        if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
+            return Some(PinningReason::ConnectionClosedNoData);
+        }
+    }
+
+    let msg = err.to_string();
+    for alert in ["bad_certificate", "certificate_unknown", "unknown_ca", "certificate_required"] {
+        if msg.contains(alert) {
+            return Some(PinningReason::TlsAlert { alert_description: alert.to_string() });
+        }
+    }
+
+    None
 }
 
 // Przekazuje ruch TCP bez inspekcji TLS.

@@ -119,6 +119,16 @@ message EchMitigationPolicy {
   bool   log_ech_attempts = 5;
 }
 
+// ── Pinning detection ───────────────────────────────────────────────────────
+
+message PinningDetectionConfig {
+  uint64 version            = 1;
+  bool   enabled            = 2;
+  uint32 failure_threshold  = 3;
+  uint32 failure_window_sec = 4;
+  uint32 bypass_ttl_sec     = 5;
+}
+
 // ── Sygnatury IPS ────────────────────────────────────────────────────────────
 
 message IpsSignature {

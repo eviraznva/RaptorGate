@@ -273,7 +273,6 @@ pub struct TlsInspectionStage {
     pub decision_engine: Arc<TlsDecisionEngine>,
 }
 
-// Wyciaga destination IP z naglowka pakietu.
 fn extract_dst_ip(ctx: &PacketContext) -> Option<IpAddr> {
     match &ctx.borrow_sliced_packet().net {
         Some(etherparse::NetSlice::Ipv4(ipv4)) => {
@@ -281,6 +280,18 @@ fn extract_dst_ip(ctx: &PacketContext) -> Option<IpAddr> {
         }
         Some(etherparse::NetSlice::Ipv6(ipv6)) => {
             Some(IpAddr::V6(ipv6.header().destination_addr()))
+        }
+        _ => None,
+    }
+}
+
+fn extract_src_ip(ctx: &PacketContext) -> Option<IpAddr> {
+    match &ctx.borrow_sliced_packet().net {
+        Some(etherparse::NetSlice::Ipv4(ipv4)) => {
+            Some(IpAddr::V4(ipv4.header().source_addr()))
+        }
+        Some(etherparse::NetSlice::Ipv6(ipv6)) => {
+            Some(IpAddr::V6(ipv6.header().source_addr()))
         }
         _ => None,
     }
@@ -311,8 +322,9 @@ impl Stage for TlsInspectionStage {
 
         let dst_ip = extract_dst_ip(ctx);
         let dst_port = extract_dst_port(ctx);
+        let src_ip = extract_src_ip(ctx);
 
-        let action = self.decision_engine.decide(sni.as_deref(), ech_detected, dst_ip, dst_port);
+        let action = self.decision_engine.decide(sni.as_deref(), ech_detected, dst_ip, dst_port, src_ip);
 
         tracing::debug!(
             sni = sni.as_deref().unwrap_or("none"),

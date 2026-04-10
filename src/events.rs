@@ -8,7 +8,7 @@ use prost_types::Timestamp;
 use tokio::{select, sync::mpsc, time::{interval, Duration}};
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
 use crate::proto::events as proto;
@@ -141,6 +141,8 @@ pub enum EventKind {
     TlsUntrustedCertDetected { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, domain: String },
     TlsBypassApplied { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, domain: String },
     InboundTlsBypassApplied { peer: SocketAddr, server: SocketAddr, sni: Option<String> },
+    PinningFailureDetected { peer: SocketAddr, dst: SocketAddr, sni: String },
+    PinningAutoBypassActivated { source_ip: IpAddr, domain: String, reason: String },
 }
 
 impl EventKind {
@@ -161,7 +163,9 @@ impl EventKind {
             | E::DecryptedIpsMatch { .. }
             | E::TlsUntrustedCertDetected { .. }
             | E::TlsBypassApplied { .. }
-            | E::InboundTlsBypassApplied { .. } => true,
+            | E::InboundTlsBypassApplied { .. }
+            | E::PinningFailureDetected { .. }
+            | E::PinningAutoBypassActivated { .. } => true,
         }
     }
 }
@@ -305,6 +309,20 @@ impl From<EventKind> for proto::EventKind {
                         server_ip: server.ip().to_string(),
                         server_port: server.port() as u32,
                         sni: sni.unwrap_or_default(),
+                    }),
+                EventKind::PinningFailureDetected { peer, dst, sni } =>
+                    Item::PinningFailureDetected(proto::PinningFailureDetectedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: peer.port() as u32,
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: dst.port() as u32,
+                        sni,
+                    }),
+                EventKind::PinningAutoBypassActivated { source_ip, domain, reason } =>
+                    Item::PinningAutoBypassActivated(proto::PinningAutoBypassActivatedEvent {
+                        source_ip: source_ip.to_string(),
+                        domain,
+                        reason,
                     }),
             }),
         }
