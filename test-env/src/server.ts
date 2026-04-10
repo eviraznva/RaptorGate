@@ -65,7 +65,11 @@ function main() {
         return;
       }
       console.log(`gRPC event server listening on 0.0.0.0:${port}`);
-      startSshTunnel();
+      startSshTunnel(server, {
+        onReady: ({ eventServer, queryClient }) => {
+          console.log('Both sides connected — system ready');
+        },
+      });
     },
   );
 }

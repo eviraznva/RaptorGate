@@ -20,11 +20,13 @@ const options = [
   'useOptionals=messages',
 ];
 
-// Only the protos needed for the event service
+// All protos needed for the event service + query service + config models
 const protoFiles = [
   path.join(protoRoot, 'common', 'common.proto'),
   path.join(protoRoot, 'events', 'firewall_events.proto'),
   path.join(protoRoot, 'services', 'event_service.proto'),
+  path.join(protoRoot, 'services', 'query_service.proto'),
+  path.join(protoRoot, 'config', 'config_models.proto'),
 ];
 
 function main() {
