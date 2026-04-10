@@ -78,8 +78,11 @@ async function bootstrap() {
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.GRPC,
     options: {
-      package: 'raptorgate',
-      protoPath: join(protoRoot, 'config', 'config_grpc_service.proto'),
+      package: ['raptorgate', 'raptorgate.services'],
+      protoPath: [
+        join(protoRoot, 'config', 'config_grpc_service.proto'),
+        join(protoRoot, 'services', 'event_service.proto'),
+      ],
       loader: {
         includeDirs: [protoRoot],
       },

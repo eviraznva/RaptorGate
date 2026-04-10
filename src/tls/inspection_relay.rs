@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use uuid::Uuid;
 
 use crate::dpi::{AppProto, DpiClassifier, DpiContext};
 use crate::events;
@@ -184,11 +185,13 @@ fn handle_verdict(
     match ips.inspect(payload, ctx) {
         IpsVerdict::Allow => Ok(()),
         IpsVerdict::Alert { signature_name, severity } => {
+            let log_id = Uuid::now_v7().to_string();
             tracing::warn!(
                 peer = %meta.peer,
                 server = %meta.server,
                 signature = %signature_name,
                 severity = %severity,
+                log_id = %log_id,
                 "Decrypted traffic IPS alert"
             );
             events::emit(events::Event::new(
@@ -201,16 +204,19 @@ fn handle_verdict(
                     blocked: false,
                     direction,
                     mode: meta.mode,
+                    log_id,
                 },
             ));
             Ok(())
         }
         IpsVerdict::Block { signature_name, severity } => {
+            let log_id = Uuid::now_v7().to_string();
             tracing::warn!(
                 peer = %meta.peer,
                 server = %meta.server,
                 signature = %signature_name,
                 severity = %severity,
+                log_id = %log_id,
                 "Decrypted traffic blocked by IPS"
             );
             events::emit(events::Event::new(
@@ -223,6 +229,7 @@ fn handle_verdict(
                     blocked: true,
                     direction,
                     mode: meta.mode,
+                    log_id,
                 },
             ));
             Err(true)

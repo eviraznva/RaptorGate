@@ -6,6 +6,7 @@ import { JwtAuthGuard } from './infrastructure/adapters/jwt-auth.guard.js';
 import { JwtStrategy } from './infrastructure/adapters/jwt.strategy.js';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { FirewallEventsModule } from './modules/firewall-events/firewall-events.module.js';
 import { GrpcModule } from './infrastructure/grpc/grpc.module.js';
 import { ZonePairsModule } from './modules/zone-pairs.module.js';
 import { RealtimeModule } from './modules/realtime.module.js';
@@ -40,6 +41,7 @@ import { Module } from '@nestjs/common';
     RulesModule,
     UserModule,
     GrpcModule,
+    FirewallEventsModule,
     AuthModule,
     ZoneModule,
     NatModule,

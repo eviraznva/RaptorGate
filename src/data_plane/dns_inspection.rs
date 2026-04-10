@@ -5,6 +5,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dpi::DpiContext;
 use crate::dpi::parsers::dns::DnsRecordType;
+use crate::events;
+use crate::events::{EchAction, EchOrigin};
 
 // Do debugowania
 #[derive(Default, Debug)]
@@ -472,8 +474,15 @@ impl DnsInspection {
 
         if dpi_ctx.dns_is_response == Some(true) && dpi_ctx.dns_has_ech_hints {
             let cfg = self.ech_config.load();
+            let action = if cfg.strip_ech_dns { EchAction::Stripped } else { EchAction::Logged };
             if cfg.log_ech_attempts {
                 tracing::info!(domain = %domain, "ECH config detected in DNS response (HTTPS/SVCB record)");
+                events::emit(events::Event::new(events::EventKind::EchAttemptDetected {
+                    source_ip: None,
+                    domain: domain.clone(),
+                    origin: EchOrigin::DnsHttpsRecord,
+                    action,
+                }));
             }
             if cfg.strip_ech_dns {
                 return DnsInspectionVerdict::Block(format!("ECH: DNS response for '{domain}' blocked (HTTPS/SVCB record)"));

@@ -28,6 +28,8 @@ message EventKind {
     InboundTlsBypassAppliedEvent      inbound_tls_bypass_applied      = 15;
     PinningFailureDetectedEvent       pinning_failure_detected        = 16;
     PinningAutoBypassActivatedEvent   pinning_auto_bypass_activated   = 17;
+    TlsHandshakeFailedEvent           tls_handshake_failed            = 18;
+    EchAttemptDetectedEvent           ech_attempt_detected            = 19;
   }
 }
 
@@ -57,20 +59,22 @@ message TcpSessionAbortedMidCloseEvent {
 }
 
 message TlsInterceptStartedEvent {
-  string peer_ip   = 1;
-  uint32 peer_port = 2;
-  string dst_ip    = 3;
-  uint32 dst_port  = 4;
-  string sni       = 5;
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string tls_version = 6;
 }
 
 message TlsHandshakeCompleteEvent {
-  string peer_ip   = 1;
-  uint32 peer_port = 2;
-  string dst_ip    = 3;
-  uint32 dst_port  = 4;
-  string sni       = 5;
-  string alpn      = 6;
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string alpn        = 6;
+  string tls_version = 7;
 }
 
 message TlsSessionClosedEvent {
@@ -90,6 +94,7 @@ message InboundTlsInterceptStartedEvent {
   uint32 server_port   = 4;
   string sni           = 5;
   string common_name   = 6;
+  string tls_version   = 7;
 }
 
 message InboundTlsHandshakeCompleteEvent {
@@ -99,6 +104,7 @@ message InboundTlsHandshakeCompleteEvent {
   uint32 server_port   = 4;
   string sni           = 5;
   string alpn          = 6;
+  string tls_version   = 7;
 }
 
 message InboundTlsSessionClosedEvent {
@@ -133,24 +139,27 @@ message DecryptedIpsMatchEvent {
   bool   blocked         = 8;
   string direction       = 9;
   string mode            = 10;
+  string log_id          = 11;
 }
 
 message TlsUntrustedCertDetectedEvent {
-  string peer_ip   = 1;
-  uint32 peer_port = 2;
-  string dst_ip    = 3;
-  uint32 dst_port  = 4;
-  string sni       = 5;
-  string domain    = 6;
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string domain      = 6;
+  string tls_version = 7;
 }
 
 message TlsBypassAppliedEvent {
-  string peer_ip   = 1;
-  uint32 peer_port = 2;
-  string dst_ip    = 3;
-  uint32 dst_port  = 4;
-  string sni       = 5;
-  string domain    = 6;
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string domain      = 6;
+  string tls_version = 7;
 }
 
 message InboundTlsBypassAppliedEvent {
@@ -159,18 +168,39 @@ message InboundTlsBypassAppliedEvent {
   string server_ip     = 3;
   uint32 server_port   = 4;
   string sni           = 5;
+  string tls_version   = 6;
 }
 
 message PinningFailureDetectedEvent {
-  string peer_ip   = 1;
-  uint32 peer_port = 2;
-  string dst_ip    = 3;
-  uint32 dst_port  = 4;
-  string sni       = 5;
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string tls_version = 6;
 }
 
 message PinningAutoBypassActivatedEvent {
   string source_ip  = 1;
   string domain     = 2;
   string reason     = 3;
+}
+
+message TlsHandshakeFailedEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string tls_version = 6;
+  string stage       = 7;
+  string reason      = 8;
+  string mode        = 9;
+}
+
+message EchAttemptDetectedEvent {
+  string source_ip = 1;
+  string domain    = 2;
+  string origin    = 3;
+  string action    = 4;
 }

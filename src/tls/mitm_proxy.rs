@@ -2,12 +2,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
-use rustls::{ClientConfig, ServerConfig};
+use rustls::{ClientConfig, ProtocolVersion, ServerConfig};
 use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::client::TlsStream as ClientTlsStream;
+use tokio_rustls::server::TlsStream as ServerTlsStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::dpi::parsers::tls::parse_tls_client_hello;
 use crate::events;
+use crate::events::{EchAction, EchOrigin, HandshakeStage};
 use crate::tls::cert_forger::CertForger;
 use crate::tls::decision_engine::TlsDecisionEngine;
 use crate::tls::dual_session::{self, AcceptParams, ConnectParams};
@@ -114,7 +117,17 @@ async fn handle_connection(
     let original_dst = original_dst::get_original_dst(&client_tcp)
         .context("Failed to read original destination address")?;
 
-    let sni = peek_sni(&client_tcp).await;
+    let PeekedClientHello { sni, client_hello_version, ech_detected } = peek_client_hello(&client_tcp).await;
+
+    if ech_detected {
+        let domain_hint = sni.clone().unwrap_or_else(|| original_dst.ip().to_string());
+        events::emit(events::Event::new(events::EventKind::EchAttemptDetected {
+            source_ip: Some(peer_addr.ip()),
+            domain: domain_hint,
+            origin: EchOrigin::ClientHelloOuterSni,
+            action: EchAction::Logged,
+        }));
+    }
 
     if let Some(entry) = engine.server_key_store().get_entry(original_dst) {
         if entry.bypass {
@@ -123,12 +136,13 @@ async fn handle_connection(
                 peer: peer_addr,
                 server: original_dst,
                 sni,
+                tls_version: client_hello_version.clone(),
             }));
             return relay_tcp_passthrough(client_tcp, original_dst).await;
         }
         tracing::debug!(peer = %peer_addr, server = %original_dst, "Inbound TLS inspection");
         return handle_inbound_connection(
-            client_tcp, peer_addr, original_dst, sni, entry.server_config, relay,
+            client_tcp, peer_addr, original_dst, sni, client_hello_version, entry.server_config, relay,
         )
         .await;
     }
@@ -142,6 +156,7 @@ async fn handle_connection(
             dst: original_dst,
             sni: sni.clone(),
             domain: domain.to_string(),
+            tls_version: client_hello_version.clone(),
         }));
         return relay_tcp_passthrough(client_tcp, original_dst).await;
     }
@@ -153,23 +168,24 @@ async fn handle_connection(
             dst: original_dst,
             sni: sni.clone(),
             domain: domain.to_string(),
+            tls_version: client_hello_version.clone(),
         }));
         return relay_tcp_passthrough(client_tcp, original_dst).await;
     }
 
     handle_outbound_connection(
-        client_tcp, peer_addr, original_dst, sni,
+        client_tcp, peer_addr, original_dst, sni, client_hello_version,
         client_config, cert_forger, untrust_forger, engine, relay,
     )
     .await
 }
 
-// Obsługuje połączenie inbound (firewall terminuje TLS prawdziwym certem serwera).
 async fn handle_inbound_connection(
     client_tcp: TcpStream,
     peer_addr: SocketAddr,
     server_addr: SocketAddr,
     sni: Option<String>,
+    client_hello_version: Option<String>,
     inbound_server_config: Arc<ServerConfig>,
     relay: Arc<InspectionRelay>,
 ) -> anyhow::Result<()> {
@@ -179,19 +195,31 @@ async fn handle_inbound_connection(
             server: server_addr,
             sni: sni.clone(),
             common_name: String::new(),
+            tls_version: client_hello_version.clone(),
         },
     ));
 
-    // Terminacja TLS od klienta prawdziwym certyfikatem serwera
-    let client_tls = dual_session::accept_client_tls(AcceptParams {
+    let client_tls = match dual_session::accept_client_tls(AcceptParams {
         tcp_stream: client_tcp,
         server_config: inbound_server_config,
     })
     .await
-    .context("Inbound TLS accept from client failed")?;
+    {
+        Ok(tls) => tls,
+        Err(e) => {
+            events::emit(events::Event::new(events::EventKind::TlsHandshakeFailed {
+                peer: peer_addr,
+                dst: server_addr,
+                sni: sni.clone(),
+                tls_version: client_hello_version.clone(),
+                stage: HandshakeStage::ClientHello,
+                reason: describe_handshake_error(&e),
+                mode: InspectionMode::Inbound,
+            }));
+            return Err(e.context("Inbound TLS accept from client failed"));
+        }
+    };
 
-    // Re-encryption: nowe polaczenie TLS do serwera wewnetrznego.
-    // Uzywamy no-verify bo admin explicite skonfigurowal ten serwer.
     let server_tcp = TcpStream::connect(server_addr)
         .await
         .context("Failed to connect to internal server")?;
@@ -203,13 +231,31 @@ async fn handle_inbound_connection(
         .clone()
         .unwrap_or_else(|| server_addr.ip().to_string());
 
-    let server_tls = dual_session::connect_to_server(ConnectParams {
+    let server_tls = match dual_session::connect_to_server(ConnectParams {
         tcp_stream: server_tcp,
         client_config: re_encrypt_config,
         server_name: server_name.clone(),
     })
     .await
-    .context("Inbound TLS connect to internal server failed")?;
+    {
+        Ok(tls) => tls,
+        Err(e) => {
+            events::emit(events::Event::new(events::EventKind::TlsHandshakeFailed {
+                peer: peer_addr,
+                dst: server_addr,
+                sni: sni.clone(),
+                tls_version: negotiated_version_from_server(&client_tls).or_else(|| client_hello_version.clone()),
+                stage: HandshakeStage::ServerHandshake,
+                reason: describe_handshake_error(&e),
+                mode: InspectionMode::Inbound,
+            }));
+            return Err(e.context("Inbound TLS connect to internal server failed"));
+        }
+    };
+
+    let negotiated = negotiated_version_from_client(&server_tls)
+        .or_else(|| negotiated_version_from_server(&client_tls))
+        .or_else(|| client_hello_version.clone());
 
     let alpn = server_tls
         .get_ref()
@@ -230,6 +276,7 @@ async fn handle_inbound_connection(
             server: server_addr,
             sni: sni.clone(),
             alpn,
+            tls_version: negotiated,
         },
     ));
 
@@ -264,6 +311,7 @@ async fn handle_outbound_connection(
     peer_addr: SocketAddr,
     original_dst: SocketAddr,
     sni: Option<String>,
+    client_hello_version: Option<String>,
     client_config: Arc<ClientConfig>,
     cert_forger: Arc<CertForger>,
     untrust_forger: Arc<CertForger>,
@@ -278,6 +326,7 @@ async fn handle_outbound_connection(
         peer: peer_addr,
         dst: original_dst,
         sni: sni.clone(),
+        tls_version: client_hello_version.clone(),
     }));
 
     let server_tcp = TcpStream::connect(original_dst)
@@ -287,18 +336,34 @@ async fn handle_outbound_connection(
     let (recording_config, trusted_flag) = rustls_config::build_client_config_recording()
         .context("Failed to build recording client config")?;
 
-    let server_tls = dual_session::connect_to_server(ConnectParams {
+    let server_tls = match dual_session::connect_to_server(ConnectParams {
         tcp_stream: server_tcp,
         client_config: recording_config,
         server_name: domain.clone(),
     })
     .await
-    .context("TLS handshake with destination server failed")?;
+    {
+        Ok(tls) => tls,
+        Err(e) => {
+            events::emit(events::Event::new(events::EventKind::TlsHandshakeFailed {
+                peer: peer_addr,
+                dst: original_dst,
+                sni: sni.clone(),
+                tls_version: client_hello_version.clone(),
+                stage: HandshakeStage::ServerHandshake,
+                reason: describe_handshake_error(&e),
+                mode: InspectionMode::Outbound,
+            }));
+            return Err(e.context("TLS handshake with destination server failed"));
+        }
+    };
 
     let server_trusted = trusted_flag.load(std::sync::atomic::Ordering::Acquire);
     let extra_sans = dual_session::extract_peer_sans(&server_tls);
 
     let active_forger = if server_trusted { &cert_forger } else { &untrust_forger };
+
+    let upstream_version = negotiated_version_from_client(&server_tls);
 
     if !server_trusted {
         tracing::warn!(
@@ -310,6 +375,7 @@ async fn handle_outbound_connection(
             dst: original_dst,
             sni: sni.clone(),
             domain: domain.clone(),
+            tls_version: upstream_version.clone().or_else(|| client_hello_version.clone()),
         }));
     }
 
@@ -332,6 +398,7 @@ async fn handle_outbound_connection(
     {
         Ok(tls) => tls,
         Err(e) => {
+            let version_for_event = upstream_version.clone().or_else(|| client_hello_version.clone());
             if let Some(reason) = classify_pinning_failure(&e) {
                 let activated = engine.report_pinning_failure(peer_addr.ip(), &domain, reason);
                 if activated {
@@ -347,12 +414,26 @@ async fn handle_outbound_connection(
                         peer: peer_addr,
                         dst: original_dst,
                         sni: domain.clone(),
+                        tls_version: version_for_event.clone(),
                     }));
                 }
             }
+            events::emit(events::Event::new(events::EventKind::TlsHandshakeFailed {
+                peer: peer_addr,
+                dst: original_dst,
+                sni: sni.clone(),
+                tls_version: version_for_event,
+                stage: HandshakeStage::ClientFinished,
+                reason: describe_handshake_error(&e),
+                mode: InspectionMode::Outbound,
+            }));
             return Err(e).context("TLS accept from client failed");
         }
     };
+
+    let negotiated = negotiated_version_from_server(&client_tls)
+        .or(upstream_version)
+        .or_else(|| client_hello_version.clone());
 
     let alpn = server_tls
         .get_ref()
@@ -374,6 +455,7 @@ async fn handle_outbound_connection(
             dst: original_dst,
             sni: sni.clone(),
             alpn,
+            tls_version: negotiated,
         },
     ));
 
@@ -402,12 +484,52 @@ async fn handle_outbound_connection(
     Ok(())
 }
 
-// Wyodrebnia SNI z ClientHello przez peek (bez konsumowania danych).
-async fn peek_sni(stream: &TcpStream) -> Option<String> {
+struct PeekedClientHello {
+    sni: Option<String>,
+    client_hello_version: Option<String>,
+    ech_detected: bool,
+}
+
+async fn peek_client_hello(stream: &TcpStream) -> PeekedClientHello {
     let mut buf = [0u8; SNI_PEEK_BUF_SIZE];
-    let n = stream.peek(&mut buf).await.ok()?;
-    let result = parse_tls_client_hello(&buf[..n])?;
-    result.sni
+    let Ok(n) = stream.peek(&mut buf).await else {
+        return PeekedClientHello { sni: None, client_hello_version: None, ech_detected: false };
+    };
+    let Some(result) = parse_tls_client_hello(&buf[..n]) else {
+        return PeekedClientHello { sni: None, client_hello_version: None, ech_detected: false };
+    };
+    PeekedClientHello {
+        sni: result.sni,
+        client_hello_version: Some(events::format_tls_version(result.version)),
+        ech_detected: result.ech_detected,
+    }
+}
+
+fn negotiated_version_from_client(stream: &ClientTlsStream<TcpStream>) -> Option<String> {
+    stream.get_ref().1.protocol_version().map(protocol_version_string)
+}
+
+fn negotiated_version_from_server(stream: &ServerTlsStream<TcpStream>) -> Option<String> {
+    stream.get_ref().1.protocol_version().map(protocol_version_string)
+}
+
+fn protocol_version_string(version: ProtocolVersion) -> String {
+    events::format_tls_version(u16::from(version))
+}
+
+fn describe_handshake_error(err: &anyhow::Error) -> String {
+    if let Some(rustls_err) = err.downcast_ref::<rustls::Error>() {
+        return format!("rustls: {rustls_err}");
+    }
+    if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+        if let Some(inner) = io_err.get_ref() {
+            if let Some(rustls_err) = inner.downcast_ref::<rustls::Error>() {
+                return format!("rustls: {rustls_err}");
+            }
+        }
+        return format!("io: {}", io_err.kind());
+    }
+    err.to_string()
 }
 
 /// Klasyfikuje błąd TLS jako potencjalny sygnał certificate pinningu.

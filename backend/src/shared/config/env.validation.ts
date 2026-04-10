@@ -28,6 +28,14 @@ const envSchema = z.object({
       return val;
     })
     .default([]),
+  OPENSEARCH_URL: z.string().url().optional(),
+  OPENSEARCH_USERNAME: z.string().optional(),
+  OPENSEARCH_PASSWORD: z.string().optional(),
+  OPENSEARCH_INDEX_PREFIX: z.string().default('raptorgate-fw-events'),
+  OPENSEARCH_INSECURE_TLS: z
+    .enum(['true', 'false', '1', '0'])
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
 });
 
 export type Env = z.infer<typeof envSchema>;
