@@ -1,55 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { writeFileSync } from 'node:fs';
+import { run, SSH_CONFIG_PATH, VAGRANT_DIR, VM_NAME, vagrant_ssh } from './ssh-helper';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '../..');
-const VAGRANT_DIR = path.resolve(REPO_ROOT, 'vagrant');
-const SSH_CONFIG_PATH = '/tmp/r1-ssh-config.txt';
-const VM_NAME = 'r1';
 const TUNNEL_REMOTE_SOCKET = '/resources/ngfw/sockets/event.sock';
 const TUNNEL_LOCAL_PORT = 50052;
-
 const POLL_INTERVAL_MS = 5_000;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function run(
-  cmd: string,
-  args: string[],
-  opts: { cwd?: string; stdin?: 'inherit'; timeout?: number } = {},
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  return new Promise((resolve, reject) => {
-    const timeout = opts.timeout ?? 30_000;
-    const proc = spawn(cmd, args, {
-      cwd: opts.cwd,
-      shell: false,
-      stdio: opts.stdin === 'inherit' ? ['inherit', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const settle = (value: { stdout: string; stderr: string; exitCode: number }) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(value);
-    };
-    const timer = setTimeout(() => {
-      proc.kill('SIGTERM');
-      settle({ stdout, stderr, exitCode: 1 });
-    }, timeout);
-    proc.stdout.on('data', (d) => { stdout += d; });
-    proc.stderr.on('data', (d) => { stderr += d; });
-    proc.on('error', (err) => { clearTimeout(timer); reject(err); });
-    proc.on('close', (code) => {
-      settle({ stdout, stderr, exitCode: code ?? 1 });
-    });
-  });
-}
 
 // ---------------------------------------------------------------------------
 // VM status
@@ -74,7 +28,10 @@ async function generateSshConfig(): Promise<boolean> {
     const { stdout, exitCode } = await run('vagrant', ['ssh-config', VM_NAME], { cwd: VAGRANT_DIR });
     if (exitCode !== 0 || !stdout.includes('Host ')) return false;
 
-    writeFileSync(SSH_CONFIG_PATH, stdout);
+    // Extract just the SSH config block (strip any progress/info lines from stderr)
+    const configStart = stdout.indexOf('Host ');
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(SSH_CONFIG_PATH, stdout.slice(configStart));
     return true;
   } catch {
     return false;
@@ -87,9 +44,8 @@ async function generateSshConfig(): Promise<boolean> {
 
 async function isNgfwActive(): Promise<boolean> {
   try {
-    // Use `vagrant ssh -c` (shorthand for -- <cmd>) — vagrant handles auth/keys itself
-    const { stdout, stderr, exitCode } = await run('vagrant', ['ssh', VM_NAME, '-c', 'systemctl is-active ngfw'], { cwd: VAGRANT_DIR });
-    return exitCode === 0 && stdout.trim() === 'active';
+    const { stdout } = await vagrant_ssh('systemctl is-active ngfw');
+    return stdout.trim() === 'active';
   } catch {
     return false;
   }
@@ -100,7 +56,7 @@ async function isNgfwActive(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 async function removeRemoteSocket(): Promise<void> {
-  await run('vagrant', ['ssh', VM_NAME, '-c', `rm -f ${TUNNEL_REMOTE_SOCKET}`], { cwd: VAGRANT_DIR });
+  await vagrant_ssh(`rm -f ${TUNNEL_REMOTE_SOCKET}`);
   console.log('[ssh-tunnel] Cleaned up stale remote socket');
 }
 
