@@ -15,25 +15,24 @@ use crate::proto::services::backend_event_service_client::BackendEventServiceCli
 const CHANNEL_CAPACITY: usize = 1024;
 const FLUSH_INTERVAL_MS: u64 = 500;
 const MAX_BATCH_SIZE: usize = 64;
+const OVERFLOW_CAPACITY: usize = 512;
+const RECONNECT_INTERVAL_SECS: u64 = 2;
 
 static EVENT_TX: OnceLock<mpsc::Sender<Event>> = OnceLock::new();
-static BACKEND_SINK: OnceLock<BackendEventSink> = OnceLock::new();
 static DROPPED_EVENTS: AtomicU64 = AtomicU64::new(0);
 
-pub struct BackendEventSink {
+struct BackendConnection {
     tx: mpsc::Sender<proto::Event>,
 }
 
-impl BackendEventSink {
-    pub async fn forward(&self, event: proto::Event) {
-        if self.tx.send(event).await.is_err() {
-            DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!("backend event sink closed, event dropped");
-        }
+impl BackendConnection {
+    /// Returns false if the gRPC task has died (receiver dropped).
+    async fn send(&self, event: proto::Event) -> bool {
+        self.tx.send(event).await.is_ok()
     }
 }
 
-async fn try_connect(socket_path: &str) -> Result<BackendEventSink, tonic::transport::Error> {
+async fn try_connect(socket_path: &str) -> Result<BackendConnection, tonic::transport::Error> {
     let socket_path = socket_path.to_owned();
 
     let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
@@ -51,27 +50,13 @@ async fn try_connect(socket_path: &str) -> Result<BackendEventSink, tonic::trans
 
     tokio::spawn(async move {
         if let Err(e) = client.push_events(ReceiverStream::new(rx)).await {
-            tracing::warn!(error = %e, "BackendEventService stream closed");
+            tracing::warn!(error = %e, "BackendEventService stream ended");
         }
+        // when this task returns, `rx` is dropped → `tx.send()` will fail
+        // → the event loop detects it and sets backend = None
     });
 
-    Ok(BackendEventSink { tx })
-}
-
-pub async fn maintain_backend_connection(socket_path: String) {
-    loop {
-        match try_connect(&socket_path).await {
-            Ok(sink) => {
-                tracing::info!("connected to backend");
-                BACKEND_SINK.set(sink).unwrap_or_else(|_| panic!("backend sink already set"));
-                return;
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "could not connect to backend, retrying...");
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-        }
-    }
+    Ok(BackendConnection { tx })
 }
 
 pub fn emit(event: Event) {
@@ -82,45 +67,92 @@ pub fn emit(event: Event) {
         }
 }
 
-pub async fn init_event_queue() {
+pub async fn init_event_system(socket_path: String) {
     let (tx, mut rx) = mpsc::channel::<Event>(CHANNEL_CAPACITY);
     EVENT_TX.set(tx).unwrap_or_else(|_| panic!("event queue already initialised"));
 
+    let mut backend: Option<BackendConnection> = None;
     let mut buffer: Vec<Event> = Vec::new();
     let mut flush_tick = interval(Duration::from_millis(FLUSH_INTERVAL_MS));
+    let mut reconnect_interval = interval(Duration::from_secs(RECONNECT_INTERVAL_SECS));
+
+    // Skip the first tick immediately
+    reconnect_interval.tick().await;
 
     loop {
         select! {
             Some(event) = rx.recv() => {
-                if event.kind.is_immediate() {
-                    flush_batch(&mut buffer).await;
-                    dispatch(event).await;
-                } else {
-                    buffer.push(event);
-                    if buffer.len() >= MAX_BATCH_SIZE {
-                        flush_batch(&mut buffer).await;
-                    }
-                }
+                handle_incoming(event, &mut buffer, &mut backend).await;
             }
-            _ = flush_tick.tick() => flush_batch(&mut buffer).await,
+            _ = flush_tick.tick() => {
+                flush_batch(&mut buffer, &mut backend).await;
+            }
+            _ = reconnect_interval.tick(), if backend.is_none() => {
+                attempt_reconnect(&socket_path, &mut backend, &mut buffer).await;
+            }
         }
     }
 }
 
-async fn flush_batch(buffer: &mut Vec<Event>) {
-    if buffer.is_empty() { return; }
-    for event in buffer.drain(..) {
-        dispatch(event).await;
+async fn handle_incoming(event: Event, buffer: &mut Vec<Event>, backend: &mut Option<BackendConnection>) {
+    if backend.is_none() {
+        // When disconnected, accumulate events up to OVERFLOW_CAPACITY
+        if buffer.len() < OVERFLOW_CAPACITY {
+            buffer.push(event);
+        } else {
+            DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!("overflow buffer full, event dropped");
+        }
+        return;
+    }
+
+    if event.kind.is_immediate() {
+        flush_batch(buffer, backend).await;
+        dispatch(event, backend).await;
+    } else {
+        buffer.push(event);
+        if buffer.len() >= MAX_BATCH_SIZE {
+            flush_batch(buffer, backend).await;
+        }
     }
 }
 
-async fn dispatch(event: Event) {
-    tracing::debug!(kind = ?event.kind, "event dispatched");
-    match BACKEND_SINK.get() {
-        Some(sink) => sink.forward(event.into()).await,
+async fn flush_batch(buffer: &mut Vec<Event>, backend: &mut Option<BackendConnection>) {
+    if buffer.is_empty() || backend.is_none() { return; }
+    for event in buffer.drain(..) {
+        dispatch(event, backend).await;
+    }
+}
+
+async fn dispatch(event: Event, backend: &mut Option<BackendConnection>) {
+    match backend {
+        Some(conn) => {
+            if !conn.send(event.into()).await {
+                tracing::warn!("backend connection lost, will reconnect");
+                *backend = None;
+                DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
         None => {
             DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!(kind = ?event.kind, "no backend sink, event dropped");
+            tracing::warn!(kind = ?event.kind, "no backend connection, event dropped");
+        }
+    }
+}
+
+async fn attempt_reconnect(
+    socket_path: &str,
+    backend: &mut Option<BackendConnection>,
+    buffer: &mut Vec<Event>,
+) {
+    match try_connect(socket_path).await {
+        Ok(conn) => {
+            tracing::info!("reconnected to backend");
+            *backend = Some(conn);
+            flush_batch(buffer, backend).await;
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, "reconnect attempt failed");
         }
     }
 }

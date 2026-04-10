@@ -18,7 +18,6 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use etherparse::NetSlice;
-use crate::events::maintain_backend_connection;
 use tokio::sync::Mutex;
 use ipnet::IpNet;
 use tracing::trace;
@@ -91,8 +90,7 @@ async fn main() {
     config_provider.register(Arc::clone(&zones), "ZoneProvider").await;
     config_provider.register(Arc::clone(&zone_pairs), "ZonePairProvider").await;
 
-    tokio::spawn(events::init_event_queue());
-    tokio::spawn(maintain_backend_connection(config.event_socket_path.clone()));
+    tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
     
     let nat_engine = build_test_nat();
 
