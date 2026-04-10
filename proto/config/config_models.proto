@@ -254,6 +254,57 @@ message DnsInspectionConfig {
   DnsInspectionDnssecConfig       dnssec        = 4;
 }
 
+// ── IPS ─────────────────────────────────────────────────────────────────────
+
+enum IpsAction {
+  IPS_ACTION_UNSPECIFIED = 0;
+  IPS_ACTION_ALERT       = 1;
+  IPS_ACTION_BLOCK       = 2;
+}
+
+enum IpsAppProtocol {
+  IPS_APP_PROTOCOL_UNSPECIFIED = 0;
+  IPS_APP_PROTOCOL_HTTP        = 1;
+  IPS_APP_PROTOCOL_TLS         = 2;
+  IPS_APP_PROTOCOL_DNS         = 3;
+  IPS_APP_PROTOCOL_SSH         = 4;
+  IPS_APP_PROTOCOL_FTP         = 5;
+  IPS_APP_PROTOCOL_SMTP        = 6;
+  IPS_APP_PROTOCOL_RDP         = 7;
+  IPS_APP_PROTOCOL_SMB         = 8;
+  IPS_APP_PROTOCOL_QUIC        = 9;
+  IPS_APP_PROTOCOL_UNKNOWN     = 10;
+}
+
+message IpsGeneralConfig {
+  bool enabled = 1;
+}
+
+message IpsDetectionConfig {
+  bool   enabled                = 1;
+  uint32 max_payload_bytes      = 2;
+  uint32 max_matches_per_packet = 3;
+}
+
+message IpsSignatureConfig {
+  string              id            = 1;
+  string              name          = 2;
+  bool                enabled       = 3;
+  string              category      = 4;
+  string              pattern       = 5;
+  common.Severity     severity      = 6;
+  IpsAction           action        = 7;
+  repeated IpsAppProtocol app_protocols = 8;
+  repeated uint32     src_ports     = 9;
+  repeated uint32     dst_ports     = 10;
+}
+
+message IpsConfig {
+  IpsGeneralConfig      general    = 1;
+  IpsDetectionConfig    detection  = 2;
+  repeated IpsSignatureConfig signatures = 3;
+}
+
 // ── AppConfig — runtime-swappable firewall configuration ─────────────────────
 
 message AppConfig {

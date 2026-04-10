@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::net::IpAddr;
+use std::sync::Arc;
 
 use etherparse::NetSlice;
 use tokio::sync::Mutex;
@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use crate::{
     data_plane::{
         dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection},
+        ips::ips::{Ips, IpsVerdict},
         nat::NatEngine,
         packet_context::PacketContext,
         tcp_session_tracker::TcpSessionTracker,
@@ -18,10 +19,10 @@ use crate::{
     rule_tree::{ArrivalInfo, Verdict},
 };
 
-use crate::dpi::AppProto;
-use crate::policy::policy_evaluator::DnsEvalContext;
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
+use crate::dpi::AppProto;
+use crate::policy::policy_evaluator::DnsEvalContext;
 
 #[derive(Clone)]
 pub struct ValidationStage;
@@ -251,6 +252,38 @@ impl Stage for DnsTunnelingStage {
     }
 }
 
+#[derive(Clone)]
+pub struct IpsStage {
+    pub inspection: Arc<Ips>,
+}
+
+impl Stage for IpsStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        use etherparse::TransportSlice;
+
+        matches!(
+            &ctx.borrow_sliced_packet().transport,
+            Some(TransportSlice::Tcp(_) | TransportSlice::Udp(_))
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        match self.inspection.inspect_packet(ctx) {
+            IpsVerdict::Allow => StageOutcome::Continue,
+            IpsVerdict::Alert(msg) => {
+                tracing::debug!(reason = %msg, "IPS alert");
+                ctx.with_warnings_mut(|warnings| warnings.push(msg));
+                StageOutcome::Continue
+            }
+            IpsVerdict::Block(msg) => {
+                tracing::debug!(reason = %msg, "IPS block");
+                ctx.with_warnings_mut(|warnings| warnings.push(msg));
+                StageOutcome::Halt
+            }
+        }
+    }
+}
+
 /// Stage ewaluacji polityk.
 ///
 /// Opcjonalnie przyjmuje dostawcę DNSSEC (`dnssec`) — jeśli jest obecny,
@@ -269,27 +302,25 @@ impl Stage for PolicyEvalStage {
 
         // Wyznacz status DNSSEC dla pakietów DNS (leniwie, przez spawn_blocking).
         let dnssec_status = if let Some(provider) = &self.dnssec {
-            let is_dns = ctx.borrow_dpi_ctx()
+            let is_dns = ctx
+                .borrow_dpi_ctx()
                 .as_ref()
                 .map_or(false, |d| d.app_proto == Some(AppProto::Dns));
 
             if is_dns {
-                let domain = ctx.borrow_dpi_ctx()
+                let domain = ctx
+                    .borrow_dpi_ctx()
                     .as_ref()
                     .and_then(|d| d.dns_query_name.clone());
-                let qtype = ctx.borrow_dpi_ctx()
-                    .as_ref()
-                    .and_then(|d| d.dns_query_type);
+                let qtype = ctx.borrow_dpi_ctx().as_ref().and_then(|d| d.dns_query_type);
 
                 if let Some(domain) = domain {
                     let p = Arc::clone(provider);
-                    tokio::task::spawn_blocking(move || {
-                        p.check_domain(&domain, qtype).status
-                    })
-                    .await
-                    .ok()
-                    .map(Some)
-                    .unwrap_or(None)
+                    tokio::task::spawn_blocking(move || p.check_domain(&domain, qtype).status)
+                        .await
+                        .ok()
+                        .map(Some)
+                        .unwrap_or(None)
                 } else {
                     None
                 }
@@ -304,9 +335,11 @@ impl Stage for PolicyEvalStage {
             dnssec_status: Some(status),
         });
 
-        let verdict = self.provider
-            .get_evaluator()
-            .evaluate(ctx.borrow_sliced_packet(), &arrival, dns_ctx.as_ref());
+        let verdict = self.provider.get_evaluator().evaluate(
+            ctx.borrow_sliced_packet(),
+            &arrival,
+            dns_ctx.as_ref(),
+        );
 
         match verdict {
             Verdict::Allow => StageOutcome::Continue,

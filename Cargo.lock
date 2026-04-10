@@ -875,6 +875,7 @@ dependencies = [
  "protoc-bin-vendored",
  "rcgen",
  "redb",
+ "regex",
  "ring",
  "ringbuffer",
  "rustc-hash",

@@ -24,6 +24,8 @@ service FirewallQueryService {
 
   rpc SwapDnsInspectionConfig (SwapDnsInspectionConfigRequest) returns (SwapDnsInspectionConfigResponse);
   rpc GetDnsInspectionConfig  (GetDnsInspectionConfigRequest)  returns (GetDnsInspectionConfigResponse);
+  rpc SwapIpsConfig           (SwapIpsConfigRequest)           returns (SwapIpsConfigResponse);
+  rpc GetIpsConfig            (GetIpsConfigRequest)            returns (GetIpsConfigResponse);
 }
 
 message GetTcpSessionsRequest {}
@@ -121,4 +123,18 @@ message GetDnsInspectionConfigRequest {}
 
 message GetDnsInspectionConfigResponse {
   config.DnsInspectionConfig config = 1;
+}
+
+// ── IPS Config ───────────────────────────────────────────────────────────────
+
+message SwapIpsConfigRequest {
+  config.IpsConfig config = 1;
+}
+
+message SwapIpsConfigResponse {}
+
+message GetIpsConfigRequest {}
+
+message GetIpsConfigResponse {
+  config.IpsConfig config = 1;
 }
