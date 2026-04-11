@@ -3,10 +3,18 @@ syntax = "proto3";
 package raptorgate.events;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 
 message Event {
   google.protobuf.Timestamp emitted_at = 1;
   EventKind kind = 2;
+}
+
+message TunDeviceSwappedEvent {
+  string old_device = 1;
+  string new_device = 2;
+  string old_address = 3;
+  string new_address = 4;
 }
 
 message EventKind {
@@ -15,27 +23,36 @@ message EventKind {
     TcpSessionRemovedEvent         tcp_session_removed      = 2;
     TcpConnectionRejectedEvent     tcp_connection_rejected  = 3;
     TcpSessionAbortedMidCloseEvent tcp_session_aborted      = 4;
-    TlsInterceptStartedEvent      tls_intercept_started     = 5;
-    TlsHandshakeCompleteEvent      tls_handshake_complete    = 6;
-    TlsSessionClosedEvent         tls_session_closed        = 7;
-    InboundTlsInterceptStartedEvent   inbound_tls_intercept_started   = 8;
-    InboundTlsHandshakeCompleteEvent  inbound_tls_handshake_complete  = 9;
-    InboundTlsSessionClosedEvent      inbound_tls_session_closed      = 10;
-    DecryptedTrafficClassifiedEvent   decrypted_traffic_classified    = 11;
-    DecryptedIpsMatchEvent            decrypted_ips_match             = 12;
-    TlsUntrustedCertDetectedEvent     tls_untrusted_cert_detected     = 13;
-    TlsBypassAppliedEvent             tls_bypass_applied              = 14;
-    InboundTlsBypassAppliedEvent      inbound_tls_bypass_applied      = 15;
-    PinningFailureDetectedEvent       pinning_failure_detected        = 16;
-    PinningAutoBypassActivatedEvent   pinning_auto_bypass_activated   = 17;
-    TlsHandshakeFailedEvent           tls_handshake_failed            = 18;
-    EchAttemptDetectedEvent           ech_attempt_detected            = 19;
+    TunDeviceSwappedEvent          tun_device_swapped       = 5;
+    SnifferConfigChangedEvent      sniffer_config_changed   = 6;
+    TlsInterceptStartedEvent          tls_intercept_started           = 7;
+    TlsHandshakeCompleteEvent         tls_handshake_complete          = 8;
+    TlsSessionClosedEvent             tls_session_closed              = 9;
+    InboundTlsInterceptStartedEvent   inbound_tls_intercept_started   = 10;
+    InboundTlsHandshakeCompleteEvent  inbound_tls_handshake_complete  = 11;
+    InboundTlsSessionClosedEvent      inbound_tls_session_closed      = 12;
+    DecryptedTrafficClassifiedEvent   decrypted_traffic_classified    = 13;
+    DecryptedIpsMatchEvent            decrypted_ips_match             = 14;
+    TlsUntrustedCertDetectedEvent     tls_untrusted_cert_detected     = 15;
+    TlsBypassAppliedEvent             tls_bypass_applied              = 16;
+    InboundTlsBypassAppliedEvent      inbound_tls_bypass_applied      = 17;
+    PinningFailureDetectedEvent       pinning_failure_detected        = 18;
+    PinningAutoBypassActivatedEvent   pinning_auto_bypass_activated   = 19;
+    TlsHandshakeFailedEvent           tls_handshake_failed            = 20;
+    EchAttemptDetectedEvent           ech_attempt_detected            = 21;
   }
 }
 
 message TcpEndpoint {
   string ip   = 1;
   uint32 port = 2;
+}
+
+message SnifferConfigChangedEvent {
+  repeated string old_interfaces = 1;
+  repeated string new_interfaces = 2;
+  google.protobuf.Duration old_timeout = 3;
+  google.protobuf.Duration new_timeout = 4;
 }
 
 message TcpSessionEstablishedEvent {
@@ -78,68 +95,68 @@ message TlsHandshakeCompleteEvent {
 }
 
 message TlsSessionClosedEvent {
-  string peer_ip   = 1;
-  uint32 peer_port = 2;
-  string dst_ip    = 3;
-  uint32 dst_port  = 4;
-  string sni       = 5;
-  uint64 bytes_up  = 6;
+  string peer_ip    = 1;
+  uint32 peer_port  = 2;
+  string dst_ip     = 3;
+  uint32 dst_port   = 4;
+  string sni        = 5;
+  uint64 bytes_up   = 6;
   uint64 bytes_down = 7;
 }
 
 message InboundTlsInterceptStartedEvent {
-  string peer_ip       = 1;
-  uint32 peer_port     = 2;
-  string server_ip     = 3;
-  uint32 server_port   = 4;
-  string sni           = 5;
-  string common_name   = 6;
-  string tls_version   = 7;
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string server_ip   = 3;
+  uint32 server_port = 4;
+  string sni         = 5;
+  string common_name = 6;
+  string tls_version = 7;
 }
 
 message InboundTlsHandshakeCompleteEvent {
-  string peer_ip       = 1;
-  uint32 peer_port     = 2;
-  string server_ip     = 3;
-  uint32 server_port   = 4;
-  string sni           = 5;
-  string alpn          = 6;
-  string tls_version   = 7;
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string server_ip   = 3;
+  uint32 server_port = 4;
+  string sni         = 5;
+  string alpn        = 6;
+  string tls_version = 7;
 }
 
 message InboundTlsSessionClosedEvent {
-  string peer_ip       = 1;
-  uint32 peer_port     = 2;
-  string server_ip     = 3;
-  uint32 server_port   = 4;
-  string sni           = 5;
-  uint64 bytes_up      = 6;
-  uint64 bytes_down    = 7;
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string server_ip   = 3;
+  uint32 server_port = 4;
+  string sni         = 5;
+  uint64 bytes_up    = 6;
+  uint64 bytes_down  = 7;
 }
 
 message DecryptedTrafficClassifiedEvent {
-  string peer_ip       = 1;
-  uint32 peer_port     = 2;
-  string server_ip     = 3;
-  uint32 server_port   = 4;
-  string sni           = 5;
-  string app_proto     = 6;
-  string direction     = 7;
-  string mode          = 8;
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string server_ip   = 3;
+  uint32 server_port = 4;
+  string sni         = 5;
+  string app_proto   = 6;
+  string direction   = 7;
+  string mode        = 8;
 }
 
 message DecryptedIpsMatchEvent {
-  string peer_ip         = 1;
-  uint32 peer_port       = 2;
-  string server_ip       = 3;
-  uint32 server_port     = 4;
-  string sni             = 5;
-  string signature_name  = 6;
-  string severity        = 7;
-  bool   blocked         = 8;
-  string direction       = 9;
-  string mode            = 10;
-  string log_id          = 11;
+  string peer_ip        = 1;
+  uint32 peer_port      = 2;
+  string server_ip      = 3;
+  uint32 server_port    = 4;
+  string sni            = 5;
+  string signature_name = 6;
+  string severity       = 7;
+  bool   blocked        = 8;
+  string direction      = 9;
+  string mode           = 10;
+  string log_id         = 11;
 }
 
 message TlsUntrustedCertDetectedEvent {
@@ -163,12 +180,12 @@ message TlsBypassAppliedEvent {
 }
 
 message InboundTlsBypassAppliedEvent {
-  string peer_ip       = 1;
-  uint32 peer_port     = 2;
-  string server_ip     = 3;
-  uint32 server_port   = 4;
-  string sni           = 5;
-  string tls_version   = 6;
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string server_ip   = 3;
+  uint32 server_port = 4;
+  string sni         = 5;
+  string tls_version = 6;
 }
 
 message PinningFailureDetectedEvent {
@@ -181,9 +198,9 @@ message PinningFailureDetectedEvent {
 }
 
 message PinningAutoBypassActivatedEvent {
-  string source_ip  = 1;
-  string domain     = 2;
-  string reason     = 3;
+  string source_ip = 1;
+  string domain    = 2;
+  string reason    = 3;
 }
 
 message TlsHandshakeFailedEvent {

@@ -1,0 +1,13 @@
+{
+  "items": [
+    {
+      "id": "019d57d5-52e5-7cc1-83bd-42998c6c6bb4",
+      "name": "test_loaded_config",
+      "zone_pair_id": "019d57d5-52e5-7cc1-83bd-42a305608a8c",
+      "priority": 0,
+      "rule_tree": {
+        "head": "match ip_ver {\n\t= v4: \n\t\tmatch protocol {\n\t\t\t|(= icmp = tcp): verdict allow\n\t\t}\n\t= v6: verdict drop\n}\n"
+      }
+    }
+  ]
+}

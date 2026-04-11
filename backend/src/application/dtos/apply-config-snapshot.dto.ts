@@ -1,6 +1,6 @@
 export class ApplyConfigSnapshotDto {
-  snapshotType: string;
-  isActive: boolean;
-  changeSummary: string | null;
-  accessToken: string;
+	snapshotType: string;
+	isActive: boolean;
+	changeSummary: string | null;
+	accessToken: string;
 }

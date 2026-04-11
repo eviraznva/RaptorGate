@@ -1,7 +1,9 @@
-import { ZonePairItemResponseDto } from '../dtos/zone-pair-item-response.dto';
-import { ZonePair } from '../../domain/entities/zone-pair.entity.js';
+import { ZonePair } from "src/domain/entities/zone-pair.entity";
+import { ZonePairItemResponseDto } from "../dtos/zone-pair-item-response.dto";
 
 export class ZonePairResponseMapper {
+  constructor() {}
+
   static toDto(zonePair: ZonePair): ZonePairItemResponseDto {
     return {
       id: zonePair.getId(),

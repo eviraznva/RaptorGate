@@ -1,15 +1,15 @@
-import { AtLeastOneFieldRequiredException } from '../../domain/exceptions/at-least-one-field-required.exception.js';
+import { Inject, Injectable } from "@nestjs/common";
+import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
+import { AtLeastOneFieldRequiredException } from "../../domain/exceptions/at-least-one-field-required.exception.js";
+import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
 import {
-  ZONE_REPOSITORY_TOKEN,
   type IZoneRepository,
-} from '../../domain/repositories/zone.repository.js';
-import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
-import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
-import type { ITokenService } from '../ports/token-service.interface.js';
-import { EditZoneResponseDto } from '../dtos/edit-zone-response.dto.js';
-import { EditZoneDto } from '../dtos/edit-zone.dto.js';
-import { Inject, Injectable } from '@nestjs/common';
+  ZONE_REPOSITORY_TOKEN,
+} from "../../domain/repositories/zone.repository.js";
+import type { EditZoneDto } from "../dtos/edit-zone.dto.js";
+import type { EditZoneResponseDto } from "../dtos/edit-zone-response.dto.js";
+import type { ITokenService } from "../ports/token-service.interface.js";
+import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
 @Injectable()
 export class EditZoneUseCase {
@@ -30,7 +30,7 @@ export class EditZoneUseCase {
     if (!claims) throw new AccessTokenIsInvalidException();
 
     const zone = await this.zoneRepository.findById(dto.id);
-    if (!zone) throw new EntityNotFoundException('zone', dto.id);
+    if (!zone) throw new EntityNotFoundException("zone", dto.id);
 
     if (dto.name !== undefined) zone.setName(dto.name);
     if (dto.description !== undefined) zone.setDescription(dto.description);

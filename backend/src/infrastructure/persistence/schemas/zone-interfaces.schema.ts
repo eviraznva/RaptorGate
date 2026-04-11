@@ -1,18 +1,18 @@
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
-import { z } from 'zod';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from "./_common.js";
+import { z } from "zod";
 
 export const ZoneInterfaceRecordSchema = z
-  .object({
-    id: uuidSchema,
-    zoneId: uuidSchema,
-    interfaceName: z.string().min(1).max(64),
-    vlanId: z.number().int(),
-    createdAt: isoDateTimeSchema,
-  })
-  .strict();
+	.object({
+		id: uuidSchema,
+		zoneId: uuidSchema,
+		interfaceName: z.string().min(1).max(64),
+		vlanId: z.number().int(),
+		createdAt: isoDateTimeSchema,
+	})
+	.strict();
 
 export const ZoneInterfacesFileSchema = tableFileSchema(
-  ZoneInterfaceRecordSchema,
+	ZoneInterfaceRecordSchema,
 );
 
 export type ZoneInterfaceRecord = z.infer<typeof ZoneInterfaceRecordSchema>;

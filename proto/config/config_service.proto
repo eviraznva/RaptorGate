@@ -73,5 +73,4 @@ message ConfigResponse {
   optional MlModel               ml_model              = 14;
   optional FirewallCertificateSet firewall_certificates = 15;
   optional IdentityBundle        identity              = 16;
-  optional EchMitigationPolicy   ech_mitigation        = 17;
 }

@@ -1,5 +1,5 @@
-import { ZonePairItemResponseDto } from './zone-pair-item-response.dto';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty } from "@nestjs/swagger";
+import { ZonePairItemResponseDto } from "./zone-pair-item-response.dto";
 
 export class GetAllZonePairsResponseDto {
   @ApiProperty({
