@@ -1,17 +1,49 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync, readFileSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(__dirname, '../..');
 export const VAGRANT_DIR = path.resolve(REPO_ROOT, 'vagrant');
-export const SSH_CONFIG_PATH = '/tmp/r1-ssh-config.txt';
-export const VM_NAME = 'r1';
 
-// ---------------------------------------------------------------------------
-// Internal runner
-// ---------------------------------------------------------------------------
+export const KNOWN_HOSTS = ['h1', 'h2', 'r1', 'ldap', 'radius'] as const;
+export type KnownHost = (typeof KNOWN_HOSTS)[number];
+
+export function sshConfigPath(host: KnownHost): string {
+  return `/tmp/${host}-ssh-config.txt`;
+}
+
+// Backward-compatible aliases for ssh-tunnel.ts (r1-specific)
+export const VM_NAME: KnownHost = 'r1';
+export const SSH_CONFIG_PATH = `/tmp/${VM_NAME}-ssh-config.txt`;
+
+function isVmRunning(vmName: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    run('vagrant', ['status', vmName], { cwd: VAGRANT_DIR })
+      .then(({ stdout, exitCode }) => {
+        if (exitCode !== 0) { resolve(false); return; }
+        resolve(/^.*running\s+\(libvirt\)/m.test(stdout));
+      })
+      .catch(() => resolve(false));
+  });
+}
+
+async function ensureSshConfig(host: KnownHost): Promise<string> {
+  const configPath = sshConfigPath(host);
+  if (existsSync(configPath)) {
+    return configPath;
+  }
+  const { stdout, exitCode } = await run('vagrant', ['ssh-config', host], {
+    cwd: VAGRANT_DIR,
+  });
+  if (exitCode !== 0 || !stdout.includes('Host ')) {
+    throw new Error(`Failed to generate SSH config for ${host}`);
+  }
+  const configStart = stdout.indexOf('Host ');
+  writeFileSync(configPath, stdout.slice(configStart));
+  return configPath;
+}
 
 function run(
   cmd: string,
@@ -47,17 +79,24 @@ function run(
   });
 }
 
-// Expose run() for callers that need raw commands (e.g. vagrant status, vagrant ssh-config)
 export { run };
-
-// ---------------------------------------------------------------------------
-// vagrant ssh wrapper
-// ---------------------------------------------------------------------------
 
 export async function vagrant_ssh(
   command: string,
+): Promise<{ stdout: string; stderr: string }>;
+export async function vagrant_ssh(
+  host: KnownHost,
+  command: string,
+): Promise<{ stdout: string; stderr: string }>;
+export async function vagrant_ssh(
+  hostOrCommand: KnownHost | string,
+  command?: string,
 ): Promise<{ stdout: string; stderr: string }> {
-  const { stdout, stderr, exitCode } = await run('vagrant', ['ssh', VM_NAME, '-c', command], {
+  const host: KnownHost = KNOWN_HOSTS.includes(hostOrCommand as KnownHost)
+    ? (hostOrCommand as KnownHost)
+    : VM_NAME;
+  const cmd = command ?? hostOrCommand;
+  const { stdout, stderr, exitCode } = await run('vagrant', ['ssh', host, '-c', cmd], {
     cwd: VAGRANT_DIR,
   });
   if (exitCode !== 0) {
@@ -66,26 +105,47 @@ export async function vagrant_ssh(
   return { stdout, stderr };
 }
 
-// ---------------------------------------------------------------------------
-// ssh wrapper (uses pre-generated config)
-// ---------------------------------------------------------------------------
-
 export async function ssh(
+  host: KnownHost,
   command: string,
-): Promise<{ stdout: string; stderr: string }> {
-  if (!existsSync(SSH_CONFIG_PATH)) {
-    throw new Error(`SSH config not found at ${SSH_CONFIG_PATH}. Run vagrant ssh-config first.`);
-  }
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const configPath = await ensureSshConfig(host);
 
   const { stdout, stderr, exitCode } = await run('ssh', [
-    '-F', SSH_CONFIG_PATH,
+    '-F', configPath,
     '-o', 'BatchMode=yes',
     '-o', 'ConnectTimeout=10',
-    VM_NAME,
+    host,
     command,
   ]);
   if (exitCode !== 0) {
-    throw new Error(`ssh failed (exit ${exitCode}):\n${stderr || stdout}`);
+    throw new Error(`ssh failed on ${host} (exit ${exitCode}):\n${stderr || stdout}`);
   }
-  return { stdout, stderr };
+  return { stdout, stderr, exitCode };
+}
+
+export async function sshWithResult(
+  host: KnownHost,
+  command: string,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const configPath = await ensureSshConfig(host);
+
+  const { stdout, stderr, exitCode } = await run('ssh', [
+    '-F', configPath,
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=10',
+    host,
+    command,
+  ]);
+  return { stdout, stderr, exitCode };
+}
+
+export async function waitForHost(host: KnownHost, timeoutMs = 30_000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const running = await isVmRunning(host);
+    if (running) return;
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  throw new Error(`Timed out waiting for ${host} to be running`);
 }

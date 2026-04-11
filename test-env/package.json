@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "start": "bun run index.ts",
-    "generate": "bun run scripts/generate-proto.ts"
+    "generate": "bun run scripts/generate-proto.ts",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -16,6 +17,7 @@
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.3",
-    "@grpc/proto-loader": "^0.8.0"
+    "@grpc/proto-loader": "^0.8.0",
+    "ts-pattern": "^5.6.2"
   }
 }
