@@ -10,6 +10,10 @@ use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
 use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig};
 
+fn default_alpn_protocols() -> Vec<Vec<u8>> {
+    vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+}
+
 /// Konfiguracja klienta TLS z weryfikacją webpki
 pub fn build_client_config() -> anyhow::Result<Arc<ClientConfig>> {
     let mut root_store = RootCertStore::empty();
@@ -31,7 +35,7 @@ pub fn build_client_config() -> anyhow::Result<Arc<ClientConfig>> {
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
 
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    config.alpn_protocols = default_alpn_protocols();
 
     Ok(Arc::new(config))
 }
@@ -40,11 +44,13 @@ pub fn build_client_config() -> anyhow::Result<Arc<ClientConfig>> {
 pub fn build_server_config(
     cert_resolver: Arc<dyn ResolvesServerCert>,
 ) -> anyhow::Result<Arc<ServerConfig>> {
-    let config = ServerConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
+    let mut config = ServerConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
         .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
         .context("Failed to set TLS protocol versions")?
         .with_no_client_auth()
         .with_cert_resolver(cert_resolver);
+
+    config.alpn_protocols = default_alpn_protocols();
 
     Ok(Arc::new(config))
 }
@@ -64,11 +70,13 @@ pub fn build_server_config_from_pem(
 
     let resolver = SingleCertResolver(certified);
 
-    let config = ServerConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
+    let mut config = ServerConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
         .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
         .context("Failed to set TLS protocol versions")?
         .with_no_client_auth()
         .with_cert_resolver(Arc::new(resolver));
+
+    config.alpn_protocols = default_alpn_protocols();
 
     Ok(Arc::new(config))
 }
@@ -97,7 +105,7 @@ pub fn build_client_config_no_verify() -> anyhow::Result<Arc<ClientConfig>> {
         .with_custom_certificate_verifier(Arc::new(NoVerifier))
         .with_no_client_auth();
 
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    config.alpn_protocols = default_alpn_protocols();
 
     Ok(Arc::new(config))
 }
@@ -106,11 +114,13 @@ pub fn build_client_config_no_verify() -> anyhow::Result<Arc<ClientConfig>> {
 pub fn build_server_config_for_key(key: Arc<CertifiedKey>) -> anyhow::Result<Arc<ServerConfig>> {
     let resolver = SingleCertResolver(key);
 
-    let config = ServerConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
+    let mut config = ServerConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
         .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
         .context("Failed to set TLS protocol versions")?
         .with_no_client_auth()
         .with_cert_resolver(Arc::new(resolver));
+
+    config.alpn_protocols = default_alpn_protocols();
 
     Ok(Arc::new(config))
 }
@@ -251,7 +261,7 @@ pub fn build_client_config_recording() -> anyhow::Result<(Arc<ClientConfig>, Arc
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
 
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    config.alpn_protocols = default_alpn_protocols();
 
     Ok((Arc::new(config), trusted))
 }
@@ -366,15 +376,9 @@ mod tests {
         let certified = Arc::new(CertifiedKey::new(certs, signing_key));
 
         let resolver = SingleCertResolver(certified);
-        let config = ServerConfig::builder_with_provider(Arc::new(
-            rustls_ring::default_provider(),
-        ))
-        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
-        .unwrap()
-        .with_no_client_auth()
-        .with_cert_resolver(Arc::new(resolver));
+        let config = build_server_config(Arc::new(resolver)).unwrap();
 
-        assert!(config.alpn_protocols.is_empty());
+        assert_eq!(config.alpn_protocols, default_alpn_protocols());
     }
 
     #[test]

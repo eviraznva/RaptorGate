@@ -1,7 +1,7 @@
 use super::AppProto;
 use super::parsers::dns::DnsRecordType;
 
-// Decyzja TlsInspectionStage dotycząca sesji TLS.
+// Decyzja dotycząca sesji TLS wyliczona przez runtime inspekcji.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TlsAction {
     #[default]

@@ -27,7 +27,7 @@ use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::dpi::DpiClassifier;
-use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, FtpAlgStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, TlsInspectionStage, ValidationStage};
+use crate::pipeline::wrappers::{DnsInspectionStage, DpiStage, FtpAlgStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage};
 use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
@@ -42,12 +42,11 @@ async fn main() {
     type DataPipeline =
         Chain<ValidationStage,
         Chain<DpiStage,
-        Chain<TlsInspectionStage,
         Chain<DnsInspectionStage,
         Chain<NatPreroutingStage,
         Chain<TcpClassificationStage,
         Chain<PolicyEvalStage,
-        Chain<NatPostroutingStage, FtpAlgStage>>>>>>>>;
+        Chain<NatPostroutingStage, FtpAlgStage>>>>>>>; 
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -64,7 +63,7 @@ async fn main() {
         }
     };
 
-    let (ca_info, tls_cert_forger, tls_untrust_forger, tls_client_config) = match CaManager::init(&config.pki_dir) {
+    let (_ca_info, tls_cert_forger, tls_untrust_forger) = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
             tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
             let info = ca.ca_info();
@@ -77,15 +76,11 @@ async fn main() {
             );
             tracing::info!("Cert forgers ready (trust: 1024, untrust: 256)");
 
-            let client_cfg = tls::rustls_config::build_client_config()
-                .expect("Failed to build TLS client config");
-            tracing::info!("TLS client config ready");
-
-            (Some(info), Some(forger), Some(untrust), Some(client_cfg))
+            (Some(info), Some(forger), Some(untrust))
         }
         Err(err) => {
             eprintln!("Warning: CA initialization failed: {err}");
-            (None, None, None, None)
+            (None, None, None)
         }
     };
 
@@ -101,6 +96,15 @@ async fn main() {
     let policy_provider = Arc::new(DiskPolicyProvider::new(&config));
 
     tokio::spawn(events::init_event_queue());
+    match events::BackendEventSink::connect(&config.grpc_socket_path).await {
+        Ok(sink) => {
+            events::set_backend_sink(sink);
+            tracing::info!(socket = %config.grpc_socket_path, "Backend event sink connected");
+        }
+        Err(error) => {
+            tracing::warn!(socket = %config.grpc_socket_path, %error, "Failed to connect backend event sink");
+        }
+    }
     let nat_engine = build_test_nat();
 
     let query_server = QueryServer::<DiskPolicyProvider>::new(
@@ -115,19 +119,21 @@ async fn main() {
     tokio::spawn(query_server.serve());
 
     if config.ssl_inspection_enabled {
-        match (&tls_cert_forger, &tls_untrust_forger, &tls_client_config) {
-            (Some(forger), Some(untrust), Some(client_cfg)) => {
+        let tls_runtime_cancel = CancellationToken::new();
+        decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
+
+        match (&tls_cert_forger, &tls_untrust_forger) {
+            (Some(forger), Some(untrust)) => {
                 let listen_addr = config.mitm_listen_addr.parse()
                     .expect("MITM_LISTEN_ADDR must be a valid socket address");
 
                 let proxy_config = MitmProxyConfig {
                     listen_addr,
-                    client_config: Arc::clone(client_cfg),
                     cert_forger: Arc::clone(forger),
                     untrust_forger: Arc::clone(untrust),
                     decision_engine: Arc::clone(&decision_engine),
                     ips_inspector: Arc::new(NoopIpsInspector),
-                    cancel: CancellationToken::new(),
+                    cancel: tls_runtime_cancel,
                 };
 
                 match MitmProxy::bind(proxy_config).await {
@@ -172,19 +178,16 @@ async fn main() {
         tail: Chain {
             head: DpiStage { classifier: Arc::clone(&dpi_classifier) },
             tail: Chain {
-                head: TlsInspectionStage { enabled: config.ssl_inspection_enabled, decision_engine: Arc::clone(&decision_engine) },
+                head: DnsInspectionStage { inspection: dns_inspection },
                 tail: Chain {
-                    head: DnsInspectionStage { inspection: dns_inspection },
+                    head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
                     tail: Chain {
-                        head: NatPreroutingStage { engine: Arc::clone(&nat_engine) },
+                        head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
                         tail: Chain {
-                            head: TcpClassificationStage { tracker: Arc::clone(&tcp_session_tracker) },
+                            head: PolicyEvalStage { provider: Arc::clone(&policy_provider) },
                             tail: Chain {
-                                head: PolicyEvalStage { provider: Arc::clone(&policy_provider) },
-                                tail: Chain {
-                                    head: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
-                                    tail: FtpAlgStage { engine: Arc::clone(&nat_engine) },
-                                },
+                                head: NatPostroutingStage { engine: Arc::clone(&nat_engine) },
+                                tail: FtpAlgStage { engine: Arc::clone(&nat_engine) },
                             },
                         },
                     },

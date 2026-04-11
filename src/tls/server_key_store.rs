@@ -72,6 +72,7 @@ pub struct InboundServerInfo {
 // Wynik get_entry, ServerConfig + flaga bypass.
 pub struct InboundEntryRef {
     pub server_config: Arc<ServerConfig>,
+    pub common_name: String,
     pub bypass: bool,
 }
 
@@ -161,6 +162,7 @@ impl ServerKeyStore {
     pub fn get_entry(&self, addr: SocketAddr) -> Option<InboundEntryRef> {
         self.entries.get(&addr).map(|entry| InboundEntryRef {
             server_config: Arc::clone(&entry.server_config),
+            common_name: entry.common_name.clone(),
             bypass: entry.bypass,
         })
     }

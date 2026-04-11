@@ -62,9 +62,6 @@ impl DomainTrie {
         trie
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.root.children.is_empty()
-    }
 }
 
 #[cfg(test)]
@@ -132,7 +129,7 @@ mod tests {
         let mut trie = DomainTrie::new();
         trie.insert("");
         trie.insert("  ");
-        assert!(trie.is_empty());
+        assert!(!trie.contains("anything"));
     }
 
     #[test]

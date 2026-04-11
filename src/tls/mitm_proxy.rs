@@ -2,12 +2,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
-use rustls::{ClientConfig, ProtocolVersion, ServerConfig};
+use rustls::{ProtocolVersion, ServerConfig};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::server::TlsStream as ServerTlsStream;
 use tokio_util::sync::CancellationToken;
 
+use crate::dpi::TlsAction;
 use crate::dpi::parsers::tls::parse_tls_client_hello;
 use crate::events;
 use crate::events::{EchAction, EchOrigin, HandshakeStage};
@@ -24,7 +25,6 @@ const SNI_PEEK_BUF_SIZE: usize = 4096;
 // Konfiguracja proxy TLS (outbound MITM + inbound server key).
 pub struct MitmProxyConfig {
     pub listen_addr: SocketAddr,
-    pub client_config: Arc<ClientConfig>,
     pub cert_forger: Arc<CertForger>,
     pub untrust_forger: Arc<CertForger>,
     pub decision_engine: Arc<TlsDecisionEngine>,
@@ -35,7 +35,6 @@ pub struct MitmProxyConfig {
 // Proxy TLS przechwytujące ruch przez iptables TPROXY/REDIRECT.
 pub struct MitmProxy {
     listener: TcpListener,
-    client_config: Arc<ClientConfig>,
     cert_forger: Arc<CertForger>,
     untrust_forger: Arc<CertForger>,
     decision_engine: Arc<TlsDecisionEngine>,
@@ -54,7 +53,6 @@ impl MitmProxy {
 
         Ok(Self {
             listener,
-            client_config: config.client_config,
             cert_forger: config.cert_forger,
             untrust_forger: config.untrust_forger,
             decision_engine: config.decision_engine,
@@ -74,7 +72,6 @@ impl MitmProxy {
                 result = self.listener.accept() => {
                     match result {
                         Ok((stream, peer_addr)) => {
-                            let client_config = Arc::clone(&self.client_config);
                             let cert_forger = Arc::clone(&self.cert_forger);
                             let untrust_forger = Arc::clone(&self.untrust_forger);
                             let engine = Arc::clone(&self.decision_engine);
@@ -84,7 +81,6 @@ impl MitmProxy {
                                 if let Err(e) = handle_connection(
                                     stream,
                                     peer_addr,
-                                    client_config,
                                     cert_forger,
                                     untrust_forger,
                                     engine,
@@ -108,7 +104,6 @@ impl MitmProxy {
 async fn handle_connection(
     client_tcp: TcpStream,
     peer_addr: SocketAddr,
-    client_config: Arc<ClientConfig>,
     cert_forger: Arc<CertForger>,
     untrust_forger: Arc<CertForger>,
     engine: Arc<TlsDecisionEngine>,
@@ -119,18 +114,30 @@ async fn handle_connection(
 
     let PeekedClientHello { sni, client_hello_version, ech_detected } = peek_client_hello(&client_tcp).await;
 
+    let action = engine.decide(
+        sni.as_deref(),
+        ech_detected,
+        Some(original_dst.ip()),
+        original_dst.port(),
+        Some(peer_addr.ip()),
+    );
+
     if ech_detected {
         let domain_hint = sni.clone().unwrap_or_else(|| original_dst.ip().to_string());
         events::emit(events::Event::new(events::EventKind::EchAttemptDetected {
             source_ip: Some(peer_addr.ip()),
             domain: domain_hint,
             origin: EchOrigin::ClientHelloOuterSni,
-            action: EchAction::Logged,
+            action: if matches!(action, TlsAction::Block) {
+                EchAction::Blocked
+            } else {
+                EchAction::Logged
+            },
         }));
     }
 
     if let Some(entry) = engine.server_key_store().get_entry(original_dst) {
-        if entry.bypass {
+        if matches!(action, TlsAction::Bypass) {
             tracing::debug!(peer = %peer_addr, server = %original_dst, "Inbound TLS bypass");
             events::emit(events::Event::new(events::EventKind::InboundTlsBypassApplied {
                 peer: peer_addr,
@@ -142,40 +149,47 @@ async fn handle_connection(
         }
         tracing::debug!(peer = %peer_addr, server = %original_dst, "Inbound TLS inspection");
         return handle_inbound_connection(
-            client_tcp, peer_addr, original_dst, sni, client_hello_version, entry.server_config, relay,
+            client_tcp,
+            peer_addr,
+            original_dst,
+            sni,
+            client_hello_version,
+            entry.common_name,
+            entry.server_config,
+            relay,
         )
         .await;
     }
 
-    let domain = sni.as_deref().unwrap_or("unknown");
+    let domain = sni.clone().unwrap_or_else(|| original_dst.ip().to_string());
 
-    if engine.is_domain_bypassed(domain) {
-        tracing::debug!(domain, "TLS bypass - relay without inspection");
-        events::emit(events::Event::new(events::EventKind::TlsBypassApplied {
-            peer: peer_addr,
-            dst: original_dst,
-            sni: sni.clone(),
-            domain: domain.to_string(),
-            tls_version: client_hello_version.clone(),
-        }));
-        return relay_tcp_passthrough(client_tcp, original_dst).await;
-    }
-
-    if engine.pinning_detector().is_bypassed(peer_addr.ip(), domain) {
-        tracing::debug!(domain, peer = %peer_addr, "TLS pinning auto-bypass active");
-        events::emit(events::Event::new(events::EventKind::TlsBypassApplied {
-            peer: peer_addr,
-            dst: original_dst,
-            sni: sni.clone(),
-            domain: domain.to_string(),
-            tls_version: client_hello_version.clone(),
-        }));
-        return relay_tcp_passthrough(client_tcp, original_dst).await;
+    match action {
+        TlsAction::Bypass => {
+            tracing::debug!(domain, "TLS bypass - relay without inspection");
+            events::emit(events::Event::new(events::EventKind::TlsBypassApplied {
+                peer: peer_addr,
+                dst: original_dst,
+                sni: sni.clone(),
+                domain: domain.clone(),
+                tls_version: client_hello_version.clone(),
+            }));
+            return relay_tcp_passthrough(client_tcp, original_dst).await;
+        }
+        TlsAction::Block => {
+            tracing::info!(
+                peer = %peer_addr,
+                dst = %original_dst,
+                sni = sni.as_deref().unwrap_or("none"),
+                "TLS connection blocked before interception"
+            );
+            return Ok(());
+        }
+        TlsAction::Intercept | TlsAction::InterceptUntrust | TlsAction::None => {}
     }
 
     handle_outbound_connection(
         client_tcp, peer_addr, original_dst, sni, client_hello_version,
-        client_config, cert_forger, untrust_forger, engine, relay,
+        cert_forger, untrust_forger, engine, relay,
     )
     .await
 }
@@ -186,6 +200,7 @@ async fn handle_inbound_connection(
     server_addr: SocketAddr,
     sni: Option<String>,
     client_hello_version: Option<String>,
+    common_name: String,
     inbound_server_config: Arc<ServerConfig>,
     relay: Arc<InspectionRelay>,
 ) -> anyhow::Result<()> {
@@ -194,7 +209,7 @@ async fn handle_inbound_connection(
             peer: peer_addr,
             server: server_addr,
             sni: sni.clone(),
-            common_name: String::new(),
+            common_name,
             tls_version: client_hello_version.clone(),
         },
     ));
@@ -312,7 +327,6 @@ async fn handle_outbound_connection(
     original_dst: SocketAddr,
     sni: Option<String>,
     client_hello_version: Option<String>,
-    client_config: Arc<ClientConfig>,
     cert_forger: Arc<CertForger>,
     untrust_forger: Arc<CertForger>,
     engine: Arc<TlsDecisionEngine>,

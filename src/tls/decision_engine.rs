@@ -1,7 +1,9 @@
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use arc_swap::ArcSwap;
+use tokio_util::sync::CancellationToken;
 
 use crate::dpi::TlsAction;
 use crate::tls::domain_trie::DomainTrie;
@@ -20,7 +22,7 @@ impl Default for EchTlsPolicy {
     }
 }
 
-// Jedno źródło prawdy dla decyzji inspekcji TLS (pipeline + proxy).
+// Jedno źródło prawdy dla decyzji inspekcji TLS w runtime proxy.
 pub struct TlsDecisionEngine {
     bypass_trie: ArcSwap<DomainTrie>,
     server_key_store: Arc<ServerKeyStore>,
@@ -123,6 +125,24 @@ impl TlsDecisionEngine {
 
     pub fn server_key_store(&self) -> &Arc<ServerKeyStore> {
         &self.server_key_store
+    }
+
+    pub fn spawn_maintenance_task(self: &Arc<Self>, cancel: CancellationToken) {
+        let engine = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(300));
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    _ = tick.tick() => {
+                        let removed = engine.pinning_detector.cleanup_expired();
+                        if removed > 0 {
+                            tracing::debug!(removed, "Expired pinning bypass entries removed");
+                        }
+                    }
+                }
+            }
+        });
     }
 }
 

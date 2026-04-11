@@ -11,9 +11,8 @@ use crate::{
         packet_context::PacketContext,
         tcp_session_tracker::TcpSessionTracker,
     },
-    dpi::{DpiClassifier, InspectResult, TlsAction},
+    dpi::{DpiClassifier, InspectResult},
     packet_validator::validate, pipeline::{Stage, StageOutcome}, policy::provider::DiskPolicyProvider, rule_tree::{ArrivalInfo, Verdict},
-    tls::decision_engine::TlsDecisionEngine,
 };
 use crate::data_plane::dns_inspection::DnsInspectionVerdict;
 use crate::dpi::AppProto;
@@ -264,86 +263,5 @@ impl Stage for DpiStage {
             InspectResult::Skipped => {}
         }
         StageOutcome::Continue
-    }
-}
-
-#[derive(Clone)]
-pub struct TlsInspectionStage {
-    pub enabled: bool,
-    pub decision_engine: Arc<TlsDecisionEngine>,
-}
-
-fn extract_dst_ip(ctx: &PacketContext) -> Option<IpAddr> {
-    match &ctx.borrow_sliced_packet().net {
-        Some(etherparse::NetSlice::Ipv4(ipv4)) => {
-            Some(IpAddr::V4(ipv4.header().destination_addr()))
-        }
-        Some(etherparse::NetSlice::Ipv6(ipv6)) => {
-            Some(IpAddr::V6(ipv6.header().destination_addr()))
-        }
-        _ => None,
-    }
-}
-
-fn extract_src_ip(ctx: &PacketContext) -> Option<IpAddr> {
-    match &ctx.borrow_sliced_packet().net {
-        Some(etherparse::NetSlice::Ipv4(ipv4)) => {
-            Some(IpAddr::V4(ipv4.header().source_addr()))
-        }
-        Some(etherparse::NetSlice::Ipv6(ipv6)) => {
-            Some(IpAddr::V6(ipv6.header().source_addr()))
-        }
-        _ => None,
-    }
-}
-
-// Wyciaga destination port z naglowka transportowego.
-fn extract_dst_port(ctx: &PacketContext) -> u16 {
-    match &ctx.borrow_sliced_packet().transport {
-        Some(etherparse::TransportSlice::Tcp(tcp)) => tcp.destination_port(),
-        Some(etherparse::TransportSlice::Udp(udp)) => udp.destination_port(),
-        _ => 0,
-    }
-}
-
-impl Stage for TlsInspectionStage {
-    fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        self.enabled && matches!(
-            ctx.borrow_dpi_ctx(),
-            Some(dpi_ctx) if dpi_ctx.app_proto == Some(AppProto::Tls)
-        )
-    }
-
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
-        let (sni, ech_detected) = match ctx.borrow_dpi_ctx() {
-            Some(dpi_ctx) => (dpi_ctx.tls_sni.clone(), dpi_ctx.tls_ech_detected),
-            None => return StageOutcome::Continue,
-        };
-
-        let dst_ip = extract_dst_ip(ctx);
-        let dst_port = extract_dst_port(ctx);
-        let src_ip = extract_src_ip(ctx);
-
-        let action = self.decision_engine.decide(sni.as_deref(), ech_detected, dst_ip, dst_port, src_ip);
-
-        tracing::debug!(
-            sni = sni.as_deref().unwrap_or("none"),
-            ech = ech_detected,
-            ?dst_ip,
-            dst_port,
-            action = ?action,
-            "TLS inspection decision"
-        );
-
-        ctx.with_dpi_ctx_mut(|c| {
-            if let Some(dpi) = c.as_mut() {
-                dpi.tls_action = action;
-            }
-        });
-
-        match action {
-            TlsAction::Block => StageOutcome::Halt,
-            _ => StageOutcome::Continue,
-        }
     }
 }
