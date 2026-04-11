@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { motion } from "framer-motion";
-import Navbar from "../components/Navbar";
 import { useAppDispatch, useAppSelector } from "../app/hooks";
 import DnsActionsBar from "../components/dns/DnsActionsBar";
 import DnsHeader from "../components/dns/DnsHeader";
@@ -47,8 +46,6 @@ export default function Dns() {
 
   return (
     <div className="min-h-screen bg-[#0c0c0c] flex flex-col text-[#f5f5f5]">
-      <Navbar />
-
       <div className="flex-1 flex justify-center p-8">
         <div className="w-full max-w-6xl">
           <div className="flex items-center justify-center mb-10">

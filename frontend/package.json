@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@iconify/react": "^6.0.2",
     "@reduxjs/toolkit": "^2.11.2",
     "framer-motion": "^12.37.0",
     "react": "^19.2.4",
