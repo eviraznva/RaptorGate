@@ -1,10 +1,10 @@
-import type { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
+import type { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
 
 export type ConfigSnapshotPushReason =
-  | "apply"
-  | "rollback"
-  | "manual_sync"
-  | "import";
+  | 'apply'
+  | 'rollback'
+  | 'manual_sync'
+  | 'import';
 
 export interface IConfigSnapshotPushService {
   pushActiveConfigSnapshot(
@@ -14,5 +14,5 @@ export interface IConfigSnapshotPushService {
 }
 
 export const CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN = Symbol(
-  "CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN",
+  'CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN',
 );

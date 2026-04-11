@@ -14,16 +14,16 @@ function toIsoTimestamp(event: Event): string {
   return new Date(millis).toISOString();
 }
 
-function undefinedIfEmpty(value: string | undefined | null): string | undefined {
+function undefinedIfEmpty(
+  value: string | undefined | null,
+): string | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined;
   }
   return value;
 }
 
-export function mapEventToDocument(
-  event: Event,
-): FirewallEventDocument | null {
+export function mapEventToDocument(event: Event): FirewallEventDocument | null {
   const item = event.kind?.item;
   if (!item) {
     return null;

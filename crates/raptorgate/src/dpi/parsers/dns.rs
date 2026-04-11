@@ -730,7 +730,11 @@ mod tests {
 
     #[test]
     fn response_with_https_record_marks_ech_hints() {
-        let pkt = build_dns_response_with_answers(&["example", "com"], 65, &[(65, &[0x00, 0x01])]);
+        let pkt = build_dns_response_with_answers(
+            &["example", "com"],
+            65,
+            &[(65, &[0x00, 0x01, 0x00])],
+        );
         let result = parse_dns(&pkt).unwrap();
         assert!(result.is_response);
         assert!(result.dns_has_ech_hints);
@@ -738,7 +742,11 @@ mod tests {
 
     #[test]
     fn response_with_svcb_record_marks_ech_hints() {
-        let pkt = build_dns_response_with_answers(&["example", "com"], 64, &[(64, &[0x00, 0x01])]);
+        let pkt = build_dns_response_with_answers(
+            &["example", "com"],
+            64,
+            &[(64, &[0x00, 0x01, 0x00])],
+        );
         let result = parse_dns(&pkt).unwrap();
         assert!(result.is_response);
         assert!(result.dns_has_ech_hints);

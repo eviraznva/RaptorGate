@@ -1,5 +1,5 @@
 export class RecoveryPasswordDto {
-	username: string;
-	recoveryToken: string;
-	newPassword: string;
+  username: string;
+  recoveryToken: string;
+  newPassword: string;
 }

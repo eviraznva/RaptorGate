@@ -1,4 +1,4 @@
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty } from '@nestjs/swagger';
 import {
   IsBoolean,
   IsDateString,
@@ -10,7 +10,7 @@ import {
   IsUUID,
   MaxLength,
   MinLength,
-} from "class-validator";
+} from 'class-validator';
 
 export class ImportConfigSnapshotDto {
   @ApiProperty()

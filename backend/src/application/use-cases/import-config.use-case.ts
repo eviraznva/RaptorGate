@@ -1,51 +1,51 @@
-import { hash } from "node:crypto";
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
-import { ConfigurationSnapshot } from "src/domain/entities/configuration-snapshot.entity";
-import { FirewallRule } from "src/domain/entities/firewall-rule.entity";
-import { NatRule } from "src/domain/entities/nat-rule.entity";
-import { Zone } from "src/domain/entities/zone.entity";
-import { ZonePair } from "src/domain/entities/zone-pair.entity";
-import { AccessTokenIsInvalidException } from "src/domain/exceptions/acces-token-is-invalid.exception";
+import { hash } from 'node:crypto';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
+import { FirewallRule } from 'src/domain/entities/firewall-rule.entity';
+import { NatRule } from 'src/domain/entities/nat-rule.entity';
+import { Zone } from 'src/domain/entities/zone.entity';
+import { ZonePair } from 'src/domain/entities/zone-pair.entity';
+import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
 import {
   CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
   type IConfigSnapshotRepository,
-} from "src/domain/repositories/config-snapshot.repository";
+} from 'src/domain/repositories/config-snapshot.repository';
 import {
   type INatRulesRepository,
   NAT_RULES_REPOSITORY_TOKEN,
-} from "src/domain/repositories/nat-rules.repository";
+} from 'src/domain/repositories/nat-rules.repository';
 import {
   type IRulesRepository,
   RULES_REPOSITORY_TOKEN,
-} from "src/domain/repositories/rules-repository";
+} from 'src/domain/repositories/rules-repository';
 import {
   type IZoneRepository,
   ZONE_REPOSITORY_TOKEN,
-} from "src/domain/repositories/zone.repository";
+} from 'src/domain/repositories/zone.repository';
 import {
   type IZonePairRepository,
   ZONE_PAIR_REPOSITORY_TOKEN,
-} from "src/domain/repositories/zone-pair.repository";
-import { Checksum } from "src/domain/value-objects/checksum.vo";
-import { IpAddress } from "src/domain/value-objects/ip-address.vo";
-import { NatType } from "src/domain/value-objects/nat-type.vo";
-import { Port } from "src/domain/value-objects/port.vo";
-import { Priority } from "src/domain/value-objects/priority.vo";
-import { SnapshotType } from "src/domain/value-objects/snapshot-type.vo";
-import { ImportConfigDto } from "../dtos/import-config.dto";
-import { ImportConfigResponseDto } from "../dtos/import-config-response.dto";
+} from 'src/domain/repositories/zone-pair.repository';
+import { Checksum } from 'src/domain/value-objects/checksum.vo';
+import { IpAddress } from 'src/domain/value-objects/ip-address.vo';
+import { NatType } from 'src/domain/value-objects/nat-type.vo';
+import { Port } from 'src/domain/value-objects/port.vo';
+import { Priority } from 'src/domain/value-objects/priority.vo';
+import { SnapshotType } from 'src/domain/value-objects/snapshot-type.vo';
+import { ImportConfigDto } from '../dtos/import-config.dto';
+import { ImportConfigResponseDto } from '../dtos/import-config-response.dto';
 import {
   CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN,
   type IConfigSnapshotPushService,
-} from "../ports/config-snapshot-push-service.interface";
+} from '../ports/config-snapshot-push-service.interface';
 import {
   type IRaptorLangValidationService,
   RAPTOR_LANG_VALIDATION_SERVICE_TOKEN,
-} from "../ports/raptor-lang-validation-service.interface";
+} from '../ports/raptor-lang-validation-service.interface';
 import {
   type ITokenService,
   TOKEN_SERVICE_TOKEN,
-} from "../ports/token-service.interface";
+} from '../ports/token-service.interface';
 
 @Injectable()
 export class ImportConfigUseCase {
@@ -73,14 +73,14 @@ export class ImportConfigUseCase {
     if (!claims) throw new AccessTokenIsInvalidException();
 
     const payloadJsonStr =
-      typeof dto.snapshotData.payloadJson === "string"
+      typeof dto.snapshotData.payloadJson === 'string'
         ? dto.snapshotData.payloadJson
         : JSON.stringify(dto.snapshotData.payloadJson);
 
-    const calculatedChecksum = hash("sha256", payloadJsonStr);
+    const calculatedChecksum = hash('sha256', payloadJsonStr);
     if (calculatedChecksum !== dto.snapshotData.checksum) {
       throw new BadRequestException(
-        "Invalid checksum: imported payload does not match the provided checksum.",
+        'Invalid checksum: imported payload does not match the provided checksum.',
       );
     }
 
@@ -102,7 +102,7 @@ export class ImportConfigUseCase {
       Checksum.create(calculatedChecksum),
       dto.snapshotData.isActive,
       dto.snapshotData.payloadJson,
-      dto.snapshotData.changeSummary || "Imported config via API",
+      dto.snapshotData.changeSummary || 'Imported config via API',
       new Date(),
       claims.sub,
     );
@@ -189,7 +189,7 @@ export class ImportConfigUseCase {
     if (dto.snapshotData.isActive) {
       await this.configSnapshotPushService.pushActiveConfigSnapshot(
         importedSnapshot,
-        "import",
+        'import',
       );
     }
 

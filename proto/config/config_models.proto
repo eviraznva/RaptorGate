@@ -325,6 +325,25 @@ message IpsConfig {
   repeated IpsSignatureConfig signatures = 3;
 }
 
+// ── ConfigSectionVersions — delta sync hint ──────────────────────────────────
+
+// Wersje sekcji znane firewallowi.
+// Backend wysyła daną sekcję tylko gdy jej aktualna wersja jest wyższa
+// niż wartość podana tutaj. 0 oznacza brak sekcji — backend ją wyśle.
+message ConfigSectionVersions {
+  uint64 rules           = 1;
+  uint64 zones           = 2;
+  uint64 zone_interfaces = 3;
+  uint64 zone_pairs      = 4;
+  uint64 nat_rules       = 5;
+  uint64 dns_blacklist   = 6;
+  uint64 ssl_bypass_list = 7;
+  uint64 ips_signatures  = 8;
+  uint64 ml_model        = 9;
+  uint64 certificates    = 10;
+  uint64 identity        = 11;
+}
+
 // ── AppConfig — runtime-swappable firewall configuration ─────────────────────
 
 message AppConfig {

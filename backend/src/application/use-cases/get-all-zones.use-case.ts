@@ -1,9 +1,9 @@
-import { Inject, Injectable } from "@nestjs/common";
-import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
-import type { IZoneRepository } from "../../domain/repositories/zone.repository.js";
-import { ZONE_REPOSITORY_TOKEN } from "../../domain/repositories/zone.repository.js";
-import type { GetAllZonesDto } from "../dtos/get-all-zones.dto.js";
-import { GetZonesQueryDto } from "../dtos/get-zones.dto.js";
+import { Inject, Injectable } from '@nestjs/common';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
+import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
+import type { GetAllZonesDto } from '../dtos/get-all-zones.dto.js';
+import { GetZonesQueryDto } from '../dtos/get-zones.dto.js';
 
 @Injectable()
 export class GetAllZonesUseCase {
@@ -14,7 +14,7 @@ export class GetAllZonesUseCase {
 
   async execute(dto: GetZonesQueryDto): Promise<GetAllZonesDto> {
     const zones = await this.zoneRepository.findAll();
-    if (!zones) throw new EntityNotFoundException("zones", "all");
+    if (!zones) throw new EntityNotFoundException('zones', 'all');
     let result = zones;
 
     if (dto.isActive !== undefined)

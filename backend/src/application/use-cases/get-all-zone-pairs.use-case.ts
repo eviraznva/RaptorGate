@@ -1,11 +1,11 @@
-import { Inject, Injectable } from "@nestjs/common";
-import { EntityNotFoundException } from "src/domain/exceptions/entity-not-found-exception";
+import { Inject, Injectable } from '@nestjs/common';
+import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
 import {
   type IZonePairRepository,
   ZONE_PAIR_REPOSITORY_TOKEN,
-} from "src/domain/repositories/zone-pair.repository";
-import { GetAllZonePairsDto } from "../dtos/get-all-zone-pairs.dto";
-import { GetZonePairsDto } from "../dtos/get-zone-pairs.dto";
+} from 'src/domain/repositories/zone-pair.repository';
+import { GetAllZonePairsDto } from '../dtos/get-all-zone-pairs.dto';
+import { GetZonePairsDto } from '../dtos/get-zone-pairs.dto';
 
 @Injectable()
 export class GetAllZonePairsUseCase {
@@ -16,7 +16,7 @@ export class GetAllZonePairsUseCase {
 
   async execute(dto: GetZonePairsDto): Promise<GetAllZonePairsDto> {
     const zonePairs = await this.zonePairRepository.findAll();
-    if (!zonePairs) throw new EntityNotFoundException("zone pairs", "all");
+    if (!zonePairs) throw new EntityNotFoundException('zone pairs', 'all');
     let result = zonePairs;
 
     if (dto.defaultPolicy !== undefined)

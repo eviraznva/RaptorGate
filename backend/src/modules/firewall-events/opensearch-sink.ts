@@ -59,26 +59,24 @@ export class OpenSearchSink implements OnModuleInit {
   private templateReady = false;
 
   constructor(configService: ConfigService<Env, true>) {
-    const rawUrl = configService.get('OPENSEARCH_URL', { infer: true }) as
-      | string
-      | undefined;
+    const rawUrl = configService.get('OPENSEARCH_URL', { infer: true });
     this.baseUrl = rawUrl ? rawUrl.replace(/\/+$/, '') : undefined;
     const username = configService.get('OPENSEARCH_USERNAME', {
       infer: true,
-    }) as string | undefined;
+    });
     const password = configService.get('OPENSEARCH_PASSWORD', {
       infer: true,
-    }) as string | undefined;
+    });
     if (username && password) {
       this.authHeader =
         'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
     }
     this.indexPrefix = configService.get('OPENSEARCH_INDEX_PREFIX', {
       infer: true,
-    }) as string;
+    });
     this.insecureTls = configService.get('OPENSEARCH_INSECURE_TLS', {
       infer: true,
-    }) as boolean;
+    });
   }
 
   onModuleInit(): void {
@@ -141,7 +139,9 @@ export class OpenSearchSink implements OnModuleInit {
         return;
       }
       this.templateReady = true;
-      this.logger.log(`OpenSearch index template '${INDEX_TEMPLATE_NAME}' ready`);
+      this.logger.log(
+        `OpenSearch index template '${INDEX_TEMPLATE_NAME}' ready`,
+      );
     } catch (err) {
       this.logger.error(
         `OpenSearch template install error: ${(err as Error).message}`,
@@ -181,9 +181,7 @@ export class OpenSearchSink implements OnModuleInit {
         );
       }
     } catch (err) {
-      this.logger.error(
-        `OpenSearch bulk error: ${(err as Error).message}`,
-      );
+      this.logger.error(`OpenSearch bulk error: ${(err as Error).message}`);
     }
   }
 

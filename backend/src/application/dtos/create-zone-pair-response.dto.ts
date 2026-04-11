@@ -1,5 +1,5 @@
-import { ZonePair } from "src/domain/entities/zone-pair.entity";
+import { ZonePair } from 'src/domain/entities/zone-pair.entity';
 
 export class CreateZonePairResponseDto {
-	zonePair: ZonePair;
+  zonePair: ZonePair;
 }

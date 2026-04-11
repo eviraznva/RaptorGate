@@ -1,7 +1,7 @@
-import { IpAddress } from "../value-objects/ip-address.vo.js";
-import { NatType } from "../value-objects/nat-type.vo.js";
-import { Port } from "../value-objects/port.vo.js";
-import { Priority } from "../value-objects/priority.vo.js";
+import { IpAddress } from '../value-objects/ip-address.vo.js';
+import { NatType } from '../value-objects/nat-type.vo.js';
+import { Port } from '../value-objects/port.vo.js';
+import { Priority } from '../value-objects/priority.vo.js';
 
 export class NatRule {
   private constructor(
