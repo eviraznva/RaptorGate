@@ -18,7 +18,7 @@ describe('Event Observation', () => {
           match: {},
         },
       ])
-      .run({ timeout: 15_000 });
+      .run();
   });
 
   test('command output on h1 matches expected ping pattern', async () => {
@@ -30,6 +30,6 @@ describe('Event Observation', () => {
         /^PING 192\.168\.20\.10/,
         /bytes from 192\.168\.20\.10/,
       ])
-      .run({ timeout: 10_000 });
+      .run();
   });
 });
