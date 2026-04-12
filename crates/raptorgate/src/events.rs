@@ -63,7 +63,6 @@ pub fn emit(event: Event) {
     if let Some(tx) = EVENT_TX.get()
         && tx.try_send(event).is_err() {
             DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!("event queue full, event dropped");
         }
 }
 
@@ -95,20 +94,9 @@ pub async fn init_event_system(socket_path: String) {
 }
 
 async fn handle_incoming(event: Event, buffer: &mut Vec<Event>, backend: &mut Option<BackendConnection>) {
-    if backend.is_none() {
-        // When disconnected, accumulate events up to OVERFLOW_CAPACITY
-        if buffer.len() < OVERFLOW_CAPACITY {
-            buffer.push(event);
-        } else {
-            DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!("overflow buffer full, event dropped");
-        }
-        return;
-    }
-
     if event.kind.is_immediate() {
         flush_batch(buffer, backend).await;
-        dispatch(event, backend).await;
+        dispatch(event, backend, buffer).await;
     } else {
         buffer.push(event);
         if buffer.len() >= MAX_BATCH_SIZE {
@@ -118,13 +106,18 @@ async fn handle_incoming(event: Event, buffer: &mut Vec<Event>, backend: &mut Op
 }
 
 async fn flush_batch(buffer: &mut Vec<Event>, backend: &mut Option<BackendConnection>) {
-    if buffer.is_empty() || backend.is_none() { return; }
-    for event in buffer.drain(..) {
-        dispatch(event, backend).await;
+    if backend.is_none() {
+        return;
+    }
+
+    let batch = std::mem::take(buffer);
+
+    for event in batch {
+        dispatch(event, backend, buffer).await;
     }
 }
 
-async fn dispatch(event: Event, backend: &mut Option<BackendConnection>) {
+async fn dispatch(event: Event, backend: &mut Option<BackendConnection>, buffer: &mut Vec<Event>) {
     match backend {
         Some(conn) => {
             if !conn.send(event.into()).await {
@@ -133,9 +126,15 @@ async fn dispatch(event: Event, backend: &mut Option<BackendConnection>) {
                 DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
             }
         }
+
         None => {
-            DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!(kind = ?event.kind, "no backend connection, event dropped");
+            if buffer.len() < OVERFLOW_CAPACITY {
+                tracing::trace!(kind = ?event.kind, "no backend connection, buffering event");
+                buffer.push(event);
+            } else {
+                DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
+                tracing::warn!(kind = ?event.kind, "overflow buffer full, event dropped");
+            }
         }
     }
 }
