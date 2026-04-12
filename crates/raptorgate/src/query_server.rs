@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
@@ -18,8 +19,7 @@ use crate::proto::services::firewall_query_service_server::{
     FirewallQueryService, FirewallQueryServiceServer,
 };
 use crate::proto::services::{
-    GetConfigRequest, GetConfigResponse, GetNatBindingsRequest, GetNatBindingsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest, GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, SwapConfigRequest, SwapConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse,
-    GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse, GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse,
+    GetConfigRequest, GetConfigResponse, GetNatBindingsRequest, GetNatBindingsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest, GetPolicyResponse, GetSystemTimeRequest, GetSystemTimeResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse, GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest, SwapConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse, SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse
 };
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use crate::zones::{ZoneId, ZoneInterfaceId, ZonePair, ZonePairId};
@@ -294,6 +294,15 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
         let config = self.config_provider.get_config();
         Ok(Response::new(GetConfigResponse {
             config: Some(config.to_proto()),
+        }))
+    }
+
+    async fn get_system_time(
+        &self,
+        _request: Request<GetSystemTimeRequest>,
+    ) -> Result<Response<GetSystemTimeResponse>, Status> {
+        Ok(Response::new(GetSystemTimeResponse {
+            time: Some(SystemTime::now().into()),
         }))
     }
 }
