@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { LineArrow } from "../components/lineArrow/LineArrow";
 
 interface Rule {
   id: number;
@@ -77,10 +78,13 @@ export default function PolicyEngine() {
       <div className="flex-1 flex justify-center p-8">
         <div className="w-full max-w-6xl">
           {/* FLOW LINE */}
-          <div className="flex items-center justify-center mb-10">
+          <div className="flex items-center justify-center relative mb-10">
             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-[#06b6d4] to-transparent" />
             <span className="px-4 text-[#06b6d4] text-xs">
-              ◄──────────── POLICY ENGINE ────────────►
+              <h3 className="text-center absolute right-0 bottom-2 w-full">
+                Plicy Engine
+              </h3>
+              <LineArrow />
             </span>
             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-[#06b6d4] to-transparent" />
           </div>

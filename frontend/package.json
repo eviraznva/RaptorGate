@@ -12,6 +12,7 @@
   "dependencies": {
     "@iconify/react": "^6.0.2",
     "@reduxjs/toolkit": "^2.11.2",
+    "async-mutex": "^0.5.0",
     "framer-motion": "^12.37.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

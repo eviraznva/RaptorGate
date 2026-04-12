@@ -32,7 +32,6 @@ export default function LoginPage() {
       navigate("/dashboard");
     } catch (err) {
       setResponse(err as ApiFailure);
-      console.error("Login failed:", err);
     }
 
     dispatch(clearLoginData());
@@ -118,10 +117,17 @@ export default function LoginPage() {
               <button
                 onClick={handleLogin}
                 className="w-full bg-[#06b6d4] text-black py-3 tracking-widest font-medium hover:bg-[#0891b2] transition"
+                type="button"
               >
                 Login
               </button>
-              <button>Reset password</button>
+              <button
+                onClick={() => navigate("/reset-password")}
+                className="w-full border border-[#262626] py-3 text-sm tracking-[0.22em] text-[#8a8a8a] transition hover:border-[#06b6d4] hover:text-[#f5f5f5]"
+                type="button"
+              >
+                Reset password
+              </button>
             </div>
           </motion.div>
 
