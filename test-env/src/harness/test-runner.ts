@@ -2,7 +2,7 @@ import { match, P } from 'ts-pattern';
 import { afterEach, afterAll } from 'bun:test';
 import { getClient } from './grpc-client';
 import { eventCollector, type EventMatcher } from './event-collector';
-import { ssh, sshWithResult, sshDetached, sshKill, type KnownHost } from '../ssh-helper';
+import { ssh, sshWithResult, type KnownHost, getJobSession, closeAllJobSessions } from '../ssh-helper';
 import type { FirewallQueryService } from '../generated/services/query_service';
 
 const DEFAULT_TIMEOUT = 5_000;
@@ -18,25 +18,24 @@ export type RpcMethodName = keyof FirewallQueryService;
 export type RequestPayload<M extends RpcMethodName> = Parameters<FirewallQueryService[M]>[0];
 
 // ---------------------------------------------------------------------------
-// Detached command — background process with automatic cleanup
+// Detached command — background process with automatic cleanup via SshJobSession
 // ---------------------------------------------------------------------------
 
 export class DetachedCommand {
   readonly host: KnownHost;
   readonly command: string;
-  readonly pid: number;
   private killed = false;
 
-  constructor(host: KnownHost, command: string, pid: number) {
+  constructor(host: KnownHost, command: string) {
     this.host = host;
     this.command = command;
-    this.pid = pid;
   }
 
   async kill(): Promise<void> {
     if (this.killed) return;
     this.killed = true;
-    await sshKill(this.host, this.pid);
+    const session = await getJobSession(this.host);
+    await session.killAllJobs();
   }
 
   cleanup(): this {
@@ -46,7 +45,7 @@ export class DetachedCommand {
   }
 
   toString(): string {
-    return `[${this.host}] ${this.command} (pid=${this.pid}, killed=${this.killed})`;
+    return `[${this.host}] ${this.command} (killed=${this.killed})`;
   }
 }
 
@@ -211,8 +210,11 @@ class CommandBuilder {
   }
 
   async runDetached(): Promise<DetachedCommand> {
-    const pid = await sshDetached(this.host, this.command);
-    return new DetachedCommand(this.host, this.command, pid);
+    const session = await getJobSession(this.host);
+    await session.spawnDetached(this.command);
+    // Give the server time to bind before the caller attempts to connect.
+    await new Promise((r) => setTimeout(r, 500));
+    return new DetachedCommand(this.host, this.command);
   }
 
   private async invokeCommand(timeout: number): Promise<{ stdout: string; stderr: string; exitCode: number }> {
@@ -228,6 +230,8 @@ class CommandBuilder {
     const combined = stdout + stderr;
     const lines = combined.split('\n').filter((l) => l.trim());
     let lineIdx = 0;
+
+	console.log(`lines for command ${this.command}: ${lines}`,)
 
     for (const regex of this.outputRegexes!) {
       let found = false;
@@ -268,6 +272,14 @@ export function request<M extends RpcMethodName>(
 export function performCommand(opts: PerformCommandOptions): CommandBuilder {
   return new CommandBuilder(opts);
 }
+
+// ---------------------------------------------------------------------------
+// Global teardown — close all persistent SSH job sessions
+// ---------------------------------------------------------------------------
+
+afterAll(async () => {
+  await closeAllJobSessions();
+});
 
 // ---------------------------------------------------------------------------
 // Pattern matching helper (ts-pattern)

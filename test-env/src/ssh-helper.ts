@@ -141,42 +141,75 @@ export async function sshWithResult(
   return { stdout, stderr, exitCode };
 }
 
-export async function sshDetached(
-  host: KnownHost,
-  command: string,
-): Promise<number> {
-  const configPath = await ensureSshConfig(host);
+// ---------------------------------------------------------------------------
+// SshJobSession — persistent SSH connection with bash job control
+// ---------------------------------------------------------------------------
 
-  const escaped = command.replace(/'/g, "'\\''");
-  const wrapped = `nohup bash -c '${escaped}' >/dev/null 2>&1 & echo $!`;
+export class SshJobSession {
+  private proc: import('node:child_process').ChildProcessWithoutNullStreams;
+  private _closed = false;
 
-  const { stdout, exitCode } = await run('ssh', [
-    '-F', configPath,
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=10',
-    host,
-    wrapped,
-  ]);
+  constructor(host: KnownHost, configPath: string) {
+    this.proc = spawn(
+      'ssh',
+      ['-F', configPath, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, 'bash'],
+      { shell: false, stdio: ['pipe', 'pipe', 'pipe'] },
+    );
 
-  const pid = parseInt(stdout.trim(), 10);
-  if (isNaN(pid) || exitCode !== 0) {
-    throw new Error(`Failed to launch detached command on ${host}: ${stdout}`);
+    // Swallow stdout/stderr so they don't block the pipe
+    this.proc.stdout.on('data', () => {});
+    this.proc.stderr.on('data', () => {});
   }
-  return pid;
+
+  /** Queue a backgrounded command via bash job control. */
+  async spawnDetached(command: string): Promise<void> {
+    if (this._closed) throw new Error('SshJobSession is closed');
+    const escaped = command.replace(/'/g, "'\\''");
+    this.proc.stdin.write(`${escaped} &\n`);
+  }
+
+  /** Kill all active jobs in the bash job table. */
+  async killAllJobs(): Promise<void> {
+    if (this._closed) return;
+    this.proc.stdin.write('kill -TERM $(jobs -p) 2>/dev/null || true\n');
+  }
+
+  /** Close the persistent SSH+bash session. */
+  async close(): Promise<void> {
+    if (this._closed) return;
+    this._closed = true;
+    await this.killAllJobs();
+    this.proc.stdin.write('exit\n');
+    this.proc.stdin.end();
+  }
+
+  /** Whether the underlying process is still alive. */
+  get isActive(): boolean {
+    return !this._closed && this.proc.exitCode === null;
+  }
 }
 
-export async function sshKill(
-  host: KnownHost,
-  pid: number,
-): Promise<void> {
-  const configPath = await ensureSshConfig(host);
-  await run('ssh', [
-    '-F', configPath,
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=10',
-    host,
-    `kill ${pid} 2>/dev/null || true`,
-  ]);
+// ---------------------------------------------------------------------------
+// Session pool — lazy instantiation per host
+// ---------------------------------------------------------------------------
+
+const jobSessions = new Map<KnownHost, SshJobSession>();
+
+export async function getJobSession(host: KnownHost): Promise<SshJobSession> {
+  let session = jobSessions.get(host);
+  if (!session || !session.isActive) {
+    const configPath = await ensureSshConfig(host);
+    session = new SshJobSession(host, configPath);
+    jobSessions.set(host, session);
+  }
+  return session;
+}
+
+export async function closeAllJobSessions(): Promise<void> {
+  await Promise.all(
+    [...jobSessions.values()].map((s) => s.close()),
+  );
+  jobSessions.clear();
 }
 
 export async function waitForHost(host: KnownHost, timeoutMs = 30_000): Promise<void> {
