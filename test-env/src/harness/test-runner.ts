@@ -1,9 +1,47 @@
 import { match, P } from 'ts-pattern';
+import { afterEach, afterAll } from 'bun:test';
 import { getClient } from './grpc-client';
 import { eventCollector, type EventMatcher } from './event-collector';
-import { ssh, sshWithResult, type KnownHost } from '../ssh-helper';
+import { ssh, sshWithResult, sshDetached, sshKill, type KnownHost } from '../ssh-helper';
 
 const DEFAULT_TIMEOUT = 5_000;
+
+// ---------------------------------------------------------------------------
+// Detached command — background process with automatic cleanup
+// ---------------------------------------------------------------------------
+
+export class DetachedCommand {
+  readonly host: KnownHost;
+  readonly command: string;
+  readonly pid: number;
+  private killed = false;
+
+  constructor(host: KnownHost, command: string, pid: number) {
+    this.host = host;
+    this.command = command;
+    this.pid = pid;
+  }
+
+  async kill(): Promise<void> {
+    if (this.killed) return;
+    this.killed = true;
+    await sshKill(this.host, this.pid);
+  }
+
+  cleanup(): this {
+    afterEach(() => this.kill());
+    afterAll(() => this.kill());
+    return this;
+  }
+
+  toString(): string {
+    return `[${this.host}] ${this.command} (pid=${this.pid}, killed=${this.killed})`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
 
 export interface RequestOptions {
   rpc: string;
@@ -159,6 +197,11 @@ class CommandBuilder {
         );
       }
     }
+  }
+
+  async runDetached(): Promise<DetachedCommand> {
+    const pid = await sshDetached(this.host, this.command);
+    return new DetachedCommand(this.host, this.command, pid);
   }
 
   private async invokeCommand(timeout: number): Promise<{ stdout: string; stderr: string; exitCode: number }> {

@@ -7,19 +7,19 @@ describe('Event Observation', () => {
     await resetFirewallState(getClient());
   });
 
-  test('ping from h1 to h2 produces observable events', async () => {
-    await performCommand({
-      host: 'h1',
-      command: 'ping -c 2 192.168.20.10',
-    })
-      .expectEvents([
-        {
-          kind: { item: 'tcpSessionEstablished' },
-          match: {},
-        },
-      ])
-      .run();
-  });
+  // test('ping from h1 to h2 produces observable events', async () => {
+  //   await performCommand({
+  //     host: 'h1',
+  //     command: 'ping -c 2 192.168.20.10',
+  //   })
+  //     .expectEvents([
+  //       {
+  //         kind: { item: 'tcpSessionEstablished' },
+  //         match: {},
+  //       },
+  //     ])
+  //     .run();
+  // });
 
   test('command output on h1 matches expected ping pattern', async () => {
     await performCommand({

@@ -13,7 +13,7 @@ describe('Command Output', () => {
       command: 'ip route show',
     })
       .expectOutput([/default via 192\.168\.10\.254/])
-      .run({ timeout: 5_000 });
+      .run();
   });
 
   test('hostname on h1 returns h1', async () => {
@@ -22,20 +22,22 @@ describe('Command Output', () => {
       command: 'hostname',
     })
       .expectOutput([/^h1$/])
-      .run({ timeout: 5_000 });
+      .run();
   });
 
   test('ncat server on h2 responds to h1', async () => {
-    await performCommand({
+    const server = await performCommand({
       host: 'h2',
-      command: 'ncat -l -k -p 8080 -c "echo hello"',
-    }).run();
+      command: 'ncat -l -k -p 12345 -c "echo hello"',
+    }).runDetached();
+
+    server.cleanup();
 
     await performCommand({
       host: 'h1',
-      command: 'echo test | ncat 192.168.20.10 8080',
+      command: 'echo test | ncat 192.168.20.10 12345',
     })
       .expectOutput([/hello/])
-      .run({ timeout: 10_000 });
+      .run();
   });
 });

@@ -1,40 +1,55 @@
+import type { Rule, Zone, ZonePair, AppConfig } from '../generated/config/config_models';
+import { DefaultPolicy } from '../generated/common/common';
 import type { FirewallQueryServiceClient } from './grpc-client';
 
-export const DEFAULT_APP_CONFIG = {
-  capture_interfaces: ['eth1', 'eth2'],
-  pcap_timeout_ms: 3000,
-  tun_device_name: 'tun0',
-  tun_address: '10.254.254.1',
-  tun_netmask: '255.255.255.0',
-  data_dir: '/resources/ngfw/.data',
-  event_socket_path: './sockets/firewall.sock',
-  query_socket_path: '/resources/ngfw/sockets/query.sock',
-  pki_dir: '/resources/ngfw/pki',
+export const DEFAULT_APP_CONFIG: AppConfig = {
+  captureInterfaces: ['eth1', 'eth2'],
+  pcapTimeoutMs: 3000,
+  tunDeviceName: 'tun0',
+  tunAddress: '10.254.254.1',
+  tunNetmask: '255.255.255.0',
+  dataDir: '/resources/ngfw/.data',
+  eventSocketPath: './sockets/firewall.sock',
+  querySocketPath: '/resources/ngfw/sockets/query.sock',
+  pkiDir: '/resources/ngfw/pki',
 };
 
-export const DEFAULT_ZONES = [
+export const DEFAULT_ZONES: Zone[] = [
   {
     id: crypto.randomUUID(),
     name: 'outside',
-    interface_ids: ['eth1'],
+    interfaceIds: ['eth1'],
   },
   {
     id: crypto.randomUUID(),
     name: 'inside',
-    interface_ids: ['eth2'],
+    interfaceIds: ['eth2'],
   },
 ];
 
-export const DEFAULT_ZONE_PAIRS = [
+export const DEFAULT_ZONE_PAIRS: ZonePair[] = [
   {
     id: crypto.randomUUID(),
-    src_zone_id: DEFAULT_ZONES[0]!.id,
-    dst_zone_id: DEFAULT_ZONES[1]!.id,
-    default_policy: 0,
+    srcZoneId: DEFAULT_ZONES[0]!.id,
+    dstZoneId: DEFAULT_ZONES[1]!.id,
+    defaultPolicy: DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED,
   },
 ];
 
-export const DEFAULT_POLICIES: any[] = [];
+export const DEFAULT_POLICIES: Rule[] = [{
+  id: crypto.randomUUID(),
+  name: "default_e2e_testing",
+  zonePairId: DEFAULT_ZONE_PAIRS[0]!.id,
+  priority: 0,
+  content: `
+		match ip_ver {
+			=v4: match protocol {
+				|(=icmp =tcp =udp): verdict allow
+			}
+			= v6: verdict drop
+		}
+	`
+}];
 
 export async function resetFirewallState(client: FirewallQueryServiceClient): Promise<void> {
   await new Promise<void>((resolve, reject) => {

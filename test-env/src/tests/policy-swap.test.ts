@@ -68,8 +68,8 @@ describe('Policy Swap', () => {
 
     await request({ rpc: 'GetPolicies', body: {} })
       .expectResponse(
-        P.when((rules: unknown) =>
-          Array.isArray(rules) && rules.some((r: any) => r.name === ruleName),
+        P.when((res: any) =>
+          res && Array.isArray(res.rules) && res.rules.some((r: any) => r.name === ruleName),
         ),
       )
       .run();

@@ -140,6 +140,44 @@ export async function sshWithResult(
   return { stdout, stderr, exitCode };
 }
 
+export async function sshDetached(
+  host: KnownHost,
+  command: string,
+): Promise<number> {
+  const configPath = await ensureSshConfig(host);
+
+  const escaped = command.replace(/'/g, "'\\''");
+  const wrapped = `nohup bash -c '${escaped}' >/dev/null 2>&1 & echo $!`;
+
+  const { stdout, exitCode } = await run('ssh', [
+    '-F', configPath,
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=10',
+    host,
+    wrapped,
+  ]);
+
+  const pid = parseInt(stdout.trim(), 10);
+  if (isNaN(pid) || exitCode !== 0) {
+    throw new Error(`Failed to launch detached command on ${host}: ${stdout}`);
+  }
+  return pid;
+}
+
+export async function sshKill(
+  host: KnownHost,
+  pid: number,
+): Promise<void> {
+  const configPath = await ensureSshConfig(host);
+  await run('ssh', [
+    '-F', configPath,
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=10',
+    host,
+    `kill ${pid} 2>/dev/null || true`,
+  ]);
+}
+
 export async function waitForHost(host: KnownHost, timeoutMs = 30_000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {

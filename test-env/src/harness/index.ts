@@ -7,6 +7,6 @@ beforeAll(async () => {
   await waitForReady();
 }, { timeout: 120_000 });
 
-export { request, performCommand } from './test-runner';
+export { request, performCommand, DetachedCommand } from './test-runner';
 export { resetFirewallState } from './fixtures';
 export { getClient } from './grpc-client';

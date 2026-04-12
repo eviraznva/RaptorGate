@@ -13,7 +13,7 @@ const PROTO_FILES = [
 ];
 
 const LOADER_OPTIONS = {
-  keepCase: true,
+  keepCase: false,
   longs: String,
   enums: String,
   defaults: true,
