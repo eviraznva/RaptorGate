@@ -176,6 +176,7 @@ pub enum EventKind {
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpConnectionRejected { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionAbortedMidClose { src: EndpointIdentifier, dst: EndpointIdentifier },
+    TcpSessionEnteredTimeWait { src: EndpointIdentifier, dst: EndpointIdentifier },
     TunDeviceSwapped { old_device: String, new_device: String, old_address: String, new_address: String },
     SnifferConfigChanged { old_interfaces: Vec<String>, new_interfaces: Vec<String>, old_timeout: Duration, new_timeout: Duration },
     EventBusConnectedEvent {}
@@ -189,6 +190,7 @@ impl EventKind {
             | E::TcpSessionRemoved { .. }
             | E::TcpConnectionRejected { .. }
             | E::TcpSessionAbortedMidClose { .. }
+            | E::TcpSessionEnteredTimeWait { .. }
             | E::TunDeviceSwapped { .. }
             | E::EventBusConnectedEvent { .. }
             | E::SnifferConfigChanged { .. } => true,
@@ -240,6 +242,12 @@ impl From<EventKind> for proto::EventKind {
                         src: Some(src.into()),
                         dst: Some(dst.into()),
                     }),
+                EventKind::TcpSessionEnteredTimeWait { src, dst } =>
+                    Item::TcpSessionEnteredTimewait(proto::TcpSessionEnteredTimeWaitEvent {
+                        src: Some(src.into()),
+                        dst: Some(dst.into()),
+                    }),
+
                 EventKind::TunDeviceSwapped { old_device, new_device, old_address, new_address } =>
                     Item::TunDeviceSwapped(proto::TunDeviceSwappedEvent {
                         old_device,

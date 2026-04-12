@@ -23,9 +23,11 @@ message EventKind {
     TcpSessionRemovedEvent         tcp_session_removed      = 2;
     TcpConnectionRejectedEvent     tcp_connection_rejected  = 3;
     TcpSessionAbortedMidCloseEvent tcp_session_aborted      = 4;
-    TunDeviceSwappedEvent          tun_device_swapped       = 5;
-    SnifferConfigChangedEvent      sniffer_config_changed   = 6;
-    EventBusConnectedEvent         event_bus_connected      = 7;
+    TcpSessionEnteredTimeWaitEvent tcp_session_entered_timewait = 5;
+
+    TunDeviceSwappedEvent          tun_device_swapped       = 6;
+    SnifferConfigChangedEvent      sniffer_config_changed   = 7;
+    EventBusConnectedEvent         event_bus_connected      = 8;
   }
 }
 
@@ -59,6 +61,11 @@ message TcpConnectionRejectedEvent {
 }
 
 message TcpSessionAbortedMidCloseEvent {
+  TcpEndpoint src = 1;
+  TcpEndpoint dst = 2;
+}
+
+message TcpSessionEnteredTimeWaitEvent {
   TcpEndpoint src = 1;
   TcpEndpoint dst = 2;
 }
