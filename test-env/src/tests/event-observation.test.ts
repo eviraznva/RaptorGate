@@ -21,15 +21,21 @@ describe('Event Observation', () => {
   //     .run();
   // });
 
-  test('command output on h1 matches expected ping pattern', async () => {
+  test('nc from h1 to h2 produces events for full tcp session', async () => {
+	  const server = await performCommand({
+		  host: 'h2',
+		  command: 'ncat -l -k -p 12345',
+	  }).runDetached();
+
+	  server.cleanup()
+
     await performCommand({
       host: 'h1',
-      command: 'ping -c 2 192.168.20.10',
+      command: 'echo $(ncat 192.168.20.10 12345 --recv-only)', // wtf
     })
-      .expectOutput([
-        /^PING 192\.168\.20\.10/,
-        /bytes from 192\.168\.20\.10/,
-      ])
+      .expectEvents([{
+
+	  }])
       .run();
-  });
+  })
 });

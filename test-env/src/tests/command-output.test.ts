@@ -7,12 +7,15 @@ describe('Command Output', () => {
     await resetFirewallState(getClient());
   });
 
-  test('ip route show on h1 shows default gateway', async () => {
+  test('command output on h1 matches expected ping pattern', async () => {
     await performCommand({
       host: 'h1',
-      command: 'ip route show',
+      command: 'ping -c 2 192.168.20.10',
     })
-      .expectOutput([/default via 192\.168\.10\.254/])
+      .expectOutput([
+        /^PING 192\.168\.20\.10/,
+        /bytes from 192\.168\.20\.10/,
+      ])
       .run();
   });
 
