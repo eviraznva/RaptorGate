@@ -30,6 +30,6 @@ describe('Event Observation', () => {
         /^PING 192\.168\.20\.10/,
         /bytes from 192\.168\.20\.10/,
       ])
-      .run({timeout: 30_000});
-  }, {timeout: 30_000});
+      .run();
+  });
 });

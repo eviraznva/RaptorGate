@@ -36,16 +36,14 @@ export class EventCollector {
 
   async waitForSubsequence(
     patterns: EventMatcher[],
-    timeout: number,
   ): Promise<WaitForResult> {
     if (patterns.length === 0) {
       return { matched: true, received: [] };
     }
 
-    const start = Date.now();
     let patternIdx = 0;
 
-    while (Date.now() - start < timeout) {
+    while (true) {
       const relevant = this.buffer.filter((e) => this.isAfterFence(e));
 
       for (const event of relevant) {
@@ -65,8 +63,6 @@ export class EventCollector {
 
       await new Promise((r) => setTimeout(r, 100));
     }
-
-    return { matched: false, received: this.buffer, failedAt: patternIdx };
   }
 
   private isAfterFence(event: Event): boolean {

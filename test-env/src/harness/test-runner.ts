@@ -5,8 +5,6 @@ import { eventCollector, type EventMatcher } from './event-collector';
 import { ssh, sshWithResult, type KnownHost, getJobSession, closeAllJobSessions } from '../ssh-helper';
 import type { FirewallQueryService } from '../generated/services/query_service';
 
-const DEFAULT_TIMEOUT = 5_000;
-
 // ---------------------------------------------------------------------------
 // Type extraction from generated gRPC service
 // ---------------------------------------------------------------------------
@@ -63,10 +61,6 @@ export interface PerformCommandOptions {
   command: string;
 }
 
-export interface RunOptions {
-  timeout?: number;
-}
-
 // ---------------------------------------------------------------------------
 // Request builder (gRPC trigger)
 // ---------------------------------------------------------------------------
@@ -92,33 +86,29 @@ class RequestBuilder<M extends RpcMethodName> {
     return this;
   }
 
-  async run(options?: RunOptions): Promise<void> {
-    const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
+  async run(): Promise<void> {
     const client = getClient();
-
-    const result = await this.invokeRpc(client, timeout);
+    const result = await this.invokeRpc(client);
 
     if (this.responsePattern) {
-      this.assertResponse(result, timeout);
+      this.assertResponse(result);
     }
 
     if (this.eventPatterns) {
-      await this.assertEvents(this.eventPatterns, timeout);
+      await this.assertEvents(this.eventPatterns);
     }
   }
 
-  private async invokeRpc(client: any, timeout: number): Promise<any> {
+  private async invokeRpc(client: any): Promise<any> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`RPC ${this.rpc} timed out after ${timeout}ms`)), timeout);
       client[this.rpc.charAt(0).toLowerCase() + this.rpc.slice(1)](this.body, (err: Error | null, resp: any) => {
-        clearTimeout(timer);
         if (err) reject(err);
         else resolve(resp);
       });
     });
   }
 
-  private assertResponse(response: any, _timeout: number): void {
+  private assertResponse(response: any): void {
     const ok = matchPattern(response, this.responsePattern);
     if (!ok) {
       throw new Error(
@@ -127,9 +117,9 @@ class RequestBuilder<M extends RpcMethodName> {
     }
   }
 
-  private async assertEvents(patterns: EventMatcher[], timeout: number): Promise<void> {
+  private async assertEvents(patterns: EventMatcher[]): Promise<void> {
     eventCollector.setFence();
-    const result = await eventCollector.waitForSubsequence(patterns, timeout);
+    const result = await eventCollector.waitForSubsequence(patterns);
     if (!result.matched) {
       throw new Error(
         `Event assertion failed at pattern index ${result.failedAt}. Received ${result.received.length} events.`,
@@ -174,14 +164,12 @@ class CommandBuilder {
     return this;
   }
 
-  async run(options?: RunOptions): Promise<void> {
-    const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
-
+  async run(): Promise<void> {
     if (this.eventPatterns) {
       eventCollector.setFence();
     }
 
-    const { stdout, stderr, exitCode } = await this.invokeCommand(timeout);
+    const { stdout, stderr, exitCode } = await this.invokeCommand();
 
     if (this.expectError && exitCode === 0) {
       throw new Error(
@@ -200,7 +188,7 @@ class CommandBuilder {
     }
 
     if (this.eventPatterns) {
-      const result = await eventCollector.waitForSubsequence(this.eventPatterns, timeout);
+      const result = await eventCollector.waitForSubsequence(this.eventPatterns);
       if (!result.matched) {
         throw new Error(
           `Event assertion failed at pattern index ${result.failedAt}. Received ${result.received.length} events.`,
@@ -217,21 +205,14 @@ class CommandBuilder {
     return new DetachedCommand(this.host, this.command);
   }
 
-  private async invokeCommand(timeout: number): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    return Promise.race([
-      sshWithResult(this.host, this.command),
-      new Promise<{ stdout: string; stderr: string; exitCode: number }>((_, reject) =>
-        setTimeout(() => reject(new Error(`Command timed out after ${timeout}ms: ${this.command}`)), timeout),
-      ),
-    ]);
+  private async invokeCommand(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    return sshWithResult(this.host, this.command);
   }
 
   private assertOutput(stdout: string, stderr: string): void {
     const combined = stdout + stderr;
     const lines = combined.split('\n').filter((l) => l.trim());
     let lineIdx = 0;
-
-	console.log(`lines for command ${this.command}: ${lines}`,)
 
     for (const regex of this.outputRegexes!) {
       let found = false;
