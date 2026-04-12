@@ -35,7 +35,7 @@ describe('Command Output', () => {
 
     await performCommand({
       host: 'h1',
-      command: 'echo test | ncat 192.168.20.10 12345',
+      command: 'echo $(ncat 192.168.20.10 12345 --recv-only)', // wtf
     })
       .expectOutput([/hello/])
       .run();
