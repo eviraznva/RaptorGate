@@ -37,6 +37,7 @@ async function ensureSshConfig(host: KnownHost): Promise<string> {
   const { stdout, exitCode } = await run('vagrant', ['ssh-config', host], {
     cwd: VAGRANT_DIR,
   });
+
   if (exitCode !== 0 || !stdout.includes('Host ')) {
     throw new Error(`Failed to generate SSH config for ${host}`);
   }

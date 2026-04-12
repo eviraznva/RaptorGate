@@ -67,7 +67,7 @@ export async function resetFirewallState(client: FirewallQueryServiceClient): Pr
   });
 
   await new Promise<void>((resolve, reject) => {
-    client.swapZonePairs({ zone_pairs: DEFAULT_ZONE_PAIRS }, (err: Error | null) => {
+    client.swapZonePairs({ zonePairs: DEFAULT_ZONE_PAIRS }, (err: Error | null) => {
       if (err) reject(err);
       else resolve();
     });

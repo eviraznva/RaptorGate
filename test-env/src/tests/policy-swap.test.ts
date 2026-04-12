@@ -9,38 +9,32 @@ describe('Policy Swap', () => {
   });
 
   test('swap policies with valid RaptorLang returns success', async () => {
-    await request({
-      rpc: 'SwapPolicies',
-      body: {
-        rules: [
-          {
-            id: crypto.randomUUID(),
-            name: 'allow-icmp-v4',
-            zone_pair_id: crypto.randomUUID(),
-            priority: 0,
-            content:
-              'match ip_ver { =v4: match protocol { =icmp: verdict allow } =v6: verdict drop }',
-          },
-        ],
-      },
+    await request('SwapPolicies', {
+      rules: [
+        {
+          id: crypto.randomUUID(),
+          name: 'allow-icmp-v4',
+          zonePairId: crypto.randomUUID(),
+          priority: 0,
+          content:
+            'match ip_ver { =v4: match protocol { =icmp: verdict allow } =v6: verdict drop }',
+        },
+      ],
     }).run();
   });
 
   test('swap policies with invalid RaptorLang returns error', async () => {
     try {
-      await request({
-        rpc: 'SwapPolicies',
-        body: {
-          rules: [
-            {
-              id: crypto.randomUUID(),
-              name: 'invalid-rule',
-              zone_pair_id: crypto.randomUUID(),
-              priority: 0,
-              content: 'this is not valid raptorlang',
-            },
-          ],
-        },
+      await request('SwapPolicies', {
+        rules: [
+          {
+            id: crypto.randomUUID(),
+            name: 'invalid-rule',
+            zonePairId: crypto.randomUUID(),
+            priority: 0,
+            content: 'this is not valid raptorlang',
+          },
+        ],
       }).run();
       throw new Error('Expected SwapPolicies to fail');
     } catch (err: any) {
@@ -51,22 +45,19 @@ describe('Policy Swap', () => {
   test('get policies returns swapped rule', async () => {
     const ruleName = `test-policy-${Date.now()}`;
 
-    await request({
-      rpc: 'SwapPolicies',
-      body: {
-        rules: [
-          {
-            id: crypto.randomUUID(),
-            name: ruleName,
-            zone_pair_id: crypto.randomUUID(),
-            priority: 0,
-            content: 'match ip_ver { =v4: verdict allow }',
-          },
-        ],
-      },
+    await request('SwapPolicies', {
+      rules: [
+        {
+          id: crypto.randomUUID(),
+          name: ruleName,
+          zonePairId: crypto.randomUUID(),
+          priority: 0,
+          content: 'match ip_ver { =v4: verdict allow }',
+        },
+      ],
     }).run();
 
-    await request({ rpc: 'GetPolicies', body: {} })
+    await request('GetPolicies', {})
       .expectResponse(
         P.when((res: any) =>
           res && Array.isArray(res.rules) && res.rules.some((r: any) => r.name === ruleName),

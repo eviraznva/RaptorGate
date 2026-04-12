@@ -3,8 +3,19 @@ import { afterEach, afterAll } from 'bun:test';
 import { getClient } from './grpc-client';
 import { eventCollector, type EventMatcher } from './event-collector';
 import { ssh, sshWithResult, sshDetached, sshKill, type KnownHost } from '../ssh-helper';
+import type { FirewallQueryService } from '../generated/services/query_service';
 
 const DEFAULT_TIMEOUT = 5_000;
+
+// ---------------------------------------------------------------------------
+// Type extraction from generated gRPC service
+// ---------------------------------------------------------------------------
+
+/** All available RPC method names on FirewallQueryService */
+export type RpcMethodName = keyof FirewallQueryService;
+
+/** The request payload type for a specific RPC method */
+export type RequestPayload<M extends RpcMethodName> = Parameters<FirewallQueryService[M]>[0];
 
 // ---------------------------------------------------------------------------
 // Detached command — background process with automatic cleanup
@@ -43,9 +54,9 @@ export class DetachedCommand {
 // Interfaces
 // ---------------------------------------------------------------------------
 
-export interface RequestOptions {
-  rpc: string;
-  body?: Record<string, unknown>;
+export interface RequestOptions<M extends RpcMethodName> {
+  rpc: M;
+  body?: RequestPayload<M>;
 }
 
 export interface PerformCommandOptions {
@@ -61,15 +72,15 @@ export interface RunOptions {
 // Request builder (gRPC trigger)
 // ---------------------------------------------------------------------------
 
-class RequestBuilder {
-  private rpc: string;
-  private body: Record<string, unknown>;
+class RequestBuilder<M extends RpcMethodName> {
+  private rpc: M;
+  private body: RequestPayload<M>;
   private responsePattern: any = null;
   private eventPatterns: EventMatcher[] | null = null;
 
-  constructor(opts: RequestOptions) {
+  constructor(opts: RequestOptions<M>) {
     this.rpc = opts.rpc;
-    this.body = opts.body ?? {};
+    this.body = opts.body ?? {} as RequestPayload<M>;
   }
 
   expectResponse(pattern: any): this {
@@ -173,10 +184,6 @@ class CommandBuilder {
 
     const { stdout, stderr, exitCode } = await this.invokeCommand(timeout);
 
-    if (this.outputRegexes) {
-      this.assertOutput(stdout, stderr);
-    }
-
     if (this.expectError && exitCode === 0) {
       throw new Error(
         `Command expected to fail but exited 0 on ${this.host}: ${this.command}`,
@@ -187,6 +194,10 @@ class CommandBuilder {
       throw new Error(
         `Command failed on ${this.host} (exit ${exitCode}): ${stderr || stdout}`,
       );
+    }
+
+    if (this.outputRegexes) {
+      this.assertOutput(stdout, stderr);
     }
 
     if (this.eventPatterns) {
@@ -242,8 +253,16 @@ class CommandBuilder {
 // Public API
 // ---------------------------------------------------------------------------
 
-export function request(opts: RequestOptions): RequestBuilder {
-  return new RequestBuilder(opts);
+/**
+ * Create a typed gRPC request builder.
+ * @param rpc - Literal RPC method name (e.g. 'SwapPolicies')
+ * @param body - Strongly typed request payload (auto-constrained by rpc)
+ */
+export function request<M extends RpcMethodName>(
+  rpc: M,
+  body?: RequestPayload<M>,
+): RequestBuilder<M> {
+  return new RequestBuilder({ rpc, body });
 }
 
 export function performCommand(opts: PerformCommandOptions): CommandBuilder {
