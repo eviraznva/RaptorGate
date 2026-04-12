@@ -160,6 +160,12 @@ export class GrpcConfigSnapshotPushService
         certificatePem: c.getCertificatePem(),
         privateKeyRef: c.getPrivateKeyRef(),
         expiresAt: this.toTimestamp(c.getExpiresAt()),
+        // TODO: pola MITM inbound TLS (bind_address/port, private_key_pem, inspection_bypass)
+        // zostaną uzupełnione gdy domain entity FirewallCertificate je dostanie.
+        bindAddress: '',
+        bindPort: 0,
+        privateKeyPem: '',
+        inspectionBypass: false,
       })),
       identity: undefined,
     };
