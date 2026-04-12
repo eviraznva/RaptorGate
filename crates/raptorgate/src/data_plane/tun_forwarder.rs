@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use std::sync::Arc;
 use tun::{AbstractDevice, AsyncDevice};
 
@@ -11,7 +11,7 @@ use crate::events::{Event, EventKind};
 const ETH_HDR: usize = 14;
 
 pub struct TunForwarder {
-    device: ArcSwap<AsyncDevice>,
+    device: ArcSwapOption<AsyncDevice>,
     config: ArcSwap<AppConfig>,
 }
 
@@ -38,7 +38,7 @@ impl TunForwarder {
     pub fn new(config: &AppConfig) -> Arc<Self> {
         let device = Self::create_device(config).expect("failed to create TUN device");
         Arc::new(Self {
-            device: ArcSwap::new(Arc::new(device)),
+            device: ArcSwapOption::new(Some(Arc::new(device))),
             config: ArcSwap::new(Arc::new(config.clone())),
         })
     }
@@ -53,13 +53,17 @@ impl TunForwarder {
             return;
         }
 
-        let device = self.device.load();
-        if let Err(e) = device.send(&raw[ETH_HDR..]).await {
-            tracing::error!(
-                iface = %ctx.borrow_src_interface(),
-                error = %e,
-                "failed to forward packet to TUN"
-            );
+        match &*self.device.load() {
+            Some(dev) => {
+                if let Err(e) = dev.send(&raw[ETH_HDR..]).await {
+                    tracing::error!(
+                        iface = %ctx.borrow_src_interface(),
+                        error = %e,
+                        "failed to forward packet to TUN"
+                    );
+                }
+            },
+            None => tracing::warn!("Tried forwarding packet, but TUN device not available"),
         }
     }
 }
@@ -69,19 +73,21 @@ impl TunForwarder {
 impl ConfigObserver for TunForwarder {
     async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
         let old_config = self.config.load();
-        let new_device = Self::create_device(new_config)
-            .context("failed to create new TUN device")?;
 
         let old_device_name = old_config.tun_device_name.clone();
         let old_address = old_config.tun_address.to_string();
         let new_address = new_config.tun_address.to_string();
 
+        self.device.store(None);
 
-        self.device.store(Arc::new(new_device));
+        let new_device = Self::create_device(new_config)?;
+
+        self.device.store(Some(Arc::new(new_device)));
         self.config.store(Arc::new(new_config.clone()));
 
         let new_device = self.device.load();
-        let new_device_name = new_device.as_ref().tun_name().unwrap_or("Device name fetch failed".to_owned());
+        let new_device_name = new_device
+            .as_ref().map_or_else(|| "Unknown".to_string(), |dev| dev.tun_name().unwrap_or_else(|_| "Unknown".to_string()));
 
         crate::events::emit(Event::new(EventKind::TunDeviceSwapped {
             old_device: old_device_name,
