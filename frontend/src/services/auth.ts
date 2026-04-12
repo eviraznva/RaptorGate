@@ -1,27 +1,16 @@
-import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
-import type { ApiFailure, ApiResponse } from "../types/ApiResponse";
+import { createApi } from "@reduxjs/toolkit/query/react";
+import type { ApiResponse } from "../types/ApiResponse";
 import type { LoginResponse } from "../types";
 import type { LoginData } from "../types/authApi/LoginData";
 import type { RefreshTokenData } from "../types/authApi/RefreshTokenData";
 import type { RefreshTokenResponse } from "../types/authApi/RefreshTokenResponse";
 import type { LogoutData } from "../types/authApi/LogoutData";
-
-const baseQuery = fetchBaseQuery({
-  baseUrl: `${import.meta.env.RAPTOR_GATE_API_URL}`,
-  credentials: "include",
-  mode: "cors",
-});
-
-const customBaseQuery = async (args: any, api: any, extraOptions: any) => {
-  const result = await baseQuery(args, api, extraOptions);
-  if (result.error) return { error: result.error.data as ApiFailure };
-
-  return result;
-};
+import { baseQueryWithReauth } from "./baseQueryWithReauth";
+import type { ResetPasswordData } from "../types/authApi/ResetPasswotdData";
 
 export const authApi = createApi({
   reducerPath: "authApi",
-  baseQuery: customBaseQuery,
+  baseQuery: baseQueryWithReauth,
   endpoints: (builder) => ({
     login: builder.mutation<ApiResponse<LoginResponse>, LoginData>({
       query: (loginData) => ({
@@ -30,6 +19,7 @@ export const authApi = createApi({
         body: loginData,
       }),
     }),
+
     refreshToken: builder.mutation<
       ApiResponse<RefreshTokenResponse>,
       RefreshTokenData
@@ -42,6 +32,7 @@ export const authApi = createApi({
         },
       }),
     }),
+
     logout: builder.mutation<ApiResponse<void>, LogoutData>({
       query: (logoutData) => ({
         url: "/auth/logout",
@@ -51,8 +42,20 @@ export const authApi = createApi({
         },
       }),
     }),
+
+    resetPassword: builder.mutation<ApiResponse<void>, ResetPasswordData>({
+      query: (resetPasswordData) => ({
+        url: "/auth/recover-password",
+        method: "POST",
+        body: resetPasswordData,
+      }),
+    }),
   }),
 });
 
-export const { useLoginMutation, useRefreshTokenMutation, useLogoutMutation } =
-  authApi;
+export const {
+  useLoginMutation,
+  useRefreshTokenMutation,
+  useLogoutMutation,
+  useResetPasswordMutation,
+} = authApi;

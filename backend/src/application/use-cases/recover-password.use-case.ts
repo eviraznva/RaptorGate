@@ -29,7 +29,7 @@ export class RecoverPasswordUseCase {
     const user = await this.userRepository.findByUsername(dto.username);
     if (!user) throw new EntityNotFoundException("User", dto.username);
 
-    if (!user.getRecoveryToken())
+    if (user.getRecoveryToken() === null)
       throw new Error("No recovery token found for user");
 
     const isValidToken = await this.passwordHasherService.compare(

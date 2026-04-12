@@ -3,6 +3,7 @@ import UserReducer from "../features/userSlice";
 import LoginDataReducer from "../features/loginDataSlice";
 import DnsInspectionReducer from "../features/dnsInspectionSlice";
 import IpsConfigReducer from "../features/ipsConfigSlice";
+import ResetPasswordReducer from "../features/resetPasswordSlice";
 import { authApi } from "../services/auth";
 import { setupListeners } from "@reduxjs/toolkit/query";
 
@@ -12,6 +13,7 @@ export const store = configureStore({
     loginData: LoginDataReducer,
     dnsInspection: DnsInspectionReducer,
     ipsConfig: IpsConfigReducer,
+    resetPassword: ResetPasswordReducer,
     [authApi.reducerPath]: authApi.reducer,
   },
 
