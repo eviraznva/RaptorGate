@@ -2,7 +2,7 @@ import { match, P } from 'ts-pattern';
 import { afterEach, afterAll, beforeEach } from 'bun:test';
 import { getClient } from './grpc-client';
 import { eventCollector, type EventMatcher } from './event-collector';
-import { ssh, sshWithResult, type KnownHost, getJobSession, closeAllJobSessions } from '../ssh-helper';
+import { ssh, sshWithResult, type KnownHost, spawnSsh, closeAllSshProcesses } from '../ssh-helper';
 import type { FirewallQueryService } from '../generated/services/query_service';
 
 // ---------------------------------------------------------------------------
@@ -31,24 +31,25 @@ async function fetchVmSystemTimeMs(): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// Detached command — background process with automatic cleanup via SshJobSession
+// Detached command — background process with automatic cleanup via SshProcessHandle
 // ---------------------------------------------------------------------------
 
 export class DetachedCommand {
   readonly host: KnownHost;
   readonly command: string;
+  readonly handle: import('../ssh-helper').SshProcessHandle;
   private killed = false;
 
-  constructor(host: KnownHost, command: string) {
+  constructor(host: KnownHost, command: string, handle: import('../ssh-helper').SshProcessHandle) {
     this.host = host;
     this.command = command;
+    this.handle = handle;
   }
 
   async kill(): Promise<void> {
     if (this.killed) return;
     this.killed = true;
-    const session = await getJobSession(this.host);
-    await session.killAllJobs();
+    this.handle.kill();
   }
 
   defer_cleanup(): this {
@@ -219,11 +220,10 @@ class CommandBuilder {
   }
 
   async runDetached(): Promise<DetachedCommand> {
-    const session = await getJobSession(this.host);
-    await session.spawnDetached(this.command);
+    const handle = spawnSsh(this.host, this.command);
     // Give the server time to bind before the caller attempts to connect.
     await new Promise((r) => setTimeout(r, 1000));
-    return new DetachedCommand(this.host, this.command);
+    return new DetachedCommand(this.host, this.command, handle);
   }
 
   private async invokeCommand(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
@@ -276,11 +276,11 @@ export function performCommand(opts: PerformCommandOptions): CommandBuilder {
 }
 
 // ---------------------------------------------------------------------------
-// Global teardown — close all persistent SSH job sessions
+// Global teardown — close all transient SSH processes
 // ---------------------------------------------------------------------------
 
 afterAll(async () => {
-  await closeAllJobSessions();
+  await closeAllSshProcesses();
 });
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, writeFileSync, readFileSync } from 'node:fs';
+import { afterEach, afterAll } from 'bun:test';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -142,74 +143,113 @@ export async function sshWithResult(
 }
 
 // ---------------------------------------------------------------------------
-// SshJobSession — persistent SSH connection with bash job control
+// SshProcessHandle — handle for a single transient SSH process
 // ---------------------------------------------------------------------------
 
-export class SshJobSession {
-  private proc: import('node:child_process').ChildProcessWithoutNullStreams;
-  private _closed = false;
+export class SshProcessHandle {
+  private _proc: ChildProcessWithoutNullStreams;
+  private _killed = false;
+  private _exitPromise: Promise<number | null>;
 
-  constructor(host: KnownHost, configPath: string) {
-    this.proc = spawn(
-      'ssh',
-      ['-F', configPath, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, 'bash'],
-      { shell: false, stdio: ['pipe', 'pipe', 'pipe'] },
-    );
-
-    // Swallow stdout/stderr so they don't block the pipe
-    this.proc.stdout.on('data', () => {});
-    this.proc.stderr.on('data', () => {});
+  constructor(proc: ChildProcessWithoutNullStreams) {
+    this._proc = proc;
+    this._exitPromise = new Promise((resolve) => {
+      proc.on('close', (code) => resolve(code));
+    });
   }
 
-  /** Queue a backgrounded command via bash job control. */
-  async spawnDetached(command: string): Promise<void> {
-    if (this._closed) throw new Error('SshJobSession is closed');
-    const escaped = command.replace(/'/g, "'\\''");
-    this.proc.stdin.write(`${escaped} &\n`);
+  /** Raw stdout stream (readable). */
+  get stdout(): NodeJS.ReadableStream {
+    return this._proc.stdout;
   }
 
-  /** Kill all active jobs in the bash job table. */
-  async killAllJobs(): Promise<void> {
-    if (this._closed) return;
-    this.proc.stdin.write('kill -TERM $(jobs -p) 2>/dev/null || true\n');
+  /** Raw stderr stream (readable). */
+  get stderr(): NodeJS.ReadableStream {
+    return this._proc.stderr;
   }
 
-  /** Close the persistent SSH+bash session. */
-  async close(): Promise<void> {
-    if (this._closed) return;
-    this._closed = true;
-    await this.killAllJobs();
-    this.proc.stdin.write('exit\n');
-    this.proc.stdin.end();
+  /** Collect all stdout into a string (consumes the stream). */
+  collectStdout(): Promise<string> {
+    return new Promise((resolve) => {
+      let data = '';
+      this._proc.stdout.on('data', (chunk) => { data += chunk; });
+      this._exitPromise.then(() => resolve(data));
+    });
+  }
+
+  /** Collect all stderr into a string (consumes the stream). */
+  collectStderr(): Promise<string> {
+    return new Promise((resolve) => {
+      let data = '';
+      this._proc.stderr.on('data', (chunk) => { data += chunk; });
+      this._exitPromise.then(() => resolve(data));
+    });
+  }
+
+  /** Send SIGTERM to the SSH process (kills remote process via connection drop). */
+  kill(): void {
+    if (this._killed) return;
+    this._killed = true;
+    this._proc.kill('SIGTERM');
+  }
+
+  /** Wait for the process to exit. Returns exit code. */
+  waitForExit(): Promise<number | null> {
+    return this._exitPromise;
+  }
+
+  /** Register automatic cleanup in afterEach/afterAll hooks. */
+  defer_cleanup(): this {
+    afterEach(() => this.kill());
+    afterAll(() => this.kill());
+    return this;
   }
 
   /** Whether the underlying process is still alive. */
   get isActive(): boolean {
-    return !this._closed && this.proc.exitCode === null;
+    return !this._killed && this._proc.exitCode === null;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Session pool — lazy instantiation per host
+// Global tracking for cleanup
 // ---------------------------------------------------------------------------
 
-const jobSessions = new Map<KnownHost, SshJobSession>();
+const activeHandles = new Set<SshProcessHandle>();
 
-export async function getJobSession(host: KnownHost): Promise<SshJobSession> {
-  let session = jobSessions.get(host);
-  if (!session || !session.isActive) {
-    const configPath = await ensureSshConfig(host);
-    session = new SshJobSession(host, configPath);
-    jobSessions.set(host, session);
-  }
-  return session;
-}
+/** Spawn a one-off SSH command. Returns a handle you can kill/wait on. */
+export function spawnSsh(host: KnownHost, command: string): SshProcessHandle {
+  const configPath = sshConfigPath(host);
 
-export async function closeAllJobSessions(): Promise<void> {
-  await Promise.all(
-    [...jobSessions.values()].map((s) => s.close()),
+  const proc = spawn(
+    'ssh',
+    [
+      '-F', configPath,
+      '-o', 'BatchMode=yes',
+      '-o', 'ConnectTimeout=10',
+      host,
+      command,
+    ],
+    { shell: false, stdio: ['pipe', 'pipe', 'pipe'] },
   );
-  jobSessions.clear();
+
+  const handle = new SshProcessHandle(proc);
+  activeHandles.add(handle);
+  proc.on('close', () => activeHandles.delete(handle));
+
+  return handle;
+}
+
+/** Kill all active SSH processes. Use in global teardown. */
+export async function closeAllSshProcesses(): Promise<void> {
+  for (const handle of activeHandles) {
+    handle.kill();
+  }
+  // Give processes a moment to terminate
+  await Promise.all(
+    [...activeHandles].map((h) => h.waitForExit()),
+  );
+  activeHandles.clear();
 }
 
 export async function waitForHost(host: KnownHost, timeoutMs = 30_000): Promise<void> {
