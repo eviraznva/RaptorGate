@@ -1,15 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { User } from 'src/domain/entities/user.entity';
-import { RoleIsInvalidException } from 'src/domain/exceptions/role-is-invalid.exception';
-import { UserAlreadyExistsException } from 'src/domain/exceptions/user-already-exitst.exception';
+import { User } from '../../domain/entities/user.entity.js';
+import { RoleIsInvalidException } from '../../domain/exceptions/role-is-invalid.exception.js';
+import { UserAlreadyExistsException } from '../../domain/exceptions/user-already-exitst.exception.js';
 import {
   type IRoleRepository,
   ROLE_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/role.repository';
+} from '../../domain/repositories/role.repository.js';
 import {
   type IUserRepository,
   USER_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/user.repository';
+} from '../../domain/repositories/user.repository.js';
 import { CreateUserDto } from '../dtos/create-user.dto';
 import { CreateUserResponseDto } from '../dtos/create-user-response.dto';
 import {

@@ -1,8 +1,8 @@
 import { status } from '@grpc/grpc-js';
 import { Controller, Inject, Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
-import { GetActiveConfigUseCase } from 'src/application/use-cases/get-active-config.use-case';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
+import { GetActiveConfigUseCase } from '../../application/use-cases/get-active-config.use-case.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import {
   FirewallConfigSnapshotServiceController,
   FirewallConfigSnapshotServiceControllerMethods,

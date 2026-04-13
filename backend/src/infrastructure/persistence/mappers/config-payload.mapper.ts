@@ -1,9 +1,9 @@
-import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
+import { ConfigurationSnapshot } from '../../../domain/entities/configuration-snapshot.entity.js';
 import {
   ConfigSnapshotPayload,
   type TlsInspectionPolicyPayload,
   normalizeTlsInspectionPolicy,
-} from 'src/domain/value-objects/config-snapshot-payload.interface';
+} from '../../../domain/value-objects/config-snapshot-payload.interface.js';
 import { DnsBlacklistFile } from '../schemas/dns-blacklist.schema';
 import { FirewallCertificatesFile } from '../schemas/firewall-certificates.schema';
 import { IpsSignaturesFile } from '../schemas/ips-signatures.schema';

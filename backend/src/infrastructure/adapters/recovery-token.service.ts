@@ -1,4 +1,4 @@
-import { IRecoveryTokenService } from 'src/application/ports/recovery-token-service.interface';
+import { IRecoveryTokenService } from '../../application/ports/recovery-token-service.interface.js';
 import { randomBytes } from 'crypto';
 
 export class RecoveryTokenService implements IRecoveryTokenService {

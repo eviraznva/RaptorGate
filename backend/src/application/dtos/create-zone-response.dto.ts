@@ -1,4 +1,4 @@
-import { Zone } from 'src/domain/entities/zone.entity';
+import { Zone } from '../../domain/entities/zone.entity.js';
 
 export class CreateZoneResponseDto {
   zone: Zone;

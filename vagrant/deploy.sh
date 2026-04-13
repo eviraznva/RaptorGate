@@ -43,5 +43,12 @@ cp -rf ../proto/* .router_sync/proto/
 cp -rf ./configs/* .router_sync/ngfw
 cp -rf services .router_sync
 
-vagrant rsync r1 &&
+R1_STATE="$(vagrant status r1 --machine-readable | awk -F, '$3=="state"{print $4}' | tail -n1)"
+
+if [ "$R1_STATE" = "running" ]; then
+  vagrant rsync r1
+else
+  echo "r1 is not running yet; skipping rsync and relying on vagrant up for initial sync"
+fi
+
 vagrant up --provision

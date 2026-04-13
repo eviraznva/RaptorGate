@@ -1,13 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import {
   type IRoleRepository,
   ROLE_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/role.repository';
+} from '../../domain/repositories/role.repository.js';
 import {
   type IUserRepository,
   USER_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/user.repository';
+} from '../../domain/repositories/user.repository.js';
 import { GetAllUsersResponseDto } from '../dtos/get-all-users-response.dto';
 import { GetUsersDto } from '../dtos/get-users.dto';
 

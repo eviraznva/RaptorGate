@@ -1,9 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import {
   CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
   type IConfigSnapshotRepository,
-} from 'src/domain/repositories/config-snapshot.repository';
+} from '../../domain/repositories/config-snapshot.repository.js';
 import { ExportConfigResponseDto } from '../dtos/export-confg-response.dto';
 
 @Injectable()

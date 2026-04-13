@@ -1,4 +1,4 @@
-import { Zone } from 'src/domain/entities/zone.entity';
+import { Zone } from '../../domain/entities/zone.entity.js';
 import { ZoneItemResponseDto } from '../dtos/zone-item-response.dto';
 
 export class ZoneResponseMapper {

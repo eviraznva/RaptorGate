@@ -1,9 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import {
   type IUserRepository,
   USER_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/user.repository';
+} from '../../domain/repositories/user.repository.js';
 import type { RecoveryPasswordDto } from '../dtos/recovery-password.dto';
 import {
   type IPasswordHasher,

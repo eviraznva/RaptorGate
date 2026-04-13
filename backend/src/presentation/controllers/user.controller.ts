@@ -12,14 +12,14 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CreateUserUseCase } from 'src/application/use-cases/create-user.use-case';
-import { DeleteUserUseCase } from 'src/application/use-cases/delete-user.use-case';
-import { EditUserUseCase } from 'src/application/use-cases/edit-user.use-case';
-import { GetAllUsersUseCase } from 'src/application/use-cases/get-all-users.use-case';
-import { Permission } from 'src/domain/enums/permissions.enum';
-import { Role } from 'src/domain/enums/role.enum';
-import { RequirePermissions } from 'src/presentation/decorators/auth/require-permissions.decorator';
-import { Roles } from 'src/presentation/decorators/auth/roles.decorator';
+import { CreateUserUseCase } from '../../application/use-cases/create-user.use-case.js';
+import { DeleteUserUseCase } from '../../application/use-cases/delete-user.use-case.js';
+import { EditUserUseCase } from '../../application/use-cases/edit-user.use-case.js';
+import { GetAllUsersUseCase } from '../../application/use-cases/get-all-users.use-case.js';
+import { Permission } from '../../domain/enums/permissions.enum.js';
+import { Role } from '../../domain/enums/role.enum.js';
+import { RequirePermissions } from '../decorators/auth/require-permissions.decorator.js';
+import { Roles } from '../decorators/auth/roles.decorator.js';
 import {
   ApiCreatedEnvelope,
   ApiNoContentEnvelope,

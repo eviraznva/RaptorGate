@@ -12,16 +12,16 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiBody, ApiOperation } from '@nestjs/swagger';
-import { CreateZonePairUseCase } from 'src/application/use-cases/create-zone-pair.use-case';
-import { DeleteZonePairUseCase } from 'src/application/use-cases/delete-zone-pair.use-case';
-import { EditZonePairUseCase } from 'src/application/use-cases/edit-zone-pair.use-case';
-import { GetAllZonePairsUseCase } from 'src/application/use-cases/get-all-zone-pairs.use-case';
-import { ZonePair } from 'src/domain/entities/zone-pair.entity';
-import { Permission } from 'src/domain/enums/permissions.enum';
-import { Role } from 'src/domain/enums/role.enum';
-import { ExtractToken } from 'src/presentation/decorators/auth/extract-token.decorator';
-import { RequirePermissions } from 'src/presentation/decorators/auth/require-permissions.decorator';
-import { Roles } from 'src/presentation/decorators/auth/roles.decorator';
+import { CreateZonePairUseCase } from '../../application/use-cases/create-zone-pair.use-case.js';
+import { DeleteZonePairUseCase } from '../../application/use-cases/delete-zone-pair.use-case.js';
+import { EditZonePairUseCase } from '../../application/use-cases/edit-zone-pair.use-case.js';
+import { GetAllZonePairsUseCase } from '../../application/use-cases/get-all-zone-pairs.use-case.js';
+import { ZonePair } from '../../domain/entities/zone-pair.entity.js';
+import { Permission } from '../../domain/enums/permissions.enum.js';
+import { Role } from '../../domain/enums/role.enum.js';
+import { ExtractToken } from '../decorators/auth/extract-token.decorator.js';
+import { RequirePermissions } from '../decorators/auth/require-permissions.decorator.js';
+import { Roles } from '../decorators/auth/roles.decorator.js';
 import {
   ApiCreatedEnvelope,
   ApiNoContentEnvelope,

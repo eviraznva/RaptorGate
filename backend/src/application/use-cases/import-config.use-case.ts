@@ -1,49 +1,49 @@
 import { hash } from 'node:crypto';
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
-import { FirewallCertificate } from 'src/domain/entities/firewall-certificate.entity';
-import { FirewallRule } from 'src/domain/entities/firewall-rule.entity';
-import { NatRule } from 'src/domain/entities/nat-rule.entity';
-import { SslBypassEntry } from 'src/domain/entities/ssl-bypass-entry.entity';
-import { Zone } from 'src/domain/entities/zone.entity';
-import { ZonePair } from 'src/domain/entities/zone-pair.entity';
-import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
+import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
+import { FirewallCertificate } from '../../domain/entities/firewall-certificate.entity.js';
+import { FirewallRule } from '../../domain/entities/firewall-rule.entity.js';
+import { NatRule } from '../../domain/entities/nat-rule.entity.js';
+import { SslBypassEntry } from '../../domain/entities/ssl-bypass-entry.entity.js';
+import { Zone } from '../../domain/entities/zone.entity.js';
+import { ZonePair } from '../../domain/entities/zone-pair.entity.js';
+import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
 import {
   CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
   type IConfigSnapshotRepository,
-} from 'src/domain/repositories/config-snapshot.repository';
+} from '../../domain/repositories/config-snapshot.repository.js';
 import {
   type IFirewallCertificateRepository,
   FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/firewall-certificate.repository';
+} from '../../domain/repositories/firewall-certificate.repository.js';
 import {
   type INatRulesRepository,
   NAT_RULES_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/nat-rules.repository';
+} from '../../domain/repositories/nat-rules.repository.js';
 import {
   type IRulesRepository,
   RULES_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/rules-repository';
+} from '../../domain/repositories/rules-repository.js';
 import {
   type ISslBypassRepository,
   SSL_BYPASS_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/ssl-bypass.repository';
+} from '../../domain/repositories/ssl-bypass.repository.js';
 import {
   type IZoneRepository,
   ZONE_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/zone.repository';
+} from '../../domain/repositories/zone.repository.js';
 import {
   type IZonePairRepository,
   ZONE_PAIR_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/zone-pair.repository';
-import { Checksum } from 'src/domain/value-objects/checksum.vo';
-import { IpAddress } from 'src/domain/value-objects/ip-address.vo';
-import { NatType } from 'src/domain/value-objects/nat-type.vo';
-import { Port } from 'src/domain/value-objects/port.vo';
-import { Priority } from 'src/domain/value-objects/priority.vo';
-import { normalizeTlsInspectionPolicy } from 'src/domain/value-objects/config-snapshot-payload.interface';
-import { SnapshotType } from 'src/domain/value-objects/snapshot-type.vo';
-import { SecretStore } from 'src/infrastructure/persistence/secret-store';
+} from '../../domain/repositories/zone-pair.repository.js';
+import { Checksum } from '../../domain/value-objects/checksum.vo.js';
+import { IpAddress } from '../../domain/value-objects/ip-address.vo.js';
+import { NatType } from '../../domain/value-objects/nat-type.vo.js';
+import { Port } from '../../domain/value-objects/port.vo.js';
+import { Priority } from '../../domain/value-objects/priority.vo.js';
+import { normalizeTlsInspectionPolicy } from '../../domain/value-objects/config-snapshot-payload.interface.js';
+import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
+import { SecretStore } from '../../infrastructure/persistence/secret-store.js';
 import { ImportConfigDto } from '../dtos/import-config.dto';
 import { ImportConfigResponseDto } from '../dtos/import-config-response.dto';
 import {
