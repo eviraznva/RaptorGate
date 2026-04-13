@@ -159,10 +159,16 @@ class CommandBuilder {
   private outputRegexes: RegExp[] | null = null;
   private eventPatterns: EventMatcher[] | null = null;
   private expectError = false;
+  private discardErrorCode = true;
 
   constructor(opts: PerformCommandOptions) {
     this.host = opts.host;
     this.command = opts.command;
+  }
+
+  discardError(): this {
+	  this.discardErrorCode = true
+	  return this
   }
 
   expectOutput(regexes: RegExp[]): this {
@@ -199,7 +205,7 @@ class CommandBuilder {
       );
     }
 
-    if (!this.expectError && exitCode !== 0) {
+    if (!this.expectError && !this.discardErrorCode && exitCode !== 0) {
       throw new Error(
         `Command failed on ${this.host} (exit ${exitCode}): ${stderr || stdout}`,
       );

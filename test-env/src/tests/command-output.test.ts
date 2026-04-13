@@ -19,16 +19,28 @@ describe('Command Output', () => {
       .run();
   });
 
-  test('hostname on h1 returns h1', async () => {
+  test('h1 and h2 both can run commands', async () => {
     await performCommand({
       host: 'h1',
       command: 'hostname',
     })
       .expectOutput([/^h1$/])
       .run();
+
+    await performCommand({
+      host: 'h2',
+      command: 'hostname',
+    })
+      .expectOutput([/^h2$/])
+      .run();
   });
 
   test('ncat server on h2 responds to h1', async () => {
+	await performCommand({
+		host: 'h2',
+		command: 'pkill -f ncat; pgrep -f nc'
+	}).run()
+
     const server = await performCommand({
       host: 'h2',
       command: 'ncat -l -p 12345 -c "echo hello"',

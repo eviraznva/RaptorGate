@@ -33,9 +33,11 @@ describe('Event Observation', () => {
       host: 'h1',
       command: 'echo $(ncat 192.168.20.10 12345 --recv-only)', // wtf
     })
-      .expectEvents([{
-		  kind: 'tcpSessionEstablished'
-	  }])
+      .expectEvents([
+		  {
+			  kind: 'tcpSessionEstablished'
+		  }
+	  ])
       .run();
   })
 });
