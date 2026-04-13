@@ -178,10 +178,13 @@ Vagrant.configure("2") do |config|
 
     r1.vm.synced_folder ".router_sync", "/resources", id: "ngfw", type: "rsync"
 
-    r1.vm.provision "shell", inline:
-      configure_interface("eth1", "192.168.10.254", "24") +
+    r1_provision = configure_interface("eth1", "192.168.10.254", "24") +
       configure_interface("eth2", "192.168.20.254", "24") +
-      setup_tun_device + setup_nftables + setup_ngfw_service + setup_backend_service
+      setup_tun_device + setup_nftables + setup_ngfw_service
+
+    r1_provision += setup_backend_service unless ENV['NO_BACKEND'] == '1'
+
+    r1.vm.provision "shell", inline: r1_provision
 
     # r1 has two interfaces, no gateway needed since it IS the gateway
   end
