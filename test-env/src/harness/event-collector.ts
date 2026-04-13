@@ -27,6 +27,10 @@ export class EventCollector {
   private buffer: BufferedEvent[] = [];
   private fenceMs = 0;
 
+  // Notification promise — wakes up waitForSubsequence on each push()
+  private notify: (() => void) | null = null;
+  private notifyPromise: Promise<void> | null = null;
+
   /**
    * Set a fence at the given VM timestamp (ms since epoch).
    * Only events emitted after this point will be considered.
@@ -38,6 +42,24 @@ export class EventCollector {
 
   push(event: any): void {
     this.buffer.push(event);
+    // Wake up exactly one waiting waitForSubsequence (if any)
+    if (this.notify) {
+      this.notify();
+      this.notify = null;
+    }
+  }
+
+  /** Return a promise that resolves on the next push(). */
+  private awaitNewEvent(): Promise<void> {
+    if (this.notifyPromise) {
+      // Already have a pending notification — reuse it
+      const p = this.notifyPromise;
+      this.notifyPromise = null;
+      return p;
+    }
+    return new Promise<void>((resolve) => {
+      this.notify = resolve;
+    });
   }
 
   async waitForSubsequence(
@@ -47,28 +69,41 @@ export class EventCollector {
       return { matched: true, received: [] };
     }
 
-    let patternIdx = 0;
-
     while (true) {
-      const relevant = this.buffer.filter((e) => this.isAfterFence(e));
-
-      for (const event of relevant) {
-        if (patternIdx >= patterns.length) break;
-
-        const pattern = patterns[patternIdx]!;
-        if (this.matchesEvent(event, pattern)) {
-          patternIdx++;
-        } else if (this.isOutOfOrder(event, patterns, patternIdx)) {
-          return { matched: false, received: relevant, failedAt: patternIdx };
-        }
+      const result = this.tryMatch(patterns);
+      if (result.matched || result.terminated) {
+        return result;
       }
 
-      if (patternIdx >= patterns.length) {
-        return { matched: true, received: relevant };
-      }
-
-      await new Promise((r) => setTimeout(r, 100));
+      await this.awaitNewEvent();
     }
+  }
+
+  /**
+   * Synchronous attempt to match patterns against the current buffer.
+   * Returns immediately — does not wait for new events.
+   */
+  private tryMatch(patterns: EventMatcher[]): WaitForResult & { terminated: boolean } {
+    let patternIdx = 0;
+    const relevant = this.buffer.filter((e) => this.isAfterFence(e));
+
+    for (const event of relevant) {
+      if (patternIdx >= patterns.length) break;
+
+      const pattern = patterns[patternIdx]!;
+      if (this.matchesEvent(event, pattern)) {
+        patternIdx++;
+      } else if (this.isOutOfOrder(event, patterns, patternIdx)) {
+        return { matched: false, received: relevant, failedAt: patternIdx, terminated: true };
+      }
+    }
+
+    if (patternIdx >= patterns.length) {
+      return { matched: true, received: relevant, terminated: true };
+    }
+
+    // Not yet complete, but not a failure — caller should await more events
+    return { matched: false, received: relevant, terminated: false };
   }
 
   private isAfterFence(event: BufferedEvent): boolean {

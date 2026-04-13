@@ -117,6 +117,7 @@ class RequestBuilder<M extends RpcMethodName> {
     }
 
     if (this.eventPatterns) {
+		process.stderr.write("running event check")
       await this.assertEvents(this.eventPatterns);
     }
   }
