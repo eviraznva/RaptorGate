@@ -1,14 +1,17 @@
 import { match, P } from 'ts-pattern';
+import type { EventKind } from '../generated/events/firewall_events';
+
+export type EventKindName = NonNullable<EventKind['item']>['$case'];
 
 export interface EventMatcher {
-  kind: Record<string, unknown>;
+  kind: EventKindName;
   match?: Record<string, unknown>;
 }
 
-export interface Event {
-  emitted_at?: { seconds: number | string; nanos: number };
+export interface BufferedEvent {
+  emittedAt?: { seconds: number | string; nanos: number };
   kind?: {
-    item?: string;
+    item?: EventKindName;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -16,21 +19,24 @@ export interface Event {
 
 export interface WaitForResult {
   matched: boolean;
-  received: Event[];
+  received: BufferedEvent[];
   failedAt?: number;
 }
 
-const VM_CLOCK_OFFSET_MS = parseInt(process.env.VM_CLOCK_OFFSET_MS ?? '0', 10);
-
 export class EventCollector {
-  private buffer: Event[] = [];
+  private buffer: BufferedEvent[] = [];
   private fenceMs = 0;
 
-  setFence(): void {
-    this.fenceMs = Date.now() + VM_CLOCK_OFFSET_MS;
+  /**
+   * Set a fence at the given VM timestamp (ms since epoch).
+   * Only events emitted after this point will be considered.
+   * The VM timestamp must come from `GetSystemTime` to avoid clock skew.
+   */
+  setFence(vmTimestampMs: number): void {
+    this.fenceMs = vmTimestampMs;
   }
 
-  push(event: Event): void {
+  push(event: any): void {
     this.buffer.push(event);
   }
 
@@ -65,21 +71,19 @@ export class EventCollector {
     }
   }
 
-  private isAfterFence(event: Event): boolean {
-    if (!event.emitted_at) return false;
+  private isAfterFence(event: BufferedEvent): boolean {
+    if (!event.emittedAt) return false;
     const seconds =
-      typeof event.emitted_at.seconds === 'string'
-        ? parseInt(event.emitted_at.seconds, 10)
-        : event.emitted_at.seconds;
-    const eventMs = seconds * 1000 + (event.emitted_at.nanos ?? 0) / 1_000_000;
+      typeof event.emittedAt.seconds === 'string'
+        ? parseInt(event.emittedAt.seconds, 10)
+        : event.emittedAt.seconds;
+    const eventMs = seconds * 1000 + (event.emittedAt.nanos ?? 0) / 1_000_000;
     return eventMs > this.fenceMs;
   }
 
-  private matchesEvent(event: Event, pattern: EventMatcher): boolean {
+  private matchesEvent(event: BufferedEvent, pattern: EventMatcher): boolean {
     const kindItem = event.kind?.item;
-    const expectedKind = pattern.kind?.item;
-
-    if (expectedKind && kindItem !== expectedKind) {
+    if (kindItem !== pattern.kind) {
       return false;
     }
 
@@ -87,7 +91,7 @@ export class EventCollector {
       return true;
     }
 
-    const payload = this.extractPayload(event, expectedKind as string | undefined);
+    const payload = this.extractPayload(event, pattern.kind);
     if (!payload) return false;
 
     try {
@@ -99,10 +103,9 @@ export class EventCollector {
     }
   }
 
-  private extractPayload(event: Event, kind?: string): Record<string, unknown> | null {
-    if (!kind || !event.kind) return null;
-    const snakeKind = (kind as string).replace(/([A-Z])/g, '_$1').toLowerCase();
-    return (event.kind as any)[snakeKind] ?? null;
+  private extractPayload(event: BufferedEvent, kind: EventKindName): Record<string, unknown> | null {
+    if (!event.kind) return null;
+    return (event.kind[kind] as Record<string, unknown> | undefined) ?? null;
   }
 
   private shallowMatch(
@@ -121,7 +124,7 @@ export class EventCollector {
   }
 
   private isOutOfOrder(
-    event: Event,
+    event: BufferedEvent,
     patterns: EventMatcher[],
     currentIdx: number,
   ): boolean {

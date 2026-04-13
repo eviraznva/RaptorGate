@@ -1,8 +1,8 @@
 import { match, P } from 'ts-pattern';
-import { afterEach, afterAll } from 'bun:test';
+import { afterEach, afterAll, beforeEach } from 'bun:test';
 import { getClient } from './grpc-client';
 import { eventCollector, type EventMatcher } from './event-collector';
-import { ssh, sshWithResult, type KnownHost, getJobSession, closeAllJobSessions } from '../ssh-helper';
+import { ssh, sshWithResult, type KnownHost, getJobSession, closeAllJobSessions, killAllActiveJobs } from '../ssh-helper';
 import type { FirewallQueryService } from '../generated/services/query_service';
 
 // ---------------------------------------------------------------------------
@@ -14,6 +14,21 @@ export type RpcMethodName = keyof FirewallQueryService;
 
 /** The request payload type for a specific RPC method */
 export type RequestPayload<M extends RpcMethodName> = Parameters<FirewallQueryService[M]>[0];
+
+// ---------------------------------------------------------------------------
+// VM system time helper
+// ---------------------------------------------------------------------------
+
+/** Fetch the current VM system time in milliseconds since epoch. */
+async function fetchVmSystemTimeMs(): Promise<number> {
+  const client = getClient();
+  return new Promise((resolve, reject) => {
+    client.getSystemTime({}, (err: Error | null, resp: any) => {
+      if (err) reject(err);
+      else resolve(resp.time instanceof Date ? resp.time.getTime() : 0);
+    });
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Detached command — background process with automatic cleanup via SshJobSession
@@ -36,7 +51,7 @@ export class DetachedCommand {
     await session.killAllJobs();
   }
 
-  cleanup(): this {
+  defer_cleanup(): this {
     afterEach(() => this.kill());
     afterAll(() => this.kill());
     return this;
@@ -88,6 +103,12 @@ class RequestBuilder<M extends RpcMethodName> {
 
   async run(): Promise<void> {
     const client = getClient();
+
+    if (this.eventPatterns) {
+      const vmTime = await fetchVmSystemTimeMs();
+      eventCollector.setFence(vmTime);
+    }
+
     const result = await this.invokeRpc(client);
 
     if (this.responsePattern) {
@@ -118,7 +139,6 @@ class RequestBuilder<M extends RpcMethodName> {
   }
 
   private async assertEvents(patterns: EventMatcher[]): Promise<void> {
-    eventCollector.setFence();
     const result = await eventCollector.waitForSubsequence(patterns);
     if (!result.matched) {
       throw new Error(
@@ -166,7 +186,8 @@ class CommandBuilder {
 
   async run(): Promise<void> {
     if (this.eventPatterns) {
-      eventCollector.setFence();
+      const vmTime = await fetchVmSystemTimeMs();
+      eventCollector.setFence(vmTime);
     }
 
     const { stdout, stderr, exitCode } = await this.invokeCommand();
@@ -201,7 +222,7 @@ class CommandBuilder {
     const session = await getJobSession(this.host);
     await session.spawnDetached(this.command);
     // Give the server time to bind before the caller attempts to connect.
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 1000));
     return new DetachedCommand(this.host, this.command);
   }
 
@@ -261,6 +282,14 @@ export function performCommand(opts: PerformCommandOptions): CommandBuilder {
 afterAll(async () => {
   await closeAllJobSessions();
 });
+
+// ---------------------------------------------------------------------------
+// Per-test setup — kill lingering background jobs from previous test
+// ---------------------------------------------------------------------------
+
+// beforeEach(async () => {
+//   await killAllActiveJobs();
+// });
 
 // ---------------------------------------------------------------------------
 // Pattern matching helper (ts-pattern)
