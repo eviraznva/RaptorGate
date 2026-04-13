@@ -7,6 +7,7 @@ const ALL_PROTO_FILES: &[&str] = &[
     "../../proto/common/common.proto",
     "../../proto/config/config_models.proto",
     "../../proto/control/validation_service.proto",
+    "../../proto/services/config_snapshot_service.proto",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

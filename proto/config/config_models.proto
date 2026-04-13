@@ -105,6 +105,16 @@ message PinningDetectionConfig {
   uint32 bypass_ttl_sec     = 5;
 }
 
+// ── Polityka inspekcji TLS (ECH + pinning) ──────────────────────────────────
+
+message TlsInspectionPolicy {
+  bool            block_ech_no_sni    = 1; // blokuj ECH bez widocznego SNI
+  bool            block_all_ech       = 2; // blokuj wszystkie polaczenia z ECH
+  bool            strip_ech_dns       = 3; // usuwaj rekordy HTTPS z ECH config
+  bool            log_ech_attempts    = 4; // loguj proba uzycia ECH
+  repeated string known_pinned_domains = 5; // domeny z pinningiem certyfikatu
+}
+
 // ── Sygnatury IPS ────────────────────────────────────────────────────────────
 
 message IpsSignature {
@@ -358,4 +368,6 @@ message AppConfig {
   string          pki_dir                = 9;
   bool            ssl_inspection_enabled = 10;
   string          mitm_listen_addr       = 11;
+  string          control_plane_socket_path = 12;
+  repeated string ssl_bypass_domains        = 13;
 }

@@ -108,6 +108,60 @@ impl Ips {
             IpsVerdict::Alert(alerts.join("; "))
         }
     }
+
+    // Inspekcja odszyfrowanego payloadu (bez PacketContext).
+    pub fn inspect_decrypted(
+        &self,
+        payload: &[u8],
+        app_proto: Option<AppProto>,
+        src_port: u16,
+        dst_port: u16,
+    ) -> IpsVerdict {
+        if !self.enabled.load(Ordering::Acquire) || !self.detection_enabled.load(Ordering::Acquire)
+        {
+            return IpsVerdict::Allow;
+        }
+
+        if payload.is_empty() {
+            return IpsVerdict::Allow;
+        }
+
+        let state = self.state.load();
+
+        let inspected = if payload.len() > state.max_payload_bytes {
+            &payload[..state.max_payload_bytes]
+        } else {
+            payload
+        };
+
+        let mut alerts = Vec::new();
+        let mut matches = 0usize;
+
+        for signature in &state.signatures {
+            if matches >= state.max_matches_per_packet {
+                break;
+            }
+            if !signature.matches_filters(app_proto, src_port, dst_port) {
+                continue;
+            }
+            if !signature.regex.is_match(inspected) {
+                continue;
+            }
+
+            matches += 1;
+            let message = signature.verdict_message();
+            if signature.action == IpsAction::Block {
+                return IpsVerdict::Block(message);
+            }
+            alerts.push(message);
+        }
+
+        if alerts.is_empty() {
+            IpsVerdict::Allow
+        } else {
+            IpsVerdict::Alert(alerts.join("; "))
+        }
+    }
 }
 
 #[derive(Clone)]

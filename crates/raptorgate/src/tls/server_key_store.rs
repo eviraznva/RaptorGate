@@ -11,10 +11,40 @@ use rustls::ServerConfig;
 use super::cert_storage::{decrypt_pem, encrypt_pem, read_encryption_key};
 use super::rustls_config::build_server_config_from_pem;
 
+use serde::{Deserialize, Serialize};
+
 const SERVER_KEYS_DIR: &str = "server_keys";
+
+// Metadane serwera inbound, persystowane obok zaszyfrowanego klucza.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ServerKeyMeta {
+    addr: String,
+    port: u16,
+    common_name: String,
+    fingerprint: String,
+    certificate_pem: String,
+    key_ref: String,
+    bypass: bool,
+}
 
 fn key_path(pki_dir: &Path, id: &str) -> PathBuf {
     pki_dir.join(SERVER_KEYS_DIR).join(format!("{id}.key.enc"))
+}
+
+fn meta_path(pki_dir: &Path, id: &str) -> PathBuf {
+    pki_dir.join(SERVER_KEYS_DIR).join(format!("{id}.meta.json"))
+}
+
+fn save_meta(pki_dir: &Path, id: &str, meta: &ServerKeyMeta) -> anyhow::Result<()> {
+    let path = meta_path(pki_dir, id);
+    let json = serde_json::to_string_pretty(meta)?;
+    fs::write(&path, json).with_context(|| format!("Failed to write meta for {id}"))?;
+    Ok(())
+}
+
+fn delete_meta(pki_dir: &Path, id: &str) {
+    let path = meta_path(pki_dir, id);
+    let _ = fs::remove_file(path);
 }
 
 fn save_key_to_disk(pki_dir: &Path, id: &str, key_pem: &str) -> anyhow::Result<()> {
@@ -90,7 +120,7 @@ impl ServerKeyStore {
         }
     }
 
-    // Rejestruje klucz serwera: zapisuje na dysk i buduje ServerConfig.
+    // Rejestruje klucz serwera: zapisuje klucz + meta na dysk i buduje ServerConfig.
     pub fn add(
         &self,
         addr: SocketAddr,
@@ -101,8 +131,19 @@ impl ServerKeyStore {
         fingerprint: &str,
         bypass: bool,
     ) -> anyhow::Result<()> {
-        save_key_to_disk(Path::new(&self.pki_dir), key_ref, key_pem)
+        let pki = Path::new(&self.pki_dir);
+        save_key_to_disk(pki, key_ref, key_pem)
             .with_context(|| format!("Failed to persist server key for {addr}"))?;
+
+        save_meta(pki, key_ref, &ServerKeyMeta {
+            addr: addr.ip().to_string(),
+            port: addr.port(),
+            common_name: common_name.to_string(),
+            fingerprint: fingerprint.to_string(),
+            certificate_pem: cert_pem.to_string(),
+            key_ref: key_ref.to_string(),
+            bypass,
+        })?;
 
         let server_config = build_server_config_from_pem(cert_pem, key_pem)
             .with_context(|| format!("Failed to build TLS config for {addr}"))?;
@@ -172,11 +213,13 @@ impl ServerKeyStore {
         self.entries.contains_key(&SocketAddr::new(ip, port))
     }
 
-    // Usuwa klucz serwera z rejestru i z dysku.
+    // Usuwa klucz serwera z rejestru i z dysku (klucz + meta).
     pub fn remove(&self, addr: SocketAddr, key_ref: &str) -> anyhow::Result<bool> {
         let removed = self.entries.remove(&addr).is_some();
         if removed {
-            delete_key_from_disk(Path::new(&self.pki_dir), key_ref)?;
+            let pki = Path::new(&self.pki_dir);
+            delete_key_from_disk(pki, key_ref)?;
+            delete_meta(pki, key_ref);
             tracing::info!(%addr, "Inbound TLS server key removed");
         }
         Ok(removed)
@@ -197,6 +240,67 @@ impl ServerKeyStore {
 
     pub fn count(&self) -> usize {
         self.entries.len()
+    }
+
+    // Laduje wszystkie klucze serwerowe z dysku przy starcie (z meta.json).
+    pub fn load_all_from_disk(&self) -> usize {
+        let dir = Path::new(&self.pki_dir).join(SERVER_KEYS_DIR);
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => return 0,
+        };
+
+        let mut count = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) if n.ends_with(".meta.json") => n.trim_end_matches(".meta.json").to_string(),
+                _ => continue,
+            };
+
+            let meta_content = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(file = %path.display(), error = %e, "failed to read meta");
+                    continue;
+                }
+            };
+
+            let meta: ServerKeyMeta = match serde_json::from_str(&meta_content) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(file = %path.display(), error = %e, "failed to parse meta");
+                    continue;
+                }
+            };
+
+            let ip: IpAddr = match meta.addr.parse() {
+                Ok(ip) => ip,
+                Err(e) => {
+                    tracing::warn!(key_ref = %name, error = %e, "invalid addr in meta");
+                    continue;
+                }
+            };
+
+            let addr = SocketAddr::new(ip, meta.port);
+            if let Err(e) = self.load(
+                addr,
+                &meta.certificate_pem,
+                &meta.key_ref,
+                &meta.common_name,
+                &meta.fingerprint,
+                meta.bypass,
+            ) {
+                tracing::warn!(key_ref = %name, error = %e, "failed to load server key from disk");
+                continue;
+            }
+            count += 1;
+        }
+
+        if count > 0 {
+            tracing::info!(count, "inbound TLS server keys loaded from disk");
+        }
+        count
     }
 }
 

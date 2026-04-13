@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use uuid::Uuid;
 
+use crate::data_plane::ips::ips::Ips;
 use crate::dpi::{AppProto, DpiClassifier, DpiContext};
 use crate::events;
 
@@ -52,6 +53,38 @@ pub struct SessionMeta {
 pub enum InspectionMode {
     Inbound,
     Outbound,
+}
+
+// Adapter IPS dla odszyfrowanego ruchu -- deleguje do Ips::inspect_decrypted.
+pub struct DecryptedIpsInspector {
+    ips: Arc<Ips>,
+}
+
+impl DecryptedIpsInspector {
+    pub fn new(ips: Arc<Ips>) -> Self {
+        Self { ips }
+    }
+}
+
+impl IpsInspector for DecryptedIpsInspector {
+    fn inspect(&self, payload: &[u8], dpi_ctx: &DpiContext) -> IpsVerdict {
+        let app_proto = dpi_ctx.app_proto;
+        // Porty z DpiContext -- src_port/dst_port ustawiane w relay
+        let src_port = dpi_ctx.src_port.unwrap_or(0);
+        let dst_port = dpi_ctx.dst_port.unwrap_or(0);
+
+        match self.ips.inspect_decrypted(payload, app_proto, src_port, dst_port) {
+            crate::data_plane::ips::ips::IpsVerdict::Allow => IpsVerdict::Allow,
+            crate::data_plane::ips::ips::IpsVerdict::Alert(msg) => IpsVerdict::Alert {
+                signature_name: msg,
+                severity: "medium".to_string(),
+            },
+            crate::data_plane::ips::ips::IpsVerdict::Block(msg) => IpsVerdict::Block {
+                signature_name: msg,
+                severity: "high".to_string(),
+            },
+        }
+    }
 }
 
 /// Relay z inspekcja DPI/IPS na odszyfrowanym ruchu TLS.
@@ -137,6 +170,9 @@ where
         if let Some(ctx) = DpiClassifier::try_classify(&inspect_buf) {
             let mut ctx = ctx;
             ctx.decrypted = true;
+            let (sp, dp) = ports_for_direction(meta, direction);
+            ctx.src_port = Some(sp);
+            ctx.dst_port = Some(dp);
 
             if let Err(blocked) = handle_verdict(ips, &inspect_buf, &ctx, meta, direction) {
                 if blocked {
@@ -150,9 +186,12 @@ where
         }
 
         if chunks_seen >= MAX_INSPECT_CHUNKS || inspect_buf.len() >= INSPECT_BUF_CAP {
+            let (sp, dp) = ports_for_direction(meta, direction);
             let ctx = DpiContext {
                 app_proto: Some(AppProto::Unknown),
                 decrypted: true,
+                src_port: Some(sp),
+                dst_port: Some(dp),
                 ..Default::default()
             };
             emit_classification_event(meta, &ctx, direction);
@@ -234,6 +273,14 @@ fn handle_verdict(
             ));
             Err(true)
         }
+    }
+}
+
+// Mapowanie portow na kierunek -- ServerToClient ma odwrocone porty.
+fn ports_for_direction(meta: &SessionMeta, direction: Direction) -> (u16, u16) {
+    match direction {
+        Direction::ClientToServer => (meta.peer.port(), meta.server.port()),
+        Direction::ServerToClient => (meta.server.port(), meta.peer.port()),
     }
 }
 

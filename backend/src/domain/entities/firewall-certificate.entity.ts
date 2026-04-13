@@ -9,6 +9,9 @@ export class FirewallCertificate {
     private isActive: boolean,
     private expiresAt: Date,
     private readonly createdAt: Date,
+    private bindAddress: string,
+    private bindPort: number,
+    private inspectionBypass: boolean,
   ) {}
 
   public static create(
@@ -21,6 +24,9 @@ export class FirewallCertificate {
     isActive: boolean,
     expiresAt: Date,
     createdAt: Date,
+    bindAddress: string = '',
+    bindPort: number = 443,
+    inspectionBypass: boolean = false,
   ): FirewallCertificate {
     return new FirewallCertificate(
       id,
@@ -32,6 +38,9 @@ export class FirewallCertificate {
       isActive,
       expiresAt,
       createdAt,
+      bindAddress,
+      bindPort,
+      inspectionBypass,
     );
   }
 
@@ -69,5 +78,17 @@ export class FirewallCertificate {
 
   public getCreatedAt(): Date {
     return this.createdAt;
+  }
+
+  public getBindAddress(): string {
+    return this.bindAddress;
+  }
+
+  public getBindPort(): number {
+    return this.bindPort;
+  }
+
+  public getInspectionBypass(): boolean {
+    return this.inspectionBypass;
   }
 }

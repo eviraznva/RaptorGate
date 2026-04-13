@@ -1,12 +1,11 @@
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{
-    OnceLock,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
+use arc_swap::ArcSwapOption;
 use prost_types::Timestamp;
-use tokio::{select, sync::mpsc, time::interval};
+use std::sync::OnceLock;
+use tokio::{select, sync::mpsc, sync::oneshot, time::interval};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
@@ -79,7 +78,7 @@ const FLUSH_INTERVAL_MS: u64 = 500;
 const MAX_BATCH_SIZE: usize = 64;
 
 static EVENT_TX: OnceLock<mpsc::Sender<Event>> = OnceLock::new();
-static BACKEND_SINK: OnceLock<BackendEventSink> = OnceLock::new();
+static BACKEND_SINK: ArcSwapOption<BackendEventSink> = ArcSwapOption::const_empty();
 static DROPPED_EVENTS: AtomicU64 = AtomicU64::new(0);
 
 pub struct BackendEventSink {
@@ -87,10 +86,11 @@ pub struct BackendEventSink {
 }
 
 impl BackendEventSink {
-    pub async fn connect(socket_path: &str) -> Result<Self, tonic::transport::Error> {
+    // Zwraca sink + sygnal rozlaczenia (oneshot fires gdy gRPC stream padnie).
+    pub async fn connect(socket_path: &str) -> Result<(Self, oneshot::Receiver<()>), tonic::transport::Error> {
         let socket_path = socket_path.to_owned();
 
-        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")? // TODO: get this from appconfig
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
             .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
                 let path = socket_path.clone();
                 async move {
@@ -102,26 +102,33 @@ impl BackendEventSink {
 
         let (tx, rx) = mpsc::channel::<proto::Event>(CHANNEL_CAPACITY);
         let mut client = BackendEventServiceClient::new(channel);
+        let (disconnect_tx, disconnect_rx) = oneshot::channel();
 
         tokio::spawn(async move {
             if let Err(e) = client.push_events(ReceiverStream::new(rx)).await {
                 tracing::warn!(error = %e, "BackendEventService stream closed");
             }
+            let _ = disconnect_tx.send(());
         });
 
-        Ok(Self { tx })
+        Ok((Self { tx }, disconnect_rx))
     }
 
-    pub async fn forward(&self, event: proto::Event) {
+    pub async fn forward(&self, event: proto::Event) -> bool {
         if self.tx.send(event).await.is_err() {
             DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!("backend event sink closed, event dropped");
+            return false;
         }
+        true
     }
 }
 
 pub fn set_backend_sink(sink: BackendEventSink) {
-    BACKEND_SINK.set(sink).unwrap_or_else(|_| panic!("backend sink already set"));
+    BACKEND_SINK.store(Some(std::sync::Arc::new(sink)));
+}
+
+pub fn clear_backend_sink() {
+    BACKEND_SINK.store(None);
 }
 
 pub fn emit(event: Event) {
@@ -166,8 +173,13 @@ async fn flush_batch(buffer: &mut Vec<Event>) {
 
 async fn dispatch(event: Event) {
     tracing::debug!(kind = ?event.kind, "event dispatched");
-    if let Some(sink) = BACKEND_SINK.get() {
-        sink.forward(event.into()).await;
+    let guard = BACKEND_SINK.load();
+    if let Some(sink) = guard.as_ref() {
+        if !sink.forward(event.into()).await {
+            drop(guard);
+            clear_backend_sink();
+            tracing::warn!("backend sink send failed, sink cleared");
+        }
     }
 }
 

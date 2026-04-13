@@ -18,6 +18,10 @@ const envSchema = z.object({
     .string()
     .min(32, 'COOKIE_SECRET must be at least 32 characters'),
   RAPTORGATE_PKI_DIR: z.string().default('/var/lib/raptorgate/pki'),
+  BACKEND_SECRET_ENCRYPTION_KEY: z
+    .string()
+    .length(64, 'BACKEND_SECRET_ENCRYPTION_KEY must be 64 hex chars (32 bytes)')
+    .regex(/^[0-9a-fA-F]+$/),
   CORS_ORIGIN: z
     .string()
     .or(z.array(z.string()))

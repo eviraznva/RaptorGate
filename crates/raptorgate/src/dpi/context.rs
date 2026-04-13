@@ -47,6 +47,8 @@ pub struct DpiContext {
     pub ssh_proto_version: Option<String>,
     pub ssh_software: Option<String>,
     pub decrypted: bool,
+    pub src_port: Option<u16>,
+    pub dst_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

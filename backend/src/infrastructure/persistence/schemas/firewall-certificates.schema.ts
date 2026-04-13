@@ -13,6 +13,9 @@ export const FirewallCertificateRecordSchema = z
     expiresAt: isoDateTimeSchema,
     createdAt: isoDateTimeSchema,
     createdBy: uuidSchema,
+    bindAddress: z.string().max(255).default(''),
+    bindPort: z.number().int().min(0).max(65535).default(443),
+    inspectionBypass: z.boolean().default(false),
   })
   .strict();
 

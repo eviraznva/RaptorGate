@@ -22,6 +22,10 @@ import type { IZoneRepository } from '../../domain/repositories/zone.repository.
 import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
 import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
 import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
+import type { IFirewallCertificateRepository } from '../../domain/repositories/firewall-certificate.repository.js';
+import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../../domain/repositories/firewall-certificate.repository.js';
+import type { ISslBypassRepository } from '../../domain/repositories/ssl-bypass.repository.js';
+import { SSL_BYPASS_REPOSITORY_TOKEN } from '../../domain/repositories/ssl-bypass.repository.js';
 import { Checksum } from '../../domain/value-objects/checksum.vo.js';
 import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
 import type { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.js';
@@ -57,6 +61,10 @@ export class ApplyConfigSnapshotUseCase {
     private readonly userRolesRepository: IUserRolesRepository,
     @Inject(CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN)
     private readonly configSnapshotPushService: IConfigSnapshotPushService,
+    @Inject(FIREWALL_CERTIFICATE_REPOSITORY_TOKEN)
+    private readonly firewallCertificateRepository: IFirewallCertificateRepository,
+    @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
+    private readonly sslBypassRepository: ISslBypassRepository,
   ) {}
 
   async execute(
@@ -72,6 +80,8 @@ export class ApplyConfigSnapshotUseCase {
     const allUsers = await this.userRepository.findAll();
     const activeZones = await this.zoneRepository.findActive();
     const allZonePairs = await this.zonePairRepository.findAll();
+    const activeCerts = await this.firewallCertificateRepository.findActive();
+    const activeBypass = await this.sslBypassRepository.findActive();
     // const rolePermissions = await this.rolePermissionsRepository.findAll();
     // const userRoles = await this.userRolesRepository.findAll();
 
@@ -96,14 +106,14 @@ export class ApplyConfigSnapshotUseCase {
           items: [], // TODO: implement dns blacklist repository and add to snapshot
         },
         ssl_bypass_list: {
-          items: [], // TODO: implement ssl bypass list repository and add to snapshot
+          items: [...activeBypass],
         },
         ips_signatures: {
           items: [], // TODO: implement ips signatures repository and add to snapshot
         },
         ml_model: null,
         firewall_certificates: {
-          items: [], // TODO: implement firewall certificates repository and add to snapshot
+          items: [...activeCerts],
         },
         users: {
           items: [...allUsers],

@@ -27,10 +27,22 @@ pub struct AppConfig {
     pub ssl_inspection_enabled: bool,
     #[serde(default = "default_mitm_listen_addr")]
     pub mitm_listen_addr: String,
+
+    // Zmiana wymaga restartu — runtime swap nie rebinduje listenera.
+    #[serde(default = "default_control_plane_socket_path")]
+    pub control_plane_socket_path: String,
+
+    // Seed startowy bypassow TLS. Zywy stan w TlsDecisionEngine, reload przez snapshot handler.
+    #[serde(default)]
+    pub ssl_bypass_domains: Vec<String>,
 }
 
 fn default_mitm_listen_addr() -> String {
     "127.0.0.1:8443".to_string()
+}
+
+fn default_control_plane_socket_path() -> String {
+    "./sockets/control-plane.sock".to_string()
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +64,8 @@ impl AppConfig {
             pki_dir: self.pki_dir.clone(),
             ssl_inspection_enabled: self.ssl_inspection_enabled,
             mitm_listen_addr: self.mitm_listen_addr.clone(),
+            control_plane_socket_path: self.control_plane_socket_path.clone(),
+            ssl_bypass_domains: self.ssl_bypass_domains.clone(),
         }
     }
 
@@ -79,6 +93,12 @@ impl AppConfig {
             } else {
                 proto_config.mitm_listen_addr
             },
+            control_plane_socket_path: if proto_config.control_plane_socket_path.is_empty() {
+                default_control_plane_socket_path()
+            } else {
+                proto_config.control_plane_socket_path
+            },
+            ssl_bypass_domains: proto_config.ssl_bypass_domains,
         })
     }
 }
@@ -101,6 +121,8 @@ mod tests {
             pki_dir: "/tmp/pki".into(),
             ssl_inspection_enabled: false,
             mitm_listen_addr: default_mitm_listen_addr(),
+            control_plane_socket_path: default_control_plane_socket_path(),
+            ssl_bypass_domains: vec![],
         }
     }
 

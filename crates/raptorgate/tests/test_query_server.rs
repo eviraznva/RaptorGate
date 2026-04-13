@@ -291,6 +291,8 @@ async fn swap_config_happy_path_returns_no_error() {
                 pki_dir: "/tmp/pki".into(),
                 ssl_inspection_enabled: false,
                 mitm_listen_addr: "127.0.0.1:8443".into(),
+                control_plane_socket_path: "./sockets/control-plane.sock".into(),
+                ssl_bypass_domains: vec![],
             }),
         })
         .await
@@ -314,6 +316,8 @@ async fn get_config_returns_ok() {
         pki_dir: "/tmp/pki".into(),
         ssl_inspection_enabled: false,
         mitm_listen_addr: "127.0.0.1:8443".into(),
+        control_plane_socket_path: "./sockets/control-plane.sock".into(),
+        ssl_bypass_domains: vec![],
     };
 
     client

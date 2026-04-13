@@ -116,6 +116,16 @@ impl AppConfigProvider {
         let mitm_listen_addr = std::env::var("MITM_LISTEN_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:8443".into());
 
+        let control_plane_socket_path = std::env::var("CONTROL_PLANE_GRPC_SOCKET_PATH")
+            .unwrap_or_else(|_| "./sockets/control-plane.sock".into());
+
+        let ssl_bypass_domains: Vec<String> = std::env::var("SSL_BYPASS_DOMAINS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
         let config = AppConfig {
             capture_interfaces,
             pcap_timeout_ms,
@@ -129,6 +139,8 @@ impl AppConfigProvider {
             pki_dir,
             ssl_inspection_enabled,
             mitm_listen_addr,
+            control_plane_socket_path,
+            ssl_bypass_domains,
         };
 
         let store = SingleDiskStore::new("app_config", config.data_dir.clone());

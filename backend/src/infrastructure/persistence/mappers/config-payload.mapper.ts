@@ -10,8 +10,10 @@ import { UsersFile } from '../schemas/users.schema';
 import { ZoneInterfacesFile } from '../schemas/zone-interfaces.schema';
 import { ZonePairsFile } from '../schemas/zone-pairs.schema';
 import { ZonesFile } from '../schemas/zones.schema';
+import { FirewallCertificateJsonMapper } from './firewall-certificate-json.mapper';
 import { NatRuleJsonMapper } from './nat-rule-json.mapper';
 import { RuleJsonMapper } from './rule-json.mapper';
+import { SslBypassJsonMapper } from './ssl-bypass-json.mapper';
 import { UserJsonMapper } from './user-json.mapper';
 import { ZoneJsonMapper } from './zone-json.mapper';
 import { ZonePairJsonMapper } from './zone-pair-json.mapper';
@@ -63,6 +65,14 @@ export function mapConfigSnapshotToPayloadRecord(
     UserJsonMapper.toRecord(user),
   );
 
+  const toSslBypassFile = payload.bundle.ssl_bypass_list.items.map((entry) =>
+    SslBypassJsonMapper.toRecord(entry, crypto.randomUUID()),
+  );
+
+  const toCertsFile = payload.bundle.firewall_certificates.items.map((cert) =>
+    FirewallCertificateJsonMapper.toRecord(cert, crypto.randomUUID()),
+  );
+
   return {
     bundle: {
       rules: {
@@ -84,14 +94,14 @@ export function mapConfigSnapshotToPayloadRecord(
         items: [],
       },
       ssl_bypass_list: {
-        items: [],
+        items: toSslBypassFile,
       },
       ips_signatures: {
         items: [],
       },
       ml_model: null,
       firewall_certificates: {
-        items: [],
+        items: toCertsFile,
       },
       users: {
         items: toUsersFile,
@@ -128,6 +138,14 @@ export function mapConfigBundlePayloadToDomain(
     UserJsonMapper.toDomain(user),
   );
 
+  const toSslBypassDomain = payload.bundle.ssl_bypass_list.items.map((entry) =>
+    SslBypassJsonMapper.toDomain(entry),
+  );
+
+  const toCertsDomain = payload.bundle.firewall_certificates.items.map(
+    (cert) => FirewallCertificateJsonMapper.toDomain(cert),
+  );
+
   return {
     bundle: {
       rules: {
@@ -149,14 +167,14 @@ export function mapConfigBundlePayloadToDomain(
         items: [],
       },
       ssl_bypass_list: {
-        items: [],
+        items: toSslBypassDomain,
       },
       ips_signatures: {
         items: [],
       },
       ml_model: null,
       firewall_certificates: {
-        items: [],
+        items: toCertsDomain,
       },
       users: {
         items: toUsersDomain,

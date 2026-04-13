@@ -26,6 +26,7 @@ import {
   type FirewallConfigSnapshotServiceClient,
   type PushActiveConfigSnapshotRequest,
 } from '../grpc/generated/services/config_snapshot_service.js';
+import { SecretStore } from '../persistence/secret-store.js';
 
 export const CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN =
   'CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN';
@@ -39,6 +40,7 @@ export class GrpcConfigSnapshotPushService
   constructor(
     @Inject(CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN)
     private readonly grpcClient: ClientGrpc,
+    private readonly secretStore: SecretStore,
   ) {}
 
   onModuleInit(): void {
@@ -66,7 +68,7 @@ export class GrpcConfigSnapshotPushService
         changesSummary: snapshot.getChangesSummary() ?? '',
         createdAt: this.toTimestamp(snapshot.getCreatedAt()),
         createdBy: snapshot.getCreatedBy(),
-        bundle: this.toBundle(payload),
+        bundle: await this.toBundle(payload),
       },
     };
 
@@ -90,7 +92,7 @@ export class GrpcConfigSnapshotPushService
     }
   }
 
-  private toBundle(payload: ConfigSnapshotPayload): ConfigBundle {
+  private async toBundle(payload: ConfigSnapshotPayload): Promise<ConfigBundle> {
     const b = payload.bundle;
 
     return {
@@ -152,21 +154,33 @@ export class GrpcConfigSnapshotPushService
             checksum: b.ml_model.getChecksum().getValue(),
           }
         : undefined,
-      firewallCertificates: b.firewall_certificates.items.map((c) => ({
-        id: c.getId(),
-        certType: this.toCertificateType(c.getCertType()),
-        commonName: c.getCommonName(),
-        fingerprint: c.getFingerprint(),
-        certificatePem: c.getCertificatePem(),
-        privateKeyRef: c.getPrivateKeyRef(),
-        expiresAt: this.toTimestamp(c.getExpiresAt()),
-        // TODO: pola MITM inbound TLS (bind_address/port, private_key_pem, inspection_bypass)
-        // zostaną uzupełnione gdy domain entity FirewallCertificate je dostanie.
-        bindAddress: '',
-        bindPort: 0,
-        privateKeyPem: '',
-        inspectionBypass: false,
-      })),
+      firewallCertificates: await Promise.all(
+        b.firewall_certificates.items.map(async (c) => {
+          // Resolve PEM z secret store tylko dla TLS_SERVER
+          let privateKeyPem = '';
+          if (c.getCertType() === 'TLS_SERVER' && c.getPrivateKeyRef()) {
+            try {
+              privateKeyPem = await this.secretStore.load(c.getPrivateKeyRef());
+            } catch {
+              // klucz niedostepny -- firewall zaladuje z dysku po key_ref
+            }
+          }
+
+          return {
+            id: c.getId(),
+            certType: this.toCertificateType(c.getCertType()),
+            commonName: c.getCommonName(),
+            fingerprint: c.getFingerprint(),
+            certificatePem: c.getCertificatePem(),
+            privateKeyRef: c.getPrivateKeyRef(),
+            expiresAt: this.toTimestamp(c.getExpiresAt()),
+            bindAddress: c.getBindAddress(),
+            bindPort: c.getBindPort(),
+            privateKeyPem,
+            inspectionBypass: c.getInspectionBypass(),
+          };
+        }),
+      ),
       identity: undefined,
     };
   }

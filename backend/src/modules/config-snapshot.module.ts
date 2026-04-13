@@ -12,7 +12,9 @@ import { GetConfigHistoryUseCase } from '../application/use-cases/get-config-his
 import { ImportConfigUseCase } from '../application/use-cases/import-config.use-case.js';
 import { RollbackConfigUseCase } from '../application/use-cases/rollback-config.use-case.js';
 import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../domain/repositories/config-snapshot.repository.js';
+import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../domain/repositories/firewall-certificate.repository.js';
 import { NAT_RULES_REPOSITORY_TOKEN } from '../domain/repositories/nat-rules.repository.js';
+import { SSL_BYPASS_REPOSITORY_TOKEN } from '../domain/repositories/ssl-bypass.repository.js';
 import { PERMISSION_REPOSITORY_TOKEN } from '../domain/repositories/permission.repository.js';
 import { ROLE_REPOSITORY_TOKEN } from '../domain/repositories/role.repository.js';
 import { ROLE_PERMISSIONS_REPOSITORY_TOKEN } from '../domain/repositories/role-permissions.repository.js';
@@ -32,8 +34,11 @@ import {
 import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
 import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
 import { FileStore } from '../infrastructure/persistence/json/file-store.js';
+import { SecretStore } from '../infrastructure/persistence/secret-store.js';
 import { JsonConfigSnapshotRepository } from '../infrastructure/persistence/repositories/json-config-snapshot.repository.js';
+import { JsonFirewallCertificateRepository } from '../infrastructure/persistence/repositories/json-firewall-certificate.repository.js';
 import { JsonNatRuleRepository } from '../infrastructure/persistence/repositories/json-nat-rule.repository.js';
+import { JsonSslBypassRepository } from '../infrastructure/persistence/repositories/json-ssl-bypass.repository.js';
 import { JsonPermissionRepository } from '../infrastructure/persistence/repositories/json-permission.repository.js';
 import { JsonRoleRepository } from '../infrastructure/persistence/repositories/json-role.repository.js';
 import { JsonRolePermissionsRepository } from '../infrastructure/persistence/repositories/json-role-permissions.repository.js';
@@ -142,6 +147,7 @@ import { Env } from '../shared/config/env.validation.js';
     ExportConfigUseCase,
     ImportConfigUseCase,
     GrpcConfigSnapshotPushService,
+    SecretStore,
     FileStore,
     Mutex,
     {
@@ -179,6 +185,14 @@ import { Env } from '../shared/config/env.validation.js';
     {
       provide: ZONE_REPOSITORY_TOKEN,
       useClass: JsonZoneRepository,
+    },
+    {
+      provide: FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
+      useClass: JsonFirewallCertificateRepository,
+    },
+    {
+      provide: SSL_BYPASS_REPOSITORY_TOKEN,
+      useClass: JsonSslBypassRepository,
     },
     {
       provide: USER_ROLES_REPOSITORY_TOKEN,

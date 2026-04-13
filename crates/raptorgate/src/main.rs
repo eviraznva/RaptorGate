@@ -1,5 +1,6 @@
 mod config;
 mod config_provider;
+mod config_snapshot_server;
 mod data_plane;
 mod disk_store;
 mod dpi;
@@ -37,10 +38,11 @@ use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
-    CaManager, EchTlsPolicy, MitmProxy, MitmProxyConfig, NoopIpsInspector, PinningConfig,
+    CaManager, DecryptedIpsInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig, PinningConfig,
     ServerKeyStore, TlsDecisionEngine,
 };
 use etherparse::NetSlice;
+use std::time::Duration;
 use ipnet::IpNet;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -118,10 +120,10 @@ async fn main() {
         }
     };
 
-    // TODO: lista bypass ładowana z ApplyConfigSnapshot (SslBypassSet), gdy handler pojawi się w data plane
     let server_key_store = Arc::new(ServerKeyStore::new(&config.pki_dir));
+    server_key_store.load_all_from_disk();
     let decision_engine = Arc::new(TlsDecisionEngine::new(
-        &[],
+        &config.ssl_bypass_domains,
         Arc::clone(&server_key_store),
         EchTlsPolicy::default(),
         PinningConfig::default(),
@@ -147,6 +149,31 @@ async fn main() {
         .await;
 
     tokio::spawn(events::init_event_queue());
+
+    // Reconnect loop dla event sink -- laczy sie z backendem i restartuje po rozlaczeniu.
+    let event_socket = config.grpc_socket_path.clone();
+    tokio::spawn(async move {
+        let mut backoff = Duration::from_secs(1);
+        const MAX_BACKOFF: Duration = Duration::from_secs(30);
+        loop {
+            match events::BackendEventSink::connect(&event_socket).await {
+                Ok((sink, disconnect_rx)) => {
+                    tracing::info!("BackendEventSink connected");
+                    events::set_backend_sink(sink);
+                    backoff = Duration::from_secs(1);
+                    let _ = disconnect_rx.await;
+                    events::clear_backend_sink();
+                    tracing::warn!("BackendEventSink disconnected, reconnecting...");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, backoff_s = backoff.as_secs(), "BackendEventSink connect failed");
+                }
+            }
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(MAX_BACKOFF);
+        }
+    });
+
     let nat_engine = build_test_nat();
 
     // Inicjalizacja providera konfiguracji DNS inspection.
@@ -192,6 +219,16 @@ async fn main() {
     );
     tokio::spawn(query_server.serve());
 
+    let snapshot_server = config_snapshot_server::SnapshotServer::new(
+        config_snapshot_server::SnapshotHandler {
+            decision_engine: Arc::clone(&decision_engine),
+            server_key_store: Arc::clone(&server_key_store),
+        },
+        &config.control_plane_socket_path,
+        CancellationToken::new(),
+    );
+    tokio::spawn(snapshot_server.serve());
+
     if config.ssl_inspection_enabled {
         let tls_runtime_cancel = CancellationToken::new();
         decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
@@ -208,7 +245,7 @@ async fn main() {
                     cert_forger: Arc::clone(forger),
                     untrust_forger: Arc::clone(untrust),
                     decision_engine: Arc::clone(&decision_engine),
-                    ips_inspector: Arc::new(NoopIpsInspector),
+                    ips_inspector: Arc::new(DecryptedIpsInspector::new(Arc::clone(&ips))),
                     cancel: tls_runtime_cancel,
                 };
 
