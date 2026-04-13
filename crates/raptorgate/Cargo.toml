@@ -44,6 +44,7 @@ mockall = "0.14.0"
 simple-dns = "0.11.2"
 tls-parser = "0.12.2"
 httparse = "1.10"
+regex = "1.12.2"
 
 [dev-dependencies]
 serial_test = "3.2.0"

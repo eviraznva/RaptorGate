@@ -1,7 +1,7 @@
 use simple_dns::{Packet, PacketFlag};
 
-use crate::dpi::context::DpiContext;
 use crate::dpi::AppProto;
+use crate::dpi::context::DpiContext;
 
 // Typ rekordu DNS (QTYPE / RTYPE).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,7 +14,16 @@ pub enum DnsRecordType {
     Mx,
     Txt,
     Aaaa,
+    Opt,
     Srv,
+    Ds,
+    Rrsig,
+    Nsec,
+    Dnskey,
+    Nsec3,
+    Nsec3Param,
+    Cds,
+    Cdnskey,
     Any,
     Other(u16),
 }
@@ -30,7 +39,16 @@ impl From<u16> for DnsRecordType {
             15 => Self::Mx,
             16 => Self::Txt,
             28 => Self::Aaaa,
+            41 => Self::Opt,
             33 => Self::Srv,
+            43 => Self::Ds,
+            46 => Self::Rrsig,
+            47 => Self::Nsec,
+            48 => Self::Dnskey,
+            50 => Self::Nsec3,
+            51 => Self::Nsec3Param,
+            59 => Self::Cds,
+            60 => Self::Cdnskey,
             255 => Self::Any,
             other => Self::Other(other),
         }
@@ -48,7 +66,16 @@ impl From<DnsRecordType> for u16 {
             DnsRecordType::Mx => 15,
             DnsRecordType::Txt => 16,
             DnsRecordType::Aaaa => 28,
+            DnsRecordType::Opt => 41,
             DnsRecordType::Srv => 33,
+            DnsRecordType::Ds => 43,
+            DnsRecordType::Rrsig => 46,
+            DnsRecordType::Nsec => 47,
+            DnsRecordType::Dnskey => 48,
+            DnsRecordType::Nsec3 => 50,
+            DnsRecordType::Nsec3Param => 51,
+            DnsRecordType::Cds => 59,
+            DnsRecordType::Cdnskey => 60,
             DnsRecordType::Any => 255,
             DnsRecordType::Other(v) => v,
         }
@@ -63,6 +90,16 @@ pub struct DnsParseResult {
     pub query_type: Option<DnsRecordType>,
     pub answer_count: u16,
     pub answer_types: Vec<DnsRecordType>,
+    pub authority_count: u16,
+    pub authority_types: Vec<DnsRecordType>,
+    pub additional_count: u16,
+    pub additional_types: Vec<DnsRecordType>,
+    pub has_opt: bool,
+    pub dnssec_ok: bool,
+    pub authentic_data: bool,
+    pub checking_disabled: bool,
+    pub rcode: u16,
+    pub has_dnssec_records: bool,
     pub response_size: u16,
 }
 
@@ -70,14 +107,31 @@ pub struct DnsParseResult {
 pub fn parse_dns(buf: &[u8]) -> Option<DnsParseResult> {
     let packet = Packet::parse(buf).ok()?;
     let is_response = packet.has_flags(PacketFlag::RESPONSE);
+    let authentic_data = packet.has_flags(PacketFlag::AUTHENTIC_DATA);
+    let checking_disabled = packet.has_flags(PacketFlag::CHECKING_DISABLED);
     let question = packet.questions.first()?;
 
     let answer_count = packet.answers.len() as u16;
-    let answer_types: Vec<DnsRecordType> = packet
-        .answers
+    let answer_types = collect_record_types(&packet.answers);
+    let authority_count = packet.name_servers.len() as u16;
+    let authority_types = collect_record_types(&packet.name_servers);
+    let has_opt = packet.opt().is_some();
+    let dnssec_ok = if has_opt {
+        extract_dnssec_ok_bit(buf)?
+    } else {
+        false
+    };
+    let mut additional_types = Vec::with_capacity(packet.additional_records.len() + usize::from(has_opt));
+    if has_opt {
+        additional_types.push(DnsRecordType::Opt);
+    }
+    additional_types.extend(collect_record_types(&packet.additional_records));
+    let additional_count = additional_types.len() as u16;
+    let has_dnssec_records = answer_types
         .iter()
-        .map(|rr| DnsRecordType::from(u16::from(rr.rdata.type_code())))
-        .collect();
+        .chain(authority_types.iter())
+        .chain(additional_types.iter())
+        .any(|record_type| record_type.is_dnssec());
 
     Some(DnsParseResult {
         is_response,
@@ -85,6 +139,16 @@ pub fn parse_dns(buf: &[u8]) -> Option<DnsParseResult> {
         query_type: Some(DnsRecordType::from(u16::from(question.qtype))),
         answer_count,
         answer_types,
+        authority_count,
+        authority_types,
+        additional_count,
+        additional_types,
+        has_opt,
+        dnssec_ok,
+        authentic_data,
+        checking_disabled,
+        rcode: rcode_to_u16(packet.rcode()),
+        has_dnssec_records,
         response_size: buf.len() as u16,
     })
 }
@@ -100,6 +164,134 @@ pub fn dns_to_dpi_context(result: &DnsParseResult) -> DpiContext {
         dns_answer_types: result.answer_types.clone(),
         dns_response_size: result.response_size,
         ..Default::default()
+    }
+}
+
+fn collect_record_types(records: &[simple_dns::ResourceRecord<'_>]) -> Vec<DnsRecordType> {
+    records
+        .iter()
+        .map(|rr| DnsRecordType::from(u16::from(rr.rdata.type_code())))
+        .collect()
+}
+
+fn rcode_to_u16(rcode: simple_dns::RCODE) -> u16 {
+    match rcode {
+        simple_dns::RCODE::NoError => 0,
+        simple_dns::RCODE::FormatError => 1,
+        simple_dns::RCODE::ServerFailure => 2,
+        simple_dns::RCODE::NameError => 3,
+        simple_dns::RCODE::NotImplemented => 4,
+        simple_dns::RCODE::Refused => 5,
+        simple_dns::RCODE::YXDOMAIN => 6,
+        simple_dns::RCODE::YXRRSET => 7,
+        simple_dns::RCODE::NXRRSET => 8,
+        simple_dns::RCODE::NOTAUTH => 9,
+        simple_dns::RCODE::NOTZONE => 10,
+        simple_dns::RCODE::BADVERS => 16,
+        simple_dns::RCODE::Reserved => 0xffff,
+    }
+}
+
+fn extract_dnssec_ok_bit(buf: &[u8]) -> Option<bool> {
+    if buf.len() < 12 {
+        return None;
+    }
+
+    let question_count = read_u16(buf, 4)? as usize;
+    let answer_count = read_u16(buf, 6)? as usize;
+    let authority_count = read_u16(buf, 8)? as usize;
+    let additional_count = read_u16(buf, 10)? as usize;
+
+    let mut offset = 12usize;
+    offset = skip_questions(buf, offset, question_count)?;
+    offset = skip_resource_records(buf, offset, answer_count)?;
+    offset = skip_resource_records(buf, offset, authority_count)?;
+
+    for _ in 0..additional_count {
+        let name_len = skip_name(buf, offset)?;
+        let rr_offset = offset + name_len;
+        let rr_type = read_u16(buf, rr_offset)?;
+        let ttl = read_u32(buf, rr_offset + 4)?;
+        let rdlength = read_u16(buf, rr_offset + 8)? as usize;
+
+        if rr_type == 41 {
+            return Some(ttl & 0x8000 != 0);
+        }
+
+        offset = rr_offset.checked_add(10)?.checked_add(rdlength)?;
+        if offset > buf.len() {
+            return None;
+        }
+    }
+
+    Some(false)
+}
+
+fn skip_questions(buf: &[u8], mut offset: usize, count: usize) -> Option<usize> {
+    for _ in 0..count {
+        offset = offset.checked_add(skip_name(buf, offset)?)?;
+        offset = offset.checked_add(4)?;
+        if offset > buf.len() {
+            return None;
+        }
+    }
+    Some(offset)
+}
+
+fn skip_resource_records(buf: &[u8], mut offset: usize, count: usize) -> Option<usize> {
+    for _ in 0..count {
+        let name_len = skip_name(buf, offset)?;
+        let rr_offset = offset.checked_add(name_len)?;
+        let rdlength = read_u16(buf, rr_offset + 8)? as usize;
+        offset = rr_offset.checked_add(10)?.checked_add(rdlength)?;
+        if offset > buf.len() {
+            return None;
+        }
+    }
+    Some(offset)
+}
+
+fn skip_name(buf: &[u8], offset: usize) -> Option<usize> {
+    let mut cursor = offset;
+    loop {
+        let len = *buf.get(cursor)?;
+        if len & 0b1100_0000 == 0b1100_0000 {
+            buf.get(cursor + 1)?;
+            return Some(cursor + 2 - offset);
+        }
+        if len == 0 {
+            return Some(cursor + 1 - offset);
+        }
+        cursor = cursor.checked_add(1 + len as usize)?;
+        if cursor > buf.len() {
+            return None;
+        }
+    }
+}
+
+fn read_u16(buf: &[u8], offset: usize) -> Option<u16> {
+    let bytes: [u8; 2] = buf.get(offset..offset + 2)?.try_into().ok()?;
+    Some(u16::from_be_bytes(bytes))
+}
+
+fn read_u32(buf: &[u8], offset: usize) -> Option<u32> {
+    let bytes: [u8; 4] = buf.get(offset..offset + 4)?.try_into().ok()?;
+    Some(u32::from_be_bytes(bytes))
+}
+
+impl DnsRecordType {
+    fn is_dnssec(self) -> bool {
+        matches!(
+            self,
+            Self::Ds
+                | Self::Rrsig
+                | Self::Nsec
+                | Self::Dnskey
+                | Self::Nsec3
+                | Self::Nsec3Param
+                | Self::Cds
+                | Self::Cdnskey
+        )
     }
 }
 
@@ -142,20 +334,45 @@ mod tests {
         qtype: u16,
         answers: &[(u16, &[u8])],
     ) -> Vec<u8> {
+        build_dns_message_with_sections(domain_labels, qtype, answers, &[], &[], [0x81, 0x80], None)
+    }
+
+    fn build_dns_message_with_sections(
+        domain_labels: &[&str],
+        qtype: u16,
+        answers: &[(u16, &[u8])],
+        authority: &[(u16, &[u8])],
+        additional: &[(u16, &[u8])],
+        flags: [u8; 2],
+        opt: Option<(u16, u32, &[(u16, &[u8])])>,
+    ) -> Vec<u8> {
         let mut pkt = Vec::new();
         pkt.extend_from_slice(&[0xAB, 0xCD]); // Transaction ID
-        pkt.extend_from_slice(&[0x81, 0x80]); // Flags: response, RD=1, RA=1
+        pkt.extend_from_slice(&flags);
         pkt.extend_from_slice(&[0x00, 0x01]); // QDCOUNT=1
         pkt.extend_from_slice(&(answers.len() as u16).to_be_bytes()); // ANCOUNT
-        pkt.extend_from_slice(&[0x00, 0x00]); // NSCOUNT=0
-        pkt.extend_from_slice(&[0x00, 0x00]); // ARCOUNT=0
+        pkt.extend_from_slice(&(authority.len() as u16).to_be_bytes()); // NSCOUNT
+        let additional_count = additional.len() as u16 + u16::from(opt.is_some());
+        pkt.extend_from_slice(&additional_count.to_be_bytes()); // ARCOUNT
 
         let name_bytes = encode_name(domain_labels);
         pkt.extend_from_slice(&name_bytes);
         pkt.extend_from_slice(&qtype.to_be_bytes());
         pkt.extend_from_slice(&[0x00, 0x01]); // QCLASS=IN
 
-        for (rtype, rdata) in answers {
+        append_records(&mut pkt, &name_bytes, answers);
+        append_records(&mut pkt, &name_bytes, authority);
+        append_records(&mut pkt, &name_bytes, additional);
+
+        if let Some((udp_size, ttl, opt_codes)) = opt {
+            append_opt_record(&mut pkt, udp_size, ttl, opt_codes);
+        }
+
+        pkt
+    }
+
+    fn append_records(pkt: &mut Vec<u8>, name_bytes: &[u8], records: &[(u16, &[u8])]) {
+        for (rtype, rdata) in records {
             pkt.extend_from_slice(&name_bytes); // NAME
             pkt.extend_from_slice(&rtype.to_be_bytes()); // TYPE
             pkt.extend_from_slice(&[0x00, 0x01]); // CLASS=IN
@@ -163,7 +380,30 @@ mod tests {
             pkt.extend_from_slice(&(rdata.len() as u16).to_be_bytes()); // RDLENGTH
             pkt.extend_from_slice(rdata); // RDATA
         }
-        pkt
+    }
+
+    fn append_opt_record(
+        pkt: &mut Vec<u8>,
+        udp_packet_size: u16,
+        ttl: u32,
+        opt_codes: &[(u16, &[u8])],
+    ) {
+        let mut rdata_len = 0u16;
+        for (_, data) in opt_codes {
+            rdata_len += 4 + data.len() as u16;
+        }
+
+        pkt.push(0x00); // root name
+        pkt.extend_from_slice(&41u16.to_be_bytes()); // TYPE=OPT
+        pkt.extend_from_slice(&udp_packet_size.to_be_bytes()); // CLASS=requestor UDP size
+        pkt.extend_from_slice(&ttl.to_be_bytes());
+        pkt.extend_from_slice(&rdata_len.to_be_bytes());
+
+        for (code, data) in opt_codes {
+            pkt.extend_from_slice(&code.to_be_bytes());
+            pkt.extend_from_slice(&(data.len() as u16).to_be_bytes());
+            pkt.extend_from_slice(data);
+        }
     }
 
     #[test]
@@ -175,6 +415,16 @@ mod tests {
         assert_eq!(result.query_type, Some(DnsRecordType::A));
         assert_eq!(result.answer_count, 0);
         assert!(result.answer_types.is_empty());
+        assert_eq!(result.authority_count, 0);
+        assert!(result.authority_types.is_empty());
+        assert_eq!(result.additional_count, 0);
+        assert!(result.additional_types.is_empty());
+        assert!(!result.has_opt);
+        assert!(!result.dnssec_ok);
+        assert!(!result.authentic_data);
+        assert!(!result.checking_disabled);
+        assert_eq!(result.rcode, 0);
+        assert!(!result.has_dnssec_records);
         assert_eq!(result.response_size, pkt.len() as u16);
     }
 
@@ -221,6 +471,31 @@ mod tests {
         let pkt = build_dns_query(&["example", "com"], 16);
         let result = parse_dns(&pkt).unwrap();
         assert_eq!(result.query_type, Some(DnsRecordType::Txt));
+    }
+
+    #[test]
+    fn dnssec_record_type_mappings_cover_query_types() {
+        let cases = [
+            (43, DnsRecordType::Ds),
+            (46, DnsRecordType::Rrsig),
+            (47, DnsRecordType::Nsec),
+            (48, DnsRecordType::Dnskey),
+            (50, DnsRecordType::Nsec3),
+            (51, DnsRecordType::Nsec3Param),
+            (59, DnsRecordType::Cds),
+            (60, DnsRecordType::Cdnskey),
+        ];
+
+        for (qtype, expected) in cases {
+            assert_eq!(DnsRecordType::from(qtype), expected);
+            assert_eq!(u16::from(expected), qtype);
+        }
+    }
+
+    #[test]
+    fn opt_record_type_roundtrip() {
+        assert_eq!(DnsRecordType::from(41), DnsRecordType::Opt);
+        assert_eq!(u16::from(DnsRecordType::Opt), 41);
     }
 
     #[test]
@@ -295,7 +570,10 @@ mod tests {
             build_dns_response_with_answers(&["cdn", "example", "com"], 1, &[(1, ip1), (1, ip2)]);
         let result = parse_dns(&pkt).unwrap();
         assert_eq!(result.answer_count, 2);
-        assert_eq!(result.answer_types, vec![DnsRecordType::A, DnsRecordType::A]);
+        assert_eq!(
+            result.answer_types,
+            vec![DnsRecordType::A, DnsRecordType::A]
+        );
     }
 
     #[test]
@@ -309,7 +587,10 @@ mod tests {
         );
         let result = parse_dns(&pkt).unwrap();
         assert_eq!(result.answer_count, 2);
-        assert_eq!(result.answer_types, vec![DnsRecordType::Cname, DnsRecordType::A]);
+        assert_eq!(
+            result.answer_types,
+            vec![DnsRecordType::Cname, DnsRecordType::A]
+        );
     }
 
     #[test]
@@ -320,6 +601,101 @@ mod tests {
         let result = parse_dns(&pkt).unwrap();
         assert_eq!(result.answer_count, 1);
         assert_eq!(result.answer_types, vec![DnsRecordType::Null]);
+    }
+
+    #[test]
+    fn dnssec_record_types_roundtrip() {
+        let cases: &[(u16, DnsRecordType)] = &[
+            (43, DnsRecordType::Ds),
+            (46, DnsRecordType::Rrsig),
+            (47, DnsRecordType::Nsec),
+            (48, DnsRecordType::Dnskey),
+            (50, DnsRecordType::Nsec3),
+            (51, DnsRecordType::Nsec3Param),
+            (59, DnsRecordType::Cds),
+            (60, DnsRecordType::Cdnskey),
+        ];
+
+        for (rtype, expected) in cases {
+            assert_eq!(DnsRecordType::from(*rtype), *expected);
+            assert_eq!(u16::from(*expected), *rtype);
+        }
+    }
+
+    #[test]
+    fn unknown_record_type_stays_other() {
+        assert_eq!(DnsRecordType::from(65280), DnsRecordType::Other(65280));
+        assert_eq!(u16::from(DnsRecordType::Other(65280)), 65280);
+    }
+
+    #[test]
+    fn response_collects_authority_additional_and_dnssec_metadata() {
+        let ds_rdata: &[u8] = &[0x12, 0x34, 0x08, 0x02, 0xde, 0xad, 0xbe, 0xef];
+        let a_rdata: &[u8] = &[1, 1, 1, 1];
+        let pkt = build_dns_message_with_sections(
+            &["secure", "example", "com"],
+            1,
+            &[(48, &[0x01, 0x00, 0x03, 0x08, 0xaa, 0xbb, 0xcc, 0xdd])],
+            &[(43, ds_rdata)],
+            &[(1, a_rdata)],
+            [0x81, 0xb0],
+            Some((1232, 0, &[])),
+        );
+
+        let result = parse_dns(&pkt).unwrap();
+
+        assert_eq!(result.answer_count, 1);
+        assert_eq!(result.answer_types, vec![DnsRecordType::Dnskey]);
+        assert_eq!(result.authority_count, 1);
+        assert_eq!(result.authority_types, vec![DnsRecordType::Ds]);
+        assert_eq!(result.additional_count, 2);
+        assert_eq!(
+            result.additional_types,
+            vec![DnsRecordType::Opt, DnsRecordType::A]
+        );
+        assert!(result.has_opt);
+        assert!(!result.dnssec_ok);
+        assert!(result.authentic_data);
+        assert!(result.checking_disabled);
+        assert_eq!(result.rcode, 0);
+        assert!(result.has_dnssec_records);
+    }
+
+    #[test]
+    fn response_extracts_do_bit_from_opt_ttl() {
+        let pkt = build_dns_message_with_sections(
+            &["secure", "example", "com"],
+            1,
+            &[],
+            &[],
+            &[],
+            [0x81, 0x80],
+            Some((1232, 0x0000_8000, &[])),
+        );
+
+        let result = parse_dns(&pkt).unwrap();
+
+        assert!(result.has_opt);
+        assert!(result.dnssec_ok);
+    }
+
+    #[test]
+    fn response_rcode_is_extracted() {
+        let pkt = build_dns_message_with_sections(
+            &["missing", "example", "com"],
+            1,
+            &[],
+            &[],
+            &[],
+            [0x81, 0x83],
+            None,
+        );
+
+        let result = parse_dns(&pkt).unwrap();
+
+        assert_eq!(result.rcode, 3);
+        assert!(!result.has_opt);
+        assert!(!result.has_dnssec_records);
     }
 
     #[test]
@@ -346,6 +722,16 @@ mod tests {
             query_type: Some(DnsRecordType::A),
             answer_count: 2,
             answer_types: vec![DnsRecordType::A, DnsRecordType::A],
+            authority_count: 0,
+            authority_types: vec![],
+            additional_count: 0,
+            additional_types: vec![],
+            has_opt: false,
+            dnssec_ok: false,
+            authentic_data: false,
+            checking_disabled: false,
+            rcode: 0,
+            has_dnssec_records: false,
             response_size: 128,
         };
         let ctx = dns_to_dpi_context(&result);
@@ -354,7 +740,10 @@ mod tests {
         assert_eq!(ctx.dns_query_type, Some(DnsRecordType::A));
         assert_eq!(ctx.dns_is_response, Some(false));
         assert_eq!(ctx.dns_answer_count, 2);
-        assert_eq!(ctx.dns_answer_types, vec![DnsRecordType::A, DnsRecordType::A]);
+        assert_eq!(
+            ctx.dns_answer_types,
+            vec![DnsRecordType::A, DnsRecordType::A]
+        );
         assert_eq!(ctx.dns_response_size, 128);
     }
 
@@ -366,6 +755,16 @@ mod tests {
             query_type: Some(DnsRecordType::Aaaa),
             answer_count: 1,
             answer_types: vec![DnsRecordType::Aaaa],
+            authority_count: 0,
+            authority_types: vec![],
+            additional_count: 0,
+            additional_types: vec![],
+            has_opt: false,
+            dnssec_ok: false,
+            authentic_data: false,
+            checking_disabled: false,
+            rcode: 0,
+            has_dnssec_records: false,
             response_size: 64,
         };
         let ctx = dns_to_dpi_context(&result);

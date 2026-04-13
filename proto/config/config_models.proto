@@ -5,15 +5,6 @@ package raptorgate.config;
 import "common/common.proto";
 import "google/protobuf/timestamp.proto";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Modele sekcji konfiguracji
-//
-// Każda sekcja posiada własny numer wersji (uint64). Backend inkrementuje
-// wersję sekcji przy każdej zmianie jej zawartości. Firewall przechowuje
-// znane wersje w lokalnym snapshotcie Redb i wysyła je w GetConfigRequest
-// (pole known_versions) aby pobrać tylko zmienione sekcje (delta).
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ── Reguły RaptorLang ────────────────────────────────────────────────────────
 
 message Rule {
@@ -25,7 +16,6 @@ message Rule {
 }
 
 message RuleSet {
-  uint64         version  = 1;
   string         checksum = 2;  // SHA-256 zawartości sekcji
   repeated Rule  items    = 3;
 }
@@ -39,7 +29,6 @@ message Zone {
 }
 
 message ZoneSet {
-  uint64        version = 1;
   repeated Zone items   = 2;
 }
 
@@ -51,7 +40,6 @@ message ZoneInterface {
 }
 
 message ZoneInterfaceSet {
-  uint64                  version = 1;
   repeated ZoneInterface  items   = 2;
 }
 
@@ -63,7 +51,6 @@ message ZonePair {
 }
 
 message ZonePairSet {
-  uint64             version = 1;
   repeated ZonePair  items   = 2;
 }
 
@@ -82,7 +69,6 @@ message NatRule {
 }
 
 message NatRuleSet {
-  uint64             version = 1;
   repeated NatRule   items   = 2;
 }
 
@@ -106,7 +92,6 @@ message SslBypassEntry {
 }
 
 message SslBypassSet {
-  uint64                   version = 1;
   repeated SslBypassEntry  items   = 2;
 }
 
@@ -121,14 +106,12 @@ message IpsSignature {
 }
 
 message IpsSignatureSet {
-  uint64                  version = 1;
   repeated IpsSignature   items   = 2;
 }
 
 // ── Model ML (ONNX) ──────────────────────────────────────────────────────────
 
 message MlModel {
-  uint64 version       = 1;
   string id            = 2;
   string name          = 3;
   string artifact_path = 4;
@@ -148,7 +131,6 @@ message FirewallCertificate {
 }
 
 message FirewallCertificateSet {
-  uint64                       version = 1;
   repeated FirewallCertificate items   = 2;
 }
 
@@ -188,11 +170,139 @@ message IdentityManagerUserSession {
 }
 
 message IdentityBundle {
-  uint64                              version       = 1;
   repeated UserGroup                  user_groups   = 2;
   repeated IdentityUser               identity_users = 3;
   repeated UserGroupMember            user_group_members = 4;
   repeated IdentityManagerUserSession user_sessions = 5;
+}
+
+// ── DNS Inspection ───────────────────────────────────────────────────────────
+
+enum DnsInspectionDnssecTransport {
+  DNS_INSPECTION_DNSSEC_TRANSPORT_UNSPECIFIED = 0;
+  DNS_INSPECTION_DNSSEC_TRANSPORT_UDP = 1;
+  DNS_INSPECTION_DNSSEC_TRANSPORT_TCP = 2;
+  DNS_INSPECTION_DNSSEC_TRANSPORT_UDP_WITH_TCP_FALLBACK = 3;
+}
+
+enum DnsInspectionDnssecFailureAction {
+  DNS_INSPECTION_DNSSEC_FAILURE_ACTION_UNSPECIFIED = 0;
+  DNS_INSPECTION_DNSSEC_FAILURE_ACTION_ALLOW = 1;
+  DNS_INSPECTION_DNSSEC_FAILURE_ACTION_ALERT = 2;
+  DNS_INSPECTION_DNSSEC_FAILURE_ACTION_BLOCK = 3;
+}
+
+message DnsInspectionGeneralConfig {
+  bool enabled = 1;
+}
+
+message DnsInspectionBlocklistConfig {
+  bool            enabled = 1;
+  repeated string domains = 2;
+}
+
+message DnsInspectionDnsTunnelingConfig {
+  bool            enabled                = 1;
+  uint32          max_label_length       = 2;
+  float           entropy_threshold      = 3;
+  uint32          window_seconds         = 4;
+  uint32          max_queries_per_domain = 5;
+  uint32          max_unique_subdomains  = 6;
+  repeated string ignore_domains        = 7;  // domeny ignorowane przez detektor (obsługa wildcard)
+  float           alert_threshold       = 8;  // score >= próg → Alert  (domyślnie 0.6)
+  float           block_threshold       = 9;  // score >= próg → Block  (domyślnie 0.85)
+}
+
+message DnsInspectionDnssecResolverEndpoint {
+  string address = 1;
+  uint32 port    = 2;
+}
+
+message DnsInspectionDnssecResolverConfig {
+  DnsInspectionDnssecResolverEndpoint primary    = 1;
+  DnsInspectionDnssecResolverEndpoint secondary  = 2;
+  DnsInspectionDnssecTransport        transport  = 3;
+  uint32                              timeout_ms = 4;
+  uint32                              retries    = 5;
+}
+
+message DnsInspectionDnssecCacheTtlConfig {
+  uint32 secure   = 1;
+  uint32 insecure = 2;
+  uint32 bogus    = 3;
+  uint32 failure  = 4;
+}
+
+message DnsInspectionDnssecCacheConfig {
+  bool                            enabled      = 1;
+  uint32                          max_entries  = 2;
+  DnsInspectionDnssecCacheTtlConfig ttl_seconds = 3;
+}
+
+message DnsInspectionDnssecConfig {
+  bool                              enabled                     = 1;
+  uint32                            max_lookups_per_packet      = 2;
+  DnsInspectionDnssecFailureAction  default_on_resolver_failure = 3;
+  DnsInspectionDnssecResolverConfig resolver                    = 4;
+  DnsInspectionDnssecCacheConfig    cache                       = 5;
+}
+
+message DnsInspectionConfig {
+  DnsInspectionGeneralConfig      general       = 1;
+  DnsInspectionBlocklistConfig    blocklist     = 2;
+  DnsInspectionDnsTunnelingConfig dns_tunneling = 3;
+  DnsInspectionDnssecConfig       dnssec        = 4;
+}
+
+// ── IPS ─────────────────────────────────────────────────────────────────────
+
+enum IpsAction {
+  IPS_ACTION_UNSPECIFIED = 0;
+  IPS_ACTION_ALERT       = 1;
+  IPS_ACTION_BLOCK       = 2;
+}
+
+enum IpsAppProtocol {
+  IPS_APP_PROTOCOL_UNSPECIFIED = 0;
+  IPS_APP_PROTOCOL_HTTP        = 1;
+  IPS_APP_PROTOCOL_TLS         = 2;
+  IPS_APP_PROTOCOL_DNS         = 3;
+  IPS_APP_PROTOCOL_SSH         = 4;
+  IPS_APP_PROTOCOL_FTP         = 5;
+  IPS_APP_PROTOCOL_SMTP        = 6;
+  IPS_APP_PROTOCOL_RDP         = 7;
+  IPS_APP_PROTOCOL_SMB         = 8;
+  IPS_APP_PROTOCOL_QUIC        = 9;
+  IPS_APP_PROTOCOL_UNKNOWN     = 10;
+}
+
+message IpsGeneralConfig {
+  bool enabled = 1;
+}
+
+message IpsDetectionConfig {
+  bool   enabled                = 1;
+  uint32 max_payload_bytes      = 2;
+  uint32 max_matches_per_packet = 3;
+}
+
+message IpsSignatureConfig {
+  string              id            = 1;
+  string              name          = 2;
+  bool                enabled       = 3;
+  string              category      = 4;
+  string              pattern       = 5;
+  common.Severity     severity      = 6;
+  IpsAction           action        = 7;
+  repeated IpsAppProtocol app_protocols = 8;
+  repeated uint32     src_ports     = 9;
+  repeated uint32     dst_ports     = 10;
+}
+
+message IpsConfig {
+  IpsGeneralConfig      general    = 1;
+  IpsDetectionConfig    detection  = 2;
+  repeated IpsSignatureConfig signatures = 3;
 }
 
 // ── AppConfig — runtime-swappable firewall configuration ─────────────────────
@@ -207,25 +317,4 @@ message AppConfig {
   string          event_socket_path   = 7;
   string          query_socket_path  = 8;
   string          pki_dir            = 9;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Wersje sekcji — używane w mechanizmie delty
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Wersje sekcji znane firewall owi.
-// Backend wysyła daną sekcję tylko gdy jej aktualna wersja jest wyższa
-// niż wartość podana tutaj. Wartość 0 oznacza brak sekcji — backend ją wyśle.
-message ConfigSectionVersions {
-  uint64 rules           = 1;
-  uint64 zones           = 2;
-  uint64 zone_interfaces = 3;
-  uint64 zone_pairs      = 4;
-  uint64 nat_rules       = 5;
-  uint64 dns_blacklist   = 6;
-  uint64 ssl_bypass_list = 7;
-  uint64 ips_signatures  = 8;
-  uint64 ml_model        = 9;
-  uint64 certificates    = 10;
-  uint64 identity        = 11;
 }

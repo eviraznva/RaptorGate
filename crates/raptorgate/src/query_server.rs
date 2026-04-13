@@ -11,27 +11,47 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::config_provider::AppConfigProvider;
+use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
+use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
+use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
+use crate::data_plane::ips::config::IpsConfig;
+use crate::data_plane::ips::ips::Ips;
+use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::data_plane::nat::NatEngine;
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
-use crate::policy::{Policy, PolicyId};
 use crate::policy::provider::PolicyManager;
+use crate::policy::{Policy, PolicyId};
 use crate::proto::services::firewall_query_service_server::{
     FirewallQueryService, FirewallQueryServiceServer,
 };
 use crate::proto::services::{
-    GetConfigRequest, GetConfigResponse, GetNatBindingsRequest, GetNatBindingsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest, GetPolicyResponse, GetSystemTimeRequest, GetSystemTimeResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse, GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest, SwapConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse, SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse
+    GetConfigRequest, GetConfigResponse, GetDnsInspectionConfigRequest,
+    GetDnsInspectionConfigResponse, GetIpsConfigRequest, GetIpsConfigResponse,
+    GetNatBindingsRequest, GetNatBindingsResponse, GetPoliciesRequest, GetPoliciesResponse,
+    GetPolicyRequest, GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse,
+    GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
+    GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest,
+    SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
+    SwapIpsConfigRequest, SwapIpsConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse,
+    SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse,
 };
+use crate::zones::Zone;
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use crate::zones::{ZoneId, ZoneInterfaceId, ZonePair, ZonePairId};
-use crate::zones::Zone;
 
-pub struct QueryServer<PolicySwap> where PolicySwap: PolicyManager + Send + Sync {
+pub struct QueryServer<PolicySwap>
+where
+    PolicySwap: PolicyManager + Send + Sync,
+{
     handler: QueryHandler<PolicySwap>,
     socket_path: String,
     shutdown: CancellationToken,
 }
 
-impl<PolicySwap> QueryServer<PolicySwap> where PolicySwap: PolicyManager + Send + Sync + 'static {
+impl<PolicySwap> QueryServer<PolicySwap>
+where
+    PolicySwap: PolicyManager + Send + Sync + 'static,
+{
     pub fn new(
         handler: QueryHandler<PolicySwap>,
         socket_path: impl Into<String>,
@@ -75,17 +95,29 @@ impl<PolicySwap> QueryServer<PolicySwap> where PolicySwap: PolicyManager + Send 
 }
 
 #[derive(Clone)]
-pub struct QueryHandler<PolicySwap> where PolicySwap: PolicyManager {
+pub struct QueryHandler<PolicySwap>
+where
+    PolicySwap: PolicyManager,
+{
     pub tcp_tracker: Arc<TcpSessionTracker>,
     pub nat_engine: Arc<Mutex<NatEngine>>,
     pub policy_store: Arc<PolicySwap>,
     pub zone_store: Arc<ZoneProvider>,
     pub zone_pair_store: Arc<ZonePairProvider>,
     pub config_provider: Arc<AppConfigProvider>,
+    /// Provider konfiguracji inspekcji DNS — zarządza trwałym przechowywaniem.
+    pub dns_inspection_store: Arc<DnsInspectionConfigProvider>,
+    /// Aktywna instancja agregatora inspekcji DNS — hot-swap przez `update_config`.
+    pub dns_inspection: Arc<DnsInspection>,
+    pub ips_store: Arc<IpsConfigProvider>,
+    pub ips: Arc<Ips>,
 }
 
 #[tonic::async_trait]
-impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: PolicyManager + Send + Sync + 'static {
+impl<Swapper> FirewallQueryService for QueryHandler<Swapper>
+where
+    Swapper: PolicyManager + Send + Sync + 'static,
+{
     async fn get_tcp_sessions(
         &self,
         _request: Request<GetTcpSessionsRequest>,
@@ -95,7 +127,7 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
 
     async fn swap_policies(
         &self,
-        request: Request<SwapPoliciesRequest>
+        request: Request<SwapPoliciesRequest>,
     ) -> Result<Response<SwapPoliciesResponse>, Status> {
         let rules = request.into_inner().rules;
         let mut policies = Vec::with_capacity(rules.len());
@@ -105,13 +137,15 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
                 Ok(policy) => policies.push(policy),
                 Err(err) => {
                     tracing::warn!(error = %err, "failed to parse policy from SwapPoliciesRequest");
-                    return Err(Status::invalid_argument(format!("failed to parse policy: {err}")));
+                    return Err(Status::invalid_argument(format!(
+                        "failed to parse policy: {err}"
+                    )));
                 }
             }
         }
-        
+
         let response = match self.policy_store.swap_policies(policies).await {
-            Ok(()) => SwapPoliciesResponse { },
+            Ok(()) => SwapPoliciesResponse {},
             Err(err) => {
                 tracing::error!(error = %err, "failed to swap policies");
                 return Err(Status::internal(format!("failed to swap policies: {err}")));
@@ -123,16 +157,16 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
 
     async fn get_policies(
         &self,
-        _request: Request<GetPoliciesRequest>
+        _request: Request<GetPoliciesRequest>,
     ) -> Result<Response<GetPoliciesResponse>, Status> {
-        let rules = self.policy_store.get_policies()
+        let rules = self
+            .policy_store
+            .get_policies()
             .iter()
             .map(|(id, pol)| pol.clone().into_rule(id.clone()))
             .collect::<Vec<_>>();
 
-        Ok(Response::new(GetPoliciesResponse {
-            rules,
-        }))
+        Ok(Response::new(GetPoliciesResponse { rules }))
     }
 
     async fn get_policy(
@@ -169,13 +203,15 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
                 Ok(pair) => zones_domain.push(pair),
                 Err(err) => {
                     tracing::warn!(error = %err, "failed to parse zone from SwapZonesRequest");
-                    return Err(Status::invalid_argument(format!("failed to parse zone: {err}")));
+                    return Err(Status::invalid_argument(format!(
+                        "failed to parse zone: {err}"
+                    )));
                 }
             }
         }
-        
+
         let response = match self.zone_store.swap_zones(zones_domain).await {
-            Ok(()) => SwapZonesResponse { },
+            Ok(()) => SwapZonesResponse {},
             Err(err) => {
                 tracing::error!(error = %err, "failed to swap zones");
                 return Err(Status::internal(format!("failed to swap zones: {err}")));
@@ -187,16 +223,16 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
 
     async fn get_zones(
         &self,
-        _request: Request<GetZonesRequest>
+        _request: Request<GetZonesRequest>,
     ) -> Result<Response<GetZonesResponse>, Status> {
-        let zones = self.zone_store.get_zones()
+        let zones = self
+            .zone_store
+            .get_zones()
             .iter()
             .map(|(id, pol)| pol.clone().into_proto(id.clone()))
             .collect::<Vec<_>>();
 
-        Ok(Response::new(GetZonesResponse {
-            zones,
-        }))
+        Ok(Response::new(GetZonesResponse { zones }))
     }
 
     async fn get_zone(
@@ -226,16 +262,24 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
                 Ok(pair) => zone_pairs_domain.push(pair),
                 Err(err) => {
                     tracing::warn!(error = %err, "failed to parse zone pair from SwapZonePairsRequest");
-                    return Err(Status::invalid_argument(format!("failed to parse zone pair: {err}")));
+                    return Err(Status::invalid_argument(format!(
+                        "failed to parse zone pair: {err}"
+                    )));
                 }
             }
         }
 
-        let response = match self.zone_pair_store.swap_zone_pairs(zone_pairs_domain).await {
+        let response = match self
+            .zone_pair_store
+            .swap_zone_pairs(zone_pairs_domain)
+            .await
+        {
             Ok(()) => SwapZonePairsResponse {},
             Err(err) => {
                 tracing::error!(error = %err, "failed to swap zone pairs");
-                return Err(Status::internal(format!("failed to swap zone pairs: {err}")));
+                return Err(Status::internal(format!(
+                    "failed to swap zone pairs: {err}"
+                )));
             }
         };
 
@@ -246,14 +290,14 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
         &self,
         _request: Request<GetZonePairsRequest>,
     ) -> Result<Response<GetZonePairsResponse>, Status> {
-        let zone_pairs = self.zone_pair_store.get_zone_pairs()
+        let zone_pairs = self
+            .zone_pair_store
+            .get_zone_pairs()
             .iter()
             .map(|(id, pair)| pair.clone().into_proto(id.clone()))
             .collect::<Vec<_>>();
 
-        Ok(Response::new(GetZonePairsResponse {
-            zone_pairs,
-        }))
+        Ok(Response::new(GetZonePairsResponse { zone_pairs }))
     }
 
     async fn get_zone_pair(
@@ -267,7 +311,9 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
             Some(pair) => Ok(Response::new(GetZonePairResponse {
                 zone_pair: Some(pair.into_proto(id)),
             })),
-            None => Err(Status::not_found(format!("zone pair with id {id} not found"))),
+            None => Err(Status::not_found(format!(
+                "zone pair with id {id} not found"
+            ))),
         }
     }
 
@@ -275,13 +321,17 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
         &self,
         request: Request<SwapConfigRequest>,
     ) -> Result<Response<SwapConfigResponse>, Status> {
-        let proto_config = request.into_inner().config
+        let proto_config = request
+            .into_inner()
+            .config
             .ok_or_else(|| Status::invalid_argument("missing config field"))?;
 
         let new_config = AppConfig::from_proto(proto_config)
             .map_err(|e| Status::invalid_argument(format!("invalid config: {e}")))?;
 
-        self.config_provider.swap_config(new_config).await
+        self.config_provider
+            .swap_config(new_config)
+            .await
             .map_err(|e| Status::internal(format!("failed to swap config: {e}")))?;
 
         Ok(Response::new(SwapConfigResponse {}))
@@ -303,6 +353,71 @@ impl<Swapper> FirewallQueryService for QueryHandler<Swapper> where Swapper: Poli
     ) -> Result<Response<GetSystemTimeResponse>, Status> {
         Ok(Response::new(GetSystemTimeResponse {
             time: Some(SystemTime::now().into()),
+    async fn swap_dns_inspection_config(
+        &self,
+        request: Request<SwapDnsInspectionConfigRequest>,
+    ) -> Result<Response<SwapDnsInspectionConfigResponse>, Status> {
+        let proto_config = request
+            .into_inner()
+            .config
+            .ok_or_else(|| Status::invalid_argument("missing config field in request"))?;
+
+        let new_config = DnsInspectionConfig::from_proto(proto_config)
+            .map_err(|e| Status::invalid_argument(format!("invalid dns inspection config: {e}")))?;
+
+        self.dns_inspection_store
+            .swap_config(new_config.clone())
+            .await
+            .map_err(|e| Status::internal(format!("failed to save dns inspection config: {e}")))?;
+
+        self.dns_inspection
+            .update_config(&new_config)
+            .map_err(|e| Status::internal(format!("failed to apply dns inspection config: {e}")))?;
+
+        Ok(Response::new(SwapDnsInspectionConfigResponse {}))
+    }
+
+    async fn get_dns_inspection_config(
+        &self,
+        _request: Request<GetDnsInspectionConfigRequest>,
+    ) -> Result<Response<GetDnsInspectionConfigResponse>, Status> {
+        let config = self.dns_inspection_store.get_config();
+        Ok(Response::new(GetDnsInspectionConfigResponse {
+            config: Some(config.to_proto()),
+        }))
+    }
+
+    async fn swap_ips_config(
+        &self,
+        request: Request<SwapIpsConfigRequest>,
+    ) -> Result<Response<SwapIpsConfigResponse>, Status> {
+        let proto_config = request
+            .into_inner()
+            .config
+            .ok_or_else(|| Status::invalid_argument("missing config field in request"))?;
+
+        let new_config = IpsConfig::from_proto(proto_config)
+            .map_err(|e| Status::invalid_argument(format!("invalid ips config: {e}")))?;
+
+        self.ips_store
+            .swap_config(new_config.clone())
+            .await
+            .map_err(|e| Status::internal(format!("failed to save ips config: {e}")))?;
+
+        self.ips
+            .update_config(&new_config)
+            .map_err(|e| Status::internal(format!("failed to apply ips config: {e}")))?;
+
+        Ok(Response::new(SwapIpsConfigResponse {}))
+    }
+
+    async fn get_ips_config(
+        &self,
+        _request: Request<GetIpsConfigRequest>,
+    ) -> Result<Response<GetIpsConfigResponse>, Status> {
+        let config = self.ips_store.get_config();
+        Ok(Response::new(GetIpsConfigResponse {
+            config: Some(config.to_proto()),
         }))
     }
 }
@@ -321,7 +436,8 @@ fn prepare_socket(socket_path: &str) -> std::io::Result<()> {
 
 fn cleanup_socket(socket_path: &str) {
     if let Err(e) = std::fs::remove_file(socket_path)
-        && e.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!(socket = socket_path, error = %e, "failed to remove query socket");
-        }
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(socket = socket_path, error = %e, "failed to remove query socket");
+    }
 }

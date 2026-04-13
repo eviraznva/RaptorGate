@@ -1,47 +1,90 @@
-import { motion } from "framer-motion"
-import Navbar from "../components/Navbar"
+import { motion } from "framer-motion";
+import { LineArrow } from "../components/lineArrow/LineArrow";
 
 interface Rule {
-  id: number
-  priority: number
-  name: string
-  source: string
-  dest: string
-  service: string
-  action: "ALLOW" | "DROP" | "REJECT" | "LOG"
-  status: boolean
+  id: number;
+  priority: number;
+  name: string;
+  source: string;
+  dest: string;
+  service: string;
+  action: "ALLOW" | "DROP" | "REJECT" | "LOG";
+  status: boolean;
 }
 
 const rules: Rule[] = [
-  { id: 1, priority: 100, name: "mgmt_ssh", source: "MGMT", dest: "LOCAL", service: "TCP/22", action: "ALLOW", status: true },
-  { id: 2, priority: 200, name: "lan_wan", source: "LAN", dest: "WAN", service: "ANY", action: "ALLOW", status: true },
-  { id: 3, priority: 300, name: "dmz_http", source: "WAN", dest: "DMZ", service: "TCP/80", action: "ALLOW", status: true },
-  { id: 4, priority: 400, name: "block_all", source: "ANY", dest: "ANY", service: "ANY", action: "DROP", status: true },
-  { id: 5, priority: 500, name: "log_ssh", source: "ANY", dest: "ANY", service: "TCP/22", action: "LOG", status: false },
-]
+  {
+    id: 1,
+    priority: 100,
+    name: "mgmt_ssh",
+    source: "MGMT",
+    dest: "LOCAL",
+    service: "TCP/22",
+    action: "ALLOW",
+    status: true,
+  },
+  {
+    id: 2,
+    priority: 200,
+    name: "lan_wan",
+    source: "LAN",
+    dest: "WAN",
+    service: "ANY",
+    action: "ALLOW",
+    status: true,
+  },
+  {
+    id: 3,
+    priority: 300,
+    name: "dmz_http",
+    source: "WAN",
+    dest: "DMZ",
+    service: "TCP/80",
+    action: "ALLOW",
+    status: true,
+  },
+  {
+    id: 4,
+    priority: 400,
+    name: "block_all",
+    source: "ANY",
+    dest: "ANY",
+    service: "ANY",
+    action: "DROP",
+    status: true,
+  },
+  {
+    id: 5,
+    priority: 500,
+    name: "log_ssh",
+    source: "ANY",
+    dest: "ANY",
+    service: "TCP/22",
+    action: "LOG",
+    status: false,
+  },
+];
 
 const actionStyles = {
   ALLOW: "text-[#10b981]",
   DROP: "text-[#f43f5e]",
   REJECT: "text-[#f43f5e]",
   LOG: "text-[#eab308]",
-}
+};
 
 export default function PolicyEngine() {
   return (
     <div className="min-h-screen bg-[#0c0c0c] flex flex-col text-[#f5f5f5]">
-
-      <Navbar />
-
       <div className="flex-1 flex justify-center p-8">
-
         <div className="w-full max-w-6xl">
-
           {/* FLOW LINE */}
-          <div className="flex items-center justify-center mb-10">
+          <div className="flex items-center justify-center relative mb-10">
             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-[#06b6d4] to-transparent" />
             <span className="px-4 text-[#06b6d4] text-xs">
-              ◄──────────── POLICY ENGINE ────────────►
+              <h3 className="text-center absolute right-0 bottom-2 w-full">
+                Plicy Engine
+              </h3>
+              <LineArrow />
             </span>
             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-[#06b6d4] to-transparent" />
           </div>
@@ -64,11 +107,7 @@ export default function PolicyEngine() {
                     <div className="text-xs text-[#8a8a8a] mt-1">Zone</div>
                   </div>
 
-                  {i < 3 && (
-                    <div className="mx-2 text-[#06b6d4]">
-                      ───►
-                    </div>
-                  )}
+                  {i < 3 && <div className="mx-2 text-[#06b6d4]">───►</div>}
                 </div>
               ))}
             </div>
@@ -90,7 +129,6 @@ export default function PolicyEngine() {
             className="bg-[#161616] border border-[#262626]"
           >
             <table className="w-full text-sm">
-
               <thead className="text-xs text-[#8a8a8a] border-b border-[#262626]">
                 <tr>
                   <th className="text-left p-4">PRIORITY</th>
@@ -121,19 +159,22 @@ export default function PolicyEngine() {
                       {rule.action}
                     </td>
                     <td className="p-4">
-                      <span className={`flex items-center gap-2 text-xs ${
-                        rule.status ? "text-[#10b981]" : "text-[#4a4a4a]"
-                      }`}>
-                        <span className={`w-2 h-2 rounded-full ${
-                          rule.status ? "bg-[#10b981]" : "bg-[#4a4a4a]"
-                        }`} />
+                      <span
+                        className={`flex items-center gap-2 text-xs ${
+                          rule.status ? "text-[#10b981]" : "text-[#4a4a4a]"
+                        }`}
+                      >
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            rule.status ? "bg-[#10b981]" : "bg-[#4a4a4a]"
+                          }`}
+                        />
                         {rule.status ? "Active" : "Inactive"}
                       </span>
                     </td>
                   </motion.tr>
                 ))}
               </tbody>
-
             </table>
           </motion.div>
 
@@ -145,19 +186,8 @@ export default function PolicyEngine() {
             <span className="text-[#06b6d4] mx-3">|</span>
             RaptorGate UI
           </div>
-
         </div>
       </div>
-
-      {/* BOTTOM BAR */}
-      <div className="bg-[#1e293b] text-[#94a3b8] text-xs px-6 py-2 flex justify-between">
-        <span>
-          Accent: <span className="text-[#06b6d4]">#06b6d4</span>
-        </span>
-        <span>Style: Flow visualization</span>
-        <span>Policy Engine</span>
-      </div>
-
     </div>
-  )
+  );
 }

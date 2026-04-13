@@ -1,33 +1,35 @@
-import { ROLE_PERMISSIONS_REPOSITORY_TOKEN } from '../../domain/repositories/role-permissions.repository.js';
-import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
-import type { IRolePermissionsRepository } from '../../domain/repositories/role-permissions.repository.js';
-import type { IConfigSnapshotRepository } from '../../domain/repositories/config-snapshot.repository.js';
-import { PERMISSION_REPOSITORY_TOKEN } from '../../domain/repositories/permission.repository.js';
-import { USER_ROLES_REPOSITORY_TOKEN } from '../../domain/repositories/user-roles.repository.js';
-import type { IPermissionRepository } from '../../domain/repositories/permission.repository.js';
-import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
-import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
-import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
-import type { IUserRolesRepository } from '../../domain/repositories/user-roles.repository.js';
-import { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
-import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
-import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
-import type { IRulesRepository } from '../../domain/repositories/rules-repository.js';
-import { RULES_REPOSITORY_TOKEN } from '../../domain/repositories/rules-repository.js';
-import { ROLE_REPOSITORY_TOKEN } from '../../domain/repositories/role.repository.js';
-import { USER_REPOSITORY_TOKEN } from '../../domain/repositories/user.repository.js';
-import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
-import type { IRoleRepository } from '../../domain/repositories/role.repository.js';
-import type { IUserRepository } from '../../domain/repositories/user.repository.js';
-import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
-import { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.js';
-import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
-import type { ITokenService } from '../ports/token-service.interface.js';
-import { Checksum } from '../../domain/value-objects/checksum.vo.js';
-import { Inject, Injectable } from '@nestjs/common';
-import { hash } from 'node:crypto';
+import { hash } from "node:crypto";
+import { Inject, Injectable } from "@nestjs/common";
+import { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
+import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
+import type { IConfigSnapshotRepository } from "../../domain/repositories/config-snapshot.repository.js";
+import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from "../../domain/repositories/config-snapshot.repository.js";
+import type { INatRulesRepository } from "../../domain/repositories/nat-rules.repository.js";
+import { NAT_RULES_REPOSITORY_TOKEN } from "../../domain/repositories/nat-rules.repository.js";
+import type { IPermissionRepository } from "../../domain/repositories/permission.repository.js";
+import { PERMISSION_REPOSITORY_TOKEN } from "../../domain/repositories/permission.repository.js";
+import type { IRoleRepository } from "../../domain/repositories/role.repository.js";
+import { ROLE_REPOSITORY_TOKEN } from "../../domain/repositories/role.repository.js";
+import type { IRolePermissionsRepository } from "../../domain/repositories/role-permissions.repository.js";
+import { ROLE_PERMISSIONS_REPOSITORY_TOKEN } from "../../domain/repositories/role-permissions.repository.js";
+import type { IRulesRepository } from "../../domain/repositories/rules-repository.js";
+import { RULES_REPOSITORY_TOKEN } from "../../domain/repositories/rules-repository.js";
+import type { IUserRepository } from "../../domain/repositories/user.repository.js";
+import { USER_REPOSITORY_TOKEN } from "../../domain/repositories/user.repository.js";
+import type { IUserRolesRepository } from "../../domain/repositories/user-roles.repository.js";
+import { USER_ROLES_REPOSITORY_TOKEN } from "../../domain/repositories/user-roles.repository.js";
+import type { IZoneRepository } from "../../domain/repositories/zone.repository.js";
+import { ZONE_REPOSITORY_TOKEN } from "../../domain/repositories/zone.repository.js";
+import type { IZonePairRepository } from "../../domain/repositories/zone-pair.repository.js";
+import { ZONE_PAIR_REPOSITORY_TOKEN } from "../../domain/repositories/zone-pair.repository.js";
+import { Checksum } from "../../domain/value-objects/checksum.vo.js";
+import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
+import type { ApplyConfigSnapshotDto } from "../dtos/apply-config-snapshot.dto.js";
+import type { ApplyConfigSnapshotResponseDto } from "../dtos/apply-config-snapshot-response.dto.js";
+import type { IConfigSnapshotPushService } from "../ports/config-snapshot-push-service.interface.js";
+import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from "../ports/config-snapshot-push-service.interface.js";
+import type { ITokenService } from "../ports/token-service.interface.js";
+import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
 @Injectable()
 export class ApplyConfigSnapshotUseCase {
@@ -53,6 +55,8 @@ export class ApplyConfigSnapshotUseCase {
     private readonly rolePermissionsRepository: IRolePermissionsRepository,
     @Inject(USER_ROLES_REPOSITORY_TOKEN)
     private readonly userRolesRepository: IUserRolesRepository,
+    @Inject(CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN)
+    private readonly configSnapshotPushService: IConfigSnapshotPushService,
   ) {}
 
   async execute(
@@ -126,7 +130,7 @@ export class ApplyConfigSnapshotUseCase {
       if (curr.getVersionNumber() > prev) return curr.getVersionNumber();
     }, 0);
 
-    const checksum = hash('sha256', JSON.stringify(configSnposhotPayload));
+    const checksum = hash("sha256", JSON.stringify(configSnposhotPayload));
 
     const currentActiveSnapshot = allConfigSnapshots.find((snapshot) =>
       snapshot.getIsActive(),
@@ -149,6 +153,13 @@ export class ApplyConfigSnapshotUseCase {
     if (currentActiveSnapshot && dto.isActive) {
       currentActiveSnapshot.setIsActive(false);
       await this.configSnapshotRepository.save(currentActiveSnapshot);
+    }
+
+    if (dto.isActive) {
+      await this.configSnapshotPushService.pushActiveConfigSnapshot(
+        newConfigSnapshot,
+        "apply",
+      );
     }
 
     return {

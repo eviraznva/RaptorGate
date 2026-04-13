@@ -1,7 +1,5 @@
 @import "tailwindcss";
 
-/* RaptorGate theme */
-
 :root {
   --raptor-bg: #0c0c0c;
   --raptor-panel: #161616;
@@ -10,16 +8,12 @@
   --raptor-text: #f5f5f5;
 }
 
-/* base */
-
 body {
   margin: 0;
   background: var(--raptor-bg);
   color: var(--raptor-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
-
-/* reusable components */
 
 .panel {
   background: var(--raptor-panel);

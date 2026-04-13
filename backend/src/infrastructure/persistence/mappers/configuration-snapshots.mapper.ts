@@ -1,9 +1,11 @@
-import { ConfigurationSnapshot } from '../../../domain/entities/configuration-snapshot.entity.js';
-import { ConfigurationSnapshotRecord } from '../schemas/configuration-snapshots.schema.js';
-import { SnapshotType } from '../../../domain/value-objects/snapshot-type.vo.js';
-import { Checksum } from '../../../domain/value-objects/checksum.vo.js';
+import { ConfigurationSnapshot } from "../../../domain/entities/configuration-snapshot.entity.js";
+import { Checksum } from "../../../domain/value-objects/checksum.vo.js";
+import { SnapshotType } from "../../../domain/value-objects/snapshot-type.vo.js";
+import { ConfigurationSnapshotRecord } from "../schemas/configuration-snapshots.schema.js";
 
 export class ConfigurationSnapshotJsonMapper {
+  constructor() {}
+
   static toDomain(record: ConfigurationSnapshotRecord): ConfigurationSnapshot {
     return ConfigurationSnapshot.create(
       record.id,

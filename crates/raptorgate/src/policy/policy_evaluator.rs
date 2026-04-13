@@ -3,10 +3,21 @@ use std::net::IpAddr;
 
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
+use crate::data_plane::dns_inspection::types::DnssecStatus;
 use crate::rule_tree::{
     ArrivalInfo, FieldValue, IpVer, MatchKind, Operation, Pattern, Port, Protocol, RuleTree, Step,
     TreeWalker, Verdict,
 };
+
+/// Kontekst DNS przekazywany do ewaluatora polityk — zawiera wyniki inspekcji DNS.
+///
+/// Przekazywany opcjonalnie do [`PolicyEvaluator::evaluate`]. Dla pakietów nieDNS
+/// należy przekazać `None`.
+pub struct DnsEvalContext {
+    /// Status walidacji DNSSEC dla domeny z zapytania DNS (wyznaczany leniwie przez
+    /// [`DnssecProvider`][crate::data_plane::dns_inspection::dnssec::DnssecProvider]).
+    pub dnssec_status: Option<DnssecStatus>,
+}
 
 pub struct PolicyEvaluator {
     rules: RuleTree,
@@ -21,13 +32,22 @@ impl PolicyEvaluator {
         }
     }
 
-    pub(crate) fn evaluate(&self, packet: &SlicedPacket, arrival: &ArrivalInfo) -> Verdict {
+    /// Ewaluuje polityki dla podanego pakietu i opcjonalnego kontekstu DNS.
+    ///
+    /// Dla pakietów DNS należy przekazać `Some(&DnsEvalContext)` z wypełnionym
+    /// statusem DNSSEC. Dla pozostałych pakietów — `None`.
+    pub(crate) fn evaluate(
+        &self,
+        packet: &SlicedPacket,
+        arrival: &ArrivalInfo,
+        dns: Option<&DnsEvalContext>,
+    ) -> Verdict {
         let mut walker = TreeWalker::new(&self.rules);
 
         loop {
             match walker.current_step() {
                 Step::NeedsMatch { kind, pattern } => {
-                    let Some(value) = Self::extract(*kind, packet, arrival) else {
+                    let Some(value) = Self::extract(*kind, packet, arrival, dns) else {
                         walker.advance(false);
                         continue;
                     };
@@ -46,6 +66,7 @@ impl PolicyEvaluator {
         kind: MatchKind,
         packet: &SlicedPacket,
         arrival: &ArrivalInfo,
+        dns: Option<&DnsEvalContext>,
     ) -> Option<FieldValue> {
         match kind {
             MatchKind::SrcIp => {
@@ -97,6 +118,10 @@ impl PolicyEvaluator {
             },
             MatchKind::Hour => Some(FieldValue::Hour(arrival.hour)),
             MatchKind::DayOfWeek => Some(FieldValue::DayOfWeek(arrival.day_of_week)),
+            MatchKind::DnssecStatus => {
+                let status = dns?.dnssec_status?;
+                Some(FieldValue::DnssecStatus(status))
+            }
         }
     }
 
@@ -130,6 +155,9 @@ impl PolicyEvaluator {
 
             (Pattern::Or(patterns), _) => patterns.iter().any(|p| Self::pattern_matches(p, value)),
             (Pattern::And(patterns), _) => patterns.iter().all(|p| Self::pattern_matches(p, value)),
+
+            // DnssecStatus obsługuje wyłącznie Equal (comparisons odrzucane przez validate_for).
+            (_, FieldValue::DnssecStatus(_)) => false,
         }
     }
 }
@@ -209,7 +237,7 @@ mod tests {
     fn eval(tree: RuleTree, raw: &[u8], arrival: &ArrivalInfo) -> Verdict {
         let sliced = SlicedPacket::from_ethernet(raw).unwrap();
         let evaluator = PolicyEvaluator::new(tree, Verdict::Drop);
-        evaluator.evaluate(&sliced, arrival)
+        evaluator.evaluate(&sliced, arrival, None)
     }
 
     // ── Wildcard ──────────────────────────────────────────────

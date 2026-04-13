@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{proto::config::Rule, rule_tree::RuleTree, zones::ZonePairId};
 pub use crate::rule_tree::{parsing::{RaptorlangError, parse_rule_tree}};
 
-mod policy_evaluator;
+pub mod policy_evaluator;
 pub mod provider;
 pub mod nat;
 

@@ -1,9 +1,9 @@
-import { UserRole } from '../entities/user-roles.entity.js';
+import { UserRole } from "../entities/user-roles.entity.js";
 
 export interface IUserRolesRepository {
-  findAll(): Promise<UserRole[]>;
+	findAll(): Promise<UserRole[]>;
 }
 
 export const USER_ROLES_REPOSITORY_TOKEN = Symbol(
-  'USER_ROLES_REPOSITORY_TOKEN',
+	"USER_ROLES_REPOSITORY_TOKEN",
 );

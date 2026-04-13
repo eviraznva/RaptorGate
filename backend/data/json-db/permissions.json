@@ -1,224 +1,224 @@
 {
-  "items": [
-    {
-      "id": "00000000-0000-4000-8000-0000000003e8",
-      "name": "users:read",
-      "description": "Permission users:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003e9",
-      "name": "users:create",
-      "description": "Permission users:create"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003ea",
-      "name": "users:update",
-      "description": "Permission users:update"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003eb",
-      "name": "users:delete",
-      "description": "Permission users:delete"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003ec",
-      "name": "users:assign-role",
-      "description": "Permission users:assign-role"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003ed",
-      "name": "rules:read",
-      "description": "Permission rules:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003ee",
-      "name": "rules:create",
-      "description": "Permission rules:create"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003ef",
-      "name": "rules:update",
-      "description": "Permission rules:update"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003f0",
-      "name": "rules:delete",
-      "description": "Permission rules:delete"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003f1",
-      "name": "rules:activate",
-      "description": "Permission rules:activate"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003f2",
-      "name": "zones:read",
-      "description": "Permission zones:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003f3",
-      "name": "zones:create",
-      "description": "Permission zones:create"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003f4",
-      "name": "zones:update",
-      "description": "Permission zones:update"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003f5",
-      "name": "zones:delete",
-      "description": "Permission zones:delete"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003f6",
-      "name": "zone-interfaces:manage",
-      "description": "Permission zone-interfaces:manage"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003f7",
-      "name": "zone-pairs:read",
-      "description": "Permission zone-pairs:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003f8",
-      "name": "zone-pairs:create",
-      "description": "Permission zone-pairs:create"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003f9",
-      "name": "zone-pairs:delete",
-      "description": "Permission zone-pairs:delete"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003fa",
-      "name": "nat:read",
-      "description": "Permission nat:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003fb",
-      "name": "nat:create",
-      "description": "Permission nat:create"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003fc",
-      "name": "nat:update",
-      "description": "Permission nat:update"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003fd",
-      "name": "nat:delete",
-      "description": "Permission nat:delete"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003fe",
-      "name": "dns-blacklist:read",
-      "description": "Permission dns-blacklist:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-0000000003ff",
-      "name": "dns-blacklist:create",
-      "description": "Permission dns-blacklist:create"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000400",
-      "name": "dns-blacklist:delete",
-      "description": "Permission dns-blacklist:delete"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000401",
-      "name": "ssl-bypass:read",
-      "description": "Permission ssl-bypass:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000402",
-      "name": "ssl-bypass:create",
-      "description": "Permission ssl-bypass:create"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000403",
-      "name": "ssl-bypass:delete",
-      "description": "Permission ssl-bypass:delete"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000404",
-      "name": "ips:read",
-      "description": "Permission ips:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000405",
-      "name": "ips:create",
-      "description": "Permission ips:create"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000406",
-      "name": "ips:update",
-      "description": "Permission ips:update"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000407",
-      "name": "ips:delete",
-      "description": "Permission ips:delete"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000408",
-      "name": "ml_models:read",
-      "description": "Permission ml_models:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000409",
-      "name": "ml_models:upload",
-      "description": "Permission ml_models:upload"
-    },
-    {
-      "id": "00000000-0000-4000-8000-00000000040a",
-      "name": "ml_models:activate",
-      "description": "Permission ml_models:activate"
-    },
-    {
-      "id": "00000000-0000-4000-8000-00000000040b",
-      "name": "certs:read",
-      "description": "Permission certs:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-00000000040c",
-      "name": "certs:upload",
-      "description": "Permission certs:upload"
-    },
-    {
-      "id": "00000000-0000-4000-8000-00000000040d",
-      "name": "certs:delete",
-      "description": "Permission certs:delete"
-    },
-    {
-      "id": "00000000-0000-4000-8000-00000000040e",
-      "name": "snapshots:read",
-      "description": "Permission snapshots:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-00000000040f",
-      "name": "snapshots:create",
-      "description": "Permission snapshots:create"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000410",
-      "name": "snapshots:restore",
-      "description": "Permission snapshots:restore"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000411",
-      "name": "audit:read",
-      "description": "Permission audit:read"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000412",
-      "name": "firewall:status",
-      "description": "Permission firewall:status"
-    },
-    {
-      "id": "00000000-0000-4000-8000-000000000413",
-      "name": "identity:read",
-      "description": "Permission identity:read"
-    }
-  ]
+	"items": [
+		{
+			"id": "00000000-0000-4000-8000-0000000003e8",
+			"name": "users:read",
+			"description": "Permission users:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003e9",
+			"name": "users:create",
+			"description": "Permission users:create"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003ea",
+			"name": "users:update",
+			"description": "Permission users:update"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003eb",
+			"name": "users:delete",
+			"description": "Permission users:delete"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003ec",
+			"name": "users:assign-role",
+			"description": "Permission users:assign-role"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003ed",
+			"name": "rules:read",
+			"description": "Permission rules:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003ee",
+			"name": "rules:create",
+			"description": "Permission rules:create"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003ef",
+			"name": "rules:update",
+			"description": "Permission rules:update"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003f0",
+			"name": "rules:delete",
+			"description": "Permission rules:delete"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003f1",
+			"name": "rules:activate",
+			"description": "Permission rules:activate"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003f2",
+			"name": "zones:read",
+			"description": "Permission zones:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003f3",
+			"name": "zones:create",
+			"description": "Permission zones:create"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003f4",
+			"name": "zones:update",
+			"description": "Permission zones:update"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003f5",
+			"name": "zones:delete",
+			"description": "Permission zones:delete"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003f6",
+			"name": "zone-interfaces:manage",
+			"description": "Permission zone-interfaces:manage"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003f7",
+			"name": "zone-pairs:read",
+			"description": "Permission zone-pairs:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003f8",
+			"name": "zone-pairs:create",
+			"description": "Permission zone-pairs:create"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003f9",
+			"name": "zone-pairs:delete",
+			"description": "Permission zone-pairs:delete"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003fa",
+			"name": "nat:read",
+			"description": "Permission nat:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003fb",
+			"name": "nat:create",
+			"description": "Permission nat:create"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003fc",
+			"name": "nat:update",
+			"description": "Permission nat:update"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003fd",
+			"name": "nat:delete",
+			"description": "Permission nat:delete"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003fe",
+			"name": "dns-blacklist:read",
+			"description": "Permission dns-blacklist:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-0000000003ff",
+			"name": "dns-blacklist:create",
+			"description": "Permission dns-blacklist:create"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000400",
+			"name": "dns-blacklist:delete",
+			"description": "Permission dns-blacklist:delete"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000401",
+			"name": "ssl-bypass:read",
+			"description": "Permission ssl-bypass:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000402",
+			"name": "ssl-bypass:create",
+			"description": "Permission ssl-bypass:create"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000403",
+			"name": "ssl-bypass:delete",
+			"description": "Permission ssl-bypass:delete"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000404",
+			"name": "ips:read",
+			"description": "Permission ips:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000405",
+			"name": "ips:create",
+			"description": "Permission ips:create"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000406",
+			"name": "ips:update",
+			"description": "Permission ips:update"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000407",
+			"name": "ips:delete",
+			"description": "Permission ips:delete"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000408",
+			"name": "ml_models:read",
+			"description": "Permission ml_models:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000409",
+			"name": "ml_models:upload",
+			"description": "Permission ml_models:upload"
+		},
+		{
+			"id": "00000000-0000-4000-8000-00000000040a",
+			"name": "ml_models:activate",
+			"description": "Permission ml_models:activate"
+		},
+		{
+			"id": "00000000-0000-4000-8000-00000000040b",
+			"name": "certs:read",
+			"description": "Permission certs:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-00000000040c",
+			"name": "certs:upload",
+			"description": "Permission certs:upload"
+		},
+		{
+			"id": "00000000-0000-4000-8000-00000000040d",
+			"name": "certs:delete",
+			"description": "Permission certs:delete"
+		},
+		{
+			"id": "00000000-0000-4000-8000-00000000040e",
+			"name": "snapshots:read",
+			"description": "Permission snapshots:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-00000000040f",
+			"name": "snapshots:create",
+			"description": "Permission snapshots:create"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000410",
+			"name": "snapshots:restore",
+			"description": "Permission snapshots:restore"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000411",
+			"name": "audit:read",
+			"description": "Permission audit:read"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000412",
+			"name": "firewall:status",
+			"description": "Permission firewall:status"
+		},
+		{
+			"id": "00000000-0000-4000-8000-000000000413",
+			"name": "identity:read",
+			"description": "Permission identity:read"
+		}
+	]
 }

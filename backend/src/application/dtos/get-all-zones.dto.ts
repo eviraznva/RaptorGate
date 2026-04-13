@@ -1,5 +1,5 @@
-import { Zone } from '../../domain/entities/zone.entity.js';
+import { Zone } from "../../domain/entities/zone.entity.js";
 
 export class GetAllZonesDto {
-  zones: Zone[];
+	zones: Zone[];
 }

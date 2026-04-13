@@ -4,18 +4,25 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use ngfw::config_provider::AppConfigProvider;
+use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
+use ngfw::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
+use ngfw::data_plane::ips::ips::Ips;
+use ngfw::data_plane::ips::provider::IpsConfigProvider;
 use ngfw::data_plane::nat::NatEngine;
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::proto::config::Rule;
-use ngfw::proto::services::{GetConfigRequest, GetPoliciesRequest, SwapConfigRequest, SwapPoliciesRequest};
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
+use ngfw::proto::services::{
+    GetConfigRequest, GetIpsConfigRequest, GetPoliciesRequest, SwapConfigRequest,
+    SwapIpsConfigRequest, SwapPoliciesRequest,
+};
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
+use serial_test::serial;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use serial_test::serial;
 use uuid::Uuid;
 
 struct SharedServer {
@@ -37,13 +44,26 @@ fn shared_server() -> &'static SharedServer {
             // it is never dropped, so the server task is never killed.
             let rt = tokio::runtime::Runtime::new().expect("failed to build server runtime");
             rt.block_on(async move {
-                let config_provider = Arc::new(AppConfigProvider::from_env().await.expect("failed to load config"));
+                let config_provider = Arc::new(
+                    AppConfigProvider::from_env()
+                        .await
+                        .expect("failed to load config"),
+                );
                 let config = config_provider.get_config();
                 let policy = DiskPolicyProvider::from_loaded(&config)
                     .await
                     .expect("failed to load policy provider");
                 let zones = ZoneProvider::from_disk(&config).await;
                 let zone_pairs = ZonePairProvider::from_disk(&config).await;
+                let dns_inspection_store =
+                    Arc::new(DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await);
+                let dns_initial_config = dns_inspection_store.get_config().clone();
+                let dns_inspection = DnsInspection::new((*dns_initial_config).clone())
+                    .expect("failed to init dns inspection");
+                let ips_store =
+                    Arc::new(IpsConfigProvider::from_disk(config.data_dir.clone()).await);
+                let ips_initial_config = ips_store.get_config().clone();
+                let ips = Ips::new((*ips_initial_config).clone()).expect("failed to init ips");
 
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
@@ -52,6 +72,10 @@ fn shared_server() -> &'static SharedServer {
                     zone_store: Arc::new(zones),
                     zone_pair_store: Arc::new(zone_pairs),
                     config_provider: Arc::clone(&config_provider),
+                    dns_inspection_store,
+                    dns_inspection,
+                    ips_store,
+                    ips,
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();
@@ -88,7 +112,7 @@ async fn connect(socket: &str) -> FirewallQueryServiceClient<tonic::transport::C
 
 #[tokio::test]
 #[serial(policies)] // has to be serial or else there's a race condition where after one test saves a new
-          // config, a second test may load the config saved by the first one.
+// config, a second test may load the config saved by the first one.
 async fn swap_policies_happy_path_returns_no_error() {
     let mut client = connect(&shared_server().socket).await;
 
@@ -139,7 +163,9 @@ async fn fetch_policies_returns_ok() {
     };
 
     client
-        .swap_policies(SwapPoliciesRequest { rules: vec![rule.clone()] })
+        .swap_policies(SwapPoliciesRequest {
+            rules: vec![rule.clone()],
+        })
         .await
         .unwrap();
 
@@ -182,10 +208,15 @@ async fn fetch_zones_returns_ok() {
         interface_ids: vec![],
     };
     client
-        .swap_zones(ngfw::proto::services::SwapZonesRequest { zones: vec![zone.clone()] })
+        .swap_zones(ngfw::proto::services::SwapZonesRequest {
+            zones: vec![zone.clone()],
+        })
         .await
         .unwrap();
-    let resp = client.get_zones(ngfw::proto::services::GetZonesRequest {}).await.unwrap();
+    let resp = client
+        .get_zones(ngfw::proto::services::GetZonesRequest {})
+        .await
+        .unwrap();
     let inner = resp.into_inner();
     assert!(
         inner.zones.iter().any(|z| z.name == zone.name),
@@ -223,10 +254,15 @@ async fn fetch_zone_pairs_returns_ok() {
         default_policy: Default::default(),
     };
     client
-        .swap_zone_pairs(ngfw::proto::services::SwapZonePairsRequest { zone_pairs: vec![zone_pair.clone()] })
+        .swap_zone_pairs(ngfw::proto::services::SwapZonePairsRequest {
+            zone_pairs: vec![zone_pair.clone()],
+        })
         .await
         .unwrap();
-    let resp = client.get_zone_pairs(ngfw::proto::services::GetZonePairsRequest {}).await.unwrap();
+    let resp = client
+        .get_zone_pairs(ngfw::proto::services::GetZonePairsRequest {})
+        .await
+        .unwrap();
     let inner = resp.into_inner();
     assert!(
         inner.zone_pairs.iter().any(|zp| zp.id == zone_pair.id),
@@ -277,7 +313,9 @@ async fn get_config_returns_ok() {
     };
 
     client
-        .swap_config(SwapConfigRequest { config: Some(swapped.clone()) })
+        .swap_config(SwapConfigRequest {
+            config: Some(swapped.clone()),
+        })
         .await
         .unwrap();
 
@@ -291,4 +329,53 @@ async fn get_config_returns_ok() {
     assert_eq!(config.tun_address, "192.168.1.1");
     assert_eq!(config.tun_netmask, "255.255.0.0");
     assert_eq!(config.pki_dir, "/tmp/pki");
+}
+
+#[tokio::test]
+#[serial(ips_config)]
+async fn swap_and_get_ips_config_roundtrip() {
+    let mut client = connect(&shared_server().socket).await;
+
+    let swapped = ngfw::proto::config::IpsConfig {
+        general: Some(ngfw::proto::config::IpsGeneralConfig { enabled: true }),
+        detection: Some(ngfw::proto::config::IpsDetectionConfig {
+            enabled: true,
+            max_payload_bytes: 2048,
+            max_matches_per_packet: 2,
+        }),
+        signatures: vec![ngfw::proto::config::IpsSignatureConfig {
+            id: "sig-http-sqli".into(),
+            name: "HTTP SQLi".into(),
+            enabled: true,
+            category: "sqli".into(),
+            pattern: "(?i)union\\s+select".into(),
+            severity: ngfw::proto::common::Severity::High as i32,
+            action: ngfw::proto::config::IpsAction::Block as i32,
+            app_protocols: vec![ngfw::proto::config::IpsAppProtocol::Http as i32],
+            src_ports: vec![],
+            dst_ports: vec![80, 8080],
+        }],
+    };
+
+    client
+        .swap_ips_config(SwapIpsConfigRequest {
+            config: Some(swapped.clone()),
+        })
+        .await
+        .unwrap();
+
+    let response = client
+        .get_ips_config(GetIpsConfigRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    let config = response.config.expect("get_ips_config returned no config");
+
+    assert!(config.general.expect("general").enabled);
+    let detection = config.detection.expect("detection");
+    assert_eq!(detection.max_payload_bytes, 2048);
+    assert_eq!(detection.max_matches_per_packet, 2);
+    assert_eq!(config.signatures.len(), 1);
+    assert_eq!(config.signatures[0].id, "sig-http-sqli");
+    assert_eq!(config.signatures[0].dst_ports, vec![80, 8080]);
 }

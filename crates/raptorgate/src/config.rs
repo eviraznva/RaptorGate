@@ -65,3 +65,51 @@ impl AppConfig {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_app_config() -> AppConfig {
+        AppConfig {
+            capture_interfaces: vec!["eth0".into(), "eth1".into()],
+            pcap_timeout_ms: 5000,
+            tun_device_name: "tun0".into(),
+            tun_address: "10.254.254.1".parse().unwrap(),
+            tun_netmask: "255.255.255.0".parse().unwrap(),
+            data_dir: "/tmp".into(),
+            grpc_socket_path: "/tmp/firewall.sock".into(),
+            query_socket_path: "/tmp/query.sock".into(),
+            dev_config: None,
+            pki_dir: "/tmp/pki".into(),
+        }
+    }
+
+    #[test]
+    fn app_config_proto_roundtrip() {
+        let config = sample_app_config();
+        let roundtrip = AppConfig::from_proto(config.to_proto()).unwrap();
+
+        assert_eq!(roundtrip.capture_interfaces, vec!["eth0", "eth1"]);
+        assert_eq!(roundtrip.tun_address.to_string(), "10.254.254.1");
+        assert_eq!(roundtrip.pki_dir, "/tmp/pki");
+    }
+
+    #[test]
+    fn app_config_json_deserializes() {
+        let raw = r#"{
+          "capture_interfaces": ["eth1"],
+          "pcap_timeout_ms": 5000,
+          "tun_device_name": "tun0",
+          "tun_address": "10.254.254.1",
+          "tun_netmask": "255.255.255.0",
+          "data_dir": "./",
+          "grpc_socket_path": "./sockets/firewall.sock",
+          "query_socket_path": "./sockets/query.sock",
+          "pki_dir": "/var/lib/raptorgate/pki"
+        }"#;
+
+        let config: AppConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(config.capture_interfaces, vec!["eth1"]);
+    }
+}

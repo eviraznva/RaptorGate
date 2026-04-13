@@ -1,24 +1,24 @@
-import {
-  ConfigurationSnapshotsFile,
-  ConfigurationSnapshotsFileSchema,
-} from '../schemas/configuration-snapshots.schema.js';
-import { IConfigSnapshotRepository } from '../../../domain/repositories/config-snapshot.repository.js';
-import { ConfigurationSnapshot } from '../../../domain/entities/configuration-snapshot.entity.js';
-import { ConfigurationSnapshotJsonMapper } from '../mappers/configuration-snapshots.mapper.js';
-import { FileStore } from '../json/file-store.js';
-import { Mutex } from '../json/file-mutex.js';
-import { Inject, Logger } from '@nestjs/common';
-import { join } from 'node:path';
+import { join } from "node:path";
+import { Inject, Logger } from "@nestjs/common";
+import { ConfigurationSnapshot } from "../../../domain/entities/configuration-snapshot.entity.js";
+import { IConfigSnapshotRepository } from "../../../domain/repositories/config-snapshot.repository.js";
+import { Mutex } from "../json/file-mutex.js";
+import { FileStore } from "../json/file-store.js";
 import {
   mapConfigBundlePayloadToDomain,
   mapConfigSnapshotToPayloadRecord,
-} from '../mappers/config-payload.mapper.js';
+} from "../mappers/config-payload.mapper.js";
+import { ConfigurationSnapshotJsonMapper } from "../mappers/configuration-snapshots.mapper.js";
+import {
+  ConfigurationSnapshotsFile,
+  ConfigurationSnapshotsFileSchema,
+} from "../schemas/configuration-snapshots.schema.js";
 
 export class JsonConfigSnapshotRepository implements IConfigSnapshotRepository {
   private readonly logger = new Logger(JsonConfigSnapshotRepository.name);
   private readonly filePath = join(
     process.cwd(),
-    'data/json-db/configuration_snapshots.json',
+    "data/json-db/configuration_snapshots.json",
   );
   constructor(
     @Inject(Mutex) private readonly mutex: Mutex,

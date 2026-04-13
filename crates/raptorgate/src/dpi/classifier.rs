@@ -78,6 +78,16 @@ impl DpiClassifier {
                     if parsed.is_response {
                         ctx.dns_answer_count = parsed.answer_count;
                         ctx.dns_answer_types = parsed.answer_types;
+                        ctx.dns_authority_count = parsed.authority_count;
+                        ctx.dns_authority_types = parsed.authority_types;
+                        ctx.dns_additional_count = parsed.additional_count;
+                        ctx.dns_additional_types = parsed.additional_types;
+                        ctx.dns_has_opt = parsed.has_opt;
+                        ctx.dns_dnssec_ok = parsed.dnssec_ok;
+                        ctx.dns_authentic_data = parsed.authentic_data;
+                        ctx.dns_checking_disabled = parsed.checking_disabled;
+                        ctx.dns_rcode = parsed.rcode;
+                        ctx.dns_has_dnssec_records = parsed.has_dnssec_records;
                         ctx.dns_response_size = parsed.response_size;
                     } else {
                         *ctx = dns::dns_to_dpi_context(&parsed);

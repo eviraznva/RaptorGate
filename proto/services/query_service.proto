@@ -24,6 +24,10 @@ service FirewallQueryService {
   rpc GetConfig     (GetConfigRequest)         returns (GetConfigResponse);
 
   rpc GetSystemTime (GetSystemTimeRequest)     returns (GetSystemTimeResponse);
+  rpc SwapDnsInspectionConfig (SwapDnsInspectionConfigRequest) returns (SwapDnsInspectionConfigResponse);
+  rpc GetDnsInspectionConfig  (GetDnsInspectionConfigRequest)  returns (GetDnsInspectionConfigResponse);
+  rpc SwapIpsConfig           (SwapIpsConfigRequest)           returns (SwapIpsConfigResponse);
+  rpc GetIpsConfig            (GetIpsConfigRequest)            returns (GetIpsConfigResponse);
 }
 
 message GetTcpSessionsRequest {}
@@ -113,4 +117,30 @@ message GetSystemTimeRequest {}
 
 message GetSystemTimeResponse {
   google.protobuf.Timestamp time = 1;
+// ── DNS Inspection Config ─────────────────────────────────────────────────────
+
+message SwapDnsInspectionConfigRequest {
+  config.DnsInspectionConfig config = 1;
+}
+
+message SwapDnsInspectionConfigResponse {}
+
+message GetDnsInspectionConfigRequest {}
+
+message GetDnsInspectionConfigResponse {
+  config.DnsInspectionConfig config = 1;
+}
+
+// ── IPS Config ───────────────────────────────────────────────────────────────
+
+message SwapIpsConfigRequest {
+  config.IpsConfig config = 1;
+}
+
+message SwapIpsConfigResponse {}
+
+message GetIpsConfigRequest {}
+
+message GetIpsConfigResponse {
+  config.IpsConfig config = 1;
 }

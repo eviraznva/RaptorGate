@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+  package raptorgate.services;
+
+  import "config/config_models.proto";
+  import "google/protobuf/timestamp.proto";
+
+  service FirewallConfigSnapshotService {
+    // backend -> firewall
+    rpc PushActiveConfigSnapshot(PushActiveConfigSnapshotRequest)
+        returns (PushActiveConfigSnapshotResponse);
+  }
+
+  message PushActiveConfigSnapshotRequest {
+    string correlation_id = 1;
+    ActiveConfigSnapshot snapshot = 2;
+    string reason = 3; // np. "apply" | "rollback" | "manual_sync"
+  }
+
+  message ActiveConfigSnapshot {
+    string id = 1;
+    uint64 version_number = 2;
+    string snapshot_type = 3; // manual_import | rollback_point | auto_save
+    string checksum = 4;
+    bool is_active = 5;
+    string changes_summary = 6;
+    google.protobuf.Timestamp created_at = 7;
+    string created_by = 8;
+    ConfigBundle bundle = 9;
+  }
+
+  message ConfigBundle {
+    repeated raptorgate.config.Rule rules = 1;
+    repeated raptorgate.config.Zone zones = 2;
+    repeated raptorgate.config.ZoneInterface zone_interfaces = 3;
+    repeated raptorgate.config.ZonePair zone_pairs = 4;
+    repeated raptorgate.config.NatRule nat_rules = 5;
+    repeated raptorgate.config.DnsBlacklistEntry dns_blacklist = 6;
+    repeated raptorgate.config.SslBypassEntry ssl_bypass_list = 7;
+    repeated raptorgate.config.IpsSignature ips_signatures = 8;
+    raptorgate.config.MlModel ml_model = 9;
+    repeated raptorgate.config.FirewallCertificate firewall_certificates = 10;
+    raptorgate.config.IdentityBundle identity = 11;
+  }
+
+  message PushActiveConfigSnapshotResponse {
+    string correlation_id = 1;
+    bool accepted = 2;
+    string message = 3;
+    string applied_snapshot_id = 4;
+  }
+

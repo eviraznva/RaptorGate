@@ -1,7 +1,7 @@
 export class EntityNotFoundException extends Error {
-  constructor(entityName: string, identifier: string) {
-    super(`${entityName} with identifier "${identifier}" was not found.`);
+	constructor(entityName: string, identifier: string) {
+		super(`${entityName} with identifier "${identifier}" was not found.`);
 
-    this.name = 'EntityNotFoundException';
-  }
+		this.name = "EntityNotFoundException";
+	}
 }

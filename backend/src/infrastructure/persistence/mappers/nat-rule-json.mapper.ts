@@ -1,11 +1,13 @@
-import { IpAddress } from '../../../domain/value-objects/ip-address.vo.js';
-import { Priority } from '../../../domain/value-objects/priority.vo.js';
-import { NatType } from '../../../domain/value-objects/nat-type.vo.js';
-import { NatRule } from '../../../domain/entities/nat-rule.entity.js';
-import { Port } from '../../../domain/value-objects/port.vo.js';
-import { NatRuleRecord } from '../schemas/nat-rules.schema.js';
+import { NatRule } from "../../../domain/entities/nat-rule.entity.js";
+import { IpAddress } from "../../../domain/value-objects/ip-address.vo.js";
+import { NatType } from "../../../domain/value-objects/nat-type.vo.js";
+import { Port } from "../../../domain/value-objects/port.vo.js";
+import { Priority } from "../../../domain/value-objects/priority.vo.js";
+import { NatRuleRecord } from "../schemas/nat-rules.schema.js";
 
 export class NatRuleJsonMapper {
+  constructor() {}
+
   static toDomain(record: NatRuleRecord): NatRule {
     return NatRule.create(
       record.id,

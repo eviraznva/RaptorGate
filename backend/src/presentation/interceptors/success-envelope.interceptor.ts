@@ -1,20 +1,20 @@
 import {
-  ExecutionContext,
-  NestInterceptor,
   CallHandler,
+  ExecutionContext,
   Injectable,
-} from '@nestjs/common';
-import { RESPONSE_MESSAGE_KEY } from '../decorators/response-message.decorator.js';
-import type { Request, Response } from 'express';
-import { Reflector } from '@nestjs/core';
-import { map } from 'rxjs/operators';
+  NestInterceptor,
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import type { Request, Response } from "express";
+import { map } from "rxjs/operators";
+import { RESPONSE_MESSAGE_KEY } from "../decorators/response-message.decorator.js";
 
 @Injectable()
 export class SuccessEnvelopeInterceptor implements NestInterceptor {
   constructor(private readonly reflector: Reflector) {}
 
   intercept(context: ExecutionContext, next: CallHandler) {
-    if (context.getType() !== 'http') return next.handle();
+    if (context.getType() !== "http") return next.handle();
 
     const http = context.switchToHttp();
     const req = http.getRequest<Request>();
@@ -36,9 +36,9 @@ export class SuccessEnvelopeInterceptor implements NestInterceptor {
   }
 
   private defaultMessage(method: string, status: number): string {
-    if (method === 'POST' && status === 201) return 'Resource created';
-    if (method === 'DELETE') return 'Resource deleted';
-    if (method === 'PUT' || method === 'PATCH') return 'Resource updated';
-    return 'Success';
+    if (method === "POST" && status === 201) return "Resource created";
+    if (method === "DELETE") return "Resource deleted";
+    if (method === "PUT" || method === "PATCH") return "Resource updated";
+    return "Success";
   }
 }
