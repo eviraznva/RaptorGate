@@ -2,7 +2,7 @@ import { match, P } from 'ts-pattern';
 import { afterEach, afterAll, beforeEach } from 'bun:test';
 import { getClient } from './grpc-client';
 import { eventCollector, type EventMatcher } from './event-collector';
-import { ssh, sshWithResult, type KnownHost, getJobSession, closeAllJobSessions, killAllActiveJobs } from '../ssh-helper';
+import { ssh, sshWithResult, type KnownHost, getJobSession, closeAllJobSessions } from '../ssh-helper';
 import type { FirewallQueryService } from '../generated/services/query_service';
 
 // ---------------------------------------------------------------------------

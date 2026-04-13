@@ -31,10 +31,10 @@ describe('Command Output', () => {
   test('ncat server on h2 responds to h1', async () => {
     const server = await performCommand({
       host: 'h2',
-      command: 'ncat -l -k -p 12345 -c "echo hello"',
+      command: 'ncat -l -p 12345 -c "echo hello"',
     }).runDetached();
 
-    server.cleanup();
+    server.defer_cleanup();
 
     await performCommand({
       host: 'h1',
