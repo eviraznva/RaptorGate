@@ -8,6 +8,16 @@ export const baseQuery = fetchBaseQuery({
   baseUrl: `${import.meta.env.RAPTOR_GATE_API_URL}`,
   credentials: "include",
   mode: "cors",
+  prepareHeaders: (headers, { getState }) => {
+    const state = getState() as { user?: { accessToken?: string } };
+    const accessToken = state.user?.accessToken;
+
+    if (accessToken && !headers.has("authorization")) {
+      headers.set("authorization", `Bearer ${accessToken}`);
+    }
+
+    return headers;
+  },
 });
 
 const mutex = new Mutex();
@@ -33,7 +43,7 @@ export const baseQueryWithReauth: BaseQueryFn = async (
         );
 
         if (refreshResult.data) {
-          const token = refreshResult as ApiSuccess<RefreshTokenResponse>;
+          const token = refreshResult.data as ApiSuccess<RefreshTokenResponse>;
 
           api.dispatch(updateAccessToken(token.data.accessToken));
 

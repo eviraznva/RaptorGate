@@ -11,6 +11,7 @@ import { GrpcModule } from "./infrastructure/grpc/grpc.module.js";
 import { AuthModule } from "./modules/auth.module.js";
 import { ConfigSnapshotModule } from "./modules/config-snapshot.module.js";
 import { DnsBlacklistModule } from "./modules/dns-blacklist.module.js";
+import { DnsInspectionModule } from "./modules/dns-inspection.module.js";
 import { NatModule } from "./modules/nat.module.js";
 import { RealtimeModule } from "./modules/realtime.module.js";
 import { RulesModule } from "./modules/rules.module.js";
@@ -35,6 +36,7 @@ import { validate } from "./shared/config/env.validation.js";
     ]),
     ConfigSnapshotModule,
     DnsBlacklistModule,
+    DnsInspectionModule,
     ZonePairsModule,
     RealtimeModule,
     PassportModule,

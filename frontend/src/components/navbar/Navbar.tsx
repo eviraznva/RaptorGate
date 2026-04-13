@@ -19,7 +19,7 @@ export default function Navbar() {
   const user = useAppSelector((state) => state.user);
   const navigate = useNavigate();
   const location = useLocation();
-  const [logout, { isLoading, isError, isSuccess }] = useLogoutMutation();
+  const [logout, { isSuccess }] = useLogoutMutation();
 
   const handleLogout = async function () {
     try {
@@ -34,7 +34,7 @@ export default function Navbar() {
       dispatch(clearUser());
       navigate("/login", { replace: true });
     }
-  }, [isSuccess]);
+  }, [dispatch, isSuccess, navigate]);
 
   return (
     <nav className="bg-[#161616] border-b border-[#262626] px-6">
@@ -43,6 +43,7 @@ export default function Navbar() {
           {navItems.map((item, i) => (
             <div key={item.name} className="flex items-center">
               <button
+                type="button"
                 onClick={() => {
                   navigate(item.path);
                 }}
@@ -63,14 +64,15 @@ export default function Navbar() {
         <div className="flex items-center gap-2 text-sm text-[#8a8a8a]">
           <span>{user.username}</span>
           <span className="text-[#06b6d4]">│</span>
-          <button className="hover:text-[#f5f5f5]">
+          <button type="button" className="hover:text-[#f5f5f5]">
             <Icon icon="lucide:settings cursor-pointer" />
           </button>
-          <button className="hover:text-[#f5f5f5] relative">
+          <button type="button" className="hover:text-[#f5f5f5] relative">
             <Icon icon="lucide:bell" className="cursor-pointer" />
             <span className="absolute -top-1 -right-1 w-2 h-2 bg-[#f43f5e] rounded-full" />
           </button>
           <button
+            type="button"
             onClick={handleLogout}
             className="hover:text-[#f5f5f5] cursor-pointer flex felx-row"
           >

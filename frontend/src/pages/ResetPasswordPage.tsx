@@ -1,4 +1,4 @@
-import { replace, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { LineArrow } from "../components/lineArrow/LineArrow";
 import { useAppDispatch, useAppSelector } from "../app/hooks";
 import { useEffect, useState } from "react";
@@ -19,8 +19,7 @@ export default function ResetPasswordPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [response, setResponse] = useState<ApiFailure>();
 
-  const [resetPassword, { isError, isLoading, isSuccess }] =
-    useResetPasswordMutation();
+  const [resetPassword, { isError, isSuccess }] = useResetPasswordMutation();
 
   const handleResetPassword = async function () {
     try {
@@ -34,7 +33,7 @@ export default function ResetPasswordPage() {
     if (isSuccess) {
       navigate("/login", { replace: true });
     }
-  }, [isSuccess]);
+  }, [isSuccess, navigate]);
 
   return (
     <div className="min-h-screen bg-[#0c0c0c] flex flex-col text-[#f5f5f5]">
@@ -152,4 +151,3 @@ export default function ResetPasswordPage() {
     </div>
   );
 }
-
