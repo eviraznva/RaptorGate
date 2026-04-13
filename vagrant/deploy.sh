@@ -4,6 +4,11 @@ LIBVIRT_DEFAULT_URI=qemu:///system
 
 set -e
 
+# Parse flags
+if [[ "$1" == "--no-backend" || "$1" == "-n" ]]; then
+  export NO_BACKEND=1
+fi
+
 sudo sysctl -w net.ipv4.ip_forward=1
 
 # 2. Allow virbr1 traffic through Docker's FORWARD chain
@@ -41,5 +46,5 @@ cp -rf ../proto/* .router_sync/proto/
 cp -rf ./configs/* .router_sync/ngfw
 cp -rf services .router_sync
 
-vagrant rsync r1 &&
+vagrant rsync r1 || true
 vagrant up --provision

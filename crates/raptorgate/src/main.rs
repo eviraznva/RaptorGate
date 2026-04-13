@@ -36,6 +36,7 @@ use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::CaManager;
+use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use etherparse::NetSlice;
 use ipnet::IpNet;
 use std::collections::HashMap;
@@ -117,7 +118,8 @@ async fn main() {
         .register(Arc::clone(&zone_pairs), "ZonePairProvider")
         .await;
 
-    tokio::spawn(events::init_event_queue());
+    tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
+    
     let nat_engine = build_test_nat();
 
     // Inicjalizacja providera konfiguracji DNS inspection.

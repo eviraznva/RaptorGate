@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package raptorgate.services;
+import "google/protobuf/timestamp.proto";
 
 import "config/config_models.proto";
 
@@ -22,6 +23,7 @@ service FirewallQueryService {
   rpc SwapConfig    (SwapConfigRequest)        returns (SwapConfigResponse);
   rpc GetConfig     (GetConfigRequest)         returns (GetConfigResponse);
 
+  rpc GetSystemTime (GetSystemTimeRequest)     returns (GetSystemTimeResponse);
   rpc SwapDnsInspectionConfig (SwapDnsInspectionConfigRequest) returns (SwapDnsInspectionConfigResponse);
   rpc GetDnsInspectionConfig  (GetDnsInspectionConfigRequest)  returns (GetDnsInspectionConfigResponse);
   rpc SwapIpsConfig           (SwapIpsConfigRequest)           returns (SwapIpsConfigResponse);
@@ -111,6 +113,11 @@ message GetConfigResponse {
   config.AppConfig config = 1;
 }
 
+message GetSystemTimeRequest {}
+
+message GetSystemTimeResponse {
+  google.protobuf.Timestamp time = 1;
+}
 // ── DNS Inspection Config ─────────────────────────────────────────────────────
 
 message SwapDnsInspectionConfigRequest {

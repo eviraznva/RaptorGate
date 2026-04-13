@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
@@ -32,7 +33,7 @@ use crate::proto::services::{
     GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest,
     SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
     SwapIpsConfigRequest, SwapIpsConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse,
-    SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse,
+    SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse, GetSystemTimeRequest, GetSystemTimeResponse
 };
 use crate::zones::Zone;
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
@@ -343,6 +344,15 @@ where
         let config = self.config_provider.get_config();
         Ok(Response::new(GetConfigResponse {
             config: Some(config.to_proto()),
+        }))
+    }
+
+    async fn get_system_time(
+        &self,
+        _request: Request<GetSystemTimeRequest>,
+    ) -> Result<Response<GetSystemTimeResponse>, Status> {
+        Ok(Response::new(GetSystemTimeResponse {
+            time: Some(SystemTime::now().into()),
         }))
     }
 
