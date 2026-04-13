@@ -416,7 +416,7 @@ impl TcpSessionTracker {
                             && packet.acknowledgment_number == responder.next_expected_seq
                         {
                             session.state = TcpSessionState::TimeWait;
-                            Event::new(EventKind::TcpSessionEnteredTimeWait { src: initiator.id.clone(), dst: responder.id.clone() });
+                            emit(Event::new(EventKind::TcpSessionEnteredTimeWait { src: initiator.id.clone(), dst: responder.id.clone() }));
                             return (Ok(Some(session.state)), PostAction::ScheduleTimeWaitCleanup);
                         }
                     }

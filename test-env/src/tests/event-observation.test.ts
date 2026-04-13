@@ -44,6 +44,10 @@ describe('Event Observation', () => {
 		  {
 			  kind: 'tcpSessionEstablished',
 			  match: {}
+		  },
+		  {
+			  kind: 'tcpSessionEnteredTimewait',
+			  match: {}
 		  }
 	  ])
       .run();
