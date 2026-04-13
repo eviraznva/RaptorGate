@@ -28,6 +28,8 @@ struct BackendConnection {
 impl BackendConnection {
     /// Returns false if the gRPC task has died (receiver dropped).
     async fn send(&self, event: proto::Event) -> bool {
+        tracing::trace!(kind = ?event.kind, "Sending out event...");
+
         self.tx.send(event).await.is_ok()
     }
 }
