@@ -1,10 +1,13 @@
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use etherparse::NetSlice;
+use etherparse::{NetSlice, TransportSlice};
 use tokio::sync::Mutex;
 
 use crate::{
+    config::AppConfig,
+    config_provider::AppConfigProvider,
     data_plane::{
         dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection, EchMitigationVerdict},
         ips::ips::{Ips, IpsVerdict},
@@ -44,6 +47,64 @@ impl Stage for ValidationStage {
             }
         }
     }
+}
+
+#[derive(Clone)]
+pub struct LocalOwnershipStage {
+    pub config_provider: Arc<AppConfigProvider>,
+    pub local_ips: Arc<HashSet<IpAddr>>,
+}
+
+impl Stage for LocalOwnershipStage {
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let Some(dst_ip) = packet_destination_ip(ctx) else {
+            return StageOutcome::Continue;
+        };
+
+        if self.local_ips.contains(&dst_ip) {
+            tracing::trace!(dst_ip = %dst_ip, iface = %ctx.borrow_src_interface(), "packet owned by local stack");
+            return StageOutcome::Halt;
+        }
+
+        let config = self.config_provider.get_config();
+        if should_halt_for_tls_redirect(ctx, &config) {
+            tracing::trace!(
+                dst_ip = %dst_ip,
+                iface = %ctx.borrow_src_interface(),
+                "packet owned by tls redirect"
+            );
+            return StageOutcome::Halt;
+        }
+
+        StageOutcome::Continue
+    }
+}
+
+fn packet_destination_ip(ctx: &PacketContext) -> Option<IpAddr> {
+    match &ctx.borrow_sliced_packet().net {
+        Some(NetSlice::Ipv4(ipv4)) => Some(IpAddr::V4(ipv4.header().destination_addr())),
+        Some(NetSlice::Ipv6(ipv6)) => Some(IpAddr::V6(ipv6.header().destination_addr())),
+        _ => None,
+    }
+}
+
+fn should_halt_for_tls_redirect(ctx: &PacketContext, config: &AppConfig) -> bool {
+    if !config.ssl_inspection_enabled {
+        return false;
+    }
+
+    if !config
+        .capture_interfaces
+        .iter()
+        .any(|iface| iface.as_str() == ctx.borrow_src_interface().as_ref())
+    {
+        return false;
+    }
+
+    matches!(
+        &ctx.borrow_sliced_packet().transport,
+        Some(TransportSlice::Tcp(tcp)) if tcp.destination_port() == 443
+    )
 }
 
 #[derive(Clone)]
@@ -440,5 +501,69 @@ impl Stage for DpiStage {
             InspectResult::Skipped => {}
         }
         StageOutcome::Continue
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use etherparse::PacketBuilder;
+    use std::path::PathBuf;
+
+    fn sample_config() -> AppConfig {
+        AppConfig {
+            capture_interfaces: vec!["eth1".into(), "eth2".into()],
+            pcap_timeout_ms: 5000,
+            tun_device_name: "tun0".into(),
+            tun_address: "10.254.254.1".parse().unwrap(),
+            tun_netmask: "255.255.255.0".parse().unwrap(),
+            data_dir: PathBuf::from("/tmp"),
+            grpc_socket_path: "/tmp/firewall.sock".into(),
+            query_socket_path: "/tmp/query.sock".into(),
+            dev_config: None,
+            pki_dir: "/tmp/pki".into(),
+            ssl_inspection_enabled: true,
+            mitm_listen_addr: "127.0.0.1:8443".into(),
+            control_plane_socket_path: "/tmp/control.sock".into(),
+            ssl_bypass_domains: Vec::new(),
+        }
+    }
+
+    fn tcp_context(src: [u8; 4], dst: [u8; 4], dst_port: u16, iface: &str) -> PacketContext {
+        let mut raw = Vec::new();
+        PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4(src, dst, 64)
+            .tcp(12345, dst_port, 1, 65535)
+            .write(&mut raw, b"hello")
+            .unwrap();
+
+        PacketContext::from_raw(raw, Arc::from(iface)).unwrap()
+    }
+
+    #[test]
+    fn packet_destination_ip_extracts_ipv4_destination() {
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth1");
+        assert_eq!(
+            packet_destination_ip(&ctx),
+            Some("192.168.20.10".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn tls_redirect_halts_tcp_443_on_capture_interface() {
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth1");
+        assert!(should_halt_for_tls_redirect(&ctx, &sample_config()));
+    }
+
+    #[test]
+    fn tls_redirect_ignores_non_tls_ports() {
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 80, "eth1");
+        assert!(!should_halt_for_tls_redirect(&ctx, &sample_config()));
+    }
+
+    #[test]
+    fn tls_redirect_ignores_unknown_interfaces() {
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth9");
+        assert!(!should_halt_for_tls_redirect(&ctx, &sample_config()));
     }
 }

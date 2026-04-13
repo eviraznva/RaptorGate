@@ -112,7 +112,13 @@ async fn handle_connection(
     let original_dst = original_dst::get_original_dst(&client_tcp)
         .context("Failed to read original destination address")?;
 
-    let PeekedClientHello { sni, client_hello_version, ech_detected } = peek_client_hello(&client_tcp).await;
+    let PeekedClientHello { sni, client_hello_version, ech_detected, looks_like_tls } =
+        peek_client_hello(&client_tcp).await;
+
+    if !looks_like_tls {
+        tracing::debug!(peer = %peer_addr, dst = %original_dst, "Port 443 traffic is not TLS, using passthrough");
+        return relay_tcp_passthrough(client_tcp, original_dst).await;
+    }
 
     let action = engine.decide(
         sni.as_deref(),
@@ -502,21 +508,38 @@ struct PeekedClientHello {
     sni: Option<String>,
     client_hello_version: Option<String>,
     ech_detected: bool,
+    looks_like_tls: bool,
 }
 
 async fn peek_client_hello(stream: &TcpStream) -> PeekedClientHello {
     let mut buf = [0u8; SNI_PEEK_BUF_SIZE];
     let Ok(n) = stream.peek(&mut buf).await else {
-        return PeekedClientHello { sni: None, client_hello_version: None, ech_detected: false };
+        return PeekedClientHello {
+            sni: None,
+            client_hello_version: None,
+            ech_detected: false,
+            looks_like_tls: false,
+        };
     };
+    let looks_like_tls = looks_like_tls_client_hello_prefix(&buf[..n]);
     let Some(result) = parse_tls_client_hello(&buf[..n]) else {
-        return PeekedClientHello { sni: None, client_hello_version: None, ech_detected: false };
+        return PeekedClientHello {
+            sni: None,
+            client_hello_version: None,
+            ech_detected: false,
+            looks_like_tls,
+        };
     };
     PeekedClientHello {
         sni: result.sni,
         client_hello_version: Some(events::format_tls_version(result.version)),
         ech_detected: result.ech_detected,
+        looks_like_tls: true,
     }
+}
+
+fn looks_like_tls_client_hello_prefix(buf: &[u8]) -> bool {
+    buf.len() >= 3 && buf[0] == 0x16 && buf[1] == 0x03 && (1..=4).contains(&buf[2])
 }
 
 fn negotiated_version_from_client(stream: &ClientTlsStream<TcpStream>) -> Option<String> {
@@ -592,5 +615,15 @@ mod tests {
     #[test]
     fn peek_buf_size_enough_for_client_hello() {
         assert!(SNI_PEEK_BUF_SIZE >= 512);
+    }
+
+    #[test]
+    fn tls_prefix_heuristic_accepts_handshake_record() {
+        assert!(looks_like_tls_client_hello_prefix(&[0x16, 0x03, 0x03]));
+    }
+
+    #[test]
+    fn tls_prefix_heuristic_rejects_plaintext() {
+        assert!(!looks_like_tls_client_hello_prefix(b"GET /"));
     }
 }

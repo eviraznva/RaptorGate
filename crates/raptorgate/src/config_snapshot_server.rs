@@ -3,10 +3,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tokio::net::UnixListener;
+use tokio::sync::Mutex;
 use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
+use crate::data_plane::nat::{NatConfigProvider, NatEngine};
+use crate::data_plane::nat::config::NatConfig;
 use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -70,6 +73,8 @@ pub struct SnapshotHandler {
     pub server_key_store: Arc<ServerKeyStore>,
     pub dns_inspection_store: Arc<DnsInspectionConfigProvider>,
     pub dns_inspection: Arc<DnsInspection>,
+    pub nat_store: Arc<NatConfigProvider>,
+    pub nat_engine: Arc<Mutex<NatEngine>>,
 }
 
 #[tonic::async_trait]
@@ -127,10 +132,22 @@ impl FirewallConfigSnapshotService for SnapshotHandler {
             }
         }
 
+        // 4. NAT rules
+        if let Err(e) = self.apply_nat_rules(&bundle.nat_rules).await {
+            tracing::error!(error = %e, "NAT snapshot apply failed");
+            return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                correlation_id,
+                accepted: false,
+                message: format!("nat snapshot apply failed: {e}"),
+                applied_snapshot_id: String::new(),
+            }));
+        }
+
         tracing::info!(
             snapshot_id = snapshot.id,
             bypass_count = bypass_domains.len(),
             certs = bundle.firewall_certificates.len(),
+            nat_rules = bundle.nat_rules.len(),
             "config snapshot applied"
         );
 
@@ -144,6 +161,20 @@ impl FirewallConfigSnapshotService for SnapshotHandler {
 }
 
 impl SnapshotHandler {
+    async fn apply_nat_rules(
+        &self,
+        rules: &[crate::proto::config::NatRule],
+    ) -> anyhow::Result<()> {
+        let nat_config = NatConfig::from_proto_rules(rules)?;
+        let runtime_rules = nat_config.to_runtime_rules()?;
+
+        self.nat_store.swap_config(nat_config).await?;
+
+        let mut engine = self.nat_engine.lock().await;
+        engine.replace_rules(&runtime_rules);
+        Ok(())
+    }
+
     async fn apply_dns_ech_policy(
         &self,
         policy: &crate::proto::config::TlsInspectionPolicy,

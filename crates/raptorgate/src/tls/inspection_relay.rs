@@ -131,7 +131,7 @@ impl InspectionRelay {
     }
 }
 
-/// Relay jednego kierunku: buforuje poczatek, klasyfikuje, inspekcjonuje, potem passthrough.
+/// Relay jednego kierunku: buforuje poczatek, klasyfikuje, inspekcjonuje i streamuje fail-closed.
 async fn relay_one_direction<R, W>(
     mut reader: R,
     mut writer: W,
@@ -143,13 +143,142 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut total_bytes: u64 = 0;
-    let mut inspect_buf = Vec::with_capacity(INSPECT_BUF_CAP);
+    let total_bytes: u64 = 0;
+    let mut buffered = Vec::with_capacity(INSPECT_BUF_CAP);
     let mut chunks_seen: u8 = 0;
-    let mut classified = false;
+    let mut buf = [0u8; CHUNK_SIZE];
+    let (src_port, dst_port) = ports_for_direction(meta, direction);
+
+    loop {
+        let n = match reader.read(&mut buf).await {
+            Ok(0) => {
+                if buffered.is_empty() {
+                    return total_bytes;
+                }
+                let ctx = classify_or_fallback(&buffered, src_port, dst_port);
+                return flush_buffered_and_continue(
+                    &mut reader,
+                    &mut writer,
+                    &buffered,
+                    &ctx,
+                    meta,
+                    direction,
+                    ips,
+                    total_bytes,
+                )
+                .await;
+            }
+            Ok(n) => n,
+            Err(_) => return total_bytes,
+        };
+
+        buffered.extend_from_slice(&buf[..n]);
+        chunks_seen += 1;
+
+        let inspect_slice = inspection_slice(&buffered);
+        if let Some(ctx) = classify_with_ports(inspect_slice, src_port, dst_port) {
+            return flush_buffered_and_continue(
+                &mut reader,
+                &mut writer,
+                &buffered,
+                &ctx,
+                meta,
+                direction,
+                ips,
+                total_bytes,
+            )
+            .await;
+        }
+
+        if chunks_seen >= MAX_INSPECT_CHUNKS || inspect_slice.len() >= INSPECT_BUF_CAP {
+            let ctx = fallback_ctx(src_port, dst_port);
+            return flush_buffered_and_continue(
+                &mut reader,
+                &mut writer,
+                &buffered,
+                &ctx,
+                meta,
+                direction,
+                ips,
+                total_bytes,
+            )
+            .await;
+        }
+    }
+}
+
+fn inspection_slice(buffered: &[u8]) -> &[u8] {
+    &buffered[..buffered.len().min(INSPECT_BUF_CAP)]
+}
+
+fn classify_with_ports(payload: &[u8], src_port: u16, dst_port: u16) -> Option<DpiContext> {
+    let mut ctx = DpiClassifier::try_classify(payload)?;
+    ctx.decrypted = true;
+    ctx.src_port = Some(src_port);
+    ctx.dst_port = Some(dst_port);
+    Some(ctx)
+}
+
+fn fallback_ctx(src_port: u16, dst_port: u16) -> DpiContext {
+    DpiContext {
+        app_proto: Some(AppProto::Unknown),
+        decrypted: true,
+        src_port: Some(src_port),
+        dst_port: Some(dst_port),
+        ..Default::default()
+    }
+}
+
+fn classify_or_fallback(payload: &[u8], src_port: u16, dst_port: u16) -> DpiContext {
+    classify_with_ports(inspection_slice(payload), src_port, dst_port)
+        .unwrap_or_else(|| fallback_ctx(src_port, dst_port))
+}
+
+async fn flush_buffered_and_continue<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    buffered: &[u8],
+    ctx: &DpiContext,
+    meta: &SessionMeta,
+    direction: Direction,
+    ips: &dyn IpsInspector,
+    mut total_bytes: u64,
+) -> u64
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    if let Err(blocked) = handle_verdict(ips, buffered, ctx, meta, direction) {
+        if blocked {
+            return total_bytes;
+        }
+    }
+
+    emit_classification_event(meta, ctx, direction);
+
+    if writer.write_all(buffered).await.is_err() {
+        return total_bytes;
+    }
+    total_bytes += buffered.len() as u64;
+
+    stream_with_inspection(reader, writer, ctx, meta, direction, ips, total_bytes).await
+}
+
+async fn stream_with_inspection<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    ctx: &DpiContext,
+    meta: &SessionMeta,
+    direction: Direction,
+    ips: &dyn IpsInspector,
+    mut total_bytes: u64,
+) -> u64
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut buf = [0u8; CHUNK_SIZE];
 
-    // Faza inspekcji: buforuj i analizuj pierwsze chunki
     loop {
         let n = match reader.read(&mut buf).await {
             Ok(0) => return total_bytes,
@@ -157,59 +286,16 @@ where
             Err(_) => return total_bytes,
         };
 
+        if let Err(blocked) = handle_verdict(ips, &buf[..n], ctx, meta, direction) {
+            if blocked {
+                return total_bytes;
+            }
+        }
+
         if writer.write_all(&buf[..n]).await.is_err() {
-            return total_bytes + n as u64;
+            return total_bytes;
         }
         total_bytes += n as u64;
-
-        let remaining = INSPECT_BUF_CAP.saturating_sub(inspect_buf.len());
-        let to_copy = n.min(remaining);
-        inspect_buf.extend_from_slice(&buf[..to_copy]);
-        chunks_seen += 1;
-
-        if let Some(ctx) = DpiClassifier::try_classify(&inspect_buf) {
-            let mut ctx = ctx;
-            ctx.decrypted = true;
-            let (sp, dp) = ports_for_direction(meta, direction);
-            ctx.src_port = Some(sp);
-            ctx.dst_port = Some(dp);
-
-            if let Err(blocked) = handle_verdict(ips, &inspect_buf, &ctx, meta, direction) {
-                if blocked {
-                    return total_bytes;
-                }
-            }
-
-            emit_classification_event(meta, &ctx, direction);
-            classified = true;
-            break;
-        }
-
-        if chunks_seen >= MAX_INSPECT_CHUNKS || inspect_buf.len() >= INSPECT_BUF_CAP {
-            let (sp, dp) = ports_for_direction(meta, direction);
-            let ctx = DpiContext {
-                app_proto: Some(AppProto::Unknown),
-                decrypted: true,
-                src_port: Some(sp),
-                dst_port: Some(dp),
-                ..Default::default()
-            };
-            emit_classification_event(meta, &ctx, direction);
-            classified = true;
-            break;
-        }
-    }
-
-    drop(inspect_buf);
-
-    if !classified {
-        return total_bytes;
-    }
-
-    // Faza passthrough: bezposredni copy bez buforowania
-    match tokio::io::copy(&mut reader, &mut writer).await {
-        Ok(n) => total_bytes + n,
-        Err(_) => total_bytes,
     }
 }
 
@@ -414,6 +500,37 @@ mod tests {
 
         assert!(up <= (payload.len() + trailing.len()) as u64);
         assert!(ips.call_count() > 0);
+    }
+
+    #[tokio::test]
+    async fn ips_block_prevents_buffer_forward() {
+        let ips = Arc::new(RecordingInspector::new(IpsVerdict::Block {
+            signature_name: "test-sig".into(),
+            severity: "high".into(),
+        }));
+        let relay = InspectionRelay::new(ips);
+        let meta = test_meta();
+
+        let payload = b"GET /blocked HTTP/1.1\r\nHost: evil.com\r\n\r\n";
+        let (mut c_w, c_r) = duplex(1024);
+        let (s_w, mut s_r) = duplex(1024);
+
+        c_w.write_all(payload).await.unwrap();
+        drop(c_w);
+
+        let (mut empty_w, empty_r) = duplex(64);
+        let (empty_w2, _empty_r2) = duplex(64);
+        empty_w.shutdown().await.unwrap();
+
+        let (up, _down) = relay
+            .relay_bidirectional(c_r, s_w, empty_r, empty_w2, &meta)
+            .await;
+
+        let mut forwarded = Vec::new();
+        s_r.read_to_end(&mut forwarded).await.unwrap();
+
+        assert_eq!(up, 0);
+        assert!(forwarded.is_empty());
     }
 
     #[tokio::test]

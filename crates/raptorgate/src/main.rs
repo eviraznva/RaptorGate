@@ -22,28 +22,26 @@ use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
-use crate::data_plane::nat::NatEngine;
+use crate::data_plane::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
-    DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage, IpsStage,
-    NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage,
-    ValidationStage,
+    DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
+    IpsStage, LocalOwnershipStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
+    TcpClassificationStage, ValidationStage,
 };
 use crate::pipeline::{Chain, Stage, StageOutcome};
-use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
-use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
     CaManager, DecryptedIpsInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig, PinningConfig,
-    ServerKeyStore, TlsDecisionEngine,
+    ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
 use etherparse::NetSlice;
-use ipnet::IpNet;
-use std::collections::HashMap;
+use pcap::Device;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,20 +54,23 @@ async fn main() {
     type DataPipeline = Chain<
         ValidationStage,
         Chain<
-            DpiStage,
+            LocalOwnershipStage,
             Chain<
-                DnsBlockListStage,
+                DpiStage,
                 Chain<
-                    DnsTunnelingStage,
+                    DnsBlockListStage,
                     Chain<
-                        DnsEchMitigationStage,
+                        DnsTunnelingStage,
                         Chain<
-                            IpsStage,
+                            DnsEchMitigationStage,
                             Chain<
-                                NatPreroutingStage,
+                                IpsStage,
                                 Chain<
-                                    TcpClassificationStage,
-                                    Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                    NatPreroutingStage,
+                                    Chain<
+                                        TcpClassificationStage,
+                                        Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                    >,
                                 >,
                             >,
                         >,
@@ -168,7 +169,17 @@ async fn main() {
         }
     });
 
-    let nat_engine = build_test_nat();
+    let interface_ips = resolve_interface_ips(&config.capture_interfaces);
+    let local_ips = collect_local_ips(&interface_ips);
+    let nat_store = Arc::new(NatConfigProvider::from_disk(config.data_dir.clone()).await);
+    let nat_rules = match nat_store.get_config().to_runtime_rules() {
+        Ok(rules) => rules,
+        Err(err) => {
+            tracing::error!(error = %err, "failed to build NAT rules from disk config");
+            None
+        }
+    };
+    let nat_engine = Arc::new(Mutex::new(NatEngine::new(&nat_rules, interface_ips)));
 
     // Inicjalizacja providera konfiguracji DNS inspection.
     let dns_inspection_store =
@@ -219,6 +230,8 @@ async fn main() {
             server_key_store: Arc::clone(&server_key_store),
             dns_inspection_store: Arc::clone(&dns_inspection_store),
             dns_inspection: Arc::clone(&dns_inspection),
+            nat_store: Arc::clone(&nat_store),
+            nat_engine: Arc::clone(&nat_engine),
         },
         &config.control_plane_socket_path,
         CancellationToken::new(),
@@ -235,6 +248,18 @@ async fn main() {
                     .mitm_listen_addr
                     .parse()
                     .expect("MITM_LISTEN_ADDR must be a valid socket address");
+
+                match TransparentRedirect::new(
+                    listen_addr,
+                    config.capture_interfaces.clone(),
+                )
+                .and_then(|redirect| redirect.install())
+                {
+                    Ok(()) => {}
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to install TLS transparent redirect");
+                    }
+                }
 
                 let proxy_config = MitmProxyConfig {
                     listen_addr,
@@ -284,44 +309,50 @@ async fn main() {
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
-            head: DpiStage {
-                classifier: Arc::clone(&dpi_classifier),
+            head: LocalOwnershipStage {
+                config_provider: Arc::clone(&config_provider),
+                local_ips: Arc::new(local_ips),
             },
             tail: Chain {
-                head: DnsBlockListStage {
-                    inspection: Arc::clone(&dns_inspection),
+                head: DpiStage {
+                    classifier: Arc::clone(&dpi_classifier),
                 },
                 tail: Chain {
-                    head: DnsTunnelingStage {
+                    head: DnsBlockListStage {
                         inspection: Arc::clone(&dns_inspection),
                     },
                     tail: Chain {
-                        head: DnsEchMitigationStage {
+                        head: DnsTunnelingStage {
                             inspection: Arc::clone(&dns_inspection),
                         },
                         tail: Chain {
-                            head: IpsStage {
-                                inspection: Arc::clone(&ips),
+                            head: DnsEchMitigationStage {
+                                inspection: Arc::clone(&dns_inspection),
                             },
                             tail: Chain {
-                                head: NatPreroutingStage {
-                                    engine: Arc::clone(&nat_engine),
+                                head: IpsStage {
+                                    inspection: Arc::clone(&ips),
                                 },
                                 tail: Chain {
-                                    head: TcpClassificationStage {
-                                        tracker: Arc::clone(&tcp_session_tracker),
+                                    head: NatPreroutingStage {
+                                        engine: Arc::clone(&nat_engine),
                                     },
                                     tail: Chain {
-                                        head: PolicyEvalStage {
-                                            provider: Arc::clone(&policy_provider),
-                                            dnssec: Some(dnssec_provider),
+                                        head: TcpClassificationStage {
+                                            tracker: Arc::clone(&tcp_session_tracker),
                                         },
                                         tail: Chain {
-                                            head: NatPostroutingStage {
-                                                engine: Arc::clone(&nat_engine),
+                                            head: PolicyEvalStage {
+                                                provider: Arc::clone(&policy_provider),
+                                                dnssec: Some(dnssec_provider),
                                             },
-                                            tail: FtpAlgStage {
-                                                engine: Arc::clone(&nat_engine),
+                                            tail: Chain {
+                                                head: NatPostroutingStage {
+                                                    engine: Arc::clone(&nat_engine),
+                                                },
+                                                tail: FtpAlgStage {
+                                                    engine: Arc::clone(&nat_engine),
+                                                },
                                             },
                                         },
                                     },
@@ -355,41 +386,34 @@ async fn main() {
     }
 }
 
-fn build_test_nat() -> Arc<Mutex<NatEngine>> {
-    let interface_ips = HashMap::from([
-        (
-            "eth1".to_string(),
-            vec![
-                "192.168.10.254".parse::<IpAddr>().unwrap(),
-                "fd10::fe".parse::<IpAddr>().unwrap(),
-            ],
-        ),
-        (
-            "eth2".to_string(),
-            vec![
-                "192.168.20.254".parse::<IpAddr>().unwrap(),
-                "fd20::fe".parse::<IpAddr>().unwrap(),
-            ],
-        ),
-    ]);
+fn resolve_interface_ips(capture_interfaces: &[String]) -> HashMap<String, Vec<IpAddr>> {
+    let mut interface_ips = HashMap::new();
 
-    let rules = NatRules::new(vec![NatRule::new(
-        "dnat-portfwd-8080-to-h1-80".to_string(),
-        20,
-        Some("eth2".to_string()),
-        None,
-        None,
-        None,
-        None,
-        Some("192.168.10.10/32".parse::<IpNet>().unwrap()),
-        Some(NatProtocol::Tcp),
-        Some(80),
-        Some(8080),
-        NatAction::Dnat,
-    )]);
+    match Device::list() {
+        Ok(devices) => {
+            for iface in capture_interfaces {
+                let ips = devices
+                    .iter()
+                    .find(|device| device.name == *iface)
+                    .map(|device| device.addresses.iter().map(|addr| addr.addr).collect())
+                    .unwrap_or_default();
+                interface_ips.insert(iface.clone(), ips);
+            }
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to enumerate interface addresses");
+            for iface in capture_interfaces {
+                interface_ips.insert(iface.clone(), Vec::new());
+            }
+        }
+    }
 
-    Arc::new(Mutex::new(NatEngine::new(
-        &Some(Arc::new(rules)),
-        interface_ips,
-    )))
+    interface_ips
+}
+
+fn collect_local_ips(interface_ips: &HashMap<String, Vec<IpAddr>>) -> HashSet<IpAddr> {
+    interface_ips
+        .values()
+        .flat_map(|ips| ips.iter().copied())
+        .collect()
 }

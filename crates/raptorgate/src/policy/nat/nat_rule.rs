@@ -1,7 +1,5 @@
 use ipnet::IpNet;
 
-use crate::policy::nat::port_range::PortRange;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NatProtocol {
     Tcp,
@@ -30,6 +28,8 @@ pub struct NatRule {
     protocol: Option<NatProtocol>,
     src_port: Option<u16>,
     dst_port: Option<u16>,
+    translated_ip: Option<std::net::IpAddr>,
+    translated_port: Option<u16>,
     action: NatAction,
 }
 
@@ -46,6 +46,8 @@ impl NatRule {
         protocol: Option<NatProtocol>,
         src_port: Option<u16>,
         dst_port: Option<u16>,
+        translated_ip: Option<std::net::IpAddr>,
+        translated_port: Option<u16>,
         action: NatAction,
     ) -> Self {
         Self {
@@ -60,6 +62,8 @@ impl NatRule {
             protocol,
             src_port,
             dst_port,
+            translated_ip,
+            translated_port,
             action,
         }
     }
@@ -96,6 +100,12 @@ impl NatRule {
     }
     pub fn dst_port(&self) -> Option<u16> {
         self.dst_port
+    }
+    pub fn translated_ip(&self) -> Option<std::net::IpAddr> {
+        self.translated_ip
+    }
+    pub fn translated_port(&self) -> Option<u16> {
+        self.translated_port
     }
     pub fn action(&self) -> NatAction {
         self.action.clone()
