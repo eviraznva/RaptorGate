@@ -22,6 +22,7 @@ describe('Event Observation', () => {
   // });
 
   test('nc from h1 to h2 produces events for full tcp session', async () => {
+
 	  const server = await performCommand({
 		  host: 'h2',
 		  command: 'ncat -l -k -p 12345',
@@ -35,9 +36,10 @@ describe('Event Observation', () => {
     })
       .expectEvents([
 		  {
-			  kind: 'tcpSessionEstablished'
+			  kind: 'tcpSessionEstablished',
+			  match: {}
 		  }
 	  ])
       .run();
-  })
+  }, /*{ timeout: 10_000 }*/)
 });

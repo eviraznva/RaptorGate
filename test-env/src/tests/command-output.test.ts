@@ -39,7 +39,9 @@ describe('Command Output', () => {
 	await performCommand({
 		host: 'h2',
 		command: 'pkill -f ncat; pgrep -f nc'
-	}).run()
+	})
+	.discardError()
+	.run()
 
     const server = await performCommand({
       host: 'h2',

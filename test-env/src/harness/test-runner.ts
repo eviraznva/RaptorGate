@@ -159,7 +159,7 @@ class CommandBuilder {
   private outputRegexes: RegExp[] | null = null;
   private eventPatterns: EventMatcher[] | null = null;
   private expectError = false;
-  private discardErrorCode = true;
+  private discardErrorCode = false;
 
   constructor(opts: PerformCommandOptions) {
     this.host = opts.host;
