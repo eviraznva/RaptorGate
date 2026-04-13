@@ -1,8 +1,10 @@
 import { hash } from 'node:crypto';
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
+import { FirewallCertificate } from 'src/domain/entities/firewall-certificate.entity';
 import { FirewallRule } from 'src/domain/entities/firewall-rule.entity';
 import { NatRule } from 'src/domain/entities/nat-rule.entity';
+import { SslBypassEntry } from 'src/domain/entities/ssl-bypass-entry.entity';
 import { Zone } from 'src/domain/entities/zone.entity';
 import { ZonePair } from 'src/domain/entities/zone-pair.entity';
 import { AccessTokenIsInvalidException } from 'src/domain/exceptions/acces-token-is-invalid.exception';
@@ -11,6 +13,10 @@ import {
   type IConfigSnapshotRepository,
 } from 'src/domain/repositories/config-snapshot.repository';
 import {
+  type IFirewallCertificateRepository,
+  FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
+} from 'src/domain/repositories/firewall-certificate.repository';
+import {
   type INatRulesRepository,
   NAT_RULES_REPOSITORY_TOKEN,
 } from 'src/domain/repositories/nat-rules.repository';
@@ -18,6 +24,10 @@ import {
   type IRulesRepository,
   RULES_REPOSITORY_TOKEN,
 } from 'src/domain/repositories/rules-repository';
+import {
+  type ISslBypassRepository,
+  SSL_BYPASS_REPOSITORY_TOKEN,
+} from 'src/domain/repositories/ssl-bypass.repository';
 import {
   type IZoneRepository,
   ZONE_REPOSITORY_TOKEN,
@@ -31,7 +41,9 @@ import { IpAddress } from 'src/domain/value-objects/ip-address.vo';
 import { NatType } from 'src/domain/value-objects/nat-type.vo';
 import { Port } from 'src/domain/value-objects/port.vo';
 import { Priority } from 'src/domain/value-objects/priority.vo';
+import { normalizeTlsInspectionPolicy } from 'src/domain/value-objects/config-snapshot-payload.interface';
 import { SnapshotType } from 'src/domain/value-objects/snapshot-type.vo';
+import { SecretStore } from 'src/infrastructure/persistence/secret-store';
 import { ImportConfigDto } from '../dtos/import-config.dto';
 import { ImportConfigResponseDto } from '../dtos/import-config-response.dto';
 import {
@@ -66,6 +78,11 @@ export class ImportConfigUseCase {
     private readonly rulesRepository: IRulesRepository,
     @Inject(NAT_RULES_REPOSITORY_TOKEN)
     private readonly natRulesRepository: INatRulesRepository,
+    @Inject(FIREWALL_CERTIFICATE_REPOSITORY_TOKEN)
+    private readonly firewallCertificateRepository: IFirewallCertificateRepository,
+    @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
+    private readonly sslBypassRepository: ISslBypassRepository,
+    private readonly secretStore: SecretStore,
   ) {}
 
   async execute(dto: ImportConfigDto): Promise<ImportConfigResponseDto> {
@@ -107,6 +124,10 @@ export class ImportConfigUseCase {
       claims.sub,
     );
     const payload = importedSnapshot.deserializePayload();
+    payload.bundle.tls_inspection_policy = normalizeTlsInspectionPolicy(
+      payload.bundle.tls_inspection_policy,
+    );
+    importedSnapshot.setPayloadJson(payload);
 
     await Promise.all(
       payload.bundle.rules.items.map((rule: any) =>
@@ -115,6 +136,35 @@ export class ImportConfigUseCase {
     );
 
     if (dto.snapshotData.isActive) {
+      const activeCerts = payload.bundle.firewall_certificates.items.map((c: any) =>
+        FirewallCertificate.create(
+          c.id,
+          c.certType,
+          c.commonName,
+          c.fingerprint,
+          c.certificatePem,
+          c.privateKeyRef,
+          c.isActive,
+          new Date(c.expiresAt),
+          new Date(c.createdAt),
+          c.bindAddress ?? '',
+          c.bindPort ?? 443,
+          c.inspectionBypass ?? false,
+        ),
+      );
+
+      const activeBypass = payload.bundle.ssl_bypass_list.items.map((entry: any) =>
+        SslBypassEntry.create(
+          entry.id,
+          entry.domain,
+          entry.reason,
+          entry.isActive,
+          new Date(entry.createdAt),
+        ),
+      );
+
+      await this.ensureTlsSecretsExist(activeCerts);
+
       const activeZones = payload.bundle.zones.items.map((z: any) =>
         Zone.create(
           z.id,
@@ -173,6 +223,8 @@ export class ImportConfigUseCase {
       await this.zonePairRepository.overwriteAll(activeZonePairs);
       await this.rulesRepository.overwriteAll(activeRules);
       await this.natRulesRepository.overwriteAll(activeNatRules);
+      await this.firewallCertificateRepository.overwriteAll(activeCerts);
+      await this.sslBypassRepository.overwriteAll(activeBypass);
 
       const currentActiveSnapshot = allConfigSnapshots.find((s) =>
         s.getIsActive(),
@@ -196,5 +248,30 @@ export class ImportConfigUseCase {
     return {
       configSnapshot: importedSnapshot,
     };
+  }
+
+  private async ensureTlsSecretsExist(
+    certificates: FirewallCertificate[],
+  ): Promise<void> {
+    const refs = certificates
+      .filter(
+        (certificate) =>
+          certificate.getCertType() === 'TLS_SERVER' &&
+          certificate.getPrivateKeyRef().length > 0,
+      )
+      .map((certificate) => certificate.getPrivateKeyRef());
+
+    if (refs.length > 0 && !this.secretStore.isConfigured()) {
+      throw new BadRequestException(
+        'BACKEND_SECRET_ENCRYPTION_KEY is required for active TLS server certificates',
+      );
+    }
+
+    const missing = await this.secretStore.missing(refs);
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Missing TLS private key secrets for refs: ${missing.join(', ')}`,
+      );
+    }
   }
 }

@@ -1,6 +1,7 @@
 import { hash } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
+import { FirewallCertificate } from '../../domain/entities/firewall-certificate.entity.js';
 import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
 import type { IConfigSnapshotRepository } from '../../domain/repositories/config-snapshot.repository.js';
 import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
@@ -26,8 +27,13 @@ import type { IFirewallCertificateRepository } from '../../domain/repositories/f
 import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../../domain/repositories/firewall-certificate.repository.js';
 import type { ISslBypassRepository } from '../../domain/repositories/ssl-bypass.repository.js';
 import { SSL_BYPASS_REPOSITORY_TOKEN } from '../../domain/repositories/ssl-bypass.repository.js';
+import {
+  normalizeTlsInspectionPolicy,
+  type ConfigSnapshotPayload,
+} from '../../domain/value-objects/config-snapshot-payload.interface.js';
 import { Checksum } from '../../domain/value-objects/checksum.vo.js';
 import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
+import { SecretStore } from '../../infrastructure/persistence/secret-store.js';
 import type { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.js';
 import type { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 import type { IConfigSnapshotPushService } from '../ports/config-snapshot-push-service.interface.js';
@@ -65,6 +71,7 @@ export class ApplyConfigSnapshotUseCase {
     private readonly firewallCertificateRepository: IFirewallCertificateRepository,
     @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
     private readonly sslBypassRepository: ISslBypassRepository,
+    private readonly secretStore: SecretStore,
   ) {}
 
   async execute(
@@ -82,6 +89,16 @@ export class ApplyConfigSnapshotUseCase {
     const allZonePairs = await this.zonePairRepository.findAll();
     const activeCerts = await this.firewallCertificateRepository.findActive();
     const activeBypass = await this.sslBypassRepository.findActive();
+    const allConfigSnapshots =
+      await this.configSnapshotRepository.findAllSnapshots();
+    const currentActiveSnapshot = allConfigSnapshots.find((snapshot) =>
+      snapshot.getIsActive(),
+    );
+    const tlsInspectionPolicy = this.resolveTlsInspectionPolicy(
+      currentActiveSnapshot?.deserializePayload(),
+    );
+
+    await this.ensureTlsSecretsExist(activeCerts);
     // const rolePermissions = await this.rolePermissionsRepository.findAll();
     // const userRoles = await this.userRolesRepository.findAll();
 
@@ -115,6 +132,7 @@ export class ApplyConfigSnapshotUseCase {
         firewall_certificates: {
           items: [...activeCerts],
         },
+        tls_inspection_policy: tlsInspectionPolicy,
         users: {
           items: [...allUsers],
         },
@@ -133,19 +151,11 @@ export class ApplyConfigSnapshotUseCase {
       },
     };
 
-    const allConfigSnapshots =
-      await this.configSnapshotRepository.findAllSnapshots();
-
     const highestVersionNumber = allConfigSnapshots.reduce((prev, curr) => {
       if (curr.getVersionNumber() > prev) return curr.getVersionNumber();
     }, 0);
 
     const checksum = hash('sha256', JSON.stringify(configSnposhotPayload));
-
-    const currentActiveSnapshot = allConfigSnapshots.find((snapshot) =>
-      snapshot.getIsActive(),
-    );
-
     const newConfigSnapshot = ConfigurationSnapshot.create(
       crypto.randomUUID(),
       highestVersionNumber !== undefined ? highestVersionNumber + 1 : 1,
@@ -183,5 +193,36 @@ export class ApplyConfigSnapshotUseCase {
       createdAt: newConfigSnapshot.getCreatedAt(),
       createdBy: newConfigSnapshot.getCreatedBy(),
     };
+  }
+
+  private resolveTlsInspectionPolicy(payload?: ConfigSnapshotPayload) {
+    return normalizeTlsInspectionPolicy(
+      payload?.bundle.tls_inspection_policy,
+    );
+  }
+
+  private async ensureTlsSecretsExist(
+    certificates: FirewallCertificate[],
+  ): Promise<void> {
+    const refs = certificates
+      .filter(
+        (certificate) =>
+          certificate.getCertType() === 'TLS_SERVER' &&
+          certificate.getPrivateKeyRef().length > 0,
+      )
+      .map((certificate) => certificate.getPrivateKeyRef());
+
+    if (refs.length > 0 && !this.secretStore.isConfigured()) {
+      throw new BadRequestException(
+        'BACKEND_SECRET_ENCRYPTION_KEY is required for active TLS server certificates',
+      );
+    }
+
+    const missing = await this.secretStore.missing(refs);
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Missing TLS private key secrets for refs: ${missing.join(', ')}`,
+      );
+    }
   }
 }

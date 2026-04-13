@@ -1,36 +1,49 @@
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
   HttpStatus,
   Inject,
+  Post,
   Query,
   Res,
   BadRequestException,
 } from '@nestjs/common';
 import {
+  ApiError400,
   ApiError401,
   ApiError403,
   ApiError404,
+  ApiError409,
   ApiError429,
   ApiError500,
 } from '../decorators/api-error-response.decorator.js';
-import { ApiOkEnvelope } from '../decorators/api-envelope-response.decorator.js';
+import {
+  ApiCreatedEnvelope,
+  ApiOkEnvelope,
+} from '../decorators/api-envelope-response.decorator.js';
 import { GetCaCertificateUseCase } from '../../application/use-cases/get-ca-certificate.use-case.js';
+import { UploadServerCertificateUseCase } from '../../application/use-cases/upload-server-certificate.use-case.js';
 import { RequirePermissions } from '../decorators/auth/require-permissions.decorator.js';
 import { GetCaCertificateResponseDto } from '../dtos/get-ca-certificate-response.dto.js';
+import { UploadServerCertificateDto } from '../dtos/upload-server-certificate.dto.js';
+import { UploadServerCertificateResponseDto } from '../dtos/upload-server-certificate-response.dto.js';
 import { ResponseMessage } from '../decorators/response-message.decorator.js';
 import { Roles } from '../decorators/auth/roles.decorator.js';
 import { Permission } from '../../domain/enums/permissions.enum.js';
-import { ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { ApiBody, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { Role } from '../../domain/enums/role.enum.js';
 import type { Response } from 'express';
+import { ExtractToken } from '../decorators/auth/extract-token.decorator.js';
 
 @Controller('ssl')
 export class SslController {
   constructor(
     @Inject(GetCaCertificateUseCase)
     private readonly getCaCertificateUseCase: GetCaCertificateUseCase,
+    @Inject(UploadServerCertificateUseCase)
+    private readonly uploadServerCertificateUseCase: UploadServerCertificateUseCase,
   ) {}
 
   @ApiOperation({
@@ -113,5 +126,36 @@ export class SslController {
     throw new BadRequestException(
       'Invalid format — supported values: pem, der',
     );
+  }
+
+  @ApiOperation({
+    summary: 'Upload inbound TLS server certificate',
+    description:
+      'Stores a TLS server certificate and private key for inbound TLS inspection.',
+  })
+  @Roles(Role.Operator)
+  @RequirePermissions(Permission.CERTIFICATES_UPLOAD)
+  @Post('server-certificates')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBody({ type: UploadServerCertificateDto })
+  @ResponseMessage('Server certificate uploaded')
+  @ApiCreatedEnvelope(
+    UploadServerCertificateResponseDto,
+    'Server certificate uploaded',
+  )
+  @ApiError400('Validation failed')
+  @ApiError401('Authorization header missing or invalid')
+  @ApiError403('Insufficient permissions to upload certificates')
+  @ApiError409('Certificate already exists for the bind address')
+  @ApiError429('Too many requests')
+  @ApiError500('Internal server error while uploading certificate')
+  async uploadServerCertificate(
+    @Body() dto: UploadServerCertificateDto,
+    @ExtractToken() accessToken: string,
+  ): Promise<UploadServerCertificateResponseDto> {
+    return this.uploadServerCertificateUseCase.execute({
+      ...dto,
+      accessToken,
+    });
   }
 }

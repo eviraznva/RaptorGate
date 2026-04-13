@@ -1,5 +1,9 @@
 import { ConfigurationSnapshot } from 'src/domain/entities/configuration-snapshot.entity';
-import { ConfigSnapshotPayload } from 'src/domain/value-objects/config-snapshot-payload.interface';
+import {
+  ConfigSnapshotPayload,
+  type TlsInspectionPolicyPayload,
+  normalizeTlsInspectionPolicy,
+} from 'src/domain/value-objects/config-snapshot-payload.interface';
 import { DnsBlacklistFile } from '../schemas/dns-blacklist.schema';
 import { FirewallCertificatesFile } from '../schemas/firewall-certificates.schema';
 import { IpsSignaturesFile } from '../schemas/ips-signatures.schema';
@@ -29,6 +33,7 @@ export interface ConfigBundlePayloadSchema {
   ips_signatures: IpsSignaturesFile;
   ml_model: null;
   firewall_certificates: FirewallCertificatesFile;
+  tls_inspection_policy?: TlsInspectionPolicyPayload;
   users: UsersFile;
   // roles: RolesFile;
   // permissions: PermissionsFile;
@@ -103,6 +108,9 @@ export function mapConfigSnapshotToPayloadRecord(
       firewall_certificates: {
         items: toCertsFile,
       },
+      tls_inspection_policy: normalizeTlsInspectionPolicy(
+        payload.bundle.tls_inspection_policy,
+      ),
       users: {
         items: toUsersFile,
       },
@@ -176,6 +184,9 @@ export function mapConfigBundlePayloadToDomain(
       firewall_certificates: {
         items: toCertsDomain,
       },
+      tls_inspection_policy: normalizeTlsInspectionPolicy(
+        payload.bundle.tls_inspection_policy,
+      ),
       users: {
         items: toUsersDomain,
       },

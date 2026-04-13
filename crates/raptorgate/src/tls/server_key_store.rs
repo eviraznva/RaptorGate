@@ -32,13 +32,17 @@ fn key_path(pki_dir: &Path, id: &str) -> PathBuf {
 }
 
 fn meta_path(pki_dir: &Path, id: &str) -> PathBuf {
-    pki_dir.join(SERVER_KEYS_DIR).join(format!("{id}.meta.json"))
+    pki_dir
+        .join(SERVER_KEYS_DIR)
+        .join(format!("{id}.meta.json"))
 }
 
 fn save_meta(pki_dir: &Path, id: &str, meta: &ServerKeyMeta) -> anyhow::Result<()> {
     let path = meta_path(pki_dir, id);
     let json = serde_json::to_string_pretty(meta)?;
     fs::write(&path, json).with_context(|| format!("Failed to write meta for {id}"))?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("Failed to set permissions on server meta {id}"))?;
     Ok(())
 }
 
@@ -55,8 +59,7 @@ fn save_key_to_disk(pki_dir: &Path, id: &str, key_pem: &str) -> anyhow::Result<(
     let encrypted = encrypt_pem(key_pem.as_bytes(), &enc_key)?;
 
     let path = key_path(pki_dir, id);
-    fs::write(&path, &encrypted)
-        .with_context(|| format!("Failed to write server key {id}"))?;
+    fs::write(&path, &encrypted).with_context(|| format!("Failed to write server key {id}"))?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
         .with_context(|| format!("Failed to set permissions on server key {id}"))?;
 
@@ -65,8 +68,7 @@ fn save_key_to_disk(pki_dir: &Path, id: &str, key_pem: &str) -> anyhow::Result<(
 
 fn load_key_from_disk(pki_dir: &Path, id: &str) -> anyhow::Result<String> {
     let path = key_path(pki_dir, id);
-    let encrypted =
-        fs::read(&path).with_context(|| format!("Failed to read server key {id}"))?;
+    let encrypted = fs::read(&path).with_context(|| format!("Failed to read server key {id}"))?;
 
     let enc_key = read_encryption_key()?;
     let decrypted = decrypt_pem(&encrypted, &enc_key)?;
@@ -87,6 +89,8 @@ struct InboundServerEntry {
     server_config: Arc<ServerConfig>,
     common_name: String,
     fingerprint: String,
+    certificate_pem: String,
+    key_ref: String,
     bypass: bool,
 }
 
@@ -96,6 +100,8 @@ pub struct InboundServerInfo {
     pub addr: SocketAddr,
     pub common_name: String,
     pub fingerprint: String,
+    pub certificate_pem: String,
+    pub key_ref: String,
     pub bypass: bool,
 }
 
@@ -135,15 +141,19 @@ impl ServerKeyStore {
         save_key_to_disk(pki, key_ref, key_pem)
             .with_context(|| format!("Failed to persist server key for {addr}"))?;
 
-        save_meta(pki, key_ref, &ServerKeyMeta {
-            addr: addr.ip().to_string(),
-            port: addr.port(),
-            common_name: common_name.to_string(),
-            fingerprint: fingerprint.to_string(),
-            certificate_pem: cert_pem.to_string(),
-            key_ref: key_ref.to_string(),
-            bypass,
-        })?;
+        save_meta(
+            pki,
+            key_ref,
+            &ServerKeyMeta {
+                addr: addr.ip().to_string(),
+                port: addr.port(),
+                common_name: common_name.to_string(),
+                fingerprint: fingerprint.to_string(),
+                certificate_pem: cert_pem.to_string(),
+                key_ref: key_ref.to_string(),
+                bypass,
+            },
+        )?;
 
         let server_config = build_server_config_from_pem(cert_pem, key_pem)
             .with_context(|| format!("Failed to build TLS config for {addr}"))?;
@@ -154,6 +164,8 @@ impl ServerKeyStore {
                 server_config,
                 common_name: common_name.to_string(),
                 fingerprint: fingerprint.to_string(),
+                certificate_pem: cert_pem.to_string(),
+                key_ref: key_ref.to_string(),
                 bypass,
             },
         );
@@ -184,6 +196,8 @@ impl ServerKeyStore {
                 server_config,
                 common_name: common_name.to_string(),
                 fingerprint: fingerprint.to_string(),
+                certificate_pem: cert_pem.to_string(),
+                key_ref: key_ref.to_string(),
                 bypass,
             },
         );
@@ -233,6 +247,8 @@ impl ServerKeyStore {
                 addr: *entry.key(),
                 common_name: entry.value().common_name.clone(),
                 fingerprint: entry.value().fingerprint.clone(),
+                certificate_pem: entry.value().certificate_pem.clone(),
+                key_ref: entry.value().key_ref.clone(),
                 bypass: entry.value().bypass,
             })
             .collect()
@@ -254,7 +270,9 @@ impl ServerKeyStore {
         for entry in entries.flatten() {
             let path = entry.path();
             let name = match path.file_name().and_then(|n| n.to_str()) {
-                Some(n) if n.ends_with(".meta.json") => n.trim_end_matches(".meta.json").to_string(),
+                Some(n) if n.ends_with(".meta.json") => {
+                    n.trim_end_matches(".meta.json").to_string()
+                }
                 _ => continue,
             };
 
@@ -343,7 +361,15 @@ mod tests {
         let addr = test_addr();
 
         store
-            .add(addr, &cert, &key, "test-ref-001", "test-server.local", "AA:BB", false)
+            .add(
+                addr,
+                &cert,
+                &key,
+                "test-ref-001",
+                "test-server.local",
+                "AA:BB",
+                false,
+            )
             .unwrap();
 
         assert!(store.get(addr).is_some());
@@ -368,7 +394,15 @@ mod tests {
         let addr = test_addr();
 
         store
-            .add(addr, &cert, &key, "test-ref-002", "test-server.local", "AA:BB", false)
+            .add(
+                addr,
+                &cert,
+                &key,
+                "test-ref-002",
+                "test-server.local",
+                "AA:BB",
+                false,
+            )
             .unwrap();
 
         assert!(store.contains(addr.ip(), addr.port()));
@@ -384,7 +418,15 @@ mod tests {
         let addr = test_addr();
 
         store
-            .add(addr, &cert, &key, "test-ref-003", "test-server.local", "AA:BB", false)
+            .add(
+                addr,
+                &cert,
+                &key,
+                "test-ref-003",
+                "test-server.local",
+                "AA:BB",
+                false,
+            )
             .unwrap();
         assert!(store.get(addr).is_some());
 

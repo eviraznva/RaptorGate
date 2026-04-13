@@ -10,6 +10,33 @@ import { NatRule } from '../entities/nat-rule.entity.js';
 import { Zone } from '../entities/zone.entity.js';
 import { User } from '../entities/user.entity.js';
 
+export interface TlsInspectionPolicyPayload {
+  block_ech_no_sni: boolean;
+  block_all_ech: boolean;
+  strip_ech_dns: boolean;
+  log_ech_attempts: boolean;
+  known_pinned_domains: string[];
+}
+
+export const DEFAULT_TLS_INSPECTION_POLICY: Readonly<TlsInspectionPolicyPayload> =
+  {
+    block_ech_no_sni: true,
+    block_all_ech: false,
+    strip_ech_dns: true,
+    log_ech_attempts: true,
+    known_pinned_domains: [],
+  };
+
+export function normalizeTlsInspectionPolicy(
+  policy?: Partial<TlsInspectionPolicyPayload> | null,
+): TlsInspectionPolicyPayload {
+  return {
+    ...DEFAULT_TLS_INSPECTION_POLICY,
+    ...(policy ?? {}),
+    known_pinned_domains: [...(policy?.known_pinned_domains ?? [])],
+  };
+}
+
 export interface ConfigBundlePayload {
   rules: { items: FirewallRule[] };
   zones: { items: Zone[] };
@@ -21,6 +48,7 @@ export interface ConfigBundlePayload {
   ips_signatures: { items: IpsSignature[] };
   ml_model: MlModel | null;
   firewall_certificates: { items: FirewallCertificate[] };
+  tls_inspection_policy?: TlsInspectionPolicyPayload | null;
   users: { items: User[] };
   // roles: { items: Role[] };
   // permissions: { items: Permission[] };

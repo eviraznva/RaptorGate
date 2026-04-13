@@ -7,6 +7,9 @@ use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
+use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
+use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
+use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::proto::common::CertificateType;
 use crate::proto::services::firewall_config_snapshot_service_server::{
     FirewallConfigSnapshotService, FirewallConfigSnapshotServiceServer,
@@ -65,6 +68,8 @@ impl SnapshotServer {
 pub struct SnapshotHandler {
     pub decision_engine: Arc<TlsDecisionEngine>,
     pub server_key_store: Arc<ServerKeyStore>,
+    pub dns_inspection_store: Arc<DnsInspectionConfigProvider>,
+    pub dns_inspection: Arc<DnsInspection>,
 }
 
 #[tonic::async_trait]
@@ -77,8 +82,12 @@ impl FirewallConfigSnapshotService for SnapshotHandler {
         let req = request.into_inner();
         let correlation_id = req.correlation_id.clone();
 
-        let snapshot = req.snapshot.ok_or_else(|| Status::invalid_argument("missing snapshot"))?;
-        let bundle = snapshot.bundle.ok_or_else(|| Status::invalid_argument("missing bundle"))?;
+        let snapshot = req
+            .snapshot
+            .ok_or_else(|| Status::invalid_argument("missing snapshot"))?;
+        let bundle = snapshot
+            .bundle
+            .ok_or_else(|| Status::invalid_argument("missing bundle"))?;
 
         // 1. Bypass domains
         let bypass_domains: Vec<String> = bundle
@@ -105,12 +114,16 @@ impl FirewallConfigSnapshotService for SnapshotHandler {
                 block_ech_no_sni: policy.block_ech_no_sni,
                 block_all_ech: policy.block_all_ech,
             });
-
-            if !policy.known_pinned_domains.is_empty() {
-                tracing::info!(
-                    count = policy.known_pinned_domains.len(),
-                    "pinned domains seed applied from snapshot"
-                );
+            self.decision_engine
+                .reload_known_pinned_domains(&policy.known_pinned_domains);
+            if let Err(e) = self.apply_dns_ech_policy(policy).await {
+                tracing::error!(error = %e, "DNS ECH policy apply failed");
+                return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                    correlation_id,
+                    accepted: false,
+                    message: format!("dns ech policy apply failed: {e}"),
+                    applied_snapshot_id: String::new(),
+                }));
             }
         }
 
@@ -131,7 +144,21 @@ impl FirewallConfigSnapshotService for SnapshotHandler {
 }
 
 impl SnapshotHandler {
-    // Desired-state reconciliation: porownuje fingerprint/cert/cn/bypass/key_ref.
+    async fn apply_dns_ech_policy(
+        &self,
+        policy: &crate::proto::config::TlsInspectionPolicy,
+    ) -> anyhow::Result<()> {
+        let current = self.dns_inspection_store.get_config();
+        let mut new_config: DnsInspectionConfig = (**current).clone();
+        new_config.ech_mitigation.strip_ech_dns = policy.strip_ech_dns;
+        new_config.ech_mitigation.log_ech_attempts = policy.log_ech_attempts;
+        self.dns_inspection_store
+            .swap_config(new_config.clone())
+            .await?;
+        self.dns_inspection.update_config(&new_config)?;
+        Ok(())
+    }
+
     fn reconcile_server_keys(
         &self,
         certs: &[crate::proto::config::FirewallCertificate],
@@ -141,34 +168,44 @@ impl SnapshotHandler {
             .filter(|c| c.cert_type == CertificateType::TlsServer as i32)
             .collect();
 
-        // Zbierz desired adresy
-        let mut desired_addrs = std::collections::HashSet::new();
+        let current: std::collections::HashMap<SocketAddr, _> = self
+            .server_key_store
+            .list()
+            .into_iter()
+            .map(|entry| (entry.addr, entry))
+            .collect();
+        let mut desired = std::collections::HashMap::new();
 
-        for cert in &tls_server_certs {
+        for cert in tls_server_certs {
             let addr = parse_bind_addr(cert)?;
-            desired_addrs.insert(addr);
+            if desired.insert(addr, cert).is_some() {
+                anyhow::bail!("duplicate TLS server certificate bind address: {addr}");
+            }
+        }
 
-            let current = self.server_key_store.list();
-            let existing = current.iter().find(|e| e.addr == addr);
+        for (addr, cert) in &desired {
+            let existing = current.get(addr);
 
             let needs_update = match existing {
                 Some(e) => {
                     e.fingerprint != cert.fingerprint
+                        || e.certificate_pem != cert.certificate_pem
                         || e.common_name != cert.common_name
                         || e.bypass != cert.inspection_bypass
+                        || e.key_ref != cert.private_key_ref
                 }
                 None => true,
             };
 
             if needs_update {
                 if let Some(e) = existing {
-                    let _ = self.server_key_store.remove(addr, &cert.private_key_ref);
+                    let _ = self.server_key_store.remove(*addr, &e.key_ref);
                     tracing::debug!(%addr, cn = %e.common_name, "removed stale server key");
                 }
 
                 if !cert.private_key_pem.is_empty() {
                     self.server_key_store.add(
-                        addr,
+                        *addr,
                         &cert.certificate_pem,
                         &cert.private_key_pem,
                         &cert.private_key_ref,
@@ -178,7 +215,7 @@ impl SnapshotHandler {
                     )?;
                 } else {
                     self.server_key_store.load(
-                        addr,
+                        *addr,
                         &cert.certificate_pem,
                         &cert.private_key_ref,
                         &cert.common_name,
@@ -189,11 +226,9 @@ impl SnapshotHandler {
             }
         }
 
-        // Usun serwery, ktorych nie ma w desired state
-        let current = self.server_key_store.list();
-        for entry in current {
-            if !desired_addrs.contains(&entry.addr) {
-                let _ = self.server_key_store.remove(entry.addr, "");
+        for entry in current.values() {
+            if !desired.contains_key(&entry.addr) {
+                let _ = self.server_key_store.remove(entry.addr, &entry.key_ref);
                 tracing::info!(addr = %entry.addr, "removed server key not in desired state");
             }
         }
@@ -207,7 +242,11 @@ fn parse_bind_addr(cert: &crate::proto::config::FirewallCertificate) -> anyhow::
         .bind_address
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid bind_address '{}': {e}", cert.bind_address))?;
-    let port = if cert.bind_port == 0 { 443 } else { cert.bind_port as u16 };
+    let port = if cert.bind_port == 0 {
+        443
+    } else {
+        cert.bind_port as u16
+    };
     Ok(SocketAddr::new(ip, port))
 }
 

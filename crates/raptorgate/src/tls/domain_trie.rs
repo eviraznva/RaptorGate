@@ -19,16 +19,14 @@ impl DomainTrie {
 
     pub fn insert(&mut self, domain: &str) {
         let normalized = domain.trim().to_lowercase();
+        let normalized = normalized.strip_prefix("*.").unwrap_or(&normalized);
         if normalized.is_empty() {
             return;
         }
         let labels: Vec<&str> = normalized.split('.').rev().collect();
         let mut node = &mut self.root;
         for label in labels {
-            node = node
-                .children
-                .entry(label.into())
-                .or_default();
+            node = node.children.entry(label.into()).or_default();
         }
         node.terminal = true;
     }
@@ -61,7 +59,6 @@ impl DomainTrie {
         }
         trie
     }
-
 }
 
 #[cfg(test)]

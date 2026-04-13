@@ -42,11 +42,11 @@ use crate::tls::{
     ServerKeyStore, TlsDecisionEngine,
 };
 use etherparse::NetSlice;
-use std::time::Duration;
 use ipnet::IpNet;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -69,10 +69,7 @@ async fn main() {
                                 NatPreroutingStage,
                                 Chain<
                                     TcpClassificationStage,
-                                    Chain<
-                                        PolicyEvalStage,
-                                        Chain<NatPostroutingStage, FtpAlgStage>,
-                                    >,
+                                    Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
                                 >,
                             >,
                         >,
@@ -103,10 +100,7 @@ async fn main() {
         Ok(ca) => {
             tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
             let info = ca.ca_info();
-            let forger = Arc::new(
-                ca.cert_forger(1024)
-                    .expect("Failed to create cert forger"),
-            );
+            let forger = Arc::new(ca.cert_forger(1024).expect("Failed to create cert forger"));
             let untrust = Arc::new(
                 ca.untrust_cert_forger(256)
                     .expect("Failed to create untrust cert forger"),
@@ -223,6 +217,8 @@ async fn main() {
         config_snapshot_server::SnapshotHandler {
             decision_engine: Arc::clone(&decision_engine),
             server_key_store: Arc::clone(&server_key_store),
+            dns_inspection_store: Arc::clone(&dns_inspection_store),
+            dns_inspection: Arc::clone(&dns_inspection),
         },
         &config.control_plane_socket_path,
         CancellationToken::new(),

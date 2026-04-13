@@ -26,6 +26,7 @@ import {
   type FirewallConfigSnapshotServiceClient,
   type PushActiveConfigSnapshotRequest,
 } from '../grpc/generated/services/config_snapshot_service.js';
+import type { TlsInspectionPolicy } from '../grpc/generated/config/config_models.js';
 import { SecretStore } from '../persistence/secret-store.js';
 
 export const CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN =
@@ -156,14 +157,14 @@ export class GrpcConfigSnapshotPushService
         : undefined,
       firewallCertificates: await Promise.all(
         b.firewall_certificates.items.map(async (c) => {
-          // Resolve PEM z secret store tylko dla TLS_SERVER
           let privateKeyPem = '';
           if (c.getCertType() === 'TLS_SERVER' && c.getPrivateKeyRef()) {
-            try {
-              privateKeyPem = await this.secretStore.load(c.getPrivateKeyRef());
-            } catch {
-              // klucz niedostepny -- firewall zaladuje z dysku po key_ref
+            if (!this.secretStore.isConfigured()) {
+              throw new Error(
+                'BACKEND_SECRET_ENCRYPTION_KEY is required for TLS server certificate push',
+              );
             }
+            privateKeyPem = await this.secretStore.load(c.getPrivateKeyRef());
           }
 
           return {
@@ -181,7 +182,22 @@ export class GrpcConfigSnapshotPushService
           };
         }),
       ),
+      tlsInspectionPolicy: this.toTlsInspectionPolicy(
+        b.tls_inspection_policy,
+      ),
       identity: undefined,
+    };
+  }
+
+  private toTlsInspectionPolicy(
+    policy: ConfigSnapshotPayload['bundle']['tls_inspection_policy'],
+  ): TlsInspectionPolicy {
+    return {
+      blockEchNoSni: policy?.block_ech_no_sni ?? true,
+      blockAllEch: policy?.block_all_ech ?? false,
+      stripEchDns: policy?.strip_ech_dns ?? true,
+      logEchAttempts: policy?.log_ech_attempts ?? true,
+      knownPinnedDomains: [...(policy?.known_pinned_domains ?? [])],
     };
   }
 

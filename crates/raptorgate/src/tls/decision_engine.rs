@@ -18,23 +18,33 @@ pub struct EchTlsPolicy {
 
 impl Default for EchTlsPolicy {
     fn default() -> Self {
-        Self { block_ech_no_sni: true, block_all_ech: false }
+        Self {
+            block_ech_no_sni: true,
+            block_all_ech: false,
+        }
     }
 }
 
 // Jedno źródło prawdy dla decyzji inspekcji TLS w runtime proxy.
 pub struct TlsDecisionEngine {
     bypass_trie: ArcSwap<DomainTrie>,
+    known_pinned_trie: ArcSwap<DomainTrie>,
     server_key_store: Arc<ServerKeyStore>,
     ech_policy: ArcSwap<EchTlsPolicy>,
     pinning_detector: PinningDetector,
 }
 
 impl TlsDecisionEngine {
-    pub fn new(bypass_domains: &[String], server_key_store: Arc<ServerKeyStore>, ech_policy: EchTlsPolicy, pinning_config: PinningConfig) -> Self {
+    pub fn new(
+        bypass_domains: &[String],
+        server_key_store: Arc<ServerKeyStore>,
+        ech_policy: EchTlsPolicy,
+        pinning_config: PinningConfig,
+    ) -> Self {
         let trie = DomainTrie::from_domains(bypass_domains);
         Self {
             bypass_trie: ArcSwap::new(Arc::new(trie)),
+            known_pinned_trie: ArcSwap::new(Arc::new(DomainTrie::new())),
             server_key_store,
             ech_policy: ArcSwap::new(Arc::new(ech_policy)),
             pinning_detector: PinningDetector::new(pinning_config),
@@ -63,6 +73,9 @@ impl TlsDecisionEngine {
         let trie = self.bypass_trie.load();
         if let Some(domain) = sni {
             if trie.contains(domain) {
+                return TlsAction::Bypass;
+            }
+            if self.known_pinned_trie.load().contains(domain) {
                 return TlsAction::Bypass;
             }
         }
@@ -115,8 +128,20 @@ impl TlsDecisionEngine {
         tracing::info!("ECH TLS policy reloaded");
     }
 
-    pub fn report_pinning_failure(&self, source_ip: IpAddr, domain: &str, reason: PinningReason) -> bool {
-        self.pinning_detector.record_failure(source_ip, domain, reason)
+    pub fn reload_known_pinned_domains(&self, domains: &[String]) {
+        let trie = DomainTrie::from_domains(domains);
+        self.known_pinned_trie.store(Arc::new(trie));
+        tracing::info!(count = domains.len(), "TLS known pinned domains reloaded");
+    }
+
+    pub fn report_pinning_failure(
+        &self,
+        source_ip: IpAddr,
+        domain: &str,
+        reason: PinningReason,
+    ) -> bool {
+        self.pinning_detector
+            .record_failure(source_ip, domain, reason)
     }
 
     pub fn pinning_detector(&self) -> &PinningDetector {
@@ -153,7 +178,12 @@ mod tests {
     fn engine(domains: &[&str]) -> TlsDecisionEngine {
         let ds: Vec<String> = domains.iter().map(|s| s.to_string()).collect();
         let store = Arc::new(ServerKeyStore::new("/tmp/test-pki-decision"));
-        TlsDecisionEngine::new(&ds, store, EchTlsPolicy::default(), PinningConfig::default())
+        TlsDecisionEngine::new(
+            &ds,
+            store,
+            EchTlsPolicy::default(),
+            PinningConfig::default(),
+        )
     }
 
     fn engine_with_ech_policy(domains: &[&str], policy: EchTlsPolicy) -> TlsDecisionEngine {
@@ -165,13 +195,19 @@ mod tests {
     #[test]
     fn bypass_by_sni() {
         let e = engine(&["bank.com"]);
-        assert_eq!(e.decide(Some("www.bank.com"), false, None, 443, None), TlsAction::Bypass);
+        assert_eq!(
+            e.decide(Some("www.bank.com"), false, None, 443, None),
+            TlsAction::Bypass
+        );
     }
 
     #[test]
     fn intercept_unknown_domain() {
         let e = engine(&["bank.com"]);
-        assert_eq!(e.decide(Some("example.com"), false, None, 443, None), TlsAction::Intercept);
+        assert_eq!(
+            e.decide(Some("example.com"), false, None, 443, None),
+            TlsAction::Intercept
+        );
     }
 
     #[test]
@@ -183,15 +219,24 @@ mod tests {
     #[test]
     fn intercept_default() {
         let e = engine(&[]);
-        assert_eq!(e.decide(Some("example.com"), false, None, 443, None), TlsAction::Intercept);
+        assert_eq!(
+            e.decide(Some("example.com"), false, None, 443, None),
+            TlsAction::Intercept
+        );
     }
 
     #[test]
     fn reload_bypass() {
         let e = engine(&[]);
-        assert_eq!(e.decide(Some("bank.com"), false, None, 443, None), TlsAction::Intercept);
+        assert_eq!(
+            e.decide(Some("bank.com"), false, None, 443, None),
+            TlsAction::Intercept
+        );
         e.reload_bypass(&["bank.com".into()]);
-        assert_eq!(e.decide(Some("bank.com"), false, None, 443, None), TlsAction::Bypass);
+        assert_eq!(
+            e.decide(Some("bank.com"), false, None, 443, None),
+            TlsAction::Bypass
+        );
     }
 
     #[test]
@@ -204,24 +249,45 @@ mod tests {
     #[test]
     fn ech_with_outer_sni_intercept() {
         let e = engine(&["bank.com"]);
-        assert_eq!(e.decide(Some("cloudflare-ech.com"), true, None, 443, None), TlsAction::Intercept);
+        assert_eq!(
+            e.decide(Some("cloudflare-ech.com"), true, None, 443, None),
+            TlsAction::Intercept
+        );
     }
 
     #[test]
     fn ech_with_outer_sni_bypass() {
         let e = engine(&["cloudflare-ech.com"]);
-        assert_eq!(e.decide(Some("cloudflare-ech.com"), true, None, 443, None), TlsAction::Bypass);
+        assert_eq!(
+            e.decide(Some("cloudflare-ech.com"), true, None, 443, None),
+            TlsAction::Bypass
+        );
     }
 
     #[test]
     fn ech_block_all_policy() {
-        let e = engine_with_ech_policy(&[], EchTlsPolicy { block_all_ech: true, block_ech_no_sni: true });
-        assert_eq!(e.decide(Some("example.com"), true, None, 443, None), TlsAction::Block);
+        let e = engine_with_ech_policy(
+            &[],
+            EchTlsPolicy {
+                block_all_ech: true,
+                block_ech_no_sni: true,
+            },
+        );
+        assert_eq!(
+            e.decide(Some("example.com"), true, None, 443, None),
+            TlsAction::Block
+        );
     }
 
     #[test]
     fn ech_no_sni_allowed_when_policy_off() {
-        let e = engine_with_ech_policy(&[], EchTlsPolicy { block_ech_no_sni: false, block_all_ech: false });
+        let e = engine_with_ech_policy(
+            &[],
+            EchTlsPolicy {
+                block_ech_no_sni: false,
+                block_all_ech: false,
+            },
+        );
         assert_eq!(e.decide(None, true, None, 443, None), TlsAction::Intercept);
     }
 
@@ -229,24 +295,50 @@ mod tests {
     fn ech_policy_reload() {
         let e = engine(&[]);
         assert_eq!(e.decide(None, true, None, 443, None), TlsAction::Block);
-        e.reload_ech_policy(EchTlsPolicy { block_ech_no_sni: false, block_all_ech: false });
+        e.reload_ech_policy(EchTlsPolicy {
+            block_ech_no_sni: false,
+            block_all_ech: false,
+        });
         assert_eq!(e.decide(None, true, None, 443, None), TlsAction::Intercept);
     }
 
     #[test]
+    fn known_pinned_domains_bypass() {
+        let e = engine(&[]);
+        e.reload_known_pinned_domains(&["*.apple.com".into()]);
+        assert_eq!(
+            e.decide(Some("api.apple.com"), false, None, 443, None),
+            TlsAction::Bypass
+        );
+    }
+
+    #[test]
     fn pinning_auto_bypass_after_threshold() {
-        let cfg = PinningConfig { enabled: true, failure_threshold: 2, ..PinningConfig::default() };
+        let cfg = PinningConfig {
+            enabled: true,
+            failure_threshold: 2,
+            ..PinningConfig::default()
+        };
         let ds: Vec<String> = Vec::new();
         let store = Arc::new(ServerKeyStore::new("/tmp/test-pki-pin"));
         let e = TlsDecisionEngine::new(&ds, store, EchTlsPolicy::default(), cfg);
 
         let src = std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
-        assert_eq!(e.decide(Some("pinned.app"), false, None, 443, Some(src)), TlsAction::Intercept);
+        assert_eq!(
+            e.decide(Some("pinned.app"), false, None, 443, Some(src)),
+            TlsAction::Intercept
+        );
 
         e.report_pinning_failure(src, "pinned.app", PinningReason::TcpReset);
         e.report_pinning_failure(src, "pinned.app", PinningReason::TcpReset);
 
-        assert_eq!(e.decide(Some("pinned.app"), false, None, 443, Some(src)), TlsAction::Bypass);
-        assert_eq!(e.decide(Some("pinned.app"), false, None, 443, None), TlsAction::Intercept);
+        assert_eq!(
+            e.decide(Some("pinned.app"), false, None, 443, Some(src)),
+            TlsAction::Bypass
+        );
+        assert_eq!(
+            e.decide(Some("pinned.app"), false, None, 443, None),
+            TlsAction::Intercept
+        );
     }
 }

@@ -21,7 +21,8 @@ const envSchema = z.object({
   BACKEND_SECRET_ENCRYPTION_KEY: z
     .string()
     .length(64, 'BACKEND_SECRET_ENCRYPTION_KEY must be 64 hex chars (32 bytes)')
-    .regex(/^[0-9a-fA-F]+$/),
+    .regex(/^[0-9a-fA-F]+$/)
+    .optional(),
   CORS_ORIGIN: z
     .string()
     .or(z.array(z.string()))
