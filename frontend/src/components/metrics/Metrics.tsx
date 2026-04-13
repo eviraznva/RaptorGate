@@ -1,39 +1,3 @@
-import { motion } from "framer-motion";
-import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer } from "recharts";
-
-const trafficData = Array.from({ length: 60 }, (_, i) => ({
-  time: i,
-  ingress: Math.floor(Math.random() * 1000000 + 500000),
-  egress: Math.floor(Math.random() * 500000 + 200000),
-}));
-
-const liveFeed = [
-  {
-    time: "14:32:01",
-    src: "10.0.0.5",
-    dst: "8.8.8.8:443",
-    proto: "TLS",
-    dir: "→",
-  },
-  {
-    time: "14:32:01",
-    src: "10.0.0.8",
-    dst: "1.1.1.1:80",
-    proto: "HTTP",
-    dir: "→",
-  },
-  { time: "14:32:00", src: "10.0.0.1", dst: "ext:53", proto: "DNS", dir: "→" },
-  { time: "14:32:00", src: "ext", dst: "10.0.0.5:22", proto: "SSH", dir: "←" },
-  { time: "14:31:59", src: "10.0.0.3", dst: "ext:22", proto: "SSH", dir: "→" },
-];
-
-const alerts = [
-  { level: "CRITICAL", msg: "Port scan detected", src: "192.168.1.1" },
-  { level: "HIGH", msg: "DNS tunneling", src: "internal" },
-  { level: "HIGH", msg: "ML anomaly (94%)", src: "10.0.0.5" },
-  { level: "MEDIUM", msg: "Unusual pattern", src: "LAN" },
-];
-
 export function Metrics() {
   return (
     <div className="min-h-screen bg-[#0c0c0c] flex flex-col text-[#f5f5f5]">

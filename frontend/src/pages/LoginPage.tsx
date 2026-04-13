@@ -12,7 +12,7 @@ import { LineArrow } from "../components/lineArrow/LineArrow";
 export default function LoginPage() {
   const loginData = useAppSelector((state) => state.loginData);
   const dispatch = useAppDispatch();
-  const [login, { isError, isSuccess }] = useLoginMutation();
+  const [login, { isError }] = useLoginMutation();
   const [response, setResponse] = useState<ApiFailure>();
   const navigate = useNavigate();
 
