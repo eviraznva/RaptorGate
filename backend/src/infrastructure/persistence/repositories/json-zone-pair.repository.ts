@@ -1,19 +1,19 @@
-import { IZonePairRepository } from '../../../domain/repositories/zone-pair.repository.js';
+import { join } from "node:path";
+import { Inject } from "@nestjs/common";
+import { ZonePair } from "../../../domain/entities/zone-pair.entity.js";
+import { IZonePairRepository } from "../../../domain/repositories/zone-pair.repository.js";
+import { Mutex } from "../json/file-mutex.js";
+import { FileStore } from "../json/file-store.js";
+import { ZonePairJsonMapper } from "../mappers/zone-pair-json.mapper.js";
 import {
   ZonePairsFile,
   ZonePairsFileSchema,
-} from '../schemas/zone-pairs.schema.js';
-import { ZonePairJsonMapper } from '../mappers/zone-pair-json.mapper.js';
-import { ZonePair } from '../../../domain/entities/zone-pair.entity.js';
-import { FileStore } from '../json/file-store.js';
-import { Mutex } from '../json/file-mutex.js';
-import { Inject } from '@nestjs/common';
-import { join } from 'path';
+} from "../schemas/zone-pairs.schema.js";
 
 export class JsonZonePairRepository implements IZonePairRepository {
   private readonly filePath = join(
     process.cwd(),
-    'data/json-db/zone_pairs.json',
+    "data/json-db/zone_pairs.json",
   );
 
   constructor(
