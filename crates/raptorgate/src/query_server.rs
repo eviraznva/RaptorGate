@@ -33,7 +33,7 @@ use crate::proto::services::{
     GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest,
     SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
     SwapIpsConfigRequest, SwapIpsConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse,
-    SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse,
+    SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse, GetSystemTimeRequest, GetSystemTimeResponse
 };
 use crate::zones::Zone;
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
@@ -353,6 +353,9 @@ where
     ) -> Result<Response<GetSystemTimeResponse>, Status> {
         Ok(Response::new(GetSystemTimeResponse {
             time: Some(SystemTime::now().into()),
+        }))
+    }
+
     async fn swap_dns_inspection_config(
         &self,
         request: Request<SwapDnsInspectionConfigRequest>,

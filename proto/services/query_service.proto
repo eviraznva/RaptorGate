@@ -117,6 +117,7 @@ message GetSystemTimeRequest {}
 
 message GetSystemTimeResponse {
   google.protobuf.Timestamp time = 1;
+}
 // ── DNS Inspection Config ─────────────────────────────────────────────────────
 
 message SwapDnsInspectionConfigRequest {
