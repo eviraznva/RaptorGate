@@ -1,7 +1,8 @@
+import "module-alias/register";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { cwd } from "node:process";
-import { BadRequestException, Logger, ValidationPipe } from "@nestjs/common";
+import { BadRequestException, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { type MicroserviceOptions, Transport } from "@nestjs/microservices";
@@ -11,9 +12,16 @@ import { apiReference } from "@scalar/nestjs-api-reference";
 import cookieParser from "cookie-parser";
 import { AppModule } from "./app.module.js";
 import type { Env } from "./shared/config/env.validation.js";
+import {
+  DailyFileLogger,
+  DEFAULT_BACKEND_LOG_DIR,
+} from "./shared/logging/daily-file.logger.js";
 
 async function bootstrap() {
-  const logger = new Logger("Bootstrap");
+  const appLogger = new DailyFileLogger({
+    logDir: process.env.BACKEND_LOG_DIR ?? DEFAULT_BACKEND_LOG_DIR,
+  });
+  const logger = appLogger.withContext("Bootstrap");
   const certsDir = join(cwd(), "devCerts");
 
   const httpsOptions = {
@@ -23,6 +31,7 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     httpsOptions,
+    logger: appLogger,
   });
 
   app.set("query parser", "extended");

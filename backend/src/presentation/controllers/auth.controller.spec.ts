@@ -26,6 +26,11 @@ describe("AuthController", () => {
 		configService = {
 			get: jest.fn(),
 		} as any;
+		configService.get.mockImplementation((key) => {
+			if (key === "NODE_ENV") return "development";
+			if (key === "AUTH_COOKIE_PATH") return "/auth/refresh";
+			return undefined;
+		});
 		const module: TestingModule = await Test.createTestingModule({
 			controllers: [AuthController],
 			providers: [
@@ -66,10 +71,6 @@ describe("AuthController", () => {
 			};
 			// Zachowanie mocków
 			loginUserUseCase.execute.mockResolvedValue(expectedResponse);
-			configService.get.mockImplementation((key) => {
-				if (key === "NODE_ENV") return "development";
-				return undefined;
-			});
 			// Wykonanie testowanej metody
 			const result = await controller.login(loginDto, mockResponse as Response);
 			// Asercje (sprawdzenia)
@@ -122,7 +123,6 @@ describe("AuthController", () => {
 				refreshToken: "rotated-refresh-token", // Use case zwrócił nowy RT
 			};
 			refreshTokenUseCase.execute.mockResolvedValue(expectedResponse);
-			configService.get.mockReturnValue("development");
 			const result = await controller.refresh(
 				accessToken,
 				refreshToken,

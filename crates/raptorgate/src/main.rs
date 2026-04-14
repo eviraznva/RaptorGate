@@ -5,6 +5,7 @@ mod disk_store;
 mod dpi;
 mod events;
 mod ip_defrag;
+mod logging;
 mod packet_validator;
 mod pipeline;
 mod policy;
@@ -71,12 +72,15 @@ async fn main() {
         >,
     >;
 
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_thread_names(false)
-        .init();
+    if let Err(err) = logging::init() {
+        eprintln!("failed to initialize daily firewall logging: {err}");
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_target(false)
+            .with_thread_ids(false)
+            .with_thread_names(false)
+            .init();
+    }
 
     let config_provider = match AppConfigProvider::from_env().await {
         Ok(provider) => Arc::new(provider),
@@ -94,7 +98,7 @@ async fn main() {
             Some(ca.ca_info())
         }
         Err(err) => {
-            eprintln!("Warning: CA initialization failed: {err}");
+            tracing::warn!(error = %err, "CA initialization failed");
             None
         }
     };
@@ -119,7 +123,7 @@ async fn main() {
         .await;
 
     tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
-    
+
     let nat_engine = build_test_nat();
 
     // Inicjalizacja providera konfiguracji DNS inspection.
