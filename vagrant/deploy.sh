@@ -24,27 +24,39 @@ cd "$SCRIPT_DIR/.."
 cd "$SCRIPT_DIR/.."
 docker compose up --build || exit 1
 
+test -d bin/backend/node_modules/@nestjs/websockets || {
+  echo "backend artifact is missing @nestjs/websockets; rebuild backend_build failed or produced stale bin/backend" >&2
+  exit 1
+}
+
+grep -q 'module-alias/register' bin/backend/dist/src/main.js || {
+  echo "backend artifact is missing module-alias/register; rebuild backend_build produced stale dist" >&2
+  exit 1
+}
+
+test -f bin/frontend/dist/index.html || {
+  echo "frontend artifact is missing dist/index.html; rebuild frontend_build failed or produced stale bin/frontend" >&2
+  exit 1
+}
+
 cd "$SCRIPT_DIR"
 mkdir -p .router_sync/"$PROJECT_NAME"
 rm -rf .router_sync/backend && mkdir -p .router_sync/backend
+rm -rf .router_sync/frontend && mkdir -p .router_sync/frontend
 rm -rf .router_sync/proto && mkdir -p .router_sync/proto
+rm -rf .router_sync/logrotate && mkdir -p .router_sync/logrotate
+rm -rf .router_sync/nginx && mkdir -p .router_sync/nginx
 cp -f ../bin/"$PROJECT_NAME" .router_sync/"$PROJECT_NAME"/"$PROJECT_NAME"
 cp -rf ../bin/backend/* .router_sync/backend/
-# cd "$SCRIPT_DIR/../backend" && bun run build || exit 1 // czm buildujemy to w deployu
+cp -rf ../bin/frontend/dist .router_sync/frontend/
 cd "$SCRIPT_DIR"
-# Lokalny build backendu jest opcjonalny. Jeśli nie istnieje `../backend/dist`,
-# zostawiamy artefakty skopiowane wcześniej z `../bin/backend/dist`.
-if [ -d ../backend/dist ]; then
-  rm -rf .router_sync/backend/dist && mkdir -p .router_sync/backend/dist
-  cp -rf ../backend/dist/* .router_sync/backend/dist/
-else
-  echo "backend/dist not found locally; using artifacts from ../bin/backend/dist"
-fi
 rm -rf .router_sync/backend/devCerts && mkdir -p .router_sync/backend/devCerts
 cp -rf ../backend/devCerts/* .router_sync/backend/devCerts/
 cp -rf ../proto/* .router_sync/proto/
 cp -rf ./configs/* .router_sync/ngfw
 cp -rf services .router_sync
+cp -rf nginx/* .router_sync/nginx/
+cp -rf logrotate/* .router_sync/logrotate/
 
 vagrant rsync r1 || true
 vagrant up --provision

@@ -10,7 +10,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
-import type { Response } from "express";
+import type { CookieOptions, Response } from "express";
 import { LoginUserUseCase } from "../../application/use-cases/login-user.use-case";
 import { LogoutUserUseCase } from "../../application/use-cases/logout-user.use-case";
 import { RecoverPasswordUseCase } from "../../application/use-cases/recover-password.use-case";
@@ -52,6 +52,19 @@ export class AuthController {
     private readonly recoverPasswordUseCase: RecoverPasswordUseCase,
   ) {}
 
+  private getRefreshCookieOptions(): CookieOptions {
+    const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
+    const path = this.configService.get("AUTH_COOKIE_PATH", { infer: true });
+
+    return {
+      httpOnly: true,
+      secure: nodeEnv === "development" || nodeEnv === "production",
+      sameSite: "strict",
+      maxAge: 60 * 60 * 1000,
+      path,
+    };
+  }
+
   @ApiOperation({
     summary: "User login",
     description:
@@ -79,15 +92,7 @@ export class AuthController {
     const { refreshToken, ...loginResponse } =
       await this.loginUserUseCase.execute(applicationDto);
 
-    res.cookie("refresh_token", refreshToken, {
-      httpOnly: true,
-      secure:
-        this.configService.get("NODE_ENV") === "development" ||
-        this.configService.get("NODE_ENV") === "production",
-      sameSite: "strict",
-      maxAge: 60 * 60 * 1000,
-      path: "/auth/refresh",
-    });
+    res.cookie("refresh_token", refreshToken, this.getRefreshCookieOptions());
 
     return loginResponse;
   }
@@ -116,15 +121,11 @@ export class AuthController {
     });
 
     if (useCase.refreshToken) {
-      res.cookie("refresh_token", useCase.refreshToken, {
-        httpOnly: true,
-        secure:
-          this.configService.get("NODE_ENV") === "development" ||
-          this.configService.get("NODE_ENV") === "production",
-        sameSite: "strict",
-        maxAge: 60 * 60 * 1000,
-        path: "/auth/refresh",
-      });
+      res.cookie(
+        "refresh_token",
+        useCase.refreshToken,
+        this.getRefreshCookieOptions(),
+      );
     }
 
     return {
@@ -151,15 +152,7 @@ export class AuthController {
   ): Promise<void> {
     await this.logoutUserUseCase.execute({ accessToken });
 
-    res.clearCookie("refresh_token", {
-      httpOnly: true,
-      secure:
-        this.configService.get("NODE_ENV") === "development" ||
-        this.configService.get("NODE_ENV") === "production",
-      sameSite: "strict",
-      maxAge: 60 * 60 * 1000,
-      path: "/auth/refresh",
-    });
+    res.clearCookie("refresh_token", this.getRefreshCookieOptions());
   }
 
   @IsPublic()
