@@ -13,9 +13,10 @@ use crate::dpi::parsers::tls::parse_tls_client_hello;
 use crate::events;
 use crate::events::{EchAction, EchOrigin, HandshakeStage};
 use crate::tls::cert_forger::CertForger;
+use crate::tls::decrypted_chain::DecryptedTrafficInspector;
 use crate::tls::decision_engine::TlsDecisionEngine;
 use crate::tls::dual_session::{self, AcceptParams, ConnectParams};
-use crate::tls::inspection_relay::{InspectionRelay, InspectionMode, IpsInspector, SessionMeta};
+use crate::tls::inspection_relay::{InspectionRelay, InspectionMode, SessionMeta};
 use crate::tls::original_dst;
 use crate::tls::pinning_detector;
 use crate::tls::rustls_config;
@@ -28,7 +29,7 @@ pub struct MitmProxyConfig {
     pub cert_forger: Arc<CertForger>,
     pub untrust_forger: Arc<CertForger>,
     pub decision_engine: Arc<TlsDecisionEngine>,
-    pub ips_inspector: Arc<dyn IpsInspector>,
+    pub decrypted_inspector: Arc<dyn DecryptedTrafficInspector>,
     pub cancel: CancellationToken,
 }
 
@@ -56,7 +57,7 @@ impl MitmProxy {
             cert_forger: config.cert_forger,
             untrust_forger: config.untrust_forger,
             decision_engine: config.decision_engine,
-            inspection_relay: Arc::new(InspectionRelay::new(config.ips_inspector)),
+            inspection_relay: Arc::new(InspectionRelay::new(config.decrypted_inspector)),
             cancel: config.cancel,
         })
     }

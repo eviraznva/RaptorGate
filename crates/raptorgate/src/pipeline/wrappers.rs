@@ -57,6 +57,10 @@ pub struct LocalOwnershipStage {
 
 impl Stage for LocalOwnershipStage {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        if packet_is_decrypted(ctx) {
+            return StageOutcome::Continue;
+        }
+
         let Some(dst_ip) = packet_destination_ip(ctx) else {
             return StageOutcome::Continue;
         };
@@ -107,12 +111,22 @@ fn should_halt_for_tls_redirect(ctx: &PacketContext, config: &AppConfig) -> bool
     )
 }
 
+fn packet_is_decrypted(ctx: &PacketContext) -> bool {
+    ctx.borrow_dpi_ctx()
+        .as_ref()
+        .is_some_and(|dpi_ctx| dpi_ctx.decrypted)
+}
+
 #[derive(Clone)]
 pub struct NatPreroutingStage {
     pub engine: Arc<Mutex<NatEngine>>,
 }
 
 impl Stage for NatPreroutingStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        !packet_is_decrypted(ctx)
+    }
+
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let iface = ctx.borrow_src_interface().to_string();
         let mut engine = self.engine.lock().await;
@@ -136,6 +150,10 @@ pub struct NatPostroutingStage {
 }
 
 impl Stage for NatPostroutingStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        !packet_is_decrypted(ctx)
+    }
+
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let dst_ip = match &ctx.borrow_sliced_packet().net {
             Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
@@ -171,6 +189,7 @@ impl Stage for FtpAlgStage {
             ctx.borrow_dpi_ctx(),
             Some(dpi_ctx)
                 if dpi_ctx.app_proto == Some(AppProto::Ftp)
+                    && !dpi_ctx.decrypted
                     && dpi_ctx.ftp_data_endpoint.is_some()
         )
     }
@@ -371,15 +390,39 @@ impl Stage for IpsStage {
     }
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        ctx.with_dpi_ctx_mut(|dpi| {
+            if let Some(dpi) = dpi.as_mut() {
+                dpi.ips_match = None;
+            }
+        });
+
         match self.inspection.inspect_packet(ctx) {
             IpsVerdict::Allow => StageOutcome::Continue,
             IpsVerdict::Alert(msg) => {
                 tracing::debug!(reason = %msg, "IPS alert");
+                ctx.with_dpi_ctx_mut(|dpi| {
+                    if let Some(dpi) = dpi.as_mut() {
+                        dpi.ips_match = Some(crate::dpi::IpsMatch {
+                            signature_name: msg.clone(),
+                            severity: "medium".to_string(),
+                            blocked: false,
+                        });
+                    }
+                });
                 ctx.with_warnings_mut(|warnings| warnings.push(msg));
                 StageOutcome::Continue
             }
             IpsVerdict::Block(msg) => {
                 tracing::debug!(reason = %msg, "IPS block");
+                ctx.with_dpi_ctx_mut(|dpi| {
+                    if let Some(dpi) = dpi.as_mut() {
+                        dpi.ips_match = Some(crate::dpi::IpsMatch {
+                            signature_name: msg.clone(),
+                            severity: "high".to_string(),
+                            blocked: true,
+                        });
+                    }
+                });
                 ctx.with_warnings_mut(|warnings| warnings.push(msg));
                 StageOutcome::Halt
             }
@@ -465,6 +508,10 @@ pub struct TcpClassificationStage {
 }
 
 impl Stage for TcpClassificationStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        !packet_is_decrypted(ctx)
+    }
+
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         match self.tracker.process_packet(ctx.borrow_sliced_packet()) {
             Ok(_) => StageOutcome::Continue,
@@ -493,7 +540,8 @@ impl Stage for DpiStage {
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         match self.classifier.inspect_packet(ctx.borrow_sliced_packet()) {
-            InspectResult::Done(dpi_ctx) => {
+            InspectResult::Done(mut dpi_ctx) => {
+                merge_preserved_dpi_fields(ctx.borrow_dpi_ctx().as_ref(), &mut dpi_ctx);
                 tracing::debug!("DPI: classification done ctx={dpi_ctx:?}");
                 ctx.with_dpi_ctx_mut(|c| *c = Some(dpi_ctx));
             }
@@ -502,6 +550,16 @@ impl Stage for DpiStage {
         }
         StageOutcome::Continue
     }
+}
+
+fn merge_preserved_dpi_fields(existing: Option<&crate::dpi::DpiContext>, next: &mut crate::dpi::DpiContext) {
+    let Some(existing) = existing else {
+        return;
+    };
+
+    next.decrypted |= existing.decrypted;
+    next.src_port = next.src_port.or(existing.src_port);
+    next.dst_port = next.dst_port.or(existing.dst_port);
 }
 
 #[cfg(test)]
@@ -565,5 +623,41 @@ mod tests {
     fn tls_redirect_ignores_unknown_interfaces() {
         let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth9");
         assert!(!should_halt_for_tls_redirect(&ctx, &sample_config()));
+    }
+
+    #[test]
+    fn packet_is_decrypted_detects_seeded_tls_plaintext_context() {
+        let mut ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth1");
+        ctx.with_dpi_ctx_mut(|dpi| {
+            *dpi = Some(crate::dpi::DpiContext {
+                decrypted: true,
+                src_port: Some(12345),
+                dst_port: Some(443),
+                ..Default::default()
+            });
+        });
+
+        assert!(packet_is_decrypted(&ctx));
+    }
+
+    #[test]
+    fn merge_preserved_dpi_fields_keeps_decrypted_metadata() {
+        let existing = crate::dpi::DpiContext {
+            decrypted: true,
+            src_port: Some(12345),
+            dst_port: Some(443),
+            ..Default::default()
+        };
+        let mut classified = crate::dpi::DpiContext {
+            app_proto: Some(crate::dpi::AppProto::Http),
+            ..Default::default()
+        };
+
+        merge_preserved_dpi_fields(Some(&existing), &mut classified);
+
+        assert!(classified.decrypted);
+        assert_eq!(classified.src_port, Some(12345));
+        assert_eq!(classified.dst_port, Some(443));
+        assert_eq!(classified.app_proto, Some(crate::dpi::AppProto::Http));
     }
 }

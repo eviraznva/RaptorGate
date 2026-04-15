@@ -4,35 +4,15 @@ use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use uuid::Uuid;
 
-use crate::data_plane::ips::ips::Ips;
 use crate::dpi::{AppProto, DpiClassifier, DpiContext};
 use crate::events;
+use crate::tls::decrypted_chain::{
+    DecryptedTrafficInspector, InspectionDisposition,
+};
 
 const INSPECT_BUF_CAP: usize = 16_384;
 const CHUNK_SIZE: usize = 8_192;
 const MAX_INSPECT_CHUNKS: u8 = 5;
-
-/// Werdykt inspekcji IPS po analizie odszyfrowanego ruchu.
-#[derive(Debug, Clone)]
-pub enum IpsVerdict {
-    Allow,
-    Alert { signature_name: String, severity: String },
-    Block { signature_name: String, severity: String },
-}
-
-/// Trait dla silnika IPS — kolega implementuje dopasowanie sygnatur.
-pub trait IpsInspector: Send + Sync {
-    fn inspect(&self, payload: &[u8], dpi_ctx: &DpiContext) -> IpsVerdict;
-}
-
-/// Placeholder IPS — przepuszcza wszystko. Zastapiony prawdziwym silnikiem.
-pub struct NoopIpsInspector;
-
-impl IpsInspector for NoopIpsInspector {
-    fn inspect(&self, _payload: &[u8], _dpi_ctx: &DpiContext) -> IpsVerdict {
-        IpsVerdict::Allow
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Direction {
@@ -55,46 +35,14 @@ pub enum InspectionMode {
     Outbound,
 }
 
-// Adapter IPS dla odszyfrowanego ruchu -- deleguje do Ips::inspect_decrypted.
-pub struct DecryptedIpsInspector {
-    ips: Arc<Ips>,
-}
-
-impl DecryptedIpsInspector {
-    pub fn new(ips: Arc<Ips>) -> Self {
-        Self { ips }
-    }
-}
-
-impl IpsInspector for DecryptedIpsInspector {
-    fn inspect(&self, payload: &[u8], dpi_ctx: &DpiContext) -> IpsVerdict {
-        let app_proto = dpi_ctx.app_proto;
-        // Porty z DpiContext -- src_port/dst_port ustawiane w relay
-        let src_port = dpi_ctx.src_port.unwrap_or(0);
-        let dst_port = dpi_ctx.dst_port.unwrap_or(0);
-
-        match self.ips.inspect_decrypted(payload, app_proto, src_port, dst_port) {
-            crate::data_plane::ips::ips::IpsVerdict::Allow => IpsVerdict::Allow,
-            crate::data_plane::ips::ips::IpsVerdict::Alert(msg) => IpsVerdict::Alert {
-                signature_name: msg,
-                severity: "medium".to_string(),
-            },
-            crate::data_plane::ips::ips::IpsVerdict::Block(msg) => IpsVerdict::Block {
-                signature_name: msg,
-                severity: "high".to_string(),
-            },
-        }
-    }
-}
-
 /// Relay z inspekcja DPI/IPS na odszyfrowanym ruchu TLS.
 pub struct InspectionRelay {
-    ips: Arc<dyn IpsInspector>,
+    inspector: Arc<dyn DecryptedTrafficInspector>,
 }
 
 impl InspectionRelay {
-    pub fn new(ips: Arc<dyn IpsInspector>) -> Self {
-        Self { ips }
+    pub fn new(inspector: Arc<dyn DecryptedTrafficInspector>) -> Self {
+        Self { inspector }
     }
 
     /// Bidirectional relay z inspekcją obu kierunków.
@@ -114,18 +62,33 @@ impl InspectionRelay {
     {
         let c2s_meta = meta.clone();
         let s2c_meta = meta.clone();
-        let ips_c2s = Arc::clone(&self.ips);
-        let ips_s2c = Arc::clone(&self.ips);
+        let inspector_c2s = Arc::clone(&self.inspector);
+        let inspector_s2c = Arc::clone(&self.inspector);
 
         let c2s = tokio::spawn(async move {
-            relay_one_direction(client_read, server_write, Direction::ClientToServer, &c2s_meta, &*ips_c2s).await
+            relay_one_direction(
+                client_read,
+                server_write,
+                Direction::ClientToServer,
+                &c2s_meta,
+                inspector_c2s,
+            )
+            .await
         });
         let s2c = tokio::spawn(async move {
-            relay_one_direction(server_read, client_write, Direction::ServerToClient, &s2c_meta, &*ips_s2c).await
+            relay_one_direction(
+                server_read,
+                client_write,
+                Direction::ServerToClient,
+                &s2c_meta,
+                inspector_s2c,
+            )
+            .await
         });
 
         let bytes_up = c2s.await.unwrap_or(0);
         let bytes_down = s2c.await.unwrap_or(0);
+        self.inspector.close_session(meta);
 
         (bytes_up, bytes_down)
     }
@@ -137,7 +100,7 @@ async fn relay_one_direction<R, W>(
     mut writer: W,
     direction: Direction,
     meta: &SessionMeta,
-    ips: &dyn IpsInspector,
+    inspector: Arc<dyn DecryptedTrafficInspector>,
 ) -> u64
 where
     R: AsyncRead + Unpin,
@@ -163,7 +126,7 @@ where
                     &ctx,
                     meta,
                     direction,
-                    ips,
+                    &*inspector,
                     total_bytes,
                 )
                 .await;
@@ -184,7 +147,7 @@ where
                 &ctx,
                 meta,
                 direction,
-                ips,
+                &*inspector,
                 total_bytes,
             )
             .await;
@@ -199,7 +162,7 @@ where
                 &ctx,
                 meta,
                 direction,
-                ips,
+                &*inspector,
                 total_bytes,
             )
             .await;
@@ -241,27 +204,28 @@ async fn flush_buffered_and_continue<R, W>(
     ctx: &DpiContext,
     meta: &SessionMeta,
     direction: Direction,
-    ips: &dyn IpsInspector,
+    inspector: &dyn DecryptedTrafficInspector,
     mut total_bytes: u64,
 ) -> u64
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    if let Err(blocked) = handle_verdict(ips, buffered, ctx, meta, direction) {
-        if blocked {
-            return total_bytes;
-        }
-    }
+    let decision = inspector.inspect(buffered, ctx, direction, meta).await;
+    emit_ips_match_event(meta, &decision.ctx, direction);
 
-    emit_classification_event(meta, ctx, direction);
-
-    if writer.write_all(buffered).await.is_err() {
+    if matches!(decision.disposition, InspectionDisposition::Drop) {
         return total_bytes;
     }
-    total_bytes += buffered.len() as u64;
 
-    stream_with_inspection(reader, writer, ctx, meta, direction, ips, total_bytes).await
+    emit_classification_event(meta, &decision.ctx, direction);
+
+    if writer.write_all(&decision.payload).await.is_err() {
+        return total_bytes;
+    }
+    total_bytes += decision.payload.len() as u64;
+
+    stream_with_inspection(reader, writer, &decision.ctx, meta, direction, inspector, total_bytes).await
 }
 
 async fn stream_with_inspection<R, W>(
@@ -270,7 +234,7 @@ async fn stream_with_inspection<R, W>(
     ctx: &DpiContext,
     meta: &SessionMeta,
     direction: Direction,
-    ips: &dyn IpsInspector,
+    inspector: &dyn DecryptedTrafficInspector,
     mut total_bytes: u64,
 ) -> u64
 where
@@ -286,80 +250,52 @@ where
             Err(_) => return total_bytes,
         };
 
-        if let Err(blocked) = handle_verdict(ips, &buf[..n], ctx, meta, direction) {
-            if blocked {
-                return total_bytes;
-            }
-        }
+        let decision = inspector.inspect(&buf[..n], ctx, direction, meta).await;
+        emit_ips_match_event(meta, &decision.ctx, direction);
 
-        if writer.write_all(&buf[..n]).await.is_err() {
+        if matches!(decision.disposition, InspectionDisposition::Drop) {
             return total_bytes;
         }
-        total_bytes += n as u64;
+
+        if writer.write_all(&decision.payload).await.is_err() {
+            return total_bytes;
+        }
+        total_bytes += decision.payload.len() as u64;
     }
 }
 
-/// Sprawdza werdykt IPS i emituje eventy. Zwraca Err(true) jesli zablokowano.
-fn handle_verdict(
-    ips: &dyn IpsInspector,
-    payload: &[u8],
-    ctx: &DpiContext,
+fn emit_ips_match_event(
     meta: &SessionMeta,
+    ctx: &DpiContext,
     direction: Direction,
-) -> Result<(), bool> {
-    match ips.inspect(payload, ctx) {
-        IpsVerdict::Allow => Ok(()),
-        IpsVerdict::Alert { signature_name, severity } => {
-            let log_id = Uuid::now_v7().to_string();
-            tracing::warn!(
-                peer = %meta.peer,
-                server = %meta.server,
-                signature = %signature_name,
-                severity = %severity,
-                log_id = %log_id,
-                "Decrypted traffic IPS alert"
-            );
-            events::emit(events::Event::new(
-                events::EventKind::DecryptedIpsMatch {
-                    peer: meta.peer,
-                    server: meta.server,
-                    sni: meta.sni.clone(),
-                    signature_name,
-                    severity,
-                    blocked: false,
-                    direction,
-                    mode: meta.mode,
-                    log_id,
-                },
-            ));
-            Ok(())
-        }
-        IpsVerdict::Block { signature_name, severity } => {
-            let log_id = Uuid::now_v7().to_string();
-            tracing::warn!(
-                peer = %meta.peer,
-                server = %meta.server,
-                signature = %signature_name,
-                severity = %severity,
-                log_id = %log_id,
-                "Decrypted traffic blocked by IPS"
-            );
-            events::emit(events::Event::new(
-                events::EventKind::DecryptedIpsMatch {
-                    peer: meta.peer,
-                    server: meta.server,
-                    sni: meta.sni.clone(),
-                    signature_name,
-                    severity,
-                    blocked: true,
-                    direction,
-                    mode: meta.mode,
-                    log_id,
-                },
-            ));
-            Err(true)
-        }
-    }
+) {
+    let Some(ips_match) = ctx.ips_match.as_ref() else {
+        return;
+    };
+
+    let log_id = Uuid::now_v7().to_string();
+    tracing::warn!(
+        peer = %meta.peer,
+        server = %meta.server,
+        signature = %ips_match.signature_name,
+        severity = %ips_match.severity,
+        blocked = ips_match.blocked,
+        log_id = %log_id,
+        "Decrypted traffic IPS match"
+    );
+    events::emit(events::Event::new(
+        events::EventKind::DecryptedIpsMatch {
+            peer: meta.peer,
+            server: meta.server,
+            sni: meta.sni.clone(),
+            signature_name: ips_match.signature_name.clone(),
+            severity: ips_match.severity.clone(),
+            blocked: ips_match.blocked,
+            direction,
+            mode: meta.mode,
+            log_id,
+        },
+    ));
 }
 
 // Mapowanie portow na kierunek -- ServerToClient ma odwrocone porty.
@@ -397,17 +333,18 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
     use tokio::io::duplex;
+    use tonic::async_trait;
 
     struct RecordingInspector {
         calls: Mutex<Vec<(Vec<u8>, bool)>>,
-        verdict: Mutex<IpsVerdict>,
+        disposition: InspectionDisposition,
     }
 
     impl RecordingInspector {
-        fn new(verdict: IpsVerdict) -> Self {
+        fn new(disposition: InspectionDisposition) -> Self {
             Self {
                 calls: Mutex::new(Vec::new()),
-                verdict: Mutex::new(verdict),
+                disposition,
             }
         }
 
@@ -416,13 +353,24 @@ mod tests {
         }
     }
 
-    impl IpsInspector for RecordingInspector {
-        fn inspect(&self, payload: &[u8], dpi_ctx: &DpiContext) -> IpsVerdict {
+    #[async_trait]
+    impl DecryptedTrafficInspector for RecordingInspector {
+        async fn inspect(
+            &self,
+            payload: &[u8],
+            dpi_ctx: &DpiContext,
+            _direction: Direction,
+            _meta: &SessionMeta,
+        ) -> crate::tls::decrypted_chain::InspectionDecision {
             self.calls
                 .lock()
                 .unwrap()
                 .push((payload.to_vec(), dpi_ctx.decrypted));
-            self.verdict.lock().unwrap().clone()
+            crate::tls::decrypted_chain::InspectionDecision {
+                disposition: self.disposition,
+                ctx: dpi_ctx.clone(),
+                payload: payload.to_vec(),
+            }
         }
     }
 
@@ -437,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn passthrough_forwards_all_data() {
-        let ips = Arc::new(NoopIpsInspector);
+        let ips = Arc::new(crate::tls::decrypted_chain::NoopDecryptedInspector);
         let relay = InspectionRelay::new(ips);
         let meta = test_meta();
 
@@ -473,10 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn ips_block_stops_relay() {
-        let ips = Arc::new(RecordingInspector::new(IpsVerdict::Block {
-            signature_name: "test-sig".into(),
-            severity: "high".into(),
-        }));
+        let ips = Arc::new(RecordingInspector::new(InspectionDisposition::Drop));
         let ips_clone = Arc::clone(&ips);
         let relay = InspectionRelay::new(ips_clone);
         let meta = test_meta();
@@ -504,10 +449,7 @@ mod tests {
 
     #[tokio::test]
     async fn ips_block_prevents_buffer_forward() {
-        let ips = Arc::new(RecordingInspector::new(IpsVerdict::Block {
-            signature_name: "test-sig".into(),
-            severity: "high".into(),
-        }));
+        let ips = Arc::new(RecordingInspector::new(InspectionDisposition::Drop));
         let relay = InspectionRelay::new(ips);
         let meta = test_meta();
 
@@ -535,7 +477,7 @@ mod tests {
 
     #[tokio::test]
     async fn ips_receives_decrypted_flag() {
-        let ips = Arc::new(RecordingInspector::new(IpsVerdict::Allow));
+        let ips = Arc::new(RecordingInspector::new(InspectionDisposition::Forward));
         let ips_clone = Arc::clone(&ips);
         let relay = InspectionRelay::new(ips_clone);
         let meta = test_meta();
@@ -563,11 +505,18 @@ mod tests {
 
     #[tokio::test]
     async fn noop_inspector_always_allows() {
-        let inspector = NoopIpsInspector;
+        let inspector = crate::tls::decrypted_chain::NoopDecryptedInspector;
         let ctx = DpiContext::default();
-        match inspector.inspect(b"anything", &ctx) {
-            IpsVerdict::Allow => {}
-            other => panic!("Expected Allow, got {:?}", other),
-        }
+        let decision = inspector
+            .inspect(
+                b"anything",
+                &ctx,
+                Direction::ClientToServer,
+                &test_meta(),
+            )
+            .await;
+
+        assert_eq!(decision.disposition, InspectionDisposition::Forward);
+        assert_eq!(decision.payload, b"anything");
     }
 }

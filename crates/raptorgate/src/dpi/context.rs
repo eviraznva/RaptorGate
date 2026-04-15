@@ -49,6 +49,14 @@ pub struct DpiContext {
     pub decrypted: bool,
     pub src_port: Option<u16>,
     pub dst_port: Option<u16>,
+    pub ips_match: Option<IpsMatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IpsMatch {
+    pub signature_name: String,
+    pub severity: String,
+    pub blocked: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

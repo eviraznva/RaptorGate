@@ -3,7 +3,7 @@
     {
       "id": "00000000-0000-4000-8000-000000000001",
       "username": "admin",
-      "passwordHash": "$2b$12$.83uYFxXILLt1cItos0QreueT4Mme.ecSj0I/WVOAiRMT4JSo2bAa",
+      "passwordHash": "$2b$12$nAmVi7/iAwI25KBwlzoKYOQiNrRHTYg7yj/ZjNiVcCERwsR4IcMpq",
       "refreshToken": "8dfbcc16-3e1d-4096-81af-31c204a9c8f0",
       "refreshTokenExpiry": "2026-04-10T15:55:34.857Z",
       "recoveryToken": "$2b$12$qBQ3y8l/MVYx5Oxe35V8HenoIjKxhPkVk2spGbiqatmRzWESHx.jW",

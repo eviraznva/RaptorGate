@@ -36,8 +36,8 @@ use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
-    CaManager, DecryptedIpsInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig, PinningConfig,
-    ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
+    CaManager, DecryptedChainInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig,
+    PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
 use etherparse::NetSlice;
 use pcap::Device;
@@ -238,70 +238,6 @@ async fn main() {
     );
     tokio::spawn(snapshot_server.serve());
 
-    if config.ssl_inspection_enabled {
-        let tls_runtime_cancel = CancellationToken::new();
-        decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
-
-        match (&tls_cert_forger, &tls_untrust_forger) {
-            (Some(forger), Some(untrust)) => {
-                let listen_addr = config
-                    .mitm_listen_addr
-                    .parse()
-                    .expect("MITM_LISTEN_ADDR must be a valid socket address");
-
-                match TransparentRedirect::new(
-                    listen_addr,
-                    config.capture_interfaces.clone(),
-                )
-                .and_then(|redirect| redirect.install())
-                {
-                    Ok(()) => {}
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to install TLS transparent redirect");
-                    }
-                }
-
-                let proxy_config = MitmProxyConfig {
-                    listen_addr,
-                    cert_forger: Arc::clone(forger),
-                    untrust_forger: Arc::clone(untrust),
-                    decision_engine: Arc::clone(&decision_engine),
-                    ips_inspector: Arc::new(DecryptedIpsInspector::new(Arc::clone(&ips))),
-                    cancel: tls_runtime_cancel,
-                };
-
-                match MitmProxy::bind(proxy_config).await {
-                    Ok(proxy) => {
-                        tokio::spawn(proxy.serve());
-                        tracing::info!("SSL/TLS inspection enabled");
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to start MITM proxy");
-                    }
-                }
-            }
-            _ => {
-                tracing::error!("SSL inspection enabled but CA/TLS config not available");
-            }
-        }
-    }
-
-    let defrag = IpDefragEngine::new(DefragConfig::default());
-
-    let tun = TunForwarder::new(&config);
-    config_provider
-        .register(Arc::clone(&tun), "TunForwarder")
-        .await;
-
-    let (sniffer, mut raw_rx, errs) = InterfaceSniffer::with_sniffing(&config);
-    let sniffer = Arc::new(sniffer);
-    config_provider
-        .register(Arc::clone(&sniffer), "InterfaceSniffer")
-        .await;
-    for e in errs {
-        tracing::error!(error = %e, "interface sniffer error");
-    }
-
     // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
     let dnssec_provider: Arc<dyn DnssecProvider> =
         Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
@@ -364,6 +300,73 @@ async fn main() {
             },
         },
     };
+
+    if config.ssl_inspection_enabled {
+        let tls_runtime_cancel = CancellationToken::new();
+        decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
+
+        match (&tls_cert_forger, &tls_untrust_forger) {
+            (Some(forger), Some(untrust)) => {
+                let listen_addr = config
+                    .mitm_listen_addr
+                    .parse()
+                    .expect("MITM_LISTEN_ADDR must be a valid socket address");
+
+                match TransparentRedirect::new(
+                    listen_addr,
+                    config.capture_interfaces.clone(),
+                )
+                .and_then(|redirect| redirect.install())
+                {
+                    Ok(()) => {}
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to install TLS transparent redirect");
+                    }
+                }
+
+                let proxy_config = MitmProxyConfig {
+                    listen_addr,
+                    cert_forger: Arc::clone(forger),
+                    untrust_forger: Arc::clone(untrust),
+                    decision_engine: Arc::clone(&decision_engine),
+                    decrypted_inspector: Arc::new(DecryptedChainInspector::new(
+                        pipeline.clone(),
+                        Arc::clone(&dpi_classifier),
+                    )),
+                    cancel: tls_runtime_cancel,
+                };
+
+                match MitmProxy::bind(proxy_config).await {
+                    Ok(proxy) => {
+                        tokio::spawn(proxy.serve());
+                        tracing::info!("SSL/TLS inspection enabled");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to start MITM proxy");
+                    }
+                }
+            }
+            _ => {
+                tracing::error!("SSL inspection enabled but CA/TLS config not available");
+            }
+        }
+    }
+
+    let defrag = IpDefragEngine::new(DefragConfig::default());
+
+    let tun = TunForwarder::new(&config);
+    config_provider
+        .register(Arc::clone(&tun), "TunForwarder")
+        .await;
+
+    let (sniffer, mut raw_rx, errs) = InterfaceSniffer::with_sniffing(&config);
+    let sniffer = Arc::new(sniffer);
+    config_provider
+        .register(Arc::clone(&sniffer), "InterfaceSniffer")
+        .await;
+    for e in errs {
+        tracing::error!(error = %e, "interface sniffer error");
+    }
 
     while let Some(raw_packet) = raw_rx.recv().await {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {
