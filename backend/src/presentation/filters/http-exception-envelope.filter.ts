@@ -10,6 +10,9 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import type { Response } from "express";
+import { IpsActionIsInvalidException } from "src/domain/exceptions/ips-action-is-invalid.exception.js";
+import { IpsAppProtocolIsInvalidException } from "src/domain/exceptions/ips-app-protocol-is-invalid.exception.js";
+import { SignatureSeverityIsInvalidException } from "src/domain/exceptions/signature-severity-is-invalid.exception.js";
 import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
 import { AtLeastOneFieldRequiredException } from "../../domain/exceptions/at-least-one-field-required.exception.js";
 import { ChecksumIsInvalidException } from "../../domain/exceptions/checksum-is-invalid.exception.js";
@@ -99,7 +102,10 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
       exception instanceof SemanticVersionIsInvalidException ||
       exception instanceof SnapshotTypeIsInvalidException ||
       exception instanceof UserSourceIsInvalidException ||
-      exception instanceof DomainNameIsInvalidException
+      exception instanceof DomainNameIsInvalidException ||
+      exception instanceof IpsActionIsInvalidException ||
+      exception instanceof IpsAppProtocolIsInvalidException ||
+      exception instanceof SignatureSeverityIsInvalidException
     ) {
       return new BadRequestException(exception.message);
     }

@@ -3,9 +3,9 @@ import { Transform, Type } from "class-transformer";
 import {
   IsArray,
   IsBoolean,
-  IsIP,
   IsIn,
   IsInt,
+  IsIP,
   IsNotEmpty,
   IsNumber,
   IsString,

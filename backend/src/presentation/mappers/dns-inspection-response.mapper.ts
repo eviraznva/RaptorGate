@@ -2,6 +2,8 @@ import { DnsInspectionConfig } from "../../domain/entities/dns-inspection-config
 import { DnsInspectionConfigResponseDto } from "../dtos/dns-inspection-config-response.dto.js";
 
 export class DnsInspectionResponseMapper {
+  constructor() {}
+
   static toDto(config: DnsInspectionConfig): DnsInspectionConfigResponseDto {
     const dnssec = config.getDnssec();
 

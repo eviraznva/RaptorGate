@@ -2,13 +2,13 @@ import { join } from "node:path";
 import { Inject, Injectable } from "@nestjs/common";
 import { DnsInspectionConfig } from "../../../domain/entities/dns-inspection-config.entity.js";
 import { IDnsInspectionRepository } from "../../../domain/repositories/dns-inspection.repository.js";
-import { FileStore } from "../json/file-store.js";
 import { Mutex } from "../json/file-mutex.js";
+import { FileStore } from "../json/file-store.js";
 import { DnsInspectionJsonMapper } from "../mappers/dns-inspection-json.mapper.js";
 import {
-  defaultDnsInspectionRecord,
   DnsInspectionRecord,
   DnsInspectionRecordSchema,
+  defaultDnsInspectionRecord,
 } from "../schemas/dns-inspection.schema.js";
 
 @Injectable()
