@@ -142,7 +142,7 @@ export class GrpcConfigSnapshotPushService
         name: i.getName(),
         category: i.getCategory().getValue(),
         pattern: i.getPattern().getValue(),
-        severity: this.toSeverity(i.getSeverity()),
+        severity: this.toSeverity(i.getSeverity().getValue()),
       })),
       mlModel: b.ml_model
         ? {

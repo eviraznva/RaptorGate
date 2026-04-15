@@ -1,0 +1,35 @@
+{
+  "general": {
+    "enabled": true
+  },
+  "detection": {
+    "enabled": false,
+    "maxPayloadBytes": 8192,
+    "maxMatchesPerPacket": 10
+  },
+  "signatures": [
+    {
+      "id": "4ed7ff30-92b4-458d-b7ea-088a3061e8ff",
+      "name": "SQL Injection Attempt",
+      "isActive": true,
+      "category": "sqli",
+      "pattern": "(?i)(UNION.*SELECT)",
+      "severity": "SEVERITY_HIGH",
+      "action": "IPS_ACTION_BLOCK",
+      "appProtocols": [
+        "IPS_APP_PROTOCOL_HTTP",
+        "IPS_APP_PROTOCOL_TLS"
+      ],
+      "srcPorts": [
+        80,
+        443
+      ],
+      "dstPorts": [
+        80,
+        443
+      ],
+      "createdAt": "2026-04-15T18:25:54.932Z",
+      "updatedAt": "2026-04-15T18:25:54.932Z"
+    }
+  ]
+}
