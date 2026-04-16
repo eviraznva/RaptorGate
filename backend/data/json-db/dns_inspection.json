@@ -3,25 +3,25 @@
     "enabled": true
   },
   "blocklist": {
-    "enabled": true,
+    "enabled": false,
     "domains": [
       "example.com"
     ]
   },
   "dnsTunneling": {
-    "enabled": true,
-    "maxLabelLength": 30,
+    "enabled": false,
+    "maxLabelLength": 40,
     "entropyThreshold": 3.5,
-    "windowSeconds": 65,
+    "windowSeconds": 60,
     "maxQueriesPerDomain": 100,
     "maxUniqueSubdomains": 20,
     "ignoreDomains": [],
-    "alertThreshold": 0.8,
+    "alertThreshold": 0.6,
     "blockThreshold": 0.85
   },
   "dnssec": {
-    "enabled": true,
-    "maxLookupsPerPacket": 9,
+    "enabled": false,
+    "maxLookupsPerPacket": 1,
     "defaultOnResolverFailure": "allow",
     "resolver": {
       "primary": {

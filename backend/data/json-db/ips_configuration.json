@@ -3,13 +3,13 @@
     "enabled": true
   },
   "detection": {
-    "enabled": false,
+    "enabled": true,
     "maxPayloadBytes": 8192,
     "maxMatchesPerPacket": 10
   },
   "signatures": [
     {
-      "id": "4ed7ff30-92b4-458d-b7ea-088a3061e8ff",
+      "id": "c48f2d5e-0b40-414c-90e3-267419e1e21f",
       "name": "SQL Injection Attempt",
       "isActive": true,
       "category": "sqli",
@@ -28,8 +28,8 @@
         80,
         443
       ],
-      "createdAt": "2026-04-15T18:25:54.932Z",
-      "updatedAt": "2026-04-15T18:25:54.932Z"
+      "createdAt": "2026-04-16T15:16:02.094Z",
+      "updatedAt": "2026-04-16T15:16:02.094Z"
     }
   ]
 }
