@@ -3,16 +3,10 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use tokio::sync::Mutex;
-use tonic::async_trait;
 use anyhow::{Context, Result};
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ConfigObserver};
 use crate::disk_store::SingleDiskStore;
-
-#[async_trait]
-pub trait ConfigObserver: Send + Sync {
-    async fn on_config_change(&self, new_config: &AppConfig) -> Result<()>;
-}
 
 pub struct ConfigSwapError {
     pub original_error: anyhow::Error,

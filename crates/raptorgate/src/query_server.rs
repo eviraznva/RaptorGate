@@ -10,7 +10,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::config_provider::AppConfigProvider;
+use crate::config::provider::AppConfigProvider;
 use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -37,7 +37,7 @@ use crate::proto::services::{
 };
 use crate::zones::Zone;
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
-use crate::zones::{ZoneId, ZoneInterfaceId, ZonePair, ZonePairId};
+use crate::zones::ZonePair;
 
 pub struct QueryServer<PolicySwap>
 where

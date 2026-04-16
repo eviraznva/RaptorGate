@@ -3,13 +3,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
-use arc_swap::{ArcSwap, Guard};
+use arc_swap::Guard;
 use mockall::automock;
 use tonic::async_trait;
 use uuid::Uuid;
 
 
-use crate::{config::{AppConfig, DevConfig}, config_provider::ConfigObserver, disk_store::{ListDiskStore, SavedProperty}, policy::{Policy, PolicyId, policy_evaluator::PolicyEvaluator}, rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict, parsing::parse_rule_tree}, swapper::Swapper};
+use crate::{config::{AppConfig, ConfigObserver, DevConfig}, disk_store::ListDiskStore, policy::{Policy, PolicyId, policy_evaluator::PolicyEvaluator}, rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict, parsing::parse_rule_tree}, swapper::Swapper};
 
 #[async_trait]
 #[automock]

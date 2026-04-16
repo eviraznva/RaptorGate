@@ -3,7 +3,7 @@ use std::env;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use ngfw::config_provider::AppConfigProvider;
+use ngfw::config::provider::AppConfigProvider;
 use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use ngfw::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use ngfw::data_plane::ips::ips::Ips;

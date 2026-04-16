@@ -2,10 +2,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Error;
 use anyhow::Result;
-use arc_swap::ArcSwap;
 use uuid::Uuid;
 
-use crate::{config::AppConfig, config_provider::ConfigObserver, disk_store::{ListDiskStore, SavedProperty}, swapper::Swapper, zones::{DefaultPolicy, Zone, ZoneId, ZonePair, ZonePairId}};
+use crate::{config::{AppConfig, ConfigObserver}, disk_store::ListDiskStore, swapper::Swapper, zones::{DefaultPolicy, Zone, ZoneId, ZonePair, ZonePairId}};
 
 pub struct ZonePairProvider {
     swapper: Swapper<ZonePairId, ZonePair>,

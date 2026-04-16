@@ -1,5 +1,4 @@
 mod config;
-mod config_provider;
 mod data_plane;
 mod disk_store;
 mod dpi;
@@ -16,7 +15,7 @@ mod tls;
 mod zones;
 mod swapper;
 
-use crate::config_provider::AppConfigProvider;
+use crate::config::provider::AppConfigProvider;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -38,7 +37,6 @@ use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::CaManager;
-use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use etherparse::NetSlice;
 use ipnet::IpNet;
 use std::collections::HashMap;

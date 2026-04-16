@@ -1,5 +1,4 @@
 pub mod config;
-pub mod config_provider;
 pub mod data_plane;
 pub mod dpi;
 pub mod events;
