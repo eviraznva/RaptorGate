@@ -14,6 +14,7 @@ mod query_server;
 mod rule_tree;
 mod tls;
 mod zones;
+mod swapper;
 
 use crate::config_provider::AppConfigProvider;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
