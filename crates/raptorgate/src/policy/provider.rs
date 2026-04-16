@@ -9,7 +9,7 @@ use tonic::async_trait;
 use uuid::Uuid;
 
 
-use crate::{config::{AppConfig, DevConfig}, config_provider::ConfigObserver, disk_store::{ListDiskStore, SavedProperty}, policy::{Policy, PolicyId, policy_evaluator::PolicyEvaluator}, rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict, parsing::parse_rule_tree}};
+use crate::{config::{AppConfig, DevConfig}, config_provider::ConfigObserver, disk_store::{ListDiskStore, SavedProperty}, policy::{Policy, PolicyId, policy_evaluator::PolicyEvaluator}, rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict, parsing::parse_rule_tree}, swapper::Swapper};
 
 #[async_trait]
 #[automock]
@@ -20,46 +20,22 @@ pub trait PolicyManager {
 }
 
 pub struct DiskPolicyProvider {
-    policies: ArcSwap<HashMap<PolicyId, Policy>>,
+    swapper: Swapper<PolicyId, Policy>,
     evaluator: PolicyEvaluator, //TODO: don't bundle the evaluator with this
-    store: ListDiskStore<Policy>,
 }
 
 #[async_trait]
 impl PolicyManager for DiskPolicyProvider {
     async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), anyhow::Error> {
-        let old_policies = self.policies.load();
-
-        self.store.save(new_policies.iter().cloned().map(|pol| SavedProperty {
-            id: pol.0.into(), contents: pol.1 
-        }).collect()).await?;
-
-        let loaded = self.store.load().await; // we load to check if we saved properly
-        match loaded {
-            Ok(loaded) => {
-                let map = loaded.into_iter().map(|prop| (prop.id.into(), prop.contents)).collect();
-                self.policies.swap(Arc::new(map));
-            }
-
-            Err(err) => {
-                tracing::error!(error = %err, "failed to load policies after saving new policies");
-                self.store.save(old_policies.iter().map(|pol| SavedProperty {
-                    id: pol.0.clone().into(), contents: pol.1.clone() 
-                }).collect()).await?; // try to restore old policies, if this fails we're in a really bad state and there's not much we can do about it. TODO: emit a notification event
-                return Err(err.into());
-            }
-        }
-
-        #[allow(clippy::from_iter_instead_of_collect)]
-        Ok(())
+        self.swapper.swap(new_policies).await
     }
 
     fn get_policies(&self) -> Guard<Arc<HashMap<PolicyId, Policy>>> {
-        self.policies.load()
+        self.swapper.get_all()
     }
 
     fn get_policy(&self, policy_id: &PolicyId) -> Option<Policy> {
-        self.policies.load().get(policy_id).cloned()
+        self.swapper.get(policy_id)
     }
 }
 
@@ -75,12 +51,12 @@ impl DiskPolicyProvider {
                 rule_tree: RuleTree::new(parse_rule_tree(policy_override).expect("COULDNT APPLY DEV POLICY OVERRIDE"))
             };
 
-            let policies = ArcSwap::new(Arc::new(HashMap::from([(Uuid::now_v7().into(), dev_policy)])));
-            let evaluator = PolicyEvaluator::new(policies.load().values().next().unwrap().rule_tree.clone(), crate::rule_tree::Verdict::Drop);
+            let policies = HashMap::from([(Uuid::now_v7().into(), dev_policy)]);
+            let evaluator = PolicyEvaluator::new(policies.values().next().unwrap().rule_tree.clone(), crate::rule_tree::Verdict::Drop);
 
             tracing::debug!("DEV MODE: Using policy override from environment variable DEV_OVERRIDE_POLICY");
 
-            return Ok(Self { policies, evaluator, store: ListDiskStore::new("policies", "/tmp/".into())})
+            return Ok(Self { swapper: Swapper::new(policies, ListDiskStore::new("policies", "/tmp/".into())), evaluator })
         }
 
         let store: ListDiskStore<Policy> = ListDiskStore::new("policies", config.data_dir.clone());
@@ -94,7 +70,7 @@ impl DiskPolicyProvider {
             let evaluator = PolicyEvaluator::new(policies.iter().next().unwrap().1.rule_tree.clone(), crate::rule_tree::Verdict::Drop);
 
             tracing::info!("Loaded policies from disk, count: {}", policies.len());
-            return Ok(Self { policies: ArcSwap::new(Arc::new(policies)), evaluator, store })
+            return Ok(Self { swapper: Swapper::new(policies, store), evaluator })
         }
 
         let default_policy = Policy {
@@ -108,15 +84,15 @@ impl DiskPolicyProvider {
                     )).build()?)
         };
 
-        let policies = ArcSwap::new(Arc::new(HashMap::from([(Uuid::now_v7().into(), default_policy)])));
-        let evaluator = PolicyEvaluator::new(policies.load().iter().next().unwrap().1.rule_tree.clone(), crate::rule_tree::Verdict::Drop);
+        let policies = HashMap::from([(Uuid::now_v7().into(), default_policy)]);
+        let evaluator = PolicyEvaluator::new(policies.iter().next().unwrap().1.rule_tree.clone(), crate::rule_tree::Verdict::Drop);
 
         tracing::info!("No policies found on disk, using default drop all policy.");
-        Ok(Self { policies, evaluator, store})
+        Ok(Self { swapper: Swapper::new(policies, store), evaluator})
     }
 
     pub fn get_policies(&self) -> arc_swap::Guard<Arc<HashMap<PolicyId, Policy>>> {
-        self.policies.load()
+        self.swapper.get_all()
     }
 
     pub fn get_evaluator(&self) -> &PolicyEvaluator {

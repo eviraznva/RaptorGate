@@ -15,6 +15,13 @@ where
     K: Eq + std::hash::Hash + Clone + Into<Uuid> + From<Uuid>,
     V: Clone + for<'a> Deserialize<'a> + Serialize
 {
+    pub fn new(data: HashMap<K, V>, store: ListDiskStore<V>) -> Self {
+        Self {
+            data: ArcSwap::new(Arc::new(data)),
+            store,
+        }
+    }
+
     pub async fn swap(&self, new_items: Vec<(K, V)>) -> anyhow::Result<()> {
         let old_items = self.data.load();
 
@@ -30,9 +37,11 @@ where
             }
             Err(mut err) => {
                 tracing::error!(error = %err, "Failed to load after save, rolling back disk state");
-                self.store.save(old_items.iter().map(|(k, v)| SavedProperty {
+                if let Err(rollback_err) = self.store.save(old_items.iter().map(|(k, v)| SavedProperty {
                     id: k.clone().into(), contents: v.clone() 
-                }).collect()).await.inspect_err(|e| err = e.clone());
+                }).collect()).await {
+                    err = rollback_err;
+                }
                 
                 Err(err.into())
             }

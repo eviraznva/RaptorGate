@@ -90,7 +90,7 @@ impl<T> SingleDiskStore<T> where T: for<'a> Deserialize<'a> + Serialize + Clone 
     }
 }
  
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error)]
 pub enum StoreError {
     #[error("I/O error: {_0}")]
     Io(#[from] tokio::io::Error),

@@ -1,0 +1,2 @@
+1. Do not add unnecessary comments or docs. Comments are not a stylistic enchantment, you should only insert them if the code does something that's not obvious and isn't cleanly expressed by the code itself or if the user explicitly asks you to.
+2. You are not the formatter. Don't try to reformat existing code to match with your way of writing it, instead conform your code to the style of whatever piece of the codebase you're editing, unless told otherwise by the user.

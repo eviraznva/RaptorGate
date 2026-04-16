@@ -5,11 +5,10 @@ use anyhow::Result;
 use arc_swap::ArcSwap;
 use uuid::Uuid;
 
-use crate::{config::AppConfig, config_provider::ConfigObserver, disk_store::{ListDiskStore, SavedProperty}, zones::{DefaultPolicy, Zone, ZoneId, ZonePair, ZonePairId}};
+use crate::{config::AppConfig, config_provider::ConfigObserver, disk_store::{ListDiskStore, SavedProperty}, swapper::Swapper, zones::{DefaultPolicy, Zone, ZoneId, ZonePair, ZonePairId}};
 
 pub struct ZonePairProvider {
-    zone_pairs: ArcSwap<HashMap<ZonePairId, ZonePair>>,
-    store: ListDiskStore<ZonePair>,
+    swapper: Swapper<ZonePairId, ZonePair>,
 }
 
 impl ZonePairProvider {
@@ -22,7 +21,7 @@ impl ZonePairProvider {
                 loaded.into_iter().map(|prop| (prop.id.into(), prop.contents))
             );
 
-            return Self { zone_pairs: Arc::new(zone_pairs).into(), store };
+            return Self { swapper: Swapper::new(zone_pairs, store) };
         }
 
         tracing::info!("no zone pairs found on disk, initializing with default zone pair");
@@ -32,45 +31,21 @@ impl ZonePairProvider {
             default_policy: DefaultPolicy::Unspecified,
         };
 
-        let zone_pairs = ArcSwap::new(Arc::new(HashMap::from([(Uuid::now_v7().into(), default_zone_pair)])));
+        let zone_pairs = HashMap::from([(Uuid::now_v7().into(), default_zone_pair)]);
 
-        Self { zone_pairs, store }
+        Self { swapper: Swapper::new(zone_pairs, store) }
     }
 
     pub async fn swap_zone_pairs(&self, new_zone_pairs: Vec<(ZonePairId, ZonePair)>) -> Result<(), Error> {
-        let old_zone_pairs = self.zone_pairs.load();
-
-        self.store.save(new_zone_pairs.iter().cloned().map(|(id, zone)| SavedProperty {
-            id: id.into(),
-            contents: zone
-        }).collect()).await?;
-
-        let loaded = self.store.load().await;
-        match loaded {
-            Ok(loaded) => {
-                let map = loaded.into_iter().map(|prop| (prop.id.into(), prop.contents)).collect();
-                self.zone_pairs.swap(Arc::new(map));
-            }
-
-            Err(err) => {
-                tracing::error!(error = %err, "failed to load zone_pairs after saving new zone_pairs");
-                self.store.save(old_zone_pairs.iter().map(|(id, zone)| SavedProperty {
-                    id: id.clone().into(), contents: zone.clone()
-                }).collect()).await?; // if this fails we're in a really bad state
-                return Err(err.into());
-            }
-        }
-
-        #[allow(clippy::from_iter_instead_of_collect)]
-        Ok(())
+        self.swapper.swap(new_zone_pairs).await.map_err(|e| e.into())
     }
 
     pub fn get_zone_pairs(&self) -> arc_swap::Guard<Arc<HashMap<ZonePairId, ZonePair>>> {
-        self.zone_pairs.load()
+        self.swapper.get_all()
     }
 
     pub fn get_zone_pair(&self, id: &ZonePairId) -> Option<ZonePair> {
-        self.zone_pairs.load().get(id).cloned()
+        self.swapper.get(id)
     }
 }
 
@@ -86,8 +61,7 @@ impl ConfigObserver for ZonePairProvider {
 }
 
 pub struct ZoneProvider {
-    zones: ArcSwap<HashMap<ZoneId, Zone>>,
-    store: ListDiskStore<Zone>,
+    swapper: Swapper<ZoneId, Zone>,
 }
 
 impl ZoneProvider {
@@ -98,7 +72,7 @@ impl ZoneProvider {
             let zones: HashMap<ZoneId, Zone> = HashMap::from_iter(
                 loaded.into_iter().map(|prop| (prop.id.into(), prop.contents))
             );
-            return Self { zones: Arc::new(zones).into(), store };
+            return Self { swapper: Swapper::new(zones, store) };
         }
 
         tracing::info!("no zones found on disk, initializing with default zone");
@@ -107,44 +81,20 @@ impl ZoneProvider {
             interface_ids: vec![],
         };
 
-        let zones = ArcSwap::new(Arc::new(HashMap::from([(Uuid::now_v7().into(), default_zone)])));
-        Self { zones, store }
+        let zones = HashMap::from([(Uuid::now_v7().into(), default_zone)]);
+        Self { swapper: Swapper::new(zones, store) }
     }
 
     pub async fn swap_zones(&self, new_zones: Vec<(ZoneId, Zone)>) -> Result<(), Error> {
-        let old_zones = self.zones.load();
-
-        self.store.save(new_zones.iter().cloned().map(|(id, zone)| SavedProperty {
-            id: id.into(),
-            contents: zone
-        }).collect()).await?;
-
-        let loaded = self.store.load().await;
-        match loaded {
-            Ok(loaded) => {
-                let map = loaded.into_iter().map(|prop| (prop.id.into(), prop.contents)).collect();
-                self.zones.swap(Arc::new(map));
-            }
-
-            Err(err) => {
-                tracing::error!(error = %err, "failed to load zones after saving new zones");
-                self.store.save(old_zones.iter().map(|(id, zone)| SavedProperty {
-                    id: id.clone().into(), contents: zone.clone()
-                }).collect()).await?; // if this fails we're in a really bad state
-                return Err(err.into());
-            }
-        }
-
-        #[allow(clippy::from_iter_instead_of_collect)]
-        Ok(())
+        self.swapper.swap(new_zones).await.map_err(|e| e.into())
     }
 
     pub fn get_zones(&self) -> arc_swap::Guard<Arc<HashMap<ZoneId, Zone>>> {
-        self.zones.load()
+        self.swapper.get_all()
     }
 
     pub fn get_zone(&self, id: &ZoneId) -> Option<Zone> {
-        self.zones.load().get(id).cloned()
+        self.swapper.get(id)
     }
 }
 
