@@ -7,6 +7,7 @@ import ResetPasswordReducer from "../features/resetPasswordSlice";
 import { authApi } from "../services/auth";
 import { dnsInspectionApi } from "../services/dnsInspection";
 import { setupListeners } from "@reduxjs/toolkit/query";
+import { ipsConfigApi } from "../services/ipsConfig";
 
 export const store = configureStore({
   reducer: {
@@ -17,12 +18,14 @@ export const store = configureStore({
     resetPassword: ResetPasswordReducer,
     [authApi.reducerPath]: authApi.reducer,
     [dnsInspectionApi.reducerPath]: dnsInspectionApi.reducer,
+    [ipsConfigApi.reducerPath]: ipsConfigApi.reducer,
   },
 
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(
       authApi.middleware,
       dnsInspectionApi.middleware,
+      ipsConfigApi.middleware,
     ),
 });
 

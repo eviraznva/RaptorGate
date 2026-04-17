@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type {
   IpsAppProtocol,
   IpsConfig,
@@ -9,6 +10,56 @@ import {
   ipsSeverityOptions,
 } from "../../../types/ipsConfig/IpsConfig";
 import Toggle from "../common/Toggle";
+
+type PortsInputProps = {
+  ports: number[];
+  onChange: (ports: number[]) => void;
+  placeholder?: string;
+  className?: string;
+};
+
+function PortsInput({ ports, onChange, placeholder, className }: PortsInputProps) {
+  const [raw, setRaw] = useState(() => ports.join(", "));
+  const [prevPorts, setPrevPorts] = useState(ports);
+
+  if (JSON.stringify(ports) !== JSON.stringify(prevPorts)) {
+    setPrevPorts(ports);
+    
+    const parsedRaw = parsePortList(raw);
+    if (JSON.stringify(parsedRaw) !== JSON.stringify(ports)) {
+      setRaw(ports.length > 0 ? ports.join(", ") : "");
+    }
+  }
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setRaw(value);
+    
+    const parsed = parsePortList(value);
+    if (JSON.stringify(parsed) !== JSON.stringify(ports)) {
+      onChange(parsed);
+    }
+  };
+
+  const handleBlur = () => {
+    const parsed = parsePortList(raw);
+    if (JSON.stringify(parsed) !== JSON.stringify(ports)) {
+      onChange(parsed);
+    }
+    setRaw(parsed.length > 0 ? parsed.join(", ") : "");
+  };
+
+  return (
+    <input
+      type="text"
+      value={raw}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+}
 
 type SignaturesTabProps = {
   config: IpsConfig;
@@ -258,12 +309,9 @@ export default function SignaturesTab({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <label className="text-sm">
                 <div className="text-[#8a8a8a] mb-2">Source ports</div>
-                <input
-                  type="text"
-                  value={selectedSignature.srcPorts.join(", ")}
-                  onChange={(event) =>
-                    onUpdateSrcPorts(parsePortList(event.target.value))
-                  }
+                <PortsInput
+                  ports={selectedSignature.srcPorts}
+                  onChange={onUpdateSrcPorts}
                   placeholder="80, 443"
                   className="w-full bg-[#0c0c0c] border border-[#262626] px-4 py-3 focus:outline-none focus:border-[#06b6d4]"
                 />
@@ -271,12 +319,9 @@ export default function SignaturesTab({
 
               <label className="text-sm">
                 <div className="text-[#8a8a8a] mb-2">Destination ports</div>
-                <input
-                  type="text"
-                  value={selectedSignature.dstPorts.join(", ")}
-                  onChange={(event) =>
-                    onUpdateDstPorts(parsePortList(event.target.value))
-                  }
+                <PortsInput
+                  ports={selectedSignature.dstPorts}
+                  onChange={onUpdateDstPorts}
                   placeholder="53, 8080"
                   className="w-full bg-[#0c0c0c] border border-[#262626] px-4 py-3 focus:outline-none focus:border-[#06b6d4]"
                 />

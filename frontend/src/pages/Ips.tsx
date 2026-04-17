@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useAppDispatch, useAppSelector } from "../app/hooks";
 import IpsActionsBar from "../components/ips/IpsActionsBar";
@@ -8,7 +8,6 @@ import IpsValidationErrors from "../components/ips/IpsValidationErrors";
 import DetectionTab from "../components/ips/tabs/DetectionTab";
 import GeneralTab from "../components/ips/tabs/GeneralTab";
 import SignaturesTab from "../components/ips/tabs/SignaturesTab";
-import { validateIpsConfig } from "../components/ips/validation";
 import {
   addIpsSignature,
   applyIpsDraft,
@@ -19,20 +18,41 @@ import {
   setIpsActiveTab,
   setIpsDetectionConfig,
   setIpsGeneralConfig,
+  setIpsSignatures,
   setSelectedIpsSignatureDstPorts,
   setSelectedIpsSignatureProtocols,
   setSelectedIpsSignatureSrcPorts,
   updateSelectedIpsSignature,
 } from "../features/ipsConfigSlice";
+import {
+  useGetIpsConfigQuery,
+  useUpdateIpsConfigMutation,
+  type IpsConfigPayload,
+} from "../services/ipsConfig";
+import type { ApiSuccess } from "../types/ApiResponse";
 
 export default function Ips() {
   const dispatch = useAppDispatch();
   const ipsState = useAppSelector((state) => state.ipsConfig);
 
-  const errors = useMemo(
-    () => validateIpsConfig(ipsState.draftConfig),
-    [ipsState.draftConfig],
-  );
+  const [backendErrors, setBackendErrors] = useState<string[]>([]);
+
+  const { data } = useGetIpsConfigQuery();
+  const [updateIpsConfig] = useUpdateIpsConfigMutation();
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+
+    const payload = (data as ApiSuccess<IpsConfigPayload>).data.ipsConfig;
+    console.log(payload);
+
+    dispatch(setIpsDetectionConfig(payload.detection));
+    dispatch(setIpsGeneralConfig(payload.general));
+    dispatch(setIpsSignatures(payload.signatures));
+    dispatch(applyIpsDraft());
+  }, [data, dispatch]);
 
   const hasChanges = useMemo(
     () =>
@@ -49,6 +69,23 @@ export default function Ips() {
     [ipsState.draftConfig.signatures, ipsState.selectedSignatureId],
   );
 
+  const handleApply = async () => {
+    try {
+      setBackendErrors([]);
+      const response = await updateIpsConfig(ipsState.draftConfig).unwrap();
+
+      const payload = (response as ApiSuccess<IpsConfigPayload>).data;
+      dispatch(setIpsDetectionConfig(payload.ipsConfig.detection));
+      dispatch(setIpsGeneralConfig(payload.ipsConfig.general));
+      dispatch(setIpsSignatures(payload.ipsConfig.signatures));
+      dispatch(applyIpsDraft());
+    } catch (error: unknown) {
+      const err = error as { data?: { message?: string | string[]; error?: string | string[] }; message?: string };
+      const message = err?.data?.message || err?.data?.error || err?.message || "An error occurred while saving.";
+      setBackendErrors(Array.isArray(message) ? message : [message]);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0c0c0c] flex flex-col text-[#f5f5f5]">
       <div className="flex-1 flex justify-center p-8">
@@ -60,7 +97,6 @@ export default function Ips() {
             </span>
             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-[#06b6d4] to-transparent" />
           </div>
-
           <IpsHeader
             enabled={ipsState.draftConfig.general.enabled}
             signatureCount={ipsState.draftConfig.signatures.length}
@@ -122,13 +158,19 @@ export default function Ips() {
             </motion.div>
           </div>
 
-          <IpsValidationErrors errors={errors} />
+          <IpsValidationErrors errors={backendErrors} />
 
           <IpsActionsBar
-            canApply={hasChanges && errors.length === 0}
-            onApply={() => dispatch(applyIpsDraft())}
-            onResetTab={() => dispatch(resetIpsTab())}
-            onResetAll={() => dispatch(resetIpsAll())}
+            canApply={hasChanges}
+            onApply={handleApply}
+            onResetTab={() => {
+              setBackendErrors([]);
+              dispatch(resetIpsTab());
+            }}
+            onResetAll={() => {
+              setBackendErrors([]);
+              dispatch(resetIpsAll());
+            }}
           />
 
           <div className="text-center text-xs text-[#4a4a4a]">
