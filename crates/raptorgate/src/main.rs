@@ -162,6 +162,7 @@ async fn main() {
             policy_store: Arc::clone(&policy_provider),
             zone_store: zones,
             zone_pair_store: zone_pairs,
+            zone_interface_store: Arc::clone(&zone_interfaces),
             config_provider: Arc::clone(&config_provider),
             dns_inspection_store: Arc::clone(&dns_inspection_store),
             dns_inspection: Arc::clone(&dns_inspection),

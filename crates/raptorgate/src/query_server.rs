@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -24,6 +25,9 @@ use crate::policy::{Policy, PolicyId};
 use crate::proto::services::firewall_query_service_server::{
     FirewallQueryService, FirewallQueryServiceServer,
 };
+use crate::proto::services::firewall_config_snapshot_service_server::{
+    FirewallConfigSnapshotService, FirewallConfigSnapshotServiceServer,
+};
 use crate::proto::services::{
     GetConfigRequest, GetConfigResponse, GetDnsInspectionConfigRequest,
     GetDnsInspectionConfigResponse, GetIpsConfigRequest, GetIpsConfigResponse,
@@ -33,11 +37,12 @@ use crate::proto::services::{
     GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest,
     SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
     SwapIpsConfigRequest, SwapIpsConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse,
-    SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse, GetSystemTimeRequest, GetSystemTimeResponse
+    SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse, GetSystemTimeRequest, GetSystemTimeResponse,
+    PushActiveConfigSnapshotRequest, PushActiveConfigSnapshotResponse
 };
 use crate::zones::Zone;
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
-use crate::zones::ZonePair;
+use crate::zones::{ZonePair, ZoneInterface};
 
 pub struct QueryServer<PolicySwap>
 where
@@ -83,7 +88,8 @@ where
         let incoming = UnixListenerStream::new(listener);
 
         if let Err(e) = tonic::transport::Server::builder()
-            .add_service(FirewallQueryServiceServer::new(self.handler))
+            .add_service(FirewallQueryServiceServer::new(self.handler.clone()))
+            .add_service(FirewallConfigSnapshotServiceServer::new(self.handler))
             .serve_with_incoming_shutdown(incoming, self.shutdown.cancelled())
             .await
         {
@@ -94,7 +100,6 @@ where
     }
 }
 
-#[derive(Clone)]
 pub struct QueryHandler<PolicySwap>
 where
     PolicySwap: PolicyManager,
@@ -104,6 +109,7 @@ where
     pub policy_store: Arc<PolicySwap>,
     pub zone_store: Arc<ZoneProvider>,
     pub zone_pair_store: Arc<ZonePairProvider>,
+    pub zone_interface_store: Arc<crate::zones::provider::ZoneInterfaceProvider>,
     pub config_provider: Arc<AppConfigProvider>,
     /// Provider konfiguracji inspekcji DNS — zarządza trwałym przechowywaniem.
     pub dns_inspection_store: Arc<DnsInspectionConfigProvider>,
@@ -111,6 +117,43 @@ where
     pub dns_inspection: Arc<DnsInspection>,
     pub ips_store: Arc<IpsConfigProvider>,
     pub ips: Arc<Ips>,
+}
+
+impl<PolicySwap> Clone for QueryHandler<PolicySwap>
+where
+    PolicySwap: PolicyManager,
+{
+    fn clone(&self) -> Self {
+        Self {
+            tcp_tracker: Arc::clone(&self.tcp_tracker),
+            nat_engine: Arc::clone(&self.nat_engine),
+            policy_store: Arc::clone(&self.policy_store),
+            zone_store: Arc::clone(&self.zone_store),
+            zone_pair_store: Arc::clone(&self.zone_pair_store),
+            zone_interface_store: Arc::clone(&self.zone_interface_store),
+            config_provider: Arc::clone(&self.config_provider),
+            dns_inspection_store: Arc::clone(&self.dns_inspection_store),
+            dns_inspection: Arc::clone(&self.dns_inspection),
+            ips_store: Arc::clone(&self.ips_store),
+            ips: Arc::clone(&self.ips),
+        }
+    }
+}
+
+fn parse_proto_collection<P, Id, V>(
+    items: Vec<P>,
+    converter: impl Fn(P) -> Result<(Id, V), anyhow::Error>,
+    label: &str,
+) -> Result<HashMap<Id, V>, Status>
+where
+    Id: Eq + std::hash::Hash,
+{
+    items
+        .into_iter()
+        .map(|item| {
+            converter(item).map_err(|e| Status::invalid_argument(format!("invalid {label}: {e}")))
+        })
+        .collect()
 }
 
 #[tonic::async_trait]
@@ -421,6 +464,83 @@ where
         let config = self.ips_store.get_config();
         Ok(Response::new(GetIpsConfigResponse {
             config: Some(config.to_proto()),
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl<Swapper> FirewallConfigSnapshotService for QueryHandler<Swapper>
+where
+    Swapper: PolicyManager + Send + Sync + 'static,
+{
+    async fn push_active_config_snapshot(
+        &self,
+        request: Request<PushActiveConfigSnapshotRequest>,
+    ) -> Result<Response<PushActiveConfigSnapshotResponse>, Status> {
+        let inner = request.into_inner();
+        let correlation_id = inner.correlation_id.clone();
+
+        // Extract snapshot_id before consuming the snapshot
+        let snapshot = inner
+            .snapshot
+            .ok_or_else(|| Status::invalid_argument("missing snapshot"))?;
+        let snapshot_id = snapshot.id.clone();
+        let bundle = snapshot
+            .bundle
+            .ok_or_else(|| Status::invalid_argument("missing bundle in snapshot"))?;
+
+        // 1. Parse all proto types into domain-type HashMaps
+        let policies = parse_proto_collection(bundle.rules, Policy::try_from_rule, "rule")?;
+        let zones = parse_proto_collection(bundle.zones, Zone::try_from_proto, "zone")?;
+        let zone_pairs =
+            parse_proto_collection(bundle.zone_pairs, ZonePair::try_from_proto, "zone pair")?;
+        let zone_interfaces = parse_proto_collection(
+            bundle.zone_interfaces,
+            ZoneInterface::try_from_proto,
+            "zone interface",
+        )?;
+
+        // 2. Validate referential integrity across the entire bundle
+        let errors =
+            crate::integrity::validate_bundle(&policies, &zone_pairs, &zones, &zone_interfaces);
+
+        if !errors.is_empty() {
+            let messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+            return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                correlation_id,
+                accepted: false,
+                message: messages.join("; "),
+                applied_snapshot_id: String::new(),
+            }));
+        }
+
+        // 3. Apply swaps in leaf-to-root dependency order:
+        //    Zones (no deps) → ZoneInterfaces & ZonePairs (depend on Zones) → Policies (depend on ZonePairs)
+        self.zone_store
+            .swap_zones(zones.into_iter().collect())
+            .await
+            .map_err(|e| Status::internal(format!("failed to swap zones: {e}")))?;
+
+        self.zone_interface_store
+            .swap_zone_interfaces(zone_interfaces.into_iter().collect())
+            .await
+            .map_err(|e| Status::internal(format!("failed to swap zone interfaces: {e}")))?;
+
+        self.zone_pair_store
+            .swap_zone_pairs(zone_pairs.into_iter().collect())
+            .await
+            .map_err(|e| Status::internal(format!("failed to swap zone pairs: {e}")))?;
+
+        self.policy_store
+            .swap_policies(policies.into_iter().collect())
+            .await
+            .map_err(|e| Status::internal(format!("failed to swap policies: {e}")))?;
+
+        Ok(Response::new(PushActiveConfigSnapshotResponse {
+            correlation_id,
+            accepted: true,
+            message: String::new(),
+            applied_snapshot_id: snapshot_id,
         }))
     }
 }

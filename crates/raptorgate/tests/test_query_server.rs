@@ -18,6 +18,7 @@ use ngfw::proto::services::{
     SwapIpsConfigRequest, SwapPoliciesRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
+use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
 use serial_test::serial;
@@ -55,6 +56,7 @@ fn shared_server() -> &'static SharedServer {
                     .expect("failed to load policy provider");
                 let zones = ZoneProvider::from_disk(&config).await;
                 let zone_pairs = ZonePairProvider::from_disk(&config).await;
+                let zone_interfaces = ZoneInterfaceProvider::from_disk(&config).await;
                 let dns_inspection_store =
                     Arc::new(DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await);
                 let dns_initial_config = dns_inspection_store.get_config().clone();
@@ -71,6 +73,7 @@ fn shared_server() -> &'static SharedServer {
                     policy_store: Arc::new(policy),
                     zone_store: Arc::new(zones),
                     zone_pair_store: Arc::new(zone_pairs),
+                    zone_interface_store: Arc::new(zone_interfaces),
                     config_provider: Arc::clone(&config_provider),
                     dns_inspection_store,
                     dns_inspection,
