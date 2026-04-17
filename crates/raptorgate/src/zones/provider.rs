@@ -4,7 +4,7 @@ use anyhow::Error;
 use anyhow::Result;
 use uuid::Uuid;
 
-use crate::{config::{AppConfig, ConfigObserver}, disk_store::ListDiskStore, swapper::Swapper, zones::{DefaultPolicy, Zone, ZoneId, ZonePair, ZonePairId}};
+use crate::{config::{AppConfig, ConfigObserver}, disk_store::ListDiskStore, swapper::Swapper, zones::{DefaultPolicy, Zone, ZoneId, ZonePair, ZonePairId, ZoneInterface, ZoneInterfaceId}};
 
 pub struct ZonePairProvider {
     swapper: Swapper<ZonePairId, ZonePair>,
@@ -103,6 +103,49 @@ impl ConfigObserver for ZoneProvider {
         tracing::info!(
             data_dir = ?new_config.data_dir,
             "ZoneProvider: config changed (stub — no reinitialization yet)"
+        );
+        Ok(())
+    }
+}
+
+pub struct ZoneInterfaceProvider {
+    swapper: Swapper<ZoneInterfaceId, ZoneInterface>,
+}
+
+impl ZoneInterfaceProvider {
+    pub async fn from_disk(config: &AppConfig) -> Self {
+        let store: ListDiskStore<ZoneInterface> = ListDiskStore::new("zone_interfaces", config.data_dir.clone());
+        if let Ok(loaded) = store.load().await {
+            #[allow(clippy::from_iter_instead_of_collect)]
+            let items: HashMap<ZoneInterfaceId, ZoneInterface> = HashMap::from_iter(
+                loaded.into_iter().map(|prop| (prop.id.into(), prop.contents))
+            );
+            return Self { swapper: Swapper::new(items, store) };
+        }
+
+        tracing::info!("no zone interfaces found on disk, initializing empty");
+        Self { swapper: Swapper::new(HashMap::new(), store) }
+    }
+
+    pub async fn swap_zone_interfaces(&self, new: Vec<(ZoneInterfaceId, ZoneInterface)>) -> Result<(), Error> {
+        self.swapper.swap(new).await.map_err(|e| e.into())
+    }
+
+    pub fn get_zone_interfaces(&self) -> arc_swap::Guard<Arc<HashMap<ZoneInterfaceId, ZoneInterface>>> {
+        self.swapper.get_all()
+    }
+
+    pub fn get_zone_interface(&self, id: &ZoneInterfaceId) -> Option<ZoneInterface> {
+        self.swapper.get(id)
+    }
+}
+
+#[tonic::async_trait]
+impl ConfigObserver for ZoneInterfaceProvider {
+    async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
+        tracing::info!(
+            data_dir = ?new_config.data_dir,
+            "ZoneInterfaceProvider: config changed (stub — no reinitialization yet)"
         );
         Ok(())
     }

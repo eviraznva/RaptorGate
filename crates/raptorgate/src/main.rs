@@ -111,6 +111,7 @@ async fn main() {
     );
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
+    let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
 
     config_provider
         .register(Arc::clone(&policy_provider), "DiskPolicyProvider")
@@ -120,6 +121,9 @@ async fn main() {
         .await;
     config_provider
         .register(Arc::clone(&zone_pairs), "ZonePairProvider")
+        .await;
+    config_provider
+        .register(Arc::clone(&zone_interfaces), "ZoneInterfaceProvider")
         .await;
 
     tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
