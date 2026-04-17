@@ -67,10 +67,6 @@ const router = createBrowserRouter([
       },
     ],
   },
-  // {
-  //   path: "*",
-  //   element: <LoginPage />,
-  // },
 ]);
 
 createRoot(document.getElementById("root")!).render(
