@@ -122,3 +122,7 @@ pub struct ZoneId(Uuid);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct ZoneInterfaceId(Uuid);
+
+use crate::integrity::foreign_keys;
+foreign_keys!(ZonePair { src_zone_id: ZoneId, dst_zone_id: ZoneId });
+foreign_keys!(ZoneInterface { zone_id: ZoneId });

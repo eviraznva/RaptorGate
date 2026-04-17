@@ -1,10 +1,15 @@
 import { describe, test, beforeAll } from 'bun:test';
 import '../harness';
-import { performCommand, resetFirewallState, getClient } from '../harness';
+import {
+  performCommand,
+  resetFirewallState,
+  getClient,
+  getSnapshotClient,
+} from '../harness';
 
 describe('Event Observation', () => {
   beforeAll(async () => {
-    await resetFirewallState(getClient());
+    await resetFirewallState(getClient(), getSnapshotClient());
   });
 
   // test('ping from h1 to h2 produces observable events', async () => {

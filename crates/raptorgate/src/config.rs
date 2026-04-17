@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tonic::async_trait;
 use std::{net::Ipv4Addr, path::PathBuf};
 
 use crate::proto::config as proto;
+pub mod provider;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -64,6 +66,11 @@ impl AppConfig {
             pki_dir: proto_config.pki_dir,
         })
     }
+}
+
+#[async_trait]
+pub trait ConfigObserver: Send + Sync {
+    async fn on_config_change(&self, new_config: &AppConfig) -> Result<()>;
 }
 
 #[cfg(test)]

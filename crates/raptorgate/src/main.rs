@@ -1,5 +1,4 @@
 mod config;
-mod config_provider;
 mod data_plane;
 mod disk_store;
 mod dpi;
@@ -14,8 +13,10 @@ mod query_server;
 mod rule_tree;
 mod tls;
 mod zones;
+mod swapper;
+mod integrity;
 
-use crate::config_provider::AppConfigProvider;
+use crate::config::provider::AppConfigProvider;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -37,7 +38,6 @@ use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::CaManager;
-use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use etherparse::NetSlice;
 use ipnet::IpNet;
 use std::collections::HashMap;
@@ -111,6 +111,7 @@ async fn main() {
     );
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
+    let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
 
     config_provider
         .register(Arc::clone(&policy_provider), "DiskPolicyProvider")
@@ -120,6 +121,9 @@ async fn main() {
         .await;
     config_provider
         .register(Arc::clone(&zone_pairs), "ZonePairProvider")
+        .await;
+    config_provider
+        .register(Arc::clone(&zone_interfaces), "ZoneInterfaceProvider")
         .await;
 
     tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
@@ -158,6 +162,7 @@ async fn main() {
             policy_store: Arc::clone(&policy_provider),
             zone_store: zones,
             zone_pair_store: zone_pairs,
+            zone_interface_store: Arc::clone(&zone_interfaces),
             config_provider: Arc::clone(&config_provider),
             dns_inspection_store: Arc::clone(&dns_inspection_store),
             dns_inspection: Arc::clone(&dns_inspection),

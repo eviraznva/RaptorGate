@@ -9,8 +9,7 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::AppConfig;
-use crate::config_provider::ConfigObserver;
+use crate::config::{AppConfig, ConfigObserver};
 use crate::events::{emit, Event, EventKind};
 
 /// Raw packet data as captured from the NIC, before parsing or reassembly.

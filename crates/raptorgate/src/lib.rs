@@ -1,8 +1,8 @@
 pub mod config;
-pub mod config_provider;
 pub mod data_plane;
 pub mod dpi;
 pub mod events;
+pub mod integrity;
 pub mod ip_defrag;
 pub mod packet_validator;
 pub mod pipeline;
@@ -15,3 +15,4 @@ pub mod tls;
 mod disk_store;
 // mod entity;
 pub mod zones;
+mod swapper;

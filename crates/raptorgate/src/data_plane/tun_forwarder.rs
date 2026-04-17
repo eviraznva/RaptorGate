@@ -3,8 +3,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use std::sync::Arc;
 use tun::{AbstractDevice, AsyncDevice};
 
-use crate::config::AppConfig;
-use crate::config_provider::ConfigObserver;
+use crate::config::{AppConfig, ConfigObserver};
 use crate::data_plane::packet_context::PacketContext;
 use crate::events::{Event, EventKind};
 

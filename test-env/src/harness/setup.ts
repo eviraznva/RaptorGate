@@ -3,7 +3,12 @@ import * as protoLoader from '@grpc/proto-loader';
 import path from 'node:path';
 import { startSshTunnel, type TunnelReadyContext } from '../ssh-tunnel';
 import { eventCollector } from './event-collector';
-import { setClient, type FirewallQueryServiceClient } from './grpc-client';
+import {
+  setClient,
+  setSnapshotClient,
+  type FirewallConfigSnapshotServiceClient,
+  type FirewallQueryServiceClient,
+} from './grpc-client';
 
 const PROTO_ROOT = path.resolve(__dirname, '../../../proto');
 const PROTO_FILES = [
@@ -72,9 +77,10 @@ export function initializeHarness(): void {
       }
       console.log(`[setup] gRPC event server listening on 0.0.0.0:${port}`);
       startSshTunnel(server, {
-        onReady: ({ queryClient }: TunnelReadyContext) => {
+        onReady: ({ queryClient, snapshotClient }: TunnelReadyContext) => {
           setClient(queryClient as FirewallQueryServiceClient);
-          console.log('[setup] System ready — event server + query client connected');
+          setSnapshotClient(snapshotClient as FirewallConfigSnapshotServiceClient);
+          console.log('[setup] System ready — event server + query/snapshot clients connected');
           readyResolve();
         },
       });

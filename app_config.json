@@ -8,7 +8,7 @@
   "tun_address": "10.254.254.1",
   "tun_netmask": "255.255.255.0",
   "data_dir": "./",
-  "grpc_socket_path": "./sockets/firewall.sock",
+  "grpc_socket_path": "./sockets/event.sock",
   "query_socket_path": "./sockets/query.sock",
   "pki_dir": "/var/lib/raptorgate/pki"
 }
