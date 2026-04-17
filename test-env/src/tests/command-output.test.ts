@@ -1,10 +1,15 @@
 import { describe, test, beforeAll } from 'bun:test';
 import '../harness';
-import { performCommand, resetFirewallState, getClient } from '../harness';
+import {
+  performCommand,
+  resetFirewallState,
+  getClient,
+  getSnapshotClient,
+} from '../harness';
 
 describe('Command Output', () => {
   beforeAll(async () => {
-    await resetFirewallState(getClient());
+    await resetFirewallState(getClient(), getSnapshotClient());
   });
 
   test('command output on h1 matches expected ping pattern', async () => {

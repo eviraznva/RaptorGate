@@ -36,9 +36,8 @@ use crate::proto::services::{
     GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
     GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest,
     SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
-    SwapIpsConfigRequest, SwapIpsConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse,
-    SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse, GetSystemTimeRequest, GetSystemTimeResponse,
-    PushActiveConfigSnapshotRequest, PushActiveConfigSnapshotResponse
+    SwapIpsConfigRequest, SwapIpsConfigResponse, GetSystemTimeRequest, GetSystemTimeResponse,
+    PushActiveConfigSnapshotRequest, PushActiveConfigSnapshotResponse,
 };
 use crate::zones::Zone;
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
@@ -168,36 +167,6 @@ where
         Err(Status::unimplemented("not yet implemented"))
     }
 
-    async fn swap_policies(
-        &self,
-        request: Request<SwapPoliciesRequest>,
-    ) -> Result<Response<SwapPoliciesResponse>, Status> {
-        let rules = request.into_inner().rules;
-        let mut policies = Vec::with_capacity(rules.len());
-
-        for rule in rules {
-            match Policy::try_from_rule(rule) {
-                Ok(policy) => policies.push(policy),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to parse policy from SwapPoliciesRequest");
-                    return Err(Status::invalid_argument(format!(
-                        "failed to parse policy: {err}"
-                    )));
-                }
-            }
-        }
-
-        let response = match self.policy_store.swap_policies(policies).await {
-            Ok(()) => SwapPoliciesResponse {},
-            Err(err) => {
-                tracing::error!(error = %err, "failed to swap policies");
-                return Err(Status::internal(format!("failed to swap policies: {err}")));
-            }
-        };
-
-        Ok(Response::new(response))
-    }
-
     async fn get_policies(
         &self,
         _request: Request<GetPoliciesRequest>,
@@ -234,36 +203,6 @@ where
         Err(Status::unimplemented("not yet implemented"))
     }
 
-    async fn swap_zones(
-        &self,
-        request: Request<SwapZonesRequest>,
-    ) -> Result<Response<SwapZonesResponse>, Status> {
-        let zones = request.into_inner().zones;
-        let mut zones_domain = Vec::with_capacity(zones.len());
-
-        for zone in zones {
-            match Zone::try_from_proto(zone) {
-                Ok(pair) => zones_domain.push(pair),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to parse zone from SwapZonesRequest");
-                    return Err(Status::invalid_argument(format!(
-                        "failed to parse zone: {err}"
-                    )));
-                }
-            }
-        }
-
-        let response = match self.zone_store.swap_zones(zones_domain).await {
-            Ok(()) => SwapZonesResponse {},
-            Err(err) => {
-                tracing::error!(error = %err, "failed to swap zones");
-                return Err(Status::internal(format!("failed to swap zones: {err}")));
-            }
-        };
-
-        Ok(Response::new(response))
-    }
-
     async fn get_zones(
         &self,
         _request: Request<GetZonesRequest>,
@@ -291,42 +230,6 @@ where
             })),
             None => Err(Status::not_found(format!("policy with id {id} not found"))),
         }
-    }
-
-    async fn swap_zone_pairs(
-        &self,
-        request: Request<SwapZonePairsRequest>,
-    ) -> Result<Response<SwapZonePairsResponse>, Status> {
-        let zone_pairs = request.into_inner().zone_pairs;
-        let mut zone_pairs_domain = Vec::with_capacity(zone_pairs.len());
-
-        for zp in zone_pairs {
-            match ZonePair::try_from_proto(zp) {
-                Ok(pair) => zone_pairs_domain.push(pair),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to parse zone pair from SwapZonePairsRequest");
-                    return Err(Status::invalid_argument(format!(
-                        "failed to parse zone pair: {err}"
-                    )));
-                }
-            }
-        }
-
-        let response = match self
-            .zone_pair_store
-            .swap_zone_pairs(zone_pairs_domain)
-            .await
-        {
-            Ok(()) => SwapZonePairsResponse {},
-            Err(err) => {
-                tracing::error!(error = %err, "failed to swap zone pairs");
-                return Err(Status::internal(format!(
-                    "failed to swap zone pairs: {err}"
-                )));
-            }
-        };
-
-        Ok(Response::new(response))
     }
 
     async fn get_zone_pairs(
@@ -505,7 +408,7 @@ where
             crate::integrity::validate_bundle(&policies, &zone_pairs, &zones, &zone_interfaces);
 
         if !errors.is_empty() {
-            let messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+            let messages: Vec<String> = errors.iter().map(std::string::ToString::to_string).collect();
             return Ok(Response::new(PushActiveConfigSnapshotResponse {
                 correlation_id,
                 accepted: false,

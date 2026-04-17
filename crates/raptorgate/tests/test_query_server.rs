@@ -11,11 +11,13 @@ use ngfw::data_plane::ips::provider::IpsConfigProvider;
 use ngfw::data_plane::nat::NatEngine;
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::provider::DiskPolicyProvider;
-use ngfw::proto::config::Rule;
+use ngfw::proto::config::{Rule, Zone, ZonePair};
+use ngfw::proto::services::firewall_config_snapshot_service_client::FirewallConfigSnapshotServiceClient;
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::proto::services::{
-    GetConfigRequest, GetIpsConfigRequest, GetPoliciesRequest, SwapConfigRequest,
-    SwapIpsConfigRequest, SwapPoliciesRequest,
+    ActiveConfigSnapshot, ConfigBundle, GetConfigRequest, GetIpsConfigRequest,
+    GetPoliciesRequest, GetZonePairsRequest, GetZonesRequest, PushActiveConfigSnapshotRequest,
+    SwapConfigRequest, SwapIpsConfigRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::zones::provider::ZoneInterfaceProvider;
@@ -113,164 +115,258 @@ async fn connect(socket: &str) -> FirewallQueryServiceClient<tonic::transport::C
     FirewallQueryServiceClient::new(channel)
 }
 
-#[tokio::test]
-#[serial(policies)] // has to be serial or else there's a race condition where after one test saves a new
-// config, a second test may load the config saved by the first one.
-async fn swap_policies_happy_path_returns_no_error() {
-    let mut client = connect(&shared_server().socket).await;
-
-    client
-        .swap_policies(SwapPoliciesRequest {
-            rules: vec![Rule {
-                id: Uuid::now_v7().into(),
-                name: "swap_happy".into(),
-                zone_pair_id: Uuid::now_v7().into(),
-                priority: 0,
-                content: "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }".into(),
-            }],
-        })
+async fn connect_snapshot(
+    socket: &str,
+) -> FirewallConfigSnapshotServiceClient<tonic::transport::Channel> {
+    let socket = socket.to_owned();
+    let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")
+        .unwrap()
+        .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
+            let path = socket.clone();
+            async move {
+                let stream = tokio::net::UnixStream::connect(&path).await?;
+                Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(stream))
+            }
+        }))
         .await
         .unwrap();
+    FirewallConfigSnapshotServiceClient::new(channel)
 }
 
-#[tokio::test]
-#[serial(policies)]
-async fn swap_policies_error_path_returns_error_message() {
-    let mut client = connect(&shared_server().socket).await;
-
-    let resp = client
-        .swap_policies(SwapPoliciesRequest {
-            rules: vec![Rule {
-                id: Uuid::now_v7().into(),
-                name: "swap_unhappy".into(),
-                zone_pair_id: Uuid::now_v7().into(),
-                priority: 1,
-                content: "this is not valid raptorlang".into(),
-            }],
-        })
-        .await;
-
-    assert!(resp.is_err());
+struct ValidBundle {
+    bundle: ConfigBundle,
+    rule: Rule,
+    src_zone: Zone,
+    dst_zone: Zone,
+    zone_pair: ZonePair,
 }
 
-#[tokio::test]
-#[serial(policies)]
-async fn fetch_policies_returns_ok() {
-    let mut client = connect(&shared_server().socket).await;
+fn create_valid_bundle(rule_name: &str, content: &str) -> ValidBundle {
+    let src_zone = Zone {
+        id: Uuid::now_v7().to_string(),
+        name: format!("{rule_name}_src"),
+        interface_ids: vec![],
+    };
+    let dst_zone = Zone {
+        id: Uuid::now_v7().to_string(),
+        name: format!("{rule_name}_dst"),
+        interface_ids: vec![],
+    };
+    let zone_pair = ZonePair {
+        id: Uuid::now_v7().to_string(),
+        src_zone_id: src_zone.id.clone(),
+        dst_zone_id: dst_zone.id.clone(),
+        default_policy: Default::default(),
+    };
     let rule = Rule {
-        id: Uuid::now_v7().into(),
-        name: "fetch_policies_returns_ok".into(), // unique per run
-        zone_pair_id: Uuid::now_v7().into(),
+        id: Uuid::now_v7().to_string(),
+        name: rule_name.to_string(),
+        zone_pair_id: zone_pair.id.clone(),
         priority: 0,
-        content: "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }".into(),
+        content: content.to_string(),
     };
 
-    client
-        .swap_policies(SwapPoliciesRequest {
-            rules: vec![rule.clone()],
-        })
-        .await
-        .unwrap();
+    let bundle = ConfigBundle {
+        rules: vec![rule.clone()],
+        zones: vec![src_zone.clone(), dst_zone.clone()],
+        zone_pairs: vec![zone_pair.clone()],
+        ..Default::default()
+    };
 
-    let resp = client.get_policies(GetPoliciesRequest {}).await.unwrap();
+    ValidBundle {
+        bundle,
+        rule,
+        src_zone,
+        dst_zone,
+        zone_pair,
+    }
+}
+
+fn create_snapshot_request(
+    bundle: ConfigBundle,
+) -> (PushActiveConfigSnapshotRequest, String, String) {
+    let correlation_id = Uuid::now_v7().to_string();
+    let snapshot_id = Uuid::now_v7().to_string();
+
+    (
+        PushActiveConfigSnapshotRequest {
+            correlation_id: correlation_id.clone(),
+            snapshot: Some(ActiveConfigSnapshot {
+                id: snapshot_id.clone(),
+                version_number: 1,
+                snapshot_type: "manual_import".into(),
+                checksum: "test-checksum".into(),
+                is_active: true,
+                changes_summary: "test snapshot".into(),
+                created_at: None,
+                created_by: "test_query_server".into(),
+                bundle: Some(bundle),
+            }),
+            reason: "apply".into(),
+        },
+        correlation_id,
+        snapshot_id,
+    )
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle)]
+async fn push_active_config_snapshot_happy_path() {
+    let mut client = connect_snapshot(&shared_server().socket).await;
+    let valid = create_valid_bundle(
+        "snapshot_happy",
+        "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }",
+    );
+    let (request, correlation_id, snapshot_id) = create_snapshot_request(valid.bundle);
+
+    let response = client
+        .push_active_config_snapshot(request)
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(response.accepted);
+    assert_eq!(response.correlation_id, correlation_id);
+    assert_eq!(response.applied_snapshot_id, snapshot_id);
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle)]
+async fn push_active_config_snapshot_integrity_error() {
+    let mut client = connect_snapshot(&shared_server().socket).await;
+    let valid = create_valid_bundle(
+        "snapshot_integrity_error",
+        "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }",
+    );
+
+    let mut broken_rule = valid.rule.clone();
+    broken_rule.zone_pair_id = Uuid::now_v7().to_string();
+
+    let broken_bundle = ConfigBundle {
+        rules: vec![broken_rule],
+        zones: vec![valid.src_zone, valid.dst_zone],
+        zone_pairs: vec![valid.zone_pair],
+        ..Default::default()
+    };
+    let (request, _, _) = create_snapshot_request(broken_bundle);
+
+    let response = client
+        .push_active_config_snapshot(request)
+        .await;
+
+    let inner = response.unwrap().into_inner();
+    assert!(!inner.accepted);
+    assert!(!inner.message.is_empty());
+    let lowered = inner.message.to_lowercase();
+    assert!(lowered.contains("zone") || lowered.contains("pair"));
+    // TODO: Return a transport error for integrity failures instead of accepted=false payloads.
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle)]
+async fn push_active_config_snapshot_raptorlang_error() {
+    let mut client = connect_snapshot(&shared_server().socket).await;
+    let invalid = create_valid_bundle("snapshot_raptorlang_error", "this is not valid raptorlang");
+    let (request, _, _) = create_snapshot_request(invalid.bundle);
+
+    let response = client.push_active_config_snapshot(request).await;
+
+    assert!(response.is_err());
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle)]
+async fn fetch_policies_returns_ok() {
+    let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
+    let mut query_client = connect(&shared_server().socket).await;
+    let valid = create_valid_bundle(
+        "fetch_policies_returns_ok",
+        "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }",
+    );
+    let expected_rule_name = valid.rule.name.clone();
+    let (request, _, _) = create_snapshot_request(valid.bundle);
+
+    let push_response = snapshot_client
+        .push_active_config_snapshot(request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(push_response.accepted);
+
+    let resp = query_client.get_policies(GetPoliciesRequest {}).await.unwrap();
     let inner = resp.into_inner();
 
-    // Don't assert on count or position — other tests race on the same server.
-    // Assert only that *our* rule made it in.
     assert!(
-        inner.rules.iter().any(|r| r.name == rule.name),
+        inner.rules.iter().any(|r| r.name == expected_rule_name),
         "expected rule '{}' to be present, got: {:?}",
-        rule.name,
+        expected_rule_name,
         inner.rules.iter().map(|r| &r.name).collect::<Vec<_>>()
     );
 }
 
 #[tokio::test]
-#[serial(zones)]
-async fn swap_zones_happy_path_returns_no_error() {
-    let mut client = connect(&shared_server().socket).await;
-    client
-        .swap_zones(ngfw::proto::services::SwapZonesRequest {
-            zones: vec![ngfw::proto::config::Zone {
-                id: Uuid::now_v7().into(),
-                name: "swap_zone_happy".into(),
-                interface_ids: vec![],
-            }],
-        })
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-#[serial(zones)]
+#[serial(snapshot_bundle)]
 async fn fetch_zones_returns_ok() {
-    let mut client = connect(&shared_server().socket).await;
-    let zone = ngfw::proto::config::Zone {
-        id: Uuid::now_v7().into(),
-        name: "fetch_zones_ok".into(),
-        interface_ids: vec![],
-    };
-    client
-        .swap_zones(ngfw::proto::services::SwapZonesRequest {
-            zones: vec![zone.clone()],
-        })
-        .await
-        .unwrap();
-    let resp = client
-        .get_zones(ngfw::proto::services::GetZonesRequest {})
-        .await
-        .unwrap();
-    let inner = resp.into_inner();
-    assert!(
-        inner.zones.iter().any(|z| z.name == zone.name),
-        "expected zone '{}' to be present, got: {:?}",
-        zone.name,
-        inner.zones.iter().map(|z| &z.name).collect::<Vec<_>>()
+    let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
+    let mut query_client = connect(&shared_server().socket).await;
+    let valid = create_valid_bundle(
+        "fetch_zones_returns_ok",
+        "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }",
     );
-}
+    let expected_zone_names = [valid.src_zone.name.clone(), valid.dst_zone.name.clone()];
+    let (request, _, _) = create_snapshot_request(valid.bundle);
 
-#[tokio::test]
-#[serial(zone_pairs)]
-async fn swap_zones_pairs_happy_path_returns_no_error() {
-    let mut client = connect(&shared_server().socket).await;
-    client
-        .swap_zone_pairs(ngfw::proto::services::SwapZonePairsRequest {
-            zone_pairs: vec![ngfw::proto::config::ZonePair {
-                id: Uuid::now_v7().into(),
-                src_zone_id: Uuid::now_v7().into(),
-                dst_zone_id: Uuid::now_v7().into(),
-                default_policy: Default::default(),
-            }],
-        })
+    let push_response = snapshot_client
+        .push_active_config_snapshot(request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(push_response.accepted);
+
+    let resp = query_client
+        .get_zones(GetZonesRequest {})
         .await
         .unwrap();
+    let inner = resp.into_inner();
+
+    for expected_zone_name in expected_zone_names {
+        assert!(
+            inner.zones.iter().any(|z| z.name == expected_zone_name),
+            "expected zone '{}' to be present, got: {:?}",
+            expected_zone_name,
+            inner.zones.iter().map(|z| &z.name).collect::<Vec<_>>()
+        );
+    }
 }
 
 #[tokio::test]
-#[serial(zone_pairs)]
+#[serial(snapshot_bundle)]
 async fn fetch_zone_pairs_returns_ok() {
-    let mut client = connect(&shared_server().socket).await;
-    let zone_pair = ngfw::proto::config::ZonePair {
-        id: Uuid::now_v7().into(),
-        src_zone_id: Uuid::now_v7().into(),
-        dst_zone_id: Uuid::now_v7().into(),
-        default_policy: Default::default(),
-    };
-    client
-        .swap_zone_pairs(ngfw::proto::services::SwapZonePairsRequest {
-            zone_pairs: vec![zone_pair.clone()],
-        })
+    let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
+    let mut query_client = connect(&shared_server().socket).await;
+    let valid = create_valid_bundle(
+        "fetch_zone_pairs_returns_ok",
+        "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }",
+    );
+    let expected_zone_pair_id = valid.zone_pair.id.clone();
+    let (request, _, _) = create_snapshot_request(valid.bundle);
+
+    let push_response = snapshot_client
+        .push_active_config_snapshot(request)
         .await
-        .unwrap();
-    let resp = client
-        .get_zone_pairs(ngfw::proto::services::GetZonePairsRequest {})
+        .unwrap()
+        .into_inner();
+    assert!(push_response.accepted);
+
+    let resp = query_client
+        .get_zone_pairs(GetZonePairsRequest {})
         .await
         .unwrap();
     let inner = resp.into_inner();
     assert!(
-        inner.zone_pairs.iter().any(|zp| zp.id == zone_pair.id),
+        inner.zone_pairs.iter().any(|zp| zp.id == expected_zone_pair_id),
         "expected zone pair with id '{}' to be present, got: {:?}",
-        zone_pair.id,
+        expected_zone_pair_id,
         inner.zone_pairs.iter().map(|zp| &zp.id).collect::<Vec<_>>()
     );
 }

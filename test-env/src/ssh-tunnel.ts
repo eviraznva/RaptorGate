@@ -18,6 +18,7 @@ const PROTO_ROOT = path.resolve(__dirname, '../../proto');
 const PROTO_FILES = [
   path.join(PROTO_ROOT, 'services', 'event_service.proto'),
   path.join(PROTO_ROOT, 'services', 'query_service.proto'),
+  path.join(PROTO_ROOT, 'services', 'config_snapshot_service.proto'),
   path.join(PROTO_ROOT, 'events', 'firewall_events.proto'),
   path.join(PROTO_ROOT, 'common', 'common.proto'),
   path.join(PROTO_ROOT, 'config', 'config_models.proto'),
@@ -36,6 +37,7 @@ const packageDef = protoLoader.loadSync(PROTO_FILES, LOADER_OPTIONS);
 const proto = grpc.loadPackageDefinition(packageDef) as any;
 
 const QueryServiceClient = proto.raptorgate.services.FirewallQueryService;
+const SnapshotServiceClient = proto.raptorgate.services.FirewallConfigSnapshotService;
 
 // ---------------------------------------------------------------------------
 // Ready callback interface
@@ -46,6 +48,8 @@ export interface TunnelReadyContext {
   eventServer: grpc.Server;
   /** gRPC client for FirewallQueryService (connected to forwarded query.sock) */
   queryClient: any; // grpc.Client subclass — methods discovered at runtime
+  /** gRPC client for FirewallConfigSnapshotService (connected to forwarded query.sock) */
+  snapshotClient: any;
 }
 
 export interface SshTunnelOptions {
@@ -306,7 +310,12 @@ export function startSshTunnel(eventServer: grpc.Server, opts: SshTunnelOptions)
         grpc.credentials.createInsecure(),
       );
 
-      opts.onReady({ eventServer, queryClient });
+      const snapshotClient = new SnapshotServiceClient(
+        `unix:${QUERY_LOCAL_SOCKET}`,
+        grpc.credentials.createInsecure(),
+      );
+
+      opts.onReady({ eventServer, queryClient, snapshotClient });
     }
   }
 

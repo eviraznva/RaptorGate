@@ -1,19 +1,35 @@
 import { match, P } from 'ts-pattern';
 import { afterEach, afterAll, beforeEach } from 'bun:test';
-import { getClient } from './grpc-client';
+import { getClient, getSnapshotClient } from './grpc-client';
 import { eventCollector, type EventMatcher } from './event-collector';
 import { ssh, sshWithResult, type KnownHost, spawnSsh, closeAllSshProcesses } from '../ssh-helper';
 import type { FirewallQueryService } from '../generated/services/query_service';
+import type { FirewallConfigSnapshotService } from '../generated/services/config_snapshot_service';
 
 // ---------------------------------------------------------------------------
 // Type extraction from generated gRPC service
 // ---------------------------------------------------------------------------
 
-/** All available RPC method names on FirewallQueryService */
-export type RpcMethodName = keyof FirewallQueryService;
+export type QueryRpcMethodName = keyof FirewallQueryService;
+export type SnapshotRpcMethodName = keyof FirewallConfigSnapshotService;
+/** All available RPC method names on FirewallQueryService + FirewallConfigSnapshotService */
+export type RpcMethodName = QueryRpcMethodName | SnapshotRpcMethodName;
 
 /** The request payload type for a specific RPC method */
-export type RequestPayload<M extends RpcMethodName> = Parameters<FirewallQueryService[M]>[0];
+export type RequestPayload<M extends RpcMethodName> =
+  M extends QueryRpcMethodName
+    ? Parameters<FirewallQueryService[M]>[0]
+    : M extends SnapshotRpcMethodName
+      ? Parameters<FirewallConfigSnapshotService[M]>[0]
+      : never;
+
+const SNAPSHOT_RPCS: ReadonlySet<SnapshotRpcMethodName> = new Set([
+  'PushActiveConfigSnapshot',
+]);
+
+function isSnapshotRpcMethod(rpc: RpcMethodName): rpc is SnapshotRpcMethodName {
+  return SNAPSHOT_RPCS.has(rpc as SnapshotRpcMethodName);
+}
 
 // ---------------------------------------------------------------------------
 // VM system time helper
@@ -103,14 +119,12 @@ class RequestBuilder<M extends RpcMethodName> {
   }
 
   async run(): Promise<void> {
-    const client = getClient();
-
     if (this.eventPatterns) {
       const vmTime = await fetchVmSystemTimeMs();
       eventCollector.setFence(vmTime);
     }
 
-    const result = await this.invokeRpc(client);
+    const result = await this.invokeRpc();
 
     if (this.responsePattern) {
       this.assertResponse(result);
@@ -122,7 +136,11 @@ class RequestBuilder<M extends RpcMethodName> {
     }
   }
 
-  private async invokeRpc(client: any): Promise<any> {
+  private async invokeRpc(): Promise<any> {
+    const client = isSnapshotRpcMethod(this.rpc)
+      ? getSnapshotClient()
+      : getClient();
+
     return new Promise((resolve, reject) => {
       client[this.rpc.charAt(0).toLowerCase() + this.rpc.slice(1)](this.body, (err: Error | null, resp: any) => {
         if (err) reject(err);
@@ -268,7 +286,7 @@ class CommandBuilder {
 
 /**
  * Create a typed gRPC request builder.
- * @param rpc - Literal RPC method name (e.g. 'SwapPolicies')
+ * @param rpc - Literal RPC method name (e.g. 'GetPolicies' | 'PushActiveConfigSnapshot')
  * @param body - Strongly typed request payload (auto-constrained by rpc)
  */
 export function request<M extends RpcMethodName>(

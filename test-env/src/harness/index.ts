@@ -9,4 +9,4 @@ beforeAll(async () => {
 
 export { request, performCommand, DetachedCommand } from './test-runner';
 export { resetFirewallState } from './fixtures';
-export { getClient } from './grpc-client';
+export { getClient, getSnapshotClient } from './grpc-client';

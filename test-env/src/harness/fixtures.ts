@@ -1,6 +1,9 @@
 import type { Rule, Zone, ZonePair, AppConfig } from '../generated/config/config_models';
 import { DefaultPolicy } from '../generated/common/common';
-import type { FirewallQueryServiceClient } from './grpc-client';
+import type {
+  FirewallConfigSnapshotServiceClient,
+  FirewallQueryServiceClient,
+} from './grpc-client';
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
   captureInterfaces: ['eth1', 'eth2'],
@@ -9,7 +12,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   tunAddress: '10.254.254.1',
   tunNetmask: '255.255.255.0',
   dataDir: '/resources/ngfw/.data',
-  eventSocketPath: './sockets/firewall.sock',
+  eventSocketPath: './sockets/event.sock',
   querySocketPath: '/resources/ngfw/sockets/query.sock',
   pkiDir: '/resources/ngfw/pki',
 };
@@ -51,7 +54,30 @@ export const DEFAULT_POLICIES: Rule[] = [{
 	`
 }];
 
-export async function resetFirewallState(client: FirewallQueryServiceClient): Promise<void> {
+export function createDefaultSnapshotBundle(policyOverrides?: Partial<Rule>) {
+  const zones = DEFAULT_ZONES.map((zone) => ({ ...zone }));
+  const zonePairs = DEFAULT_ZONE_PAIRS.map((zonePair) => ({ ...zonePair }));
+  const defaultRule = {
+    ...DEFAULT_POLICIES[0]!,
+    id: crypto.randomUUID(),
+    zonePairId: zonePairs[0]!.id,
+  };
+
+  return {
+    rules: [{
+      ...defaultRule,
+      ...policyOverrides,
+      zonePairId: policyOverrides?.zonePairId ?? defaultRule.zonePairId,
+    }],
+    zones,
+    zonePairs,
+  };
+}
+
+export async function resetFirewallState(
+  client: FirewallQueryServiceClient,
+  snapshotClient: FirewallConfigSnapshotServiceClient,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     client.swapConfig({ config: DEFAULT_APP_CONFIG }, (err: Error | null) => {
       if (err) reject(err);
@@ -60,23 +86,33 @@ export async function resetFirewallState(client: FirewallQueryServiceClient): Pr
   });
 
   await new Promise<void>((resolve, reject) => {
-    client.swapZones({ zones: DEFAULT_ZONES }, (err: Error | null) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    client.swapZonePairs({ zonePairs: DEFAULT_ZONE_PAIRS }, (err: Error | null) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    client.swapPolicies({ rules: DEFAULT_POLICIES }, (err: Error | null) => {
-      if (err) reject(err);
-      else resolve();
-    });
+    snapshotClient.pushActiveConfigSnapshot(
+      {
+        correlationId: crypto.randomUUID(),
+        reason: 'apply',
+        snapshot: {
+          id: crypto.randomUUID(),
+          versionNumber: BigInt(1),
+          snapshotType: 'manual_import',
+          checksum: 'test-env-default-checksum',
+          isActive: true,
+          changesSummary: 'reset firewall state for test-env',
+          createdAt: new Date(),
+          createdBy: 'test-env-reset',
+          bundle: createDefaultSnapshotBundle(),
+        },
+      },
+      (err: Error | null, resp: any) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        if (!resp?.accepted) {
+          reject(new Error(resp?.message || 'snapshot reset rejected'));
+          return;
+        }
+        resolve();
+      },
+    );
   });
 }

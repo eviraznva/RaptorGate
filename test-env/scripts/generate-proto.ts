@@ -26,6 +26,7 @@ const protoFiles = [
   path.join(protoRoot, 'events', 'firewall_events.proto'),
   path.join(protoRoot, 'services', 'event_service.proto'),
   path.join(protoRoot, 'services', 'query_service.proto'),
+  path.join(protoRoot, 'services', 'config_snapshot_service.proto'),
   path.join(protoRoot, 'config', 'config_models.proto'),
 ];
 
