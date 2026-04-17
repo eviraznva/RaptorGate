@@ -1,7 +1,7 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
+use std::hash::BuildHasher;
 use uuid::Uuid;
-use std::fmt;
 use thiserror::Error;
 
 use crate::policy::{Policy, PolicyId};
@@ -40,7 +40,6 @@ macro_rules! foreign_keys {
 }
 pub(crate) use foreign_keys;
 
-
 fn short_type_name<T: ?Sized>() -> &'static str {
     let full = std::any::type_name::<T>();
     let last = full.rsplit("::").next().unwrap_or(full);
@@ -68,18 +67,18 @@ pub enum CheckError {
     },
 }
 
-pub fn validate_bundle(
-    policies: &HashMap<PolicyId, Policy>,
-    zone_pairs: &HashMap<ZonePairId, ZonePair>,
-    zones: &HashMap<ZoneId, Zone>,
-    zone_interfaces: &HashMap<ZoneInterfaceId, ZoneInterface>,
+pub fn validate_bundle<S: BuildHasher>(
+    policies: &HashMap<PolicyId, Policy, S>,
+    zone_pairs: &HashMap<ZonePairId, ZonePair, S>,
+    zones: &HashMap<ZoneId, Zone, S>,
+    zone_interfaces: &HashMap<ZoneInterfaceId, ZoneInterface, S>,
 ) -> Vec<CheckError> {
     let mut known: HashMap<TypeId, HashSet<Uuid>> = HashMap::new();
 
-    register_ids::<PolicyId, _>(&mut known, policies);
-    register_ids::<ZonePairId, _>(&mut known, zone_pairs);
-    register_ids::<ZoneId, _>(&mut known, zones);
-    register_ids::<ZoneInterfaceId, _>(&mut known, zone_interfaces);
+    register_ids(&mut known, policies);
+    register_ids(&mut known, zone_pairs);
+    register_ids(&mut known, zones);
+    register_ids(&mut known, zone_interfaces);
 
     let mut errors = Vec::new();
 
@@ -90,22 +89,26 @@ pub fn validate_bundle(
     errors
 }
 
-fn register_ids<Id: 'static + Clone + Into<Uuid>, V>(
+fn register_ids<Id, V, S>(
     known: &mut HashMap<TypeId, HashSet<Uuid>>,
-    data: &HashMap<Id, V>,
-) {
+    data: &HashMap<Id, V, S>,
+) where
+    Id: 'static + Clone + Into<Uuid>,
+    S: BuildHasher,
+{
     let ids = data.keys().map(|k| k.clone().into()).collect();
     known.insert(TypeId::of::<Id>(), ids);
 }
 
-fn check_collection<Id, V>(
+fn check_collection<Id, V, S>(
     entity_name: &'static str,
-    data: &HashMap<Id, V>,
+    data: &HashMap<Id, V, S>,
     known: &HashMap<TypeId, HashSet<Uuid>>,
     errors: &mut Vec<CheckError>,
 ) where
     Id: Clone + Into<Uuid>,
     V: ForeignKeys,
+    S: BuildHasher,
 {
     for (id, entity) in data {
         for fk_ref in entity.foreign_keys() {
