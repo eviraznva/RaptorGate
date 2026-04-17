@@ -13,12 +13,18 @@ import { SignatureCategory } from "src/domain/value-objects/signature-category.v
 import { SignatureSeverity } from "src/domain/value-objects/signature-severity.vo";
 import { IpsConfigDto } from "../dtos/update-ips-config.dto";
 import { UpdateIpsConfigResponseDto } from "../dtos/update-ips-config-response.dto";
+import {
+  FIREWALL_IPS_CONFIG_QUERY_SERVICE_TOKEN,
+  type IFirewallIpsConfigQueryService,
+} from "../ports/firewall-ips-config-query-service.interface";
 
 @Injectable()
 export class UpdateIpsConfigUseCase {
   constructor(
     @Inject(IPS_CONFIG_REPOSITORY_TOKEN)
     private readonly ipsConfigRepository: IIpsConfigRepository,
+    @Inject(FIREWALL_IPS_CONFIG_QUERY_SERVICE_TOKEN)
+    private readonly firewallIpsConfigQueryService: IFirewallIpsConfigQueryService,
   ) {}
 
   async execute(dto: IpsConfigDto): Promise<UpdateIpsConfigResponseDto> {
@@ -46,6 +52,8 @@ export class UpdateIpsConfigUseCase {
     );
 
     await this.ipsConfigRepository.save(newIpsConfig);
+
+    await this.firewallIpsConfigQueryService.swapIpsConfig(newIpsConfig);
 
     return { ipsConfig: newIpsConfig };
   }
