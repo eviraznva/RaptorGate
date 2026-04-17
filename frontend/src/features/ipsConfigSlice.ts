@@ -158,6 +158,16 @@ const ipsConfigSlice = createSlice({
       );
     },
 
+    setIpsSignatures: (state, action: PayloadAction<IpsSignatureConfig[]>) => {
+      state.draftConfig.signatures = action.payload;
+      if (
+        state.selectedSignatureId &&
+        !action.payload.some((s) => s.id === state.selectedSignatureId)
+      ) {
+        state.selectedSignatureId = action.payload.length > 0 ? action.payload[0].id : null;
+      }
+    },
+
     applyIpsDraft: (state) => {
       state.appliedConfig = deepClone(state.draftConfig);
     },
@@ -204,6 +214,7 @@ export const {
   setIpsActiveTab,
   setIpsGeneralConfig,
   setIpsDetectionConfig,
+  setIpsSignatures,
   selectIpsSignature,
   addIpsSignature,
   removeIpsSignature,
