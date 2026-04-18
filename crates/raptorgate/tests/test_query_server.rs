@@ -293,6 +293,8 @@ async fn swap_config_happy_path_returns_no_error() {
                 mitm_listen_addr: "127.0.0.1:8443".into(),
                 control_plane_socket_path: "./sockets/control-plane.sock".into(),
                 ssl_bypass_domains: vec![],
+                tls_inspection_ports: vec![443],
+                block_tls_on_undeclared_ports: false,
             }),
         })
         .await
@@ -318,6 +320,8 @@ async fn get_config_returns_ok() {
         mitm_listen_addr: "127.0.0.1:8443".into(),
         control_plane_socket_path: "./sockets/control-plane.sock".into(),
         ssl_bypass_domains: vec![],
+        tls_inspection_ports: vec![443],
+        block_tls_on_undeclared_ports: false,
     };
 
     client

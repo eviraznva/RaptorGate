@@ -370,4 +370,6 @@ message AppConfig {
   string          mitm_listen_addr       = 11;
   string          control_plane_socket_path = 12;
   repeated string ssl_bypass_domains        = 13;
+  repeated uint32 tls_inspection_ports      = 14;
+  bool            block_tls_on_undeclared_ports = 15;
 }

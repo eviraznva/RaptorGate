@@ -126,6 +126,14 @@ impl AppConfigProvider {
             .filter(|s| !s.is_empty())
             .collect();
 
+        let tls_inspection_ports = parse_tls_inspection_ports(
+            std::env::var("TLS_INSPECTION_PORTS").ok().as_deref(),
+        );
+
+        let block_tls_on_undeclared_ports = std::env::var("BLOCK_TLS_ON_UNDECLARED_PORTS")
+            .unwrap_or_else(|_| "false".into())
+            .eq_ignore_ascii_case("true");
+
         let config = AppConfig {
             capture_interfaces,
             pcap_timeout_ms,
@@ -141,6 +149,8 @@ impl AppConfigProvider {
             mitm_listen_addr,
             control_plane_socket_path,
             ssl_bypass_domains,
+            tls_inspection_ports,
+            block_tls_on_undeclared_ports,
         };
 
         let store = SingleDiskStore::new("app_config", config.data_dir.clone());
@@ -224,5 +234,43 @@ impl AppConfigProvider {
 
     pub fn get_config(&self) -> arc_swap::Guard<Arc<AppConfig>> {
         self.config.load()
+    }
+}
+
+fn parse_tls_inspection_ports(raw: Option<&str>) -> Vec<u16> {
+    let parsed: Vec<u16> = raw
+        .unwrap_or("443")
+        .split(',')
+        .filter_map(|s| s.trim().parse::<u16>().ok())
+        .collect();
+
+    if parsed.is_empty() {
+        vec![443]
+    } else {
+        parsed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_tls_inspection_ports;
+
+    #[test]
+    fn parse_tls_inspection_ports_defaults_to_443_when_absent() {
+        assert_eq!(parse_tls_inspection_ports(None), vec![443]);
+    }
+
+    #[test]
+    fn parse_tls_inspection_ports_reads_comma_separated_list() {
+        assert_eq!(
+            parse_tls_inspection_ports(Some("443, 8443 ,993")),
+            vec![443, 8443, 993]
+        );
+    }
+
+    #[test]
+    fn parse_tls_inspection_ports_falls_back_on_empty_or_garbage() {
+        assert_eq!(parse_tls_inspection_ports(Some("")), vec![443]);
+        assert_eq!(parse_tls_inspection_ports(Some("abc,,")), vec![443]);
     }
 }

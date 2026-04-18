@@ -185,6 +185,8 @@ export class GrpcConfigSnapshotPushService
       tlsInspectionPolicy: this.toTlsInspectionPolicy(
         b.tls_inspection_policy,
       ),
+      decryptionPolicyRules: [],
+      decryptionProfiles: [],
       identity: undefined,
     };
   }

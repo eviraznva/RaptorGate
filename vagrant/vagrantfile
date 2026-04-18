@@ -91,6 +91,10 @@ def setup_ngfw_service
     # tun0 now has its final index — safe to write nftables rules by name
     nft add rule inet filter forward iif "tun0" accept
     nft add rule inet filter forward oif "tun0" accept
+
+    # MITM proxy (SSL inspection) terminuje lokalnie TCP/8443 po REDIRECT z 443.
+    # INPUT ma policy drop, wiec trzeba wpuscic nowe polaczenia na 8443.
+    nft add rule inet filter input tcp dport 8443 ct state new accept
   SHELL
 end
 unless File.respond_to?(:exists?)

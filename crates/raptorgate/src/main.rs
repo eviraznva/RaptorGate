@@ -30,7 +30,7 @@ use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
     DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
     IpsStage, LocalOwnershipStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
-    TcpClassificationStage, ValidationStage,
+    TcpClassificationStage, TlsPortEnforcementStage, ValidationStage,
 };
 use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::policy::provider::DiskPolicyProvider;
@@ -58,18 +58,21 @@ async fn main() {
             Chain<
                 DpiStage,
                 Chain<
-                    DnsBlockListStage,
+                    TlsPortEnforcementStage,
                     Chain<
-                        DnsTunnelingStage,
+                        DnsBlockListStage,
                         Chain<
-                            DnsEchMitigationStage,
+                            DnsTunnelingStage,
                             Chain<
-                                IpsStage,
+                                DnsEchMitigationStage,
                                 Chain<
-                                    NatPreroutingStage,
+                                    IpsStage,
                                     Chain<
-                                        TcpClassificationStage,
-                                        Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                        NatPreroutingStage,
+                                        Chain<
+                                            TcpClassificationStage,
+                                            Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                        >,
                                     >,
                                 >,
                             >,
@@ -254,40 +257,45 @@ async fn main() {
                     classifier: Arc::clone(&dpi_classifier),
                 },
                 tail: Chain {
-                    head: DnsBlockListStage {
-                        inspection: Arc::clone(&dns_inspection),
+                    head: TlsPortEnforcementStage {
+                        config_provider: Arc::clone(&config_provider),
                     },
                     tail: Chain {
-                        head: DnsTunnelingStage {
+                        head: DnsBlockListStage {
                             inspection: Arc::clone(&dns_inspection),
                         },
                         tail: Chain {
-                            head: DnsEchMitigationStage {
+                            head: DnsTunnelingStage {
                                 inspection: Arc::clone(&dns_inspection),
                             },
                             tail: Chain {
-                                head: IpsStage {
-                                    inspection: Arc::clone(&ips),
+                                head: DnsEchMitigationStage {
+                                    inspection: Arc::clone(&dns_inspection),
                                 },
                                 tail: Chain {
-                                    head: NatPreroutingStage {
-                                        engine: Arc::clone(&nat_engine),
+                                    head: IpsStage {
+                                        inspection: Arc::clone(&ips),
                                     },
                                     tail: Chain {
-                                        head: TcpClassificationStage {
-                                            tracker: Arc::clone(&tcp_session_tracker),
+                                        head: NatPreroutingStage {
+                                            engine: Arc::clone(&nat_engine),
                                         },
                                         tail: Chain {
-                                            head: PolicyEvalStage {
-                                                provider: Arc::clone(&policy_provider),
-                                                dnssec: Some(dnssec_provider),
+                                            head: TcpClassificationStage {
+                                                tracker: Arc::clone(&tcp_session_tracker),
                                             },
                                             tail: Chain {
-                                                head: NatPostroutingStage {
-                                                    engine: Arc::clone(&nat_engine),
+                                                head: PolicyEvalStage {
+                                                    provider: Arc::clone(&policy_provider),
+                                                    dnssec: Some(dnssec_provider),
                                                 },
-                                                tail: FtpAlgStage {
-                                                    engine: Arc::clone(&nat_engine),
+                                                tail: Chain {
+                                                    head: NatPostroutingStage {
+                                                        engine: Arc::clone(&nat_engine),
+                                                    },
+                                                    tail: FtpAlgStage {
+                                                        engine: Arc::clone(&nat_engine),
+                                                    },
                                                 },
                                             },
                                         },
@@ -315,6 +323,7 @@ async fn main() {
                 match TransparentRedirect::new(
                     listen_addr,
                     config.capture_interfaces.clone(),
+                    config.tls_inspection_ports.clone(),
                 )
                 .and_then(|redirect| redirect.install())
                 {

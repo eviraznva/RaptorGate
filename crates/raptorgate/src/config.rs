@@ -35,6 +35,12 @@ pub struct AppConfig {
     // Seed startowy bypassow TLS. Zywy stan w TlsDecisionEngine, reload przez snapshot handler.
     #[serde(default)]
     pub ssl_bypass_domains: Vec<String>,
+
+    #[serde(default = "default_tls_inspection_ports")]
+    pub tls_inspection_ports: Vec<u16>,
+
+    #[serde(default)]
+    pub block_tls_on_undeclared_ports: bool,
 }
 
 fn default_mitm_listen_addr() -> String {
@@ -43,6 +49,10 @@ fn default_mitm_listen_addr() -> String {
 
 fn default_control_plane_socket_path() -> String {
     "./sockets/control-plane.sock".to_string()
+}
+
+fn default_tls_inspection_ports() -> Vec<u16> {
+    vec![443]
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +76,12 @@ impl AppConfig {
             mitm_listen_addr: self.mitm_listen_addr.clone(),
             control_plane_socket_path: self.control_plane_socket_path.clone(),
             ssl_bypass_domains: self.ssl_bypass_domains.clone(),
+            tls_inspection_ports: self
+                .tls_inspection_ports
+                .iter()
+                .map(|port| u32::from(*port))
+                .collect(),
+            block_tls_on_undeclared_ports: self.block_tls_on_undeclared_ports,
         }
     }
 
@@ -99,7 +115,23 @@ impl AppConfig {
                 proto_config.control_plane_socket_path
             },
             ssl_bypass_domains: proto_config.ssl_bypass_domains,
+            tls_inspection_ports: normalize_tls_inspection_ports(
+                proto_config
+                    .tls_inspection_ports
+                    .into_iter()
+                    .filter_map(|port| u16::try_from(port).ok())
+                    .collect(),
+            ),
+            block_tls_on_undeclared_ports: proto_config.block_tls_on_undeclared_ports,
         })
+    }
+}
+
+fn normalize_tls_inspection_ports(ports: Vec<u16>) -> Vec<u16> {
+    if ports.is_empty() {
+        default_tls_inspection_ports()
+    } else {
+        ports
     }
 }
 
@@ -123,6 +155,8 @@ mod tests {
             mitm_listen_addr: default_mitm_listen_addr(),
             control_plane_socket_path: default_control_plane_socket_path(),
             ssl_bypass_domains: vec![],
+            tls_inspection_ports: default_tls_inspection_ports(),
+            block_tls_on_undeclared_ports: false,
         }
     }
 
@@ -152,5 +186,25 @@ mod tests {
 
         let config: AppConfig = serde_json::from_str(raw).unwrap();
         assert_eq!(config.capture_interfaces, vec!["eth1"]);
+        assert_eq!(config.tls_inspection_ports, vec![443]);
+        assert!(!config.block_tls_on_undeclared_ports);
+    }
+
+    #[test]
+    fn from_proto_normalizes_empty_tls_inspection_ports() {
+        let mut config = sample_app_config();
+        config.tls_inspection_ports = vec![];
+        let roundtrip = AppConfig::from_proto(config.to_proto()).unwrap();
+        assert_eq!(roundtrip.tls_inspection_ports, vec![443]);
+    }
+
+    #[test]
+    fn from_proto_preserves_custom_tls_inspection_ports() {
+        let mut config = sample_app_config();
+        config.tls_inspection_ports = vec![443, 8443, 993];
+        config.block_tls_on_undeclared_ports = true;
+        let roundtrip = AppConfig::from_proto(config.to_proto()).unwrap();
+        assert_eq!(roundtrip.tls_inspection_ports, vec![443, 8443, 993]);
+        assert!(roundtrip.block_tls_on_undeclared_ports);
     }
 }

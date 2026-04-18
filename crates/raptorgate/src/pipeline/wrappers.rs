@@ -107,7 +107,8 @@ fn should_halt_for_tls_redirect(ctx: &PacketContext, config: &AppConfig) -> bool
 
     matches!(
         &ctx.borrow_sliced_packet().transport,
-        Some(TransportSlice::Tcp(tcp)) if tcp.destination_port() == 443
+        Some(TransportSlice::Tcp(tcp))
+            if config.tls_inspection_ports.contains(&tcp.destination_port())
     )
 }
 
@@ -552,6 +553,43 @@ impl Stage for DpiStage {
     }
 }
 
+#[derive(Clone)]
+pub struct TlsPortEnforcementStage {
+    pub config_provider: Arc<AppConfigProvider>,
+}
+
+impl Stage for TlsPortEnforcementStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        matches!(
+            ctx.borrow_dpi_ctx(),
+            Some(dpi_ctx)
+                if dpi_ctx.app_proto == Some(AppProto::Tls) && !dpi_ctx.decrypted
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let config = self.config_provider.get_config();
+
+        let dst_port = match &ctx.borrow_sliced_packet().transport {
+            Some(TransportSlice::Tcp(tcp)) => tcp.destination_port(),
+            _ => return StageOutcome::Continue,
+        };
+
+        if !tls_port_enforcement_blocks(&config, dst_port) {
+            return StageOutcome::Continue;
+        }
+
+        let msg = format!("TLS detected on undeclared port {dst_port}");
+        tracing::debug!(dst_port, "TLS enforcement block");
+        ctx.with_warnings_mut(|w| w.push(msg));
+        StageOutcome::Halt
+    }
+}
+
+fn tls_port_enforcement_blocks(config: &AppConfig, dst_port: u16) -> bool {
+    config.block_tls_on_undeclared_ports && !config.tls_inspection_ports.contains(&dst_port)
+}
+
 fn merge_preserved_dpi_fields(existing: Option<&crate::dpi::DpiContext>, next: &mut crate::dpi::DpiContext) {
     let Some(existing) = existing else {
         return;
@@ -584,6 +622,8 @@ mod tests {
             mitm_listen_addr: "127.0.0.1:8443".into(),
             control_plane_socket_path: "/tmp/control.sock".into(),
             ssl_bypass_domains: Vec::new(),
+            tls_inspection_ports: vec![443],
+            block_tls_on_undeclared_ports: false,
         }
     }
 
@@ -623,6 +663,46 @@ mod tests {
     fn tls_redirect_ignores_unknown_interfaces() {
         let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth9");
         assert!(!should_halt_for_tls_redirect(&ctx, &sample_config()));
+    }
+
+    #[test]
+    fn tls_redirect_halts_on_custom_inspection_port() {
+        let mut config = sample_config();
+        config.tls_inspection_ports = vec![443, 8443];
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 8443, "eth1");
+        assert!(should_halt_for_tls_redirect(&ctx, &config));
+    }
+
+    #[test]
+    fn tls_redirect_ignores_port_outside_inspection_list() {
+        let mut config = sample_config();
+        config.tls_inspection_ports = vec![443];
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 8443, "eth1");
+        assert!(!should_halt_for_tls_redirect(&ctx, &config));
+    }
+
+    #[test]
+    fn tls_port_enforcement_passes_when_flag_off() {
+        let mut config = sample_config();
+        config.block_tls_on_undeclared_ports = false;
+        config.tls_inspection_ports = vec![443];
+        assert!(!tls_port_enforcement_blocks(&config, 8443));
+    }
+
+    #[test]
+    fn tls_port_enforcement_blocks_undeclared_port_when_flag_on() {
+        let mut config = sample_config();
+        config.block_tls_on_undeclared_ports = true;
+        config.tls_inspection_ports = vec![443];
+        assert!(tls_port_enforcement_blocks(&config, 8443));
+    }
+
+    #[test]
+    fn tls_port_enforcement_allows_declared_port_when_flag_on() {
+        let mut config = sample_config();
+        config.block_tls_on_undeclared_ports = true;
+        config.tls_inspection_ports = vec![443, 8443];
+        assert!(!tls_port_enforcement_blocks(&config, 8443));
     }
 
     #[test]

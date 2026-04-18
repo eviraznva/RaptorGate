@@ -11,6 +11,8 @@
   "grpc_socket_path": "./sockets/firewall.sock",
   "query_socket_path": "./sockets/query.sock",
   "pki_dir": "/var/lib/raptorgate/pki",
-  "ssl_inspection_enabled": false,
-  "mitm_listen_addr": "127.0.0.1:8443"
+  "ssl_inspection_enabled": true,
+  "mitm_listen_addr": "0.0.0.0:8443",
+  "tls_inspection_ports": [443],
+  "block_tls_on_undeclared_ports": false
 }
