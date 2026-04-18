@@ -14,6 +14,7 @@ const envSchema = z.object({
   FIREWALL_GRPC_SOCKET_PATH: z
     .string()
     .default('../sockets/control-plane.sock'),
+  FIREWALL_QUERY_SOCKET_PATH: z.string().default('../sockets/query.sock'),
   COOKIE_SECRET: z
     .string()
     .min(32, 'COOKIE_SECRET must be at least 32 characters'),
