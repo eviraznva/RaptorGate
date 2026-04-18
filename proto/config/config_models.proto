@@ -140,6 +140,7 @@ message MlModel {
 
 // ── Certyfikaty TLS ──────────────────────────────────────────────────────────
 
+// Snapshot niesie tylko metadane; klucz prywatny wgrywany jest przez UploadServerCertificate.
 message FirewallCertificate {
   string                   id              = 1;
   common.CertificateType   cert_type       = 2;
@@ -150,7 +151,6 @@ message FirewallCertificate {
   google.protobuf.Timestamp expires_at     = 7;
   string                   bind_address    = 8;  // IP serwera wewnetrznego (inbound TLS)
   uint32                   bind_port       = 9;  // port serwera (domyslnie 443)
-  string                   private_key_pem = 10; // klucz prywatny PEM (tylko initial sync)
   bool                     inspection_bypass = 11; // bypass inspekcji dla tego serwera
 }
 
@@ -369,6 +369,7 @@ message AppConfig {
   bool            ssl_inspection_enabled = 10;
   string          mitm_listen_addr       = 11;
   string          control_plane_socket_path = 12;
+  string          server_cert_socket_path   = 16;
   repeated string ssl_bypass_domains        = 13;
   repeated uint32 tls_inspection_ports      = 14;
   bool            block_tls_on_undeclared_ports = 15;

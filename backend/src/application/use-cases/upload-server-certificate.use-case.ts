@@ -1,19 +1,19 @@
 import { X509Certificate, createPrivateKey } from 'node:crypto';
-import {
-  BadRequestException,
-  ConflictException,
-  Inject,
-  Injectable,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
 import { FirewallCertificate } from '../../domain/entities/firewall-certificate.entity.js';
 import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
 import {
   FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
   type IFirewallCertificateRepository,
 } from '../../domain/repositories/firewall-certificate.repository.js';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
-import type { ITokenService } from '../ports/token-service.interface.js';
-import { SecretStore } from '../../infrastructure/persistence/secret-store.js';
+import {
+  type IServerCertificateUploadService,
+  SERVER_CERTIFICATE_UPLOAD_SERVICE_TOKEN,
+} from '../ports/server-certificate-upload-service.interface.js';
+import {
+  type ITokenService,
+  TOKEN_SERVICE_TOKEN,
+} from '../ports/token-service.interface.js';
 
 export interface UploadServerCertificateCommand {
   accessToken: string;
@@ -41,7 +41,8 @@ export class UploadServerCertificateUseCase {
     private readonly firewallCertificateRepository: IFirewallCertificateRepository,
     @Inject(TOKEN_SERVICE_TOKEN)
     private readonly tokenService: ITokenService,
-    private readonly secretStore: SecretStore,
+    @Inject(SERVER_CERTIFICATE_UPLOAD_SERVICE_TOKEN)
+    private readonly uploadService: IServerCertificateUploadService,
   ) {}
 
   async execute(
@@ -49,12 +50,6 @@ export class UploadServerCertificateUseCase {
   ): Promise<UploadServerCertificateResult> {
     const claims = this.tokenService.decodeAccessToken(dto.accessToken);
     if (!claims) throw new AccessTokenIsInvalidException();
-
-    if (!this.secretStore.isConfigured()) {
-      throw new BadRequestException(
-        'BACKEND_SECRET_ENCRYPTION_KEY is required to upload TLS server certificates',
-      );
-    }
 
     const certificate = this.parseCertificate(dto.certificatePem);
     const privateKey = this.parsePrivateKey(dto.privateKeyPem);
@@ -66,38 +61,41 @@ export class UploadServerCertificateUseCase {
     const id = crypto.randomUUID();
     const privateKeyRef = crypto.randomUUID();
     const commonName = this.extractCommonName(certificate) ?? dto.bindAddress;
-    const fingerprint = certificate.fingerprint256;
     const inspectionBypass = dto.inspectionBypass ?? false;
     const isActive = dto.isActive ?? true;
 
-    await this.secretStore.save(privateKeyRef, dto.privateKeyPem);
+    const uploaded = await this.uploadService.upload({
+      id,
+      commonName,
+      certificatePem: dto.certificatePem,
+      privateKeyPem: dto.privateKeyPem,
+      privateKeyRef,
+      bindAddress: dto.bindAddress,
+      bindPort,
+      inspectionBypass,
+    });
 
-    try {
-      const serverCertificate = FirewallCertificate.create(
-        id,
-        'TLS_SERVER',
-        commonName,
-        fingerprint,
-        dto.certificatePem,
-        privateKeyRef,
-        isActive,
-        new Date(certificate.validTo),
-        new Date(),
-        dto.bindAddress,
-        bindPort,
-        inspectionBypass,
-      );
+    const serverCertificate = FirewallCertificate.create(
+      id,
+      'TLS_SERVER',
+      commonName,
+      uploaded.fingerprint,
+      dto.certificatePem,
+      privateKeyRef,
+      isActive,
+      new Date(certificate.validTo),
+      new Date(),
+      dto.bindAddress,
+      bindPort,
+      inspectionBypass,
+    );
 
-      await this.firewallCertificateRepository.save(serverCertificate, claims.sub);
-    } catch (error) {
-      await this.secretStore.remove(privateKeyRef);
-      throw error;
-    }
+    await this.firewallCertificateRepository.save(serverCertificate, claims.sub);
 
     return {
       id,
       commonName,
-      fingerprint,
+      fingerprint: uploaded.fingerprint,
       bindAddress: dto.bindAddress,
       bindPort,
       inspectionBypass,

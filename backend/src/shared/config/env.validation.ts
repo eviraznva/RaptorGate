@@ -15,15 +15,13 @@ const envSchema = z.object({
     .string()
     .default('../sockets/control-plane.sock'),
   FIREWALL_QUERY_SOCKET_PATH: z.string().default('../sockets/query.sock'),
+  SERVER_CERT_GRPC_SOCKET_PATH: z
+    .string()
+    .default('../sockets/server-cert.sock'),
   COOKIE_SECRET: z
     .string()
     .min(32, 'COOKIE_SECRET must be at least 32 characters'),
   RAPTORGATE_PKI_DIR: z.string().default('/var/lib/raptorgate/pki'),
-  BACKEND_SECRET_ENCRYPTION_KEY: z
-    .string()
-    .length(64, 'BACKEND_SECRET_ENCRYPTION_KEY must be 64 hex chars (32 bytes)')
-    .regex(/^[0-9a-fA-F]+$/)
-    .optional(),
   CORS_ORIGIN: z
     .string()
     .or(z.array(z.string()))

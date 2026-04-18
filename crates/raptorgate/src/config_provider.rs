@@ -119,6 +119,9 @@ impl AppConfigProvider {
         let control_plane_socket_path = std::env::var("CONTROL_PLANE_GRPC_SOCKET_PATH")
             .unwrap_or_else(|_| "./sockets/control-plane.sock".into());
 
+        let server_cert_socket_path = std::env::var("SERVER_CERT_GRPC_SOCKET_PATH")
+            .unwrap_or_else(|_| "./sockets/server-cert.sock".into());
+
         let ssl_bypass_domains: Vec<String> = std::env::var("SSL_BYPASS_DOMAINS")
             .unwrap_or_default()
             .split(',')
@@ -148,6 +151,7 @@ impl AppConfigProvider {
             ssl_inspection_enabled,
             mitm_listen_addr,
             control_plane_socket_path,
+            server_cert_socket_path,
             ssl_bypass_domains,
             tls_inspection_ports,
             block_tls_on_undeclared_ports,

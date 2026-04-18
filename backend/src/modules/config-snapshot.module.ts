@@ -34,7 +34,6 @@ import {
 import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
 import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
 import { FileStore } from '../infrastructure/persistence/json/file-store.js';
-import { SecretStore } from '../infrastructure/persistence/secret-store.js';
 import { JsonConfigSnapshotRepository } from '../infrastructure/persistence/repositories/json-config-snapshot.repository.js';
 import { JsonFirewallCertificateRepository } from '../infrastructure/persistence/repositories/json-firewall-certificate.repository.js';
 import { JsonNatRuleRepository } from '../infrastructure/persistence/repositories/json-nat-rule.repository.js';
@@ -147,7 +146,6 @@ import { Env } from '../shared/config/env.validation.js';
     ExportConfigUseCase,
     ImportConfigUseCase,
     GrpcConfigSnapshotPushService,
-    SecretStore,
     FileStore,
     Mutex,
     {

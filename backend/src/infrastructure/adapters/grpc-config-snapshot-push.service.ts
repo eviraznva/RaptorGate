@@ -27,7 +27,6 @@ import {
   type PushActiveConfigSnapshotRequest,
 } from '../grpc/generated/services/config_snapshot_service.js';
 import type { TlsInspectionPolicy } from '../grpc/generated/config/config_models.js';
-import { SecretStore } from '../persistence/secret-store.js';
 
 export const CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN =
   'CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN';
@@ -41,7 +40,6 @@ export class GrpcConfigSnapshotPushService
   constructor(
     @Inject(CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN)
     private readonly grpcClient: ClientGrpc,
-    private readonly secretStore: SecretStore,
   ) {}
 
   onModuleInit(): void {
@@ -69,7 +67,7 @@ export class GrpcConfigSnapshotPushService
         changesSummary: snapshot.getChangesSummary() ?? '',
         createdAt: this.toTimestamp(snapshot.getCreatedAt()),
         createdBy: snapshot.getCreatedBy(),
-        bundle: await this.toBundle(payload),
+        bundle: this.toBundle(payload),
       },
     };
 
@@ -93,7 +91,7 @@ export class GrpcConfigSnapshotPushService
     }
   }
 
-  private async toBundle(payload: ConfigSnapshotPayload): Promise<ConfigBundle> {
+  private toBundle(payload: ConfigSnapshotPayload): ConfigBundle {
     const b = payload.bundle;
 
     return {
@@ -155,38 +153,21 @@ export class GrpcConfigSnapshotPushService
             checksum: b.ml_model.getChecksum().getValue(),
           }
         : undefined,
-      firewallCertificates: await Promise.all(
-        b.firewall_certificates.items.map(async (c) => {
-          let privateKeyPem = '';
-          if (c.getCertType() === 'TLS_SERVER' && c.getPrivateKeyRef()) {
-            if (!this.secretStore.isConfigured()) {
-              throw new Error(
-                'BACKEND_SECRET_ENCRYPTION_KEY is required for TLS server certificate push',
-              );
-            }
-            privateKeyPem = await this.secretStore.load(c.getPrivateKeyRef());
-          }
-
-          return {
-            id: c.getId(),
-            certType: this.toCertificateType(c.getCertType()),
-            commonName: c.getCommonName(),
-            fingerprint: c.getFingerprint(),
-            certificatePem: c.getCertificatePem(),
-            privateKeyRef: c.getPrivateKeyRef(),
-            expiresAt: this.toTimestamp(c.getExpiresAt()),
-            bindAddress: c.getBindAddress(),
-            bindPort: c.getBindPort(),
-            privateKeyPem,
-            inspectionBypass: c.getInspectionBypass(),
-          };
-        }),
-      ),
+      firewallCertificates: b.firewall_certificates.items.map((c) => ({
+        id: c.getId(),
+        certType: this.toCertificateType(c.getCertType()),
+        commonName: c.getCommonName(),
+        fingerprint: c.getFingerprint(),
+        certificatePem: c.getCertificatePem(),
+        privateKeyRef: c.getPrivateKeyRef(),
+        expiresAt: this.toTimestamp(c.getExpiresAt()),
+        bindAddress: c.getBindAddress(),
+        bindPort: c.getBindPort(),
+        inspectionBypass: c.getInspectionBypass(),
+      })),
       tlsInspectionPolicy: this.toTlsInspectionPolicy(
         b.tls_inspection_policy,
       ),
-      decryptionPolicyRules: [],
-      decryptionProfiles: [],
       identity: undefined,
     };
   }

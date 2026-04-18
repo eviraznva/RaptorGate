@@ -1,5 +1,4 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { FirewallCertificate } from '../../domain/entities/firewall-certificate.entity.js';
+import { Inject, Injectable } from '@nestjs/common';
 import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import {
   CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
@@ -35,7 +34,6 @@ import {
   CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN,
   type IConfigSnapshotPushService,
 } from '../ports/config-snapshot-push-service.interface.js';
-import { SecretStore } from '../../infrastructure/persistence/secret-store.js';
 
 @Injectable()
 export class RollbackConfigUseCase {
@@ -56,7 +54,6 @@ export class RollbackConfigUseCase {
     private readonly sslBypassRepository: ISslBypassRepository,
     @Inject(CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN)
     private readonly configSnapshotPushService: IConfigSnapshotPushService,
-    private readonly secretStore: SecretStore,
   ) {}
 
   async execute(
@@ -67,9 +64,6 @@ export class RollbackConfigUseCase {
       throw new EntityNotFoundException('Config snpshot', dto.id);
 
     const configBundle = configSnapshot.deserializePayload();
-    await this.ensureTlsSecretsExist(
-      configBundle.bundle.firewall_certificates.items,
-    );
 
     await this.zoneRepository.overwriteAll(configBundle.bundle.zones.items);
     await this.zonePairRepository.overwriteAll(
@@ -103,28 +97,4 @@ export class RollbackConfigUseCase {
     };
   }
 
-  private async ensureTlsSecretsExist(
-    certificates: FirewallCertificate[],
-  ): Promise<void> {
-    const refs = certificates
-      .filter(
-        (certificate) =>
-          certificate.getCertType() === 'TLS_SERVER' &&
-          certificate.getPrivateKeyRef().length > 0,
-      )
-      .map((certificate) => certificate.getPrivateKeyRef());
-
-    if (refs.length > 0 && !this.secretStore.isConfigured()) {
-      throw new BadRequestException(
-        'BACKEND_SECRET_ENCRYPTION_KEY is required for active TLS server certificates',
-      );
-    }
-
-    const missing = await this.secretStore.missing(refs);
-    if (missing.length > 0) {
-      throw new BadRequestException(
-        `Missing TLS private key secrets for refs: ${missing.join(', ')}`,
-      );
-    }
-  }
 }

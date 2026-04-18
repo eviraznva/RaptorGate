@@ -43,7 +43,6 @@ import { Port } from '../../domain/value-objects/port.vo.js';
 import { Priority } from '../../domain/value-objects/priority.vo.js';
 import { normalizeTlsInspectionPolicy } from '../../domain/value-objects/config-snapshot-payload.interface.js';
 import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
-import { SecretStore } from '../../infrastructure/persistence/secret-store.js';
 import { ImportConfigDto } from '../dtos/import-config.dto';
 import { ImportConfigResponseDto } from '../dtos/import-config-response.dto';
 import {
@@ -82,7 +81,6 @@ export class ImportConfigUseCase {
     private readonly firewallCertificateRepository: IFirewallCertificateRepository,
     @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
     private readonly sslBypassRepository: ISslBypassRepository,
-    private readonly secretStore: SecretStore,
   ) {}
 
   async execute(dto: ImportConfigDto): Promise<ImportConfigResponseDto> {
@@ -162,8 +160,6 @@ export class ImportConfigUseCase {
           new Date(entry.createdAt),
         ),
       );
-
-      await this.ensureTlsSecretsExist(activeCerts);
 
       const activeZones = payload.bundle.zones.items.map((z: any) =>
         Zone.create(
@@ -250,28 +246,4 @@ export class ImportConfigUseCase {
     };
   }
 
-  private async ensureTlsSecretsExist(
-    certificates: FirewallCertificate[],
-  ): Promise<void> {
-    const refs = certificates
-      .filter(
-        (certificate) =>
-          certificate.getCertType() === 'TLS_SERVER' &&
-          certificate.getPrivateKeyRef().length > 0,
-      )
-      .map((certificate) => certificate.getPrivateKeyRef());
-
-    if (refs.length > 0 && !this.secretStore.isConfigured()) {
-      throw new BadRequestException(
-        'BACKEND_SECRET_ENCRYPTION_KEY is required for active TLS server certificates',
-      );
-    }
-
-    const missing = await this.secretStore.missing(refs);
-    if (missing.length > 0) {
-      throw new BadRequestException(
-        `Missing TLS private key secrets for refs: ${missing.join(', ')}`,
-      );
-    }
-  }
 }

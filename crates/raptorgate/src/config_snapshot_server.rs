@@ -190,6 +190,7 @@ impl SnapshotHandler {
         Ok(())
     }
 
+    // Odrzuca snapshot, jesli brakuje key_ref w ServerKeyStore.
     fn reconcile_server_keys(
         &self,
         certs: &[crate::proto::config::FirewallCertificate],
@@ -214,46 +215,42 @@ impl SnapshotHandler {
             }
         }
 
-        for (addr, cert) in &desired {
-            let existing = current.get(addr);
-
-            let needs_update = match existing {
-                Some(e) => {
-                    e.fingerprint != cert.fingerprint
-                        || e.certificate_pem != cert.certificate_pem
-                        || e.common_name != cert.common_name
-                        || e.bypass != cert.inspection_bypass
-                        || e.key_ref != cert.private_key_ref
-                }
+        let missing: Vec<String> = desired
+            .iter()
+            .filter(|(addr, cert)| match current.get(addr) {
+                Some(e) => e.key_ref != cert.private_key_ref,
                 None => true,
-            };
+            })
+            .map(|(_, cert)| cert.id.clone())
+            .collect();
 
-            if needs_update {
-                if let Some(e) = existing {
-                    let _ = self.server_key_store.remove(*addr, &e.key_ref);
-                    tracing::debug!(%addr, cn = %e.common_name, "removed stale server key");
-                }
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "missing server keys on firewall (run UploadServerCertificate first): {}",
+                missing.join(", ")
+            );
+        }
 
-                if !cert.private_key_pem.is_empty() {
-                    self.server_key_store.add(
-                        *addr,
-                        &cert.certificate_pem,
-                        &cert.private_key_pem,
-                        &cert.private_key_ref,
-                        &cert.common_name,
-                        &cert.fingerprint,
-                        cert.inspection_bypass,
-                    )?;
-                } else {
-                    self.server_key_store.load(
-                        *addr,
-                        &cert.certificate_pem,
-                        &cert.private_key_ref,
-                        &cert.common_name,
-                        &cert.fingerprint,
-                        cert.inspection_bypass,
-                    )?;
-                }
+        for (addr, cert) in &desired {
+            let existing = current
+                .get(addr)
+                .expect("missing entries rejected above");
+
+            let metadata_changed = existing.fingerprint != cert.fingerprint
+                || existing.certificate_pem != cert.certificate_pem
+                || existing.common_name != cert.common_name
+                || existing.bypass != cert.inspection_bypass;
+
+            if metadata_changed {
+                self.server_key_store.load(
+                    *addr,
+                    &cert.certificate_pem,
+                    &cert.private_key_ref,
+                    &cert.common_name,
+                    &cert.fingerprint,
+                    cert.inspection_bypass,
+                )?;
+                tracing::debug!(%addr, cn = %cert.common_name, "server key metadata refreshed");
             }
         }
 

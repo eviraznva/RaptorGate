@@ -12,6 +12,7 @@ mod policy;
 mod proto;
 mod query_server;
 mod rule_tree;
+mod server_certificate_server;
 mod tls;
 mod zones;
 
@@ -241,6 +242,15 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(snapshot_server.serve());
+
+    let server_cert_server = server_certificate_server::ServerCertificateServer::new(
+        server_certificate_server::ServerCertificateHandler {
+            server_key_store: Arc::clone(&server_key_store),
+        },
+        &config.server_cert_socket_path,
+        CancellationToken::new(),
+    );
+    tokio::spawn(server_cert_server.serve());
 
     // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
     let dnssec_provider: Arc<dyn DnssecProvider> =

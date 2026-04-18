@@ -32,6 +32,10 @@ pub struct AppConfig {
     #[serde(default = "default_control_plane_socket_path")]
     pub control_plane_socket_path: String,
 
+    // Socket dla RPC UploadServerCertificate.
+    #[serde(default = "default_server_cert_socket_path")]
+    pub server_cert_socket_path: String,
+
     // Seed startowy bypassow TLS. Zywy stan w TlsDecisionEngine, reload przez snapshot handler.
     #[serde(default)]
     pub ssl_bypass_domains: Vec<String>,
@@ -49,6 +53,10 @@ fn default_mitm_listen_addr() -> String {
 
 fn default_control_plane_socket_path() -> String {
     "./sockets/control-plane.sock".to_string()
+}
+
+fn default_server_cert_socket_path() -> String {
+    "./sockets/server-cert.sock".to_string()
 }
 
 fn default_tls_inspection_ports() -> Vec<u16> {
@@ -75,6 +83,7 @@ impl AppConfig {
             ssl_inspection_enabled: self.ssl_inspection_enabled,
             mitm_listen_addr: self.mitm_listen_addr.clone(),
             control_plane_socket_path: self.control_plane_socket_path.clone(),
+            server_cert_socket_path: self.server_cert_socket_path.clone(),
             ssl_bypass_domains: self.ssl_bypass_domains.clone(),
             tls_inspection_ports: self
                 .tls_inspection_ports
@@ -113,6 +122,11 @@ impl AppConfig {
                 default_control_plane_socket_path()
             } else {
                 proto_config.control_plane_socket_path
+            },
+            server_cert_socket_path: if proto_config.server_cert_socket_path.is_empty() {
+                default_server_cert_socket_path()
+            } else {
+                proto_config.server_cert_socket_path
             },
             ssl_bypass_domains: proto_config.ssl_bypass_domains,
             tls_inspection_ports: normalize_tls_inspection_ports(
@@ -154,6 +168,7 @@ mod tests {
             ssl_inspection_enabled: false,
             mitm_listen_addr: default_mitm_listen_addr(),
             control_plane_socket_path: default_control_plane_socket_path(),
+            server_cert_socket_path: default_server_cert_socket_path(),
             ssl_bypass_domains: vec![],
             tls_inspection_ports: default_tls_inspection_ports(),
             block_tls_on_undeclared_ports: false,

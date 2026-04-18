@@ -621,6 +621,7 @@ mod tests {
             ssl_inspection_enabled: true,
             mitm_listen_addr: "127.0.0.1:8443".into(),
             control_plane_socket_path: "/tmp/control.sock".into(),
+            server_cert_socket_path: "/tmp/server-cert.sock".into(),
             ssl_bypass_domains: Vec::new(),
             tls_inspection_ports: vec![443],
             block_tls_on_undeclared_ports: false,
