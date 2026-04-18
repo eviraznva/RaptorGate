@@ -10,6 +10,8 @@ use crate::tls::domain_trie::DomainTrie;
 use crate::tls::pinning_detector::{PinningConfig, PinningDetector, PinningReason};
 use crate::tls::server_key_store::ServerKeyStore;
 
+// Wspolny detektor pinningu — ten sam Arc trafia do runtime'u TLS i query_server.
+
 #[derive(Debug, Clone)]
 pub struct EchTlsPolicy {
     pub block_ech_no_sni: bool,
@@ -31,7 +33,7 @@ pub struct TlsDecisionEngine {
     known_pinned_trie: ArcSwap<DomainTrie>,
     server_key_store: Arc<ServerKeyStore>,
     ech_policy: ArcSwap<EchTlsPolicy>,
-    pinning_detector: PinningDetector,
+    pinning_detector: Arc<PinningDetector>,
 }
 
 impl TlsDecisionEngine {
@@ -47,8 +49,12 @@ impl TlsDecisionEngine {
             known_pinned_trie: ArcSwap::new(Arc::new(DomainTrie::new())),
             server_key_store,
             ech_policy: ArcSwap::new(Arc::new(ech_policy)),
-            pinning_detector: PinningDetector::new(pinning_config),
+            pinning_detector: Arc::new(PinningDetector::new(pinning_config)),
         }
+    }
+
+    pub fn pinning_detector_arc(&self) -> Arc<PinningDetector> {
+        Arc::clone(&self.pinning_detector)
     }
 
     // Decyzja inspekcji: inbound (klucz serwera) vs outbound (MITM) vs bypass/block.

@@ -221,6 +221,7 @@ async fn main() {
             dns_inspection: Arc::clone(&dns_inspection),
             ips_store: Arc::clone(&ips_store),
             ips: Arc::clone(&ips),
+            pinning_detector: decision_engine.pinning_detector_arc(),
         },
         &config.query_socket_path,
         CancellationToken::new(),

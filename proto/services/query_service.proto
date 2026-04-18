@@ -26,6 +26,9 @@ service FirewallQueryService {
   rpc GetDnsInspectionConfig  (GetDnsInspectionConfigRequest)  returns (GetDnsInspectionConfigResponse);
   rpc SwapIpsConfig           (SwapIpsConfigRequest)           returns (SwapIpsConfigResponse);
   rpc GetIpsConfig            (GetIpsConfigRequest)            returns (GetIpsConfigResponse);
+
+  rpc GetPinningStats  (GetPinningStatsRequest)  returns (GetPinningStatsResponse);
+  rpc GetPinningBypass (GetPinningBypassRequest) returns (GetPinningBypassResponse);
 }
 
 message GetTcpSessionsRequest {}
@@ -137,4 +140,24 @@ message GetIpsConfigRequest {}
 
 message GetIpsConfigResponse {
   config.IpsConfig config = 1;
+}
+
+// ── Pinning detector observability ───────────────────────────────────────────
+
+message GetPinningStatsRequest {}
+
+message GetPinningStatsResponse {
+  uint64 active_bypasses = 1;
+  uint64 tracked_failures = 2;
+}
+
+message GetPinningBypassRequest {
+  string source_ip = 1;
+  string domain = 2;
+}
+
+message GetPinningBypassResponse {
+  bool found = 1;
+  string reason = 2;
+  uint32 failure_count = 3;
 }

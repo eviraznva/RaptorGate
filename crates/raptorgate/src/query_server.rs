@@ -1,4 +1,6 @@
+use std::net::IpAddr;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use tokio::net::UnixListener;
@@ -26,14 +28,17 @@ use crate::proto::services::firewall_query_service_server::{
 use crate::proto::services::{
     GetConfigRequest, GetConfigResponse, GetDnsInspectionConfigRequest,
     GetDnsInspectionConfigResponse, GetIpsConfigRequest, GetIpsConfigResponse,
-    GetNatBindingsRequest, GetNatBindingsResponse, GetPoliciesRequest, GetPoliciesResponse,
-    GetPolicyRequest, GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse,
-    GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
-    GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest,
-    SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
-    SwapIpsConfigRequest, SwapIpsConfigResponse, SwapPoliciesRequest, SwapPoliciesResponse,
-    SwapZonePairsRequest, SwapZonePairsResponse, SwapZonesRequest, SwapZonesResponse,
+    GetNatBindingsRequest, GetNatBindingsResponse, GetPinningBypassRequest,
+    GetPinningBypassResponse, GetPinningStatsRequest, GetPinningStatsResponse, GetPoliciesRequest,
+    GetPoliciesResponse, GetPolicyRequest, GetPolicyResponse, GetTcpSessionsRequest,
+    GetTcpSessionsResponse, GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest,
+    GetZonePairsResponse, GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse,
+    SwapConfigRequest, SwapConfigResponse, SwapDnsInspectionConfigRequest,
+    SwapDnsInspectionConfigResponse, SwapIpsConfigRequest, SwapIpsConfigResponse,
+    SwapPoliciesRequest, SwapPoliciesResponse, SwapZonePairsRequest, SwapZonePairsResponse,
+    SwapZonesRequest, SwapZonesResponse,
 };
+use crate::tls::pinning_detector::PinningDetector;
 use crate::zones::Zone;
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use crate::zones::{ZoneId, ZoneInterfaceId, ZonePair, ZonePairId};
@@ -110,6 +115,8 @@ where
     pub dns_inspection: Arc<DnsInspection>,
     pub ips_store: Arc<IpsConfigProvider>,
     pub ips: Arc<Ips>,
+    /// Detektor pinningu — wspoldzielony z TlsDecisionEngine do obserwacji stanu.
+    pub pinning_detector: Arc<PinningDetector>,
 }
 
 #[tonic::async_trait]
@@ -412,6 +419,42 @@ where
         Ok(Response::new(GetIpsConfigResponse {
             config: Some(config.to_proto()),
         }))
+    }
+
+    async fn get_pinning_stats(
+        &self,
+        _request: Request<GetPinningStatsRequest>,
+    ) -> Result<Response<GetPinningStatsResponse>, Status> {
+        let stats = self.pinning_detector.stats();
+        Ok(Response::new(GetPinningStatsResponse {
+            active_bypasses: stats.active_bypasses as u64,
+            tracked_failures: stats.tracked_failures as u64,
+        }))
+    }
+
+    async fn get_pinning_bypass(
+        &self,
+        request: Request<GetPinningBypassRequest>,
+    ) -> Result<Response<GetPinningBypassResponse>, Status> {
+        let req = request.into_inner();
+        let source_ip = IpAddr::from_str(&req.source_ip).map_err(|e| {
+            Status::invalid_argument(format!("invalid source_ip '{}': {e}", req.source_ip))
+        })?;
+
+        let response = match self.pinning_detector.bypass_detail(source_ip, &req.domain) {
+            Some((reason, failure_count)) => GetPinningBypassResponse {
+                found: true,
+                reason: reason.to_string(),
+                failure_count,
+            },
+            None => GetPinningBypassResponse {
+                found: false,
+                reason: String::new(),
+                failure_count: 0,
+            },
+        };
+
+        Ok(Response::new(response))
     }
 }
 

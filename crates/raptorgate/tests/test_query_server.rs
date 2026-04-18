@@ -14,10 +14,11 @@ use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::proto::config::Rule;
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::proto::services::{
-    GetConfigRequest, GetIpsConfigRequest, GetPoliciesRequest, SwapConfigRequest,
-    SwapIpsConfigRequest, SwapPoliciesRequest,
+    GetConfigRequest, GetIpsConfigRequest, GetPinningBypassRequest, GetPinningStatsRequest,
+    GetPoliciesRequest, SwapConfigRequest, SwapIpsConfigRequest, SwapPoliciesRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
+use ngfw::tls::pinning_detector::{PinningConfig, PinningDetector};
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
 use serial_test::serial;
@@ -76,6 +77,7 @@ fn shared_server() -> &'static SharedServer {
                     dns_inspection,
                     ips_store,
                     ips,
+                    pinning_detector: Arc::new(PinningDetector::new(PinningConfig::default())),
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();
@@ -390,4 +392,49 @@ async fn swap_and_get_ips_config_roundtrip() {
     assert_eq!(config.signatures.len(), 1);
     assert_eq!(config.signatures[0].id, "sig-http-sqli");
     assert_eq!(config.signatures[0].dst_ports, vec![80, 8080]);
+}
+
+#[tokio::test]
+#[serial(pinning)]
+async fn get_pinning_stats_returns_ok() {
+    let mut client = connect(&shared_server().socket).await;
+    let resp = client
+        .get_pinning_stats(GetPinningStatsRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    // Shared server startuje ze swiezym detektorem — zerowe liczniki sa oczekiwane.
+    assert_eq!(resp.active_bypasses, 0);
+    assert_eq!(resp.tracked_failures, 0);
+}
+
+#[tokio::test]
+#[serial(pinning)]
+async fn get_pinning_bypass_invalid_ip_returns_error() {
+    let mut client = connect(&shared_server().socket).await;
+    let err = client
+        .get_pinning_bypass(GetPinningBypassRequest {
+            source_ip: "not-an-ip".into(),
+            domain: "example.com".into(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+}
+
+#[tokio::test]
+#[serial(pinning)]
+async fn get_pinning_bypass_missing_returns_not_found() {
+    let mut client = connect(&shared_server().socket).await;
+    let resp = client
+        .get_pinning_bypass(GetPinningBypassRequest {
+            source_ip: "10.0.0.99".into(),
+            domain: "definitely-not-pinned.example".into(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!resp.found);
+    assert_eq!(resp.failure_count, 0);
+    assert!(resp.reason.is_empty());
 }
