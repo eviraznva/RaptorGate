@@ -73,6 +73,7 @@ export class UploadServerCertificateUseCase {
       bindAddress: dto.bindAddress,
       bindPort,
       inspectionBypass,
+      isActive,
     });
 
     const serverCertificate = FirewallCertificate.create(

@@ -15,6 +15,10 @@ use serde::{Deserialize, Serialize};
 
 const SERVER_KEYS_DIR: &str = "server_keys";
 
+fn default_enabled() -> bool {
+    true
+}
+
 // Metadane serwera inbound, persystowane obok zaszyfrowanego klucza.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ServerKeyMeta {
@@ -25,6 +29,9 @@ struct ServerKeyMeta {
     certificate_pem: String,
     key_ref: String,
     bypass: bool,
+    // Stare meta.json bez pola traktujemy jako enabled=true.
+    #[serde(default = "default_enabled")]
+    enabled: bool,
 }
 
 fn key_path(pki_dir: &Path, id: &str) -> PathBuf {
@@ -92,6 +99,7 @@ struct InboundServerEntry {
     certificate_pem: String,
     key_ref: String,
     bypass: bool,
+    enabled: bool,
 }
 
 // Informacja o zarejestrowanym serwerze inbound (publiczne DTO).
@@ -103,13 +111,15 @@ pub struct InboundServerInfo {
     pub certificate_pem: String,
     pub key_ref: String,
     pub bypass: bool,
+    pub enabled: bool,
 }
 
-// Wynik get_entry, ServerConfig + flaga bypass.
+// Wynik get_entry, ServerConfig + flagi runtime.
 pub struct InboundEntryRef {
     pub server_config: Arc<ServerConfig>,
     pub common_name: String,
     pub bypass: bool,
+    pub enabled: bool,
 }
 
 // Rejestr kluczy serwerow do inspekcji inbound TLS.
@@ -127,6 +137,7 @@ impl ServerKeyStore {
     }
 
     // Rejestruje klucz serwera: zapisuje klucz + meta na dysk i buduje ServerConfig.
+    #[allow(clippy::too_many_arguments)]
     pub fn add(
         &self,
         addr: SocketAddr,
@@ -136,6 +147,7 @@ impl ServerKeyStore {
         common_name: &str,
         fingerprint: &str,
         bypass: bool,
+        enabled: bool,
     ) -> anyhow::Result<()> {
         let pki = Path::new(&self.pki_dir);
         save_key_to_disk(pki, key_ref, key_pem)
@@ -152,6 +164,7 @@ impl ServerKeyStore {
                 certificate_pem: cert_pem.to_string(),
                 key_ref: key_ref.to_string(),
                 bypass,
+                enabled,
             },
         )?;
 
@@ -167,14 +180,16 @@ impl ServerKeyStore {
                 certificate_pem: cert_pem.to_string(),
                 key_ref: key_ref.to_string(),
                 bypass,
+                enabled,
             },
         );
 
-        tracing::info!(%addr, cn = common_name, bypass, "Inbound TLS server key registered");
+        tracing::info!(%addr, cn = common_name, bypass, enabled, "Inbound TLS server key registered");
         Ok(())
     }
 
     // Laduje klucz serwera z dysku (przy starcie firewalla).
+    #[allow(clippy::too_many_arguments)]
     pub fn load(
         &self,
         addr: SocketAddr,
@@ -183,6 +198,7 @@ impl ServerKeyStore {
         common_name: &str,
         fingerprint: &str,
         bypass: bool,
+        enabled: bool,
     ) -> anyhow::Result<()> {
         let key_pem = load_key_from_disk(Path::new(&self.pki_dir), key_ref)
             .with_context(|| format!("Failed to load server key {key_ref}"))?;
@@ -199,20 +215,57 @@ impl ServerKeyStore {
                 certificate_pem: cert_pem.to_string(),
                 key_ref: key_ref.to_string(),
                 bypass,
+                enabled,
             },
         );
 
-        tracing::info!(%addr, cn = common_name, bypass, "Inbound TLS server key loaded from disk");
+        tracing::info!(%addr, cn = common_name, bypass, enabled, "Inbound TLS server key loaded from disk");
         Ok(())
     }
 
-    // Zwraca ServerConfig + bypass dla danego adresu.
+    // Surowy lookup (uzywany przez reconcile i query).
     pub fn get_entry(&self, addr: SocketAddr) -> Option<InboundEntryRef> {
         self.entries.get(&addr).map(|entry| InboundEntryRef {
             server_config: Arc::clone(&entry.server_config),
             common_name: entry.common_name.clone(),
             bypass: entry.bypass,
+            enabled: entry.enabled,
         })
+    }
+
+    // Lookup tylko aktywnych wpisow (uzywany przez runtime TLS).
+    pub fn get_entry_active(&self, addr: SocketAddr) -> Option<InboundEntryRef> {
+        self.get_entry(addr).filter(|e| e.enabled)
+    }
+
+    // Aktualizuje flage enabled runtime + meta na dysku. Zwraca true gdy wpis istnial.
+    pub fn set_enabled(&self, addr: SocketAddr, enabled: bool) -> anyhow::Result<bool> {
+        let Some(mut entry) = self.entries.get_mut(&addr) else {
+            return Ok(false);
+        };
+
+        if entry.enabled == enabled {
+            return Ok(true);
+        }
+
+        entry.enabled = enabled;
+        let meta = ServerKeyMeta {
+            addr: addr.ip().to_string(),
+            port: addr.port(),
+            common_name: entry.common_name.clone(),
+            fingerprint: entry.fingerprint.clone(),
+            certificate_pem: entry.certificate_pem.clone(),
+            key_ref: entry.key_ref.clone(),
+            bypass: entry.bypass,
+            enabled,
+        };
+        drop(entry);
+
+        save_meta(Path::new(&self.pki_dir), &meta.key_ref.clone(), &meta)
+            .with_context(|| format!("Failed to persist enabled flag for {addr}"))?;
+
+        tracing::info!(%addr, enabled, "Inbound TLS server key enabled flag updated");
+        Ok(true)
     }
 
     // Usuwa klucz serwera z rejestru i z dysku (klucz + meta).
@@ -238,6 +291,7 @@ impl ServerKeyStore {
                 certificate_pem: entry.value().certificate_pem.clone(),
                 key_ref: entry.value().key_ref.clone(),
                 bypass: entry.value().bypass,
+                enabled: entry.value().enabled,
             })
             .collect()
     }
@@ -292,6 +346,7 @@ impl ServerKeyStore {
                 &meta.common_name,
                 &meta.fingerprint,
                 meta.bypass,
+                meta.enabled,
             ) {
                 tracing::warn!(key_ref = %name, error = %e, "failed to load server key from disk");
                 continue;
@@ -353,6 +408,7 @@ mod tests {
                 "test-server.local",
                 "AA:BB",
                 false,
+                true,
             )
             .unwrap();
 
@@ -385,6 +441,7 @@ mod tests {
                 "test-server.local",
                 "AA:BB",
                 false,
+                true,
             )
             .unwrap();
         assert!(store.get_entry(addr).is_some());
@@ -405,10 +462,10 @@ mod tests {
         let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 8443);
 
         store
-            .add(addr1, &cert, &key, "ref-a", "server-a", "AA:AA", false)
+            .add(addr1, &cert, &key, "ref-a", "server-a", "AA:AA", false, true)
             .unwrap();
         store
-            .add(addr2, &cert, &key, "ref-b", "server-b", "BB:BB", false)
+            .add(addr2, &cert, &key, "ref-b", "server-b", "BB:BB", false, true)
             .unwrap();
 
         let list = store.list();
@@ -426,10 +483,107 @@ mod tests {
         save_key_to_disk(Path::new(&dir), "disk-ref", &key).unwrap();
 
         store
-            .load(addr, &cert, "disk-ref", "test-server.local", "CC:DD", false)
+            .load(
+                addr,
+                &cert,
+                "disk-ref",
+                "test-server.local",
+                "CC:DD",
+                false,
+                true,
+            )
             .unwrap();
 
         assert!(store.get_entry(addr).is_some());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn add_with_enabled_false_is_hidden_from_get_entry_active() {
+        let dir = temp_dir();
+        let store = ServerKeyStore::new(&dir);
+        let (cert, key) = make_server_cert();
+        let addr = test_addr();
+
+        store
+            .add(
+                addr,
+                &cert,
+                &key,
+                "ref-disabled",
+                "test-server.local",
+                "AA:BB",
+                false,
+                false,
+            )
+            .unwrap();
+
+        assert!(store.get_entry(addr).is_some());
+        assert!(store.get_entry_active(addr).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn set_enabled_persists_and_survives_reload() {
+        let dir = temp_dir();
+        let store = ServerKeyStore::new(&dir);
+        let (cert, key) = make_server_cert();
+        let addr = test_addr();
+
+        store
+            .add(addr, &cert, &key, "ref-toggle", "cn", "FP", false, true)
+            .unwrap();
+        assert!(store.get_entry_active(addr).is_some());
+
+        store.set_enabled(addr, false).unwrap();
+        assert!(store.get_entry_active(addr).is_none());
+
+        let reloaded = ServerKeyStore::new(&dir);
+        let count = reloaded.load_all_from_disk();
+        assert_eq!(count, 1);
+        assert!(reloaded.get_entry_active(addr).is_none());
+        assert!(reloaded.get_entry(addr).is_some());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn load_all_treats_legacy_meta_without_enabled_as_true() {
+        let dir = temp_dir();
+        let (cert, key) = make_server_cert();
+        let addr = test_addr();
+
+        save_key_to_disk(Path::new(&dir), "legacy-ref", &key).unwrap();
+        let legacy_meta = serde_json::json!({
+            "addr": addr.ip().to_string(),
+            "port": addr.port(),
+            "common_name": "legacy-cn",
+            "fingerprint": "LEGACY",
+            "certificate_pem": cert,
+            "key_ref": "legacy-ref",
+            "bypass": false,
+        });
+        std::fs::create_dir_all(Path::new(&dir).join(SERVER_KEYS_DIR)).unwrap();
+        std::fs::write(
+            meta_path(Path::new(&dir), "legacy-ref"),
+            serde_json::to_string(&legacy_meta).unwrap(),
+        )
+        .unwrap();
+
+        let store = ServerKeyStore::new(&dir);
+        let count = store.load_all_from_disk();
+        assert_eq!(count, 1);
+        assert!(store.get_entry_active(addr).is_some());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn set_enabled_returns_false_for_missing_entry() {
+        let dir = temp_dir();
+        let store = ServerKeyStore::new(&dir);
+        let ok = store.set_enabled(test_addr(), false).unwrap();
+        assert!(!ok);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

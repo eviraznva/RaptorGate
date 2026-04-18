@@ -91,6 +91,8 @@ impl FirewallServerCertificateService for ServerCertificateHandler {
             return Ok(rejected("private_key_ref must not be empty".to_string()));
         }
 
+        let enabled = req.is_active.unwrap_or(true);
+
         if let Err(e) = self.server_key_store.add(
             addr,
             &req.certificate_pem,
@@ -99,6 +101,7 @@ impl FirewallServerCertificateService for ServerCertificateHandler {
             &req.common_name,
             &fingerprint,
             req.inspection_bypass,
+            enabled,
         ) {
             tracing::error!(
                 id = %req.id,

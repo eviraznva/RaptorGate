@@ -68,7 +68,7 @@ impl TlsDecisionEngine {
     ) -> TlsAction {
         if let Some(ip) = dst_ip {
             let addr = SocketAddr::new(ip, dst_port);
-            if let Some(entry) = self.server_key_store.get_entry(addr) {
+            if let Some(entry) = self.server_key_store.get_entry_active(addr) {
                 if entry.bypass {
                     return TlsAction::Bypass;
                 }

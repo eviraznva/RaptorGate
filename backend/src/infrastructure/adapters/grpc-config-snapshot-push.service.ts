@@ -164,6 +164,7 @@ export class GrpcConfigSnapshotPushService
         bindAddress: c.getBindAddress(),
         bindPort: c.getBindPort(),
         inspectionBypass: c.getInspectionBypass(),
+        isActive: c.getIsActive(),
       })),
       tlsInspectionPolicy: this.toTlsInspectionPolicy(
         b.tls_inspection_policy,

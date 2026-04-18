@@ -53,6 +53,7 @@ export class GrpcServerCertificateUploadService
           bindAddress: input.bindAddress,
           bindPort: input.bindPort,
           inspectionBypass: input.inspectionBypass,
+          isActive: input.isActive,
         }),
       );
     } catch (error) {

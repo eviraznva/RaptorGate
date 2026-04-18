@@ -84,7 +84,10 @@ export class ApplyConfigSnapshotUseCase {
     const allUsers = await this.userRepository.findAll();
     const activeZones = await this.zoneRepository.findActive();
     const allZonePairs = await this.zonePairRepository.findAll();
-    const activeCerts = await this.firewallCertificateRepository.findActive();
+    const allCerts = await this.firewallCertificateRepository.findAll();
+    const snapshotCerts = allCerts.filter((cert) =>
+      cert.getCertType() === 'TLS_SERVER' ? true : cert.getIsActive(),
+    );
     const activeBypass = await this.sslBypassRepository.findActive();
     const allConfigSnapshots =
       await this.configSnapshotRepository.findAllSnapshots();
@@ -126,7 +129,7 @@ export class ApplyConfigSnapshotUseCase {
         },
         ml_model: null,
         firewall_certificates: {
-          items: [...activeCerts],
+          items: [...snapshotCerts],
         },
         tls_inspection_policy: tlsInspectionPolicy,
         users: {

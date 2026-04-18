@@ -235,6 +235,7 @@ impl SnapshotHandler {
             let existing = current
                 .get(addr)
                 .expect("missing entries rejected above");
+            let desired_enabled = cert.is_active.unwrap_or(true);
 
             let metadata_changed = existing.fingerprint != cert.fingerprint
                 || existing.certificate_pem != cert.certificate_pem
@@ -249,8 +250,11 @@ impl SnapshotHandler {
                     &cert.common_name,
                     &cert.fingerprint,
                     cert.inspection_bypass,
+                    desired_enabled,
                 )?;
                 tracing::debug!(%addr, cn = %cert.common_name, "server key metadata refreshed");
+            } else if existing.enabled != desired_enabled {
+                self.server_key_store.set_enabled(*addr, desired_enabled)?;
             }
         }
 

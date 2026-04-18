@@ -7,6 +7,7 @@ export interface UploadServerCertificateInput {
   bindAddress: string;
   bindPort: number;
   inspectionBypass: boolean;
+  isActive: boolean;
 }
 
 export interface UploadServerCertificateOutput {

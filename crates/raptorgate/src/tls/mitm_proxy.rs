@@ -143,7 +143,7 @@ async fn handle_connection(
         }));
     }
 
-    if let Some(entry) = engine.server_key_store().get_entry(original_dst) {
+    if let Some(entry) = engine.server_key_store().get_entry_active(original_dst) {
         if matches!(action, TlsAction::Bypass) {
             tracing::debug!(peer = %peer_addr, server = %original_dst, "Inbound TLS bypass");
             events::emit(events::Event::new(events::EventKind::InboundTlsBypassApplied {
