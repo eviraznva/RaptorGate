@@ -206,13 +206,6 @@ impl ServerKeyStore {
         Ok(())
     }
 
-    // Zwraca ServerConfig dla danego adresu (jesli zarejestrowany).
-    pub fn get(&self, addr: SocketAddr) -> Option<Arc<ServerConfig>> {
-        self.entries
-            .get(&addr)
-            .map(|entry| Arc::clone(&entry.server_config))
-    }
-
     // Zwraca ServerConfig + bypass dla danego adresu.
     pub fn get_entry(&self, addr: SocketAddr) -> Option<InboundEntryRef> {
         self.entries.get(&addr).map(|entry| InboundEntryRef {
@@ -220,11 +213,6 @@ impl ServerKeyStore {
             common_name: entry.common_name.clone(),
             bypass: entry.bypass,
         })
-    }
-
-    // Sprawdza czy adres ma zarejestrowany klucz inbound.
-    pub fn contains(&self, ip: IpAddr, port: u16) -> bool {
-        self.entries.contains_key(&SocketAddr::new(ip, port))
     }
 
     // Usuwa klucz serwera z rejestru i z dysku (klucz + meta).
@@ -252,10 +240,6 @@ impl ServerKeyStore {
                 bypass: entry.value().bypass,
             })
             .collect()
-    }
-
-    pub fn count(&self) -> usize {
-        self.entries.len()
     }
 
     // Laduje wszystkie klucze serwerowe z dysku przy starcie (z meta.json).
@@ -372,41 +356,16 @@ mod tests {
             )
             .unwrap();
 
-        assert!(store.get(addr).is_some());
-        assert_eq!(store.count(), 1);
+        assert!(store.get_entry(addr).is_some());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn get_missing_returns_none() {
+    fn get_entry_missing_returns_none() {
         let dir = temp_dir();
         let store = ServerKeyStore::new(&dir);
 
-        assert!(store.get(test_addr()).is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn contains_check() {
-        let dir = temp_dir();
-        let store = ServerKeyStore::new(&dir);
-        let (cert, key) = make_server_cert();
-        let addr = test_addr();
-
-        store
-            .add(
-                addr,
-                &cert,
-                &key,
-                "test-ref-002",
-                "test-server.local",
-                "AA:BB",
-                false,
-            )
-            .unwrap();
-
-        assert!(store.contains(addr.ip(), addr.port()));
-        assert!(!store.contains(addr.ip(), 8443));
+        assert!(store.get_entry(test_addr()).is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -428,11 +387,11 @@ mod tests {
                 false,
             )
             .unwrap();
-        assert!(store.get(addr).is_some());
+        assert!(store.get_entry(addr).is_some());
 
         let removed = store.remove(addr, "test-ref-003").unwrap();
         assert!(removed);
-        assert!(store.get(addr).is_none());
+        assert!(store.get_entry(addr).is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -470,7 +429,7 @@ mod tests {
             .load(addr, &cert, "disk-ref", "test-server.local", "CC:DD", false)
             .unwrap();
 
-        assert!(store.get(addr).is_some());
+        assert!(store.get_entry(addr).is_some());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

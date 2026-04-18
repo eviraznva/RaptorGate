@@ -14,47 +14,6 @@ fn default_alpn_protocols() -> Vec<Vec<u8>> {
     vec![b"h2".to_vec(), b"http/1.1".to_vec()]
 }
 
-/// Konfiguracja klienta TLS z weryfikacją webpki
-pub fn build_client_config() -> anyhow::Result<Arc<ClientConfig>> {
-    let mut root_store = RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-    let provider = rustls_ring::default_provider();
-
-    let verifier = WebPkiServerVerifier::builder_with_provider(
-        Arc::new(root_store),
-        Arc::new(provider),
-    )
-    .build()
-    .context("Failed to build WebPKI server verifier")?;
-
-    let mut config = ClientConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
-        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
-        .context("Failed to set TLS protocol versions")?
-        .dangerous()
-        .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth();
-
-    config.alpn_protocols = default_alpn_protocols();
-
-    Ok(Arc::new(config))
-}
-
-/// Konfiguracja serwera TLS z dynamicznym resolverem certyfikatów
-pub fn build_server_config(
-    cert_resolver: Arc<dyn ResolvesServerCert>,
-) -> anyhow::Result<Arc<ServerConfig>> {
-    let mut config = ServerConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
-        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
-        .context("Failed to set TLS protocol versions")?
-        .with_no_client_auth()
-        .with_cert_resolver(cert_resolver);
-
-    config.alpn_protocols = default_alpn_protocols();
-
-    Ok(Arc::new(config))
-}
-
 /// Konfiguracja serwera TLS ze statycznym certyfikatem PEM dla trybu inbound
 pub fn build_server_config_from_pem(
     cert_pem: &str,
@@ -182,12 +141,6 @@ pub struct RecordingVerifier {
     trusted: Arc<AtomicBool>,
 }
 
-impl RecordingVerifier {
-    pub fn trusted(&self) -> bool {
-        self.trusted.load(Ordering::Acquire)
-    }
-}
-
 impl ServerCertVerifier for RecordingVerifier {
     fn verify_server_cert(
         &self,
@@ -281,7 +234,7 @@ impl ResolvesServerCert for SingleCertResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
+    use rcgen::{CertificateParams, DnType, IsCa, KeyPair};
 
     fn make_self_signed() -> (String, String) {
         let key = KeyPair::generate().unwrap();
@@ -297,48 +250,23 @@ mod tests {
         (cert.pem(), key.serialize_pem())
     }
 
-    fn make_ca_and_leaf() -> (String, String, String, String) {
-        let ca_key = KeyPair::generate().unwrap();
-        let mut ca_params = CertificateParams::default();
-        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
-        ca_params
-            .distinguished_name
-            .push(DnType::CommonName, "Test CA");
-        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
-
-        let leaf_key = KeyPair::generate().unwrap();
-        let mut leaf_params = CertificateParams::default();
-        leaf_params
-            .distinguished_name
-            .push(DnType::CommonName, "localhost");
-        leaf_params.subject_alt_names = vec![rcgen::SanType::DnsName(
-            "localhost".to_string().try_into().unwrap(),
-        )];
-        let leaf_cert = leaf_params.signed_by(&leaf_key, &ca_cert, &ca_key).unwrap();
-
-        (
-            ca_cert.pem(),
-            ca_key.serialize_pem(),
-            leaf_cert.pem(),
-            leaf_key.serialize_pem(),
-        )
-    }
-
-    #[test]
-    fn client_config_builds_successfully() {
-        let config = build_client_config().unwrap();
-        assert_eq!(
-            config.alpn_protocols,
-            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
-        );
-    }
-
     #[test]
     fn server_config_from_pem_builds_successfully() {
         let (cert_pem, key_pem) = make_self_signed();
         let config = build_server_config_from_pem(&cert_pem, &key_pem);
         assert!(config.is_ok());
+    }
+
+    #[test]
+    fn server_config_for_key_builds_successfully() {
+        let (cert_pem, key_pem) = make_self_signed();
+        let certs = parse_cert_chain_pem(&cert_pem).unwrap();
+        let key = parse_private_key_pem(&key_pem).unwrap();
+        let signing_key = rustls_ring::sign::any_supported_type(&key).unwrap();
+        let certified = Arc::new(CertifiedKey::new(certs, signing_key));
+
+        let config = build_server_config_for_key(certified).unwrap();
+        assert_eq!(config.alpn_protocols, default_alpn_protocols());
     }
 
     #[test]
@@ -368,29 +296,8 @@ mod tests {
     }
 
     #[test]
-    fn single_cert_resolver_always_returns_cert() {
-        let (cert_pem, key_pem) = make_self_signed();
-        let certs = parse_cert_chain_pem(&cert_pem).unwrap();
-        let key = parse_private_key_pem(&key_pem).unwrap();
-        let signing_key = rustls_ring::sign::any_supported_type(&key).unwrap();
-        let certified = Arc::new(CertifiedKey::new(certs, signing_key));
-
-        let resolver = SingleCertResolver(certified);
-        let config = build_server_config(Arc::new(resolver)).unwrap();
-
+    fn client_config_recording_builds_successfully() {
+        let (config, _trusted) = build_client_config_recording().unwrap();
         assert_eq!(config.alpn_protocols, default_alpn_protocols());
-    }
-
-    #[test]
-    fn build_server_config_with_resolver_succeeds() {
-        let (cert_pem, key_pem) = make_self_signed();
-        let certs = parse_cert_chain_pem(&cert_pem).unwrap();
-        let key = parse_private_key_pem(&key_pem).unwrap();
-        let signing_key = rustls_ring::sign::any_supported_type(&key).unwrap();
-        let certified = Arc::new(CertifiedKey::new(certs, signing_key));
-        let resolver = Arc::new(SingleCertResolver(certified));
-
-        let config = build_server_config(resolver);
-        assert!(config.is_ok());
     }
 }

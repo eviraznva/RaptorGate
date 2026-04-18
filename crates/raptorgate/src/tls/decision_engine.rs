@@ -110,11 +110,6 @@ impl TlsDecisionEngine {
         TlsAction::Intercept
     }
 
-    // Sprawdza bypass tylko po domenie (dla proxy, bez inbound).
-    pub fn is_domain_bypassed(&self, domain: &str) -> bool {
-        self.bypass_trie.load().contains(domain)
-    }
-
     // Atomowa podmiana listy bypass (hot-reload z backendu).
     pub fn reload_bypass(&self, domains: &[String]) {
         let trie = DomainTrie::from_domains(domains);
@@ -237,13 +232,6 @@ mod tests {
             e.decide(Some("bank.com"), false, None, 443, None),
             TlsAction::Bypass
         );
-    }
-
-    #[test]
-    fn is_domain_bypassed() {
-        let e = engine(&["example.com"]);
-        assert!(e.is_domain_bypassed("sub.example.com"));
-        assert!(!e.is_domain_bypassed("other.com"));
     }
 
     #[test]

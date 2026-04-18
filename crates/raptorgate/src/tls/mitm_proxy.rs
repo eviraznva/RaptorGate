@@ -191,7 +191,7 @@ async fn handle_connection(
             );
             return Ok(());
         }
-        TlsAction::Intercept | TlsAction::InterceptUntrust | TlsAction::None => {}
+        TlsAction::Intercept => {}
     }
 
     handle_outbound_connection(

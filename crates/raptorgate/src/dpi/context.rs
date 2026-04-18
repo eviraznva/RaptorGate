@@ -2,12 +2,9 @@ use super::AppProto;
 use super::parsers::dns::DnsRecordType;
 
 // Decyzja dotycząca sesji TLS wyliczona przez runtime inspekcji.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlsAction {
-    #[default]
-    None,
     Intercept,
-    InterceptUntrust,
     Bypass,
     Block,
 }
@@ -20,7 +17,6 @@ pub struct DpiContext {
     pub tls_sni: Option<String>,
     pub tls_ech_detected: bool,
     pub tls_version: Option<u16>,
-    pub tls_action: TlsAction,
     pub http_host: Option<String>,
     pub http_method: Option<String>,
     pub http_user_agent: Option<String>,
