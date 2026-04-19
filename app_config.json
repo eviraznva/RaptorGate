@@ -1,8 +1,5 @@
 {
-  "capture_interfaces": [
-    "eth1",
-    "eth2"
-  ],
+  "capture_interfaces": ["eth1", "eth2"],
   "pcap_timeout_ms": 5000,
   "tun_device_name": "tun0",
   "tun_address": "10.254.254.1",

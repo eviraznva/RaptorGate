@@ -10,6 +10,8 @@ const navItems = [
   { name: "DNS", path: "/dashboard/dns" },
   { name: "IPS", path: "/dashboard/ips" },
   { name: "Policy Engine", path: "/dashboard/rules" },
+  { name: "Zones", path: "/dashboard/zones" },
+  { name: "NAT Rules", path: "/dashboard/nat-rules" },
   { name: "Connections", path: "/dashboard/connections" },
   { name: "Settings", path: "/dashboard/settings" },
 ];

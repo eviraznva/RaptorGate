@@ -23,6 +23,14 @@
       "defaultPolicy": "DENY",
       "createdAt": "2026-03-23T11:36:15.675Z",
       "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "cd8c2b9e-bbd5-44f0-a0ae-ed2b468d69c6",
+      "srcZoneId": "b5fc6256-d502-41a7-9370-d69663bf26b6",
+      "dstZoneID": "0a71df53-c55d-4aa0-a733-3e949453f773",
+      "defaultPolicy": "ALLOW",
+      "createdAt": "2026-04-19T17:05:31.450Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
     }
   ]
 }
