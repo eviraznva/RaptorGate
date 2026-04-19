@@ -28,6 +28,7 @@ message EventKind {
     TunDeviceSwappedEvent          tun_device_swapped       = 6;
     SnifferConfigChangedEvent      sniffer_config_changed   = 7;
     EventBusConnectedEvent         event_bus_connected      = 8;
+    IpsSignatureMatchedEvent       ips_signature_matched    = 9;
   }
 }
 
@@ -37,6 +38,22 @@ message TcpEndpoint {
 }
 
 message EventBusConnectedEvent {}
+
+message IpsSignatureMatchedEvent {
+  string signature_id = 1;
+  string signature_name = 2;
+  string category = 3;
+  string severity = 4;
+  string action = 5;
+  string src_ip = 6;
+  uint32 src_port = 7;
+  string dst_ip = 8;
+  uint32 dst_port = 9;
+  string transport_protocol = 10;
+  string app_protocol = 11;
+  string interface = 12;
+  uint32 payload_length = 13;
+}
 
 message SnifferConfigChangedEvent {
   repeated string old_interfaces = 1;

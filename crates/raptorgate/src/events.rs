@@ -181,6 +181,21 @@ pub enum EventKind {
     TcpSessionEnteredTimeWait { src: EndpointIdentifier, dst: EndpointIdentifier },
     TunDeviceSwapped { old_device: String, new_device: String, old_address: String, new_address: String },
     SnifferConfigChanged { old_interfaces: Vec<String>, new_interfaces: Vec<String>, old_timeout: Duration, new_timeout: Duration },
+    IpsSignatureMatched {
+        signature_id: String,
+        signature_name: String,
+        category: String,
+        severity: String,
+        action: String,
+        src_ip: String,
+        src_port: u16,
+        dst_ip: String,
+        dst_port: u16,
+        transport_protocol: String,
+        app_protocol: String,
+        interface: String,
+        payload_length: u32,
+    },
     EventBusConnectedEvent {}
 }
 
@@ -194,6 +209,7 @@ impl EventKind {
             | E::TcpSessionAbortedMidClose { .. }
             | E::TcpSessionEnteredTimeWait { .. }
             | E::TunDeviceSwapped { .. }
+            | E::IpsSignatureMatched { .. }
             | E::EventBusConnectedEvent { .. }
             | E::SnifferConfigChanged { .. } => true,
         }
@@ -264,6 +280,35 @@ impl From<EventKind> for proto::EventKind {
                         old_timeout: Some(duration_to_proto(old_timeout)),
                         new_timeout: Some(duration_to_proto(new_timeout)),
                     }),
+                EventKind::IpsSignatureMatched {
+                    signature_id,
+                    signature_name,
+                    category,
+                    severity,
+                    action,
+                    src_ip,
+                    src_port,
+                    dst_ip,
+                    dst_port,
+                    transport_protocol,
+                    app_protocol,
+                    interface,
+                    payload_length,
+                } => Item::IpsSignatureMatched(proto::IpsSignatureMatchedEvent {
+                    signature_id,
+                    signature_name,
+                    category,
+                    severity,
+                    action,
+                    src_ip,
+                    src_port: u32::from(src_port),
+                    dst_ip,
+                    dst_port: u32::from(dst_port),
+                    transport_protocol,
+                    app_protocol,
+                    interface,
+                    payload_length,
+                }),
                 EventKind::EventBusConnectedEvent { .. } => Item::EventBusConnected(proto::EventBusConnectedEvent {})
             }),
         }
