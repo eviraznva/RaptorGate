@@ -12,6 +12,8 @@ import Ips from "./pages/Ips.tsx";
 import ConnectionTracking from "./pages/ConnectionTracking.tsx";
 import PolicyEngine from "./pages/PolicyEngine.tsx";
 import Settings from "./pages/Settings.tsx";
+import Zones from "./pages/Zones.tsx";
+import NatRules from "./pages/NatRules.tsx";
 import { Layout } from "./components/layout/layout.tsx";
 import { Metrics } from "./components/metrics/Metrics.tsx";
 import { ProtectedRoute } from "./components/protectedRoute/protectedRoute.tsx";
@@ -58,6 +60,14 @@ const router = createBrowserRouter([
           {
             path: "rules",
             element: <PolicyEngine />,
+          },
+          {
+            path: "zones",
+            element: <Zones />,
+          },
+          {
+            path: "nat-rules",
+            element: <NatRules />,
           },
           {
             path: "settings",

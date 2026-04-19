@@ -181,19 +181,19 @@
       "createdBy": "6b2f7c55-8a41-4260-9284-8db2d2e3f116"
     },
     {
-      "id": "7b0e4b1c-2b8f-4cf4-a77f-95d0c17e4d31",
-      "type": "SNAT",
-      "isActive": false,
-      "srcIp": "192.168.1.13",
-      "dstIp": null,
+      "id": "9d57fa6f-a4a3-492b-b965-92c604c48d0f",
+      "type": "DNAT",
+      "isActive": true,
+      "srcIp": null,
+      "dstIp": "192.168.19.10",
       "srcPort": null,
       "dstPort": null,
-      "translatedIp": "172.16.0.23",
+      "translatedIp": "10.0.0.5",
       "translatedPort": null,
-      "priority": 42,
-      "createdAt": "2026-04-06T09:17:00.000Z",
-      "updatedAt": "2026-04-06T09:17:00.000Z",
-      "createdBy": "4cd7b2a5-7e90-4a34-92ab-9a7d1c2b3f17"
+      "priority": 99,
+      "createdAt": "2026-04-19T17:08:34.773Z",
+      "updatedAt": "2026-04-19T17:08:34.773Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
     }
   ]
 }
