@@ -1,5 +1,5 @@
 import { X509Certificate, createPrivateKey } from 'node:crypto';
-import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { FirewallCertificate } from '../../domain/entities/firewall-certificate.entity.js';
 import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
 import {
@@ -56,13 +56,17 @@ export class UploadServerCertificateUseCase {
     this.ensureKeyMatchesCertificate(certificate, privateKey);
 
     const bindPort = dto.bindPort ?? 443;
-    await this.ensureBindAddressIsUnique(dto.bindAddress, bindPort);
+    const existing = await this.findCertificateByBindAddress(
+      dto.bindAddress,
+      bindPort,
+    );
 
-    const id = crypto.randomUUID();
+    const id = existing?.getId() ?? crypto.randomUUID();
     const privateKeyRef = crypto.randomUUID();
     const commonName = this.extractCommonName(certificate) ?? dto.bindAddress;
-    const inspectionBypass = dto.inspectionBypass ?? false;
-    const isActive = dto.isActive ?? true;
+    const inspectionBypass =
+      dto.inspectionBypass ?? existing?.getInspectionBypass() ?? false;
+    const isActive = dto.isActive ?? existing?.getIsActive() ?? true;
 
     const uploaded = await this.uploadService.upload({
       id,
@@ -85,7 +89,7 @@ export class UploadServerCertificateUseCase {
       privateKeyRef,
       isActive,
       new Date(certificate.validTo),
-      new Date(),
+      existing?.getCreatedAt() ?? new Date(),
       dto.bindAddress,
       bindPort,
       inspectionBypass,
@@ -142,21 +146,18 @@ export class UploadServerCertificateUseCase {
     return match?.[1]?.trim() ?? null;
   }
 
-  private async ensureBindAddressIsUnique(
+  private async findCertificateByBindAddress(
     bindAddress: string,
     bindPort: number,
-  ): Promise<void> {
+  ): Promise<FirewallCertificate | null> {
     const certificates = await this.firewallCertificateRepository.findAll();
-    const existing = certificates.find(
-      (certificate) =>
-        certificate.getBindAddress() === bindAddress &&
-        certificate.getBindPort() === bindPort,
+    return (
+      certificates.find(
+        (certificate) =>
+          certificate.getCertType() === 'TLS_SERVER' &&
+          certificate.getBindAddress() === bindAddress &&
+          certificate.getBindPort() === bindPort,
+      ) ?? null
     );
-
-    if (existing) {
-      throw new ConflictException(
-        `TLS server certificate for ${bindAddress}:${bindPort} already exists`,
-      );
-    }
   }
 }

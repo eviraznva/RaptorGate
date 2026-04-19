@@ -136,6 +136,24 @@ impl ServerKeyStore {
         }
     }
 
+    fn replace_entry(&self, addr: SocketAddr, entry: InboundServerEntry) {
+        let new_key_ref = entry.key_ref.clone();
+        if let Some(previous) = self.entries.insert(addr, entry)
+            && previous.key_ref != new_key_ref
+        {
+            let pki = Path::new(&self.pki_dir);
+            if let Err(e) = delete_key_from_disk(pki, &previous.key_ref) {
+                tracing::warn!(
+                    %addr,
+                    key_ref = %previous.key_ref,
+                    error = %e,
+                    "failed to delete replaced inbound TLS server key"
+                );
+            }
+            delete_meta(pki, &previous.key_ref);
+        }
+    }
+
     // Rejestruje klucz serwera: zapisuje klucz + meta na dysk i buduje ServerConfig.
     #[allow(clippy::too_many_arguments)]
     pub fn add(
@@ -171,7 +189,7 @@ impl ServerKeyStore {
         let server_config = build_server_config_from_pem(cert_pem, key_pem)
             .with_context(|| format!("Failed to build TLS config for {addr}"))?;
 
-        self.entries.insert(
+        self.replace_entry(
             addr,
             InboundServerEntry {
                 server_config,
@@ -206,7 +224,7 @@ impl ServerKeyStore {
         let server_config = build_server_config_from_pem(cert_pem, &key_pem)
             .with_context(|| format!("Failed to build TLS config for {addr}"))?;
 
-        self.entries.insert(
+        self.replace_entry(
             addr,
             InboundServerEntry {
                 server_config,
@@ -520,6 +538,48 @@ mod tests {
 
         assert!(store.get_entry(addr).is_some());
         assert!(store.get_entry_active(addr).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn replacing_entry_removes_old_key_material() {
+        let dir = temp_dir();
+        let store = ServerKeyStore::new(&dir);
+        let (cert, key) = make_server_cert();
+        let addr = test_addr();
+
+        store
+            .add(
+                addr,
+                &cert,
+                &key,
+                "ref-old",
+                "test-server.local",
+                "AA:BB",
+                false,
+                true,
+            )
+            .unwrap();
+        assert!(key_path(Path::new(&dir), "ref-old").exists());
+        assert!(meta_path(Path::new(&dir), "ref-old").exists());
+
+        store
+            .add(
+                addr,
+                &cert,
+                &key,
+                "ref-new",
+                "test-server.local",
+                "CC:DD",
+                false,
+                true,
+            )
+            .unwrap();
+
+        assert!(!key_path(Path::new(&dir), "ref-old").exists());
+        assert!(!meta_path(Path::new(&dir), "ref-old").exists());
+        assert!(key_path(Path::new(&dir), "ref-new").exists());
+        assert!(meta_path(Path::new(&dir), "ref-new").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -68,8 +68,8 @@ impl TlsDecisionEngine {
     ) -> TlsAction {
         if let Some(ip) = dst_ip {
             let addr = SocketAddr::new(ip, dst_port);
-            if let Some(entry) = self.server_key_store.get_entry_active(addr) {
-                if entry.bypass {
+            if let Some(entry) = self.server_key_store.get_entry(addr) {
+                if !entry.enabled || entry.bypass {
                     return TlsAction::Bypass;
                 }
                 return TlsAction::Intercept;
@@ -175,6 +175,8 @@ impl TlsDecisionEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rcgen::{CertificateParams, DnType, IsCa, KeyPair, SanType};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     fn engine(domains: &[&str]) -> TlsDecisionEngine {
         let ds: Vec<String> = domains.iter().map(|s| s.to_string()).collect();
@@ -191,6 +193,27 @@ mod tests {
         let ds: Vec<String> = domains.iter().map(|s| s.to_string()).collect();
         let store = Arc::new(ServerKeyStore::new("/tmp/test-pki-decision"));
         TlsDecisionEngine::new(&ds, store, policy, PinningConfig::default())
+    }
+
+    fn temp_dir() -> String {
+        let dir = std::env::temp_dir()
+            .join(uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.to_string_lossy().to_string()
+    }
+
+    fn make_server_cert() -> (String, String) {
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::default();
+        params.is_ca = IsCa::NoCa;
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "test-server.local");
+        params.subject_alt_names = vec![SanType::DnsName(
+            "test-server.local".to_string().try_into().unwrap(),
+        )];
+        let cert = params.self_signed(&key).unwrap();
+        (cert.pem(), key.serialize_pem())
     }
 
     #[test]
@@ -334,5 +357,63 @@ mod tests {
             e.decide(Some("pinned.app"), false, None, 443, None),
             TlsAction::Intercept
         );
+    }
+
+    #[test]
+    fn configured_inbound_service_intercepts() {
+        let dir = temp_dir();
+        let store = Arc::new(ServerKeyStore::new(&dir));
+        let (cert, key) = make_server_cert();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 20, 10)), 443);
+
+        store
+            .add(
+                addr,
+                &cert,
+                &key,
+                "decision-ref-enabled",
+                "test-server.local",
+                "FP",
+                false,
+                true,
+            )
+            .unwrap();
+
+        let e = TlsDecisionEngine::new(&[], store, EchTlsPolicy::default(), PinningConfig::default());
+        assert_eq!(
+            e.decide(Some("h2-firewall.lab"), false, Some(addr.ip()), addr.port(), None),
+            TlsAction::Intercept
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn disabled_inbound_service_bypasses() {
+        let dir = temp_dir();
+        let store = Arc::new(ServerKeyStore::new(&dir));
+        let (cert, key) = make_server_cert();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 20, 10)), 443);
+
+        store
+            .add(
+                addr,
+                &cert,
+                &key,
+                "decision-ref-disabled",
+                "test-server.local",
+                "FP",
+                false,
+                false,
+            )
+            .unwrap();
+
+        let e = TlsDecisionEngine::new(&[], store, EchTlsPolicy::default(), PinningConfig::default());
+        assert_eq!(
+            e.decide(Some("h2-firewall.lab"), false, Some(addr.ip()), addr.port(), None),
+            TlsAction::Bypass
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

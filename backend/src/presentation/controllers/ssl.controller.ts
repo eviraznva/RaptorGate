@@ -15,7 +15,6 @@ import {
   ApiError401,
   ApiError403,
   ApiError404,
-  ApiError409,
   ApiError429,
   ApiError500,
 } from '../decorators/api-error-response.decorator.js';
@@ -129,9 +128,9 @@ export class SslController {
   }
 
   @ApiOperation({
-    summary: 'Upload inbound TLS server certificate',
+    summary: 'Upload or replace inbound TLS server certificate',
     description:
-      'Stores a TLS server certificate and private key for inbound TLS inspection.',
+      'Stores or replaces a TLS server certificate and private key for inbound TLS inspection.',
   })
   @Roles(Role.Operator)
   @RequirePermissions(Permission.CERTIFICATES_UPLOAD)
@@ -146,7 +145,6 @@ export class SslController {
   @ApiError400('Validation failed')
   @ApiError401('Authorization header missing or invalid')
   @ApiError403('Insufficient permissions to upload certificates')
-  @ApiError409('Certificate already exists for the bind address')
   @ApiError429('Too many requests')
   @ApiError500('Internal server error while uploading certificate')
   async uploadServerCertificate(
