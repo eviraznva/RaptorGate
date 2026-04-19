@@ -2,6 +2,7 @@ import {
   CallHandler,
   ExecutionContext,
   Injectable,
+  Logger,
   NestInterceptor,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
@@ -11,6 +12,8 @@ import { RESPONSE_MESSAGE_KEY } from "../decorators/response-message.decorator.j
 
 @Injectable()
 export class SuccessEnvelopeInterceptor implements NestInterceptor {
+  private readonly logger = new Logger(SuccessEnvelopeInterceptor.name);
+
   constructor(private readonly reflector: Reflector) {}
 
   intercept(context: ExecutionContext, next: CallHandler) {
@@ -19,6 +22,7 @@ export class SuccessEnvelopeInterceptor implements NestInterceptor {
     const http = context.switchToHttp();
     const req = http.getRequest<Request>();
     const res = http.getResponse<Response>();
+    const startedAt = Date.now();
 
     const customMessage = this.reflector.getAllAndOverride<string>(
       RESPONSE_MESSAGE_KEY,
@@ -26,12 +30,26 @@ export class SuccessEnvelopeInterceptor implements NestInterceptor {
     );
 
     return next.handle().pipe(
-      map((data: unknown) => ({
-        statusCode: res.statusCode,
-        message:
-          customMessage ?? this.defaultMessage(req.method, res.statusCode),
-        data: data ?? null,
-      })),
+      map((data: unknown) => {
+        const message =
+          customMessage ?? this.defaultMessage(req.method, res.statusCode);
+
+        this.logger.log({
+          event: "http.request.completed",
+          message,
+          method: req.method,
+          path: req.originalUrl ?? req.url,
+          statusCode: res.statusCode,
+          durationMs: Date.now() - startedAt,
+          userId: getRequestUserId(req),
+        });
+
+        return {
+          statusCode: res.statusCode,
+          message,
+          data: data ?? null,
+        };
+      }),
     );
   }
 
@@ -41,4 +59,11 @@ export class SuccessEnvelopeInterceptor implements NestInterceptor {
     if (method === "PUT" || method === "PATCH") return "Resource updated";
     return "Success";
   }
+}
+
+function getRequestUserId(req: Request): string | undefined {
+  const user = (req as Request & { user?: { id?: unknown; sub?: unknown } }).user;
+  if (typeof user?.id === "string") return user.id;
+  if (typeof user?.sub === "string") return user.sub;
+  return undefined;
 }

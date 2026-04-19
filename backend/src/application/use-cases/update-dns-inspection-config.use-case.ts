@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { DnsInspectionConfig } from "../../domain/entities/dns-inspection-config.entity.js";
 import {
   DNS_INSPECTION_REPOSITORY_TOKEN,
@@ -15,6 +15,8 @@ import {
 
 @Injectable()
 export class UpdateDnsInspectionConfigUseCase {
+  private readonly logger = new Logger(UpdateDnsInspectionConfigUseCase.name);
+
   constructor(
     @Inject(DNS_INSPECTION_REPOSITORY_TOKEN)
     private readonly repository: IDnsInspectionRepository,
@@ -56,6 +58,15 @@ export class UpdateDnsInspectionConfigUseCase {
     await this.firewallDnsInspectionQueryService.swapDnsInspectionConfig(
       dnsInspection,
     );
+
+    this.logger.log({
+      event: "dns_inspection.update.succeeded",
+      message: "DNS inspection config updated",
+      enabled: dnsInspection.getGeneral().enabled,
+      blocklistDomains: dnsInspection.getBlocklist().domains.length,
+      dnsTunnelingEnabled: dnsInspection.getDnsTunneling().enabled,
+      dnssecEnabled: dnsInspection.getDnssec().enabled,
+    });
 
     return { dnsInspection };
   }

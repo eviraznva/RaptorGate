@@ -82,7 +82,11 @@ where
             }
         };
 
-        tracing::info!(socket = self.socket_path, "FirewallQueryService listening");
+        tracing::info!(
+            event = "grpc.query_service.listening",
+            socket = self.socket_path,
+            "FirewallQueryService listening"
+        );
 
         let incoming = UnixListenerStream::new(listener);
 
@@ -275,10 +279,23 @@ where
         let new_config = AppConfig::from_proto(proto_config)
             .map_err(|e| Status::invalid_argument(format!("invalid config: {e}")))?;
 
+        tracing::info!(
+            event = "config.swap.started",
+            capture_interfaces = ?new_config.capture_interfaces,
+            query_socket_path = %new_config.query_socket_path,
+            event_socket_path = %new_config.event_socket_path,
+            "received AppConfig swap request"
+        );
+
         self.config_provider
             .swap_config(new_config)
             .await
             .map_err(|e| Status::internal(format!("failed to swap config: {e}")))?;
+
+        tracing::info!(
+            event = "config.swap.succeeded",
+            "AppConfig swap request applied"
+        );
 
         Ok(Response::new(SwapConfigResponse {}))
     }
@@ -314,6 +331,15 @@ where
         let new_config = DnsInspectionConfig::from_proto(proto_config)
             .map_err(|e| Status::invalid_argument(format!("invalid dns inspection config: {e}")))?;
 
+        tracing::info!(
+            event = "dns_inspection.swap.started",
+            enabled = new_config.general.enabled,
+            blocklist_domains = new_config.blocklist.domains.len(),
+            dns_tunneling_enabled = new_config.dns_tunneling.enabled,
+            dnssec_enabled = new_config.dnssec.enabled,
+            "received DNS inspection config swap request"
+        );
+
         self.dns_inspection_store
             .swap_config(new_config.clone())
             .await
@@ -322,6 +348,12 @@ where
         self.dns_inspection
             .update_config(&new_config)
             .map_err(|e| Status::internal(format!("failed to apply dns inspection config: {e}")))?;
+
+        tracing::info!(
+            event = "dns_inspection.swap.succeeded",
+            enabled = new_config.general.enabled,
+            "DNS inspection config applied"
+        );
 
         Ok(Response::new(SwapDnsInspectionConfigResponse {}))
     }
@@ -348,6 +380,14 @@ where
         let new_config = IpsConfig::from_proto(proto_config)
             .map_err(|e| Status::invalid_argument(format!("invalid ips config: {e}")))?;
 
+        tracing::info!(
+            event = "ips.swap.started",
+            enabled = new_config.general.enabled,
+            detection_enabled = new_config.detection.enabled,
+            signatures = new_config.signatures.len(),
+            "received IPS config swap request"
+        );
+
         self.ips_store
             .swap_config(new_config.clone())
             .await
@@ -356,6 +396,13 @@ where
         self.ips
             .update_config(&new_config)
             .map_err(|e| Status::internal(format!("failed to apply ips config: {e}")))?;
+
+        tracing::info!(
+            event = "ips.swap.succeeded",
+            enabled = new_config.general.enabled,
+            signatures = new_config.signatures.len(),
+            "IPS config applied"
+        );
 
         Ok(Response::new(SwapIpsConfigResponse {}))
     }
@@ -392,6 +439,17 @@ where
             .bundle
             .ok_or_else(|| Status::invalid_argument("missing bundle in snapshot"))?;
 
+        tracing::info!(
+            event = "config_snapshot.push.started",
+            correlation_id,
+            snapshot_id,
+            rules = bundle.rules.len(),
+            zones = bundle.zones.len(),
+            zone_pairs = bundle.zone_pairs.len(),
+            zone_interfaces = bundle.zone_interfaces.len(),
+            "received active config snapshot push"
+        );
+
         // 1. Parse all proto types into domain-type HashMaps
         let policies = parse_proto_collection(bundle.rules, Policy::try_from_rule, "rule")?;
         let zones = parse_proto_collection(bundle.zones, Zone::try_from_proto, "zone")?;
@@ -409,6 +467,14 @@ where
 
         if !errors.is_empty() {
             let messages: Vec<String> = errors.iter().map(std::string::ToString::to_string).collect();
+            tracing::warn!(
+                event = "config_snapshot.push.rejected",
+                correlation_id,
+                snapshot_id,
+                error_count = messages.len(),
+                message = %messages.join("; "),
+                "active config snapshot rejected by integrity validation"
+            );
             return Ok(Response::new(PushActiveConfigSnapshotResponse {
                 correlation_id,
                 accepted: false,
@@ -438,6 +504,13 @@ where
             .swap_policies(policies.into_iter().collect())
             .await
             .map_err(|e| Status::internal(format!("failed to swap policies: {e}")))?;
+
+        tracing::info!(
+            event = "config_snapshot.push.succeeded",
+            correlation_id,
+            snapshot_id,
+            "active config snapshot applied"
+        );
 
         Ok(Response::new(PushActiveConfigSnapshotResponse {
             correlation_id,

@@ -5,10 +5,12 @@ import type { IUserRepository } from '../../domain/repositories/user.repository.
 import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
 import type { ITokenService } from '../ports/token-service.interface.js';
 import { LogoutUserDto } from '../dtos/logout-user.dto.js';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class LogoutUserUseCase {
+  private readonly logger = new Logger(LogoutUserUseCase.name);
+
   constructor(
     @Inject(USER_REPOSITORY_TOKEN)
     private readonly userRepository: IUserRepository,
@@ -38,5 +40,12 @@ export class LogoutUserUseCase {
       user.getRefreshToken(),
       user.getRefreshTokenExpiry(),
     );
+
+    this.logger.log({
+      event: 'auth.logout.succeeded',
+      message: 'user logged out',
+      userId: user.getId(),
+      username: user.getUsername(),
+    });
   }
 }

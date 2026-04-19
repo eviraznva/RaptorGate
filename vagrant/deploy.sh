@@ -46,6 +46,7 @@ rm -rf .router_sync/frontend && mkdir -p .router_sync/frontend
 rm -rf .router_sync/proto && mkdir -p .router_sync/proto
 rm -rf .router_sync/logrotate && mkdir -p .router_sync/logrotate
 rm -rf .router_sync/nginx && mkdir -p .router_sync/nginx
+rm -rf .router_sync/vector && mkdir -p .router_sync/vector
 cp -f ../bin/"$PROJECT_NAME" .router_sync/"$PROJECT_NAME"/"$PROJECT_NAME"
 cp -rf ../bin/backend/* .router_sync/backend/
 cp -rf ../bin/frontend/dist .router_sync/frontend/
@@ -57,6 +58,7 @@ cp -rf ./configs/* .router_sync/ngfw
 cp -rf services .router_sync
 cp -rf nginx/* .router_sync/nginx/
 cp -rf logrotate/* .router_sync/logrotate/
+cp -rf vector/* .router_sync/vector/
 
 vagrant rsync r1 || true
 vagrant up --provision

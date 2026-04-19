@@ -1,6 +1,7 @@
 import {
   Inject,
   Injectable,
+  Logger,
   OnModuleInit,
   ServiceUnavailableException,
 } from "@nestjs/common";
@@ -20,6 +21,7 @@ export const RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN =
 export class GrpcRaptorLangValidationService
   implements IRaptorLangValidationService, OnModuleInit
 {
+  private readonly logger = new Logger(GrpcRaptorLangValidationService.name);
   private raptorLangValidationClient: RaptorLangValidationServiceClient;
 
   constructor(
@@ -36,15 +38,33 @@ export class GrpcRaptorLangValidationService
 
   async validateRaptorLang(content: string): Promise<void> {
     try {
+      this.logger.log({
+        event: "firewall.raptorlang.validation.started",
+        message: "validating RaptorLang content through firewall",
+        contentLength: content.length,
+      });
+
       const response = await firstValueFrom(
         this.raptorLangValidationClient.validateRaptorLang({ dsl: content }),
       );
 
       if (!response.isValid) {
+        this.logger.warn({
+          event: "firewall.raptorlang.validation.rejected",
+          message: response.errorMessage || "RaptorLang content is invalid",
+          contentLength: content.length,
+        });
+
         throw new RaptorLangValidationException(
           response.errorMessage || "RaptorLang rule content is invalid.",
         );
       }
+
+      this.logger.log({
+        event: "firewall.raptorlang.validation.succeeded",
+        message: "RaptorLang content accepted by firewall",
+        contentLength: content.length,
+      });
     } catch (error) {
       if (error instanceof RaptorLangValidationException) {
         throw error;
@@ -52,6 +72,16 @@ export class GrpcRaptorLangValidationService
 
       const reason =
         error instanceof Error ? error.message : "Unknown gRPC error";
+
+      this.logger.error(
+        {
+          event: "firewall.raptorlang.validation.failed",
+          message: "RaptorLang validation service call failed",
+          contentLength: content.length,
+          error: reason,
+        },
+        error instanceof Error ? error.stack : undefined,
+      );
 
       throw new ServiceUnavailableException(
         `RaptorLang validation service is unavailable. ${reason}`,

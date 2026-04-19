@@ -5,7 +5,6 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
-  Logger,
   Put,
 } from "@nestjs/common";
 import { ApiBody, ApiOperation } from "@nestjs/swagger";
@@ -37,7 +36,6 @@ import {
 
 @Controller("ips-config")
 export class IpsConfigController {
-  private readonly logger = new Logger(IpsConfigController.name);
   constructor(
     @Inject(GetIpsConfigurationUseCase)
     private readonly getIpsConfigurationUseCase: GetIpsConfigurationUseCase,
@@ -61,7 +59,6 @@ export class IpsConfigController {
   @ApiError500("Internal server error while retrieving IPS config")
   async getIpsConfig(): Promise<GetIpsConfigResponseDto> {
     const result = await this.getIpsConfigurationUseCase.execute();
-    this.logger.debug(result);
 
     const ipsConfig = IpsConfigResponseMapper.toDto(result.ipsConfig);
 

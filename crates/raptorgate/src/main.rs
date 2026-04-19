@@ -75,30 +75,55 @@ async fn main() {
     if let Err(err) = logging::init() {
         eprintln!("failed to initialize daily firewall logging: {err}");
         tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_env("RAPTORGATE_LOG_LEVEL")
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
             .with_target(false)
             .with_thread_ids(false)
             .with_thread_names(false)
+            .json()
+            .flatten_event(true)
             .init();
     }
 
     let config_provider = match AppConfigProvider::from_env().await {
         Ok(provider) => Arc::new(provider),
         Err(err) => {
-            tracing::error!("Configuration error: {err}");
+            tracing::error!(
+                event = "startup.config.failed",
+                error = %err,
+                "configuration error"
+            );
             return;
         }
     };
 
     let config = config_provider.get_config();
+    tracing::info!(
+        event = "startup.config.loaded",
+        capture_interfaces = ?config.capture_interfaces,
+        data_dir = %config.data_dir.display(),
+        query_socket_path = %config.query_socket_path,
+        event_socket_path = %config.event_socket_path,
+        "firewall config loaded"
+    );
 
     let ca_info = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
-            tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
+            tracing::info!(
+                event = "startup.ca.initialized",
+                fingerprint = %ca.ca_info().fingerprint,
+                "CA initialized"
+            );
             Some(ca.ca_info())
         }
         Err(err) => {
-            tracing::warn!(error = %err, "CA initialization failed");
+            tracing::warn!(
+                event = "startup.ca.failed",
+                error = %err,
+                "CA initialization failed"
+            );
             None
         }
     };
@@ -138,7 +163,11 @@ async fn main() {
     let dns_inspection = match DnsInspection::new((*dns_initial_config).clone()) {
         Ok(inspection) => inspection,
         Err(err) => {
-            tracing::error!(error = %err, "failed to initialize DNS inspection");
+            tracing::error!(
+                event = "startup.dns_inspection.failed",
+                error = %err,
+                "failed to initialize DNS inspection"
+            );
             return;
         }
     };
@@ -148,7 +177,11 @@ async fn main() {
     let ips = match Ips::new((*ips_initial_config).clone()) {
         Ok(inspection) => inspection,
         Err(err) => {
-            tracing::error!(error = %err, "failed to initialize IPS");
+            tracing::error!(
+                event = "startup.ips.failed",
+                error = %err,
+                "failed to initialize IPS"
+            );
             return;
         }
     };
@@ -187,7 +220,11 @@ async fn main() {
         .register(Arc::clone(&sniffer), "InterfaceSniffer")
         .await;
     for e in errs {
-        tracing::error!(error = %e, "interface sniffer error");
+        tracing::error!(
+            event = "startup.sniffer.failed",
+            error = %e,
+            "interface sniffer error"
+        );
     }
 
     // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.

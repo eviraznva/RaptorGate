@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
 import {
   CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
@@ -29,6 +29,8 @@ import {
 
 @Injectable()
 export class RollbackConfigUseCase {
+  private readonly logger = new Logger(RollbackConfigUseCase.name);
+
   constructor(
     @Inject(CONFIG_SNAPSHOT_REPOSITORY_TOKEN)
     private readonly configSnapshotRepository: IConfigSnapshotRepository,
@@ -65,6 +67,20 @@ export class RollbackConfigUseCase {
       configSnapshot,
       "rollback",
     );
+
+    this.logger.log({
+      event: "config_snapshot.rollback.succeeded",
+      message: "configuration snapshot rolled back",
+      snapshotId: configSnapshot.getId(),
+      versionNumber: configSnapshot.getVersionNumber(),
+      checksum: configSnapshot.getChecksum().getValue(),
+      counts: {
+        rules: configBundle.bundle.rules.items.length,
+        zones: configBundle.bundle.zones.items.length,
+        zonePairs: configBundle.bundle.zone_pairs.items.length,
+        natRules: configBundle.bundle.nat_rules.items.length,
+      },
+    });
 
     return {
       id: configSnapshot.getId(),

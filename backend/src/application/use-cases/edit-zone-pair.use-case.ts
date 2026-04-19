@@ -6,10 +6,12 @@ import { EditZonePairResponseDto } from '../dtos/edit-zone-pair-response.dto.js'
 import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
 import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
 import { EditZonePairDto } from '../dtos/edit-zone-pair.dto.js';
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 
 @Injectable()
 export class EditZonePairUseCase {
+  private readonly logger = new Logger(EditZonePairUseCase.name);
+
   constructor(
     @Inject(ZONE_PAIR_REPOSITORY_TOKEN)
     private readonly zonePairRepository: IZonePairRepository,
@@ -49,6 +51,18 @@ export class EditZonePairUseCase {
       zonePairExists.setDefaultPolicy(dto.defaultPolicy);
 
     await this.zonePairRepository.save(zonePairExists);
+
+    this.logger.log({
+      event: 'zone_pair.update.succeeded',
+      message: 'zone pair updated',
+      zonePairId: zonePairExists.getId(),
+      srcZoneId: zonePairExists.getSrcZoneId(),
+      dstZoneId: zonePairExists.getDstZoneId(),
+      defaultPolicy: zonePairExists.getDefaultPolicy(),
+      changedFields: Object.entries(dto)
+        .filter(([key, value]) => key !== 'id' && value !== undefined)
+        .map(([key]) => key),
+    });
 
     return {
       zonePair: zonePairExists,

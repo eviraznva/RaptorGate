@@ -1,0 +1,15 @@
+[Unit]
+Description=VictoriaLogs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=victorialogs
+Group=victorialogs
+ExecStart=/usr/local/bin/victoria-logs-prod -storageDataPath=/var/lib/victorialogs -retentionPeriod=14d -httpListenAddr=:9428
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

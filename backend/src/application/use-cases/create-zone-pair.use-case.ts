@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ZonePair } from "../../domain/entities/zone-pair.entity.js";
 import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
 import { EntityAlreadyExistsException } from "../../domain/exceptions/entity-already-exists-exception.js";
@@ -14,6 +14,8 @@ import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
 @Injectable()
 export class CreateZonePairUseCase {
+  private readonly logger = new Logger(CreateZonePairUseCase.name);
+
   constructor(
     @Inject(ZONE_PAIR_REPOSITORY_TOKEN)
     private readonly zonePairRepository: IZonePairRepository,
@@ -56,6 +58,16 @@ export class CreateZonePairUseCase {
     );
 
     await this.zonePairRepository.save(newZonePair);
+
+    this.logger.log({
+      event: "zone_pair.create.succeeded",
+      message: "zone pair created",
+      actorId: claims.sub,
+      zonePairId: newZonePair.getId(),
+      srcZoneId: newZonePair.getSrcZoneId(),
+      dstZoneId: newZonePair.getDstZoneId(),
+      defaultPolicy: newZonePair.getDefaultPolicy(),
+    });
 
     return { zonePair: newZonePair };
   }

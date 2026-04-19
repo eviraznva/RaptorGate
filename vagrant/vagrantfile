@@ -54,13 +54,18 @@ def setup_nftables
     nft add rule inet filter input tcp dport 22 ct state new accept
     nft add rule inet filter input tcp dport 2201 ct state new accept
     nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 443 ct state new accept
+    nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 9428 ct state new accept
   SHELL
 end
 
 def setup_backend_service
   <<-SHELL
     chmod +x /resources/backend/bun
-    install -d -m 0755 /var/log/raptorgate/backend
+    if getent group raptorgate-logs >/dev/null 2>&1; then
+      install -d -m 2750 -o root -g raptorgate-logs /var/log/raptorgate/backend
+    else
+      install -d -m 0755 /var/log/raptorgate/backend
+    fi
     touch /var/log/raptorgate/.logrotate-trigger
     cp -f /resources/services/backend.service /etc/systemd/system/backend.service
     if [ -f /resources/logrotate/raptorgate ]; then
@@ -88,6 +93,76 @@ def setup_frontend_service
   SHELL
 end
 
+def setup_observability
+  <<-SHELL
+    set -e
+
+    apt-get update
+    apt-get install -y ca-certificates curl gnupg tar gzip
+
+    if ! command -v vector >/dev/null 2>&1; then
+      vector_setup="$(mktemp)"
+      curl -fsSL -o "$vector_setup" https://setup.vector.dev
+      bash "$vector_setup"
+      rm -f "$vector_setup"
+      apt-get install -y vector
+    fi
+
+    if ! id -u victorialogs >/dev/null 2>&1; then
+      useradd --system --home /var/lib/victorialogs --shell /usr/sbin/nologin victorialogs
+    fi
+
+    if ! getent group raptorgate-logs >/dev/null 2>&1; then
+      groupadd --system raptorgate-logs
+    fi
+
+    if id -u vector >/dev/null 2>&1; then
+      usermod -a -G raptorgate-logs vector
+    fi
+
+    install -d -m 0755 /etc/vector
+    install -d -m 0755 -o victorialogs -g victorialogs /var/lib/victorialogs
+    install -d -m 2750 -o root -g raptorgate-logs /var/log/raptorgate /var/log/raptorgate/backend /var/log/raptorgate/firewall
+    chgrp -R raptorgate-logs /var/log/raptorgate
+    find /var/log/raptorgate -type d -exec chmod 2750 {} +
+    find /var/log/raptorgate -type f -name "*.log" -exec chmod 0640 {} +
+    if id -u vector >/dev/null 2>&1; then
+      install -d -m 0755 -o vector -g vector /var/lib/vector
+      chown -R vector:vector /var/lib/vector
+      chmod -R u+rwX /var/lib/vector
+    else
+      install -d -m 0755 /var/lib/vector
+    fi
+
+    VICTORIALOGS_VERSION="${VICTORIALOGS_VERSION:-v1.50.0}"
+    if [ ! -x /usr/local/bin/victoria-logs-prod ] || ! /usr/local/bin/victoria-logs-prod --version 2>/dev/null | grep -q "$VICTORIALOGS_VERSION"; then
+      tmp_dir="$(mktemp -d)"
+      curl -fL -o "$tmp_dir/victoria-logs.tar.gz" "https://github.com/VictoriaMetrics/VictoriaLogs/releases/download/$VICTORIALOGS_VERSION/victoria-logs-linux-amd64-$VICTORIALOGS_VERSION.tar.gz"
+      tar -xzf "$tmp_dir/victoria-logs.tar.gz" -C "$tmp_dir"
+      victorialogs_bin="$tmp_dir/victoria-logs-prod"
+      if [ ! -f "$victorialogs_bin" ]; then
+        victorialogs_bin="$(find "$tmp_dir" -type f -name victoria-logs-prod -print -quit)"
+      fi
+      if [ -z "$victorialogs_bin" ] || [ ! -f "$victorialogs_bin" ]; then
+        echo "victoria-logs-prod not found in downloaded archive"
+        find "$tmp_dir" -maxdepth 2 -type f -print
+        exit 1
+      fi
+      install -m 0755 "$victorialogs_bin" /usr/local/bin/victoria-logs-prod
+      rm -rf "$tmp_dir"
+    fi
+
+    cp -f /resources/services/victorialogs.service /etc/systemd/system/victorialogs.service
+    cp -f /resources/vector/vector.yaml /etc/vector/vector.yaml
+
+    systemctl daemon-reload
+    systemctl enable victorialogs
+    systemctl restart victorialogs
+    systemctl enable vector
+    systemctl restart vector
+  SHELL
+end
+
 def setup_ngfw_service
   <<-SHELL
     sysctl -w net.ipv4.ip_forward=1
@@ -105,7 +180,11 @@ def setup_ngfw_service
     mkdir -p /resources/ngfw
     mkdir -p /resources/ngfw/.data
     mkdir -p /resources/ngfw/sockets
-    install -d -m 0755 /var/log/raptorgate/firewall
+    if getent group raptorgate-logs >/dev/null 2>&1; then
+      install -d -m 2750 -o root -g raptorgate-logs /var/log/raptorgate/firewall
+    else
+      install -d -m 0755 /var/log/raptorgate/firewall
+    fi
     touch /var/log/raptorgate/.logrotate-trigger
     chmod +x /resources/ngfw/ngfw
     cp -f /resources/services/*.service /etc/systemd/system/
@@ -217,7 +296,7 @@ Vagrant.configure("2") do |config|
     r1_provision = configure_interface("eth1", "192.168.10.254", "24") +
       configure_interface("eth2", "192.168.20.254", "24") +
       configure_interface("eth3", "192.168.56.254", "24") +
-      setup_tun_device + setup_nftables + setup_ngfw_service
+      setup_tun_device + setup_nftables + setup_ngfw_service + setup_observability
 
     unless ENV['NO_BACKEND'] == '1'
       r1_provision += setup_backend_service + setup_frontend_service 

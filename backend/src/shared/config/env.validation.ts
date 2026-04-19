@@ -16,6 +16,7 @@ const envSchema = z.object({
     .default("../sockets/control-plane.sock"),
   FIREWALL_QUERY_GRPC_SOCKET_PATH: z.string().default("../sockets/query.sock"),
   BACKEND_LOG_DIR: z.string().default("/var/log/raptorgate/backend"),
+  BACKEND_LOG_LEVELS: z.string().default("log,error,warn"),
   AUTH_COOKIE_PATH: z.string().min(1).default("/auth/refresh"),
   COOKIE_SECRET: z
     .string()

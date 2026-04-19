@@ -28,7 +28,11 @@ struct BackendConnection {
 impl BackendConnection {
     /// Returns false if the gRPC task has died (receiver dropped).
     async fn send(&self, event: proto::Event) -> bool {
-        tracing::trace!(kind = ?event.kind, "Sending out event...");
+        tracing::trace!(
+            event = "event_bus.dispatch.started",
+            kind = ?event.kind,
+            "sending event to backend stream"
+        );
 
         self.tx.send(event).await.is_ok()
     }
@@ -52,7 +56,11 @@ async fn try_connect(socket_path: &str) -> Result<BackendConnection, tonic::tran
 
     tokio::spawn(async move {
         if let Err(e) = client.push_events(ReceiverStream::new(rx)).await {
-            tracing::warn!(error = %e, "BackendEventService stream ended");
+            tracing::warn!(
+                event = "event_bus.backend_stream.ended",
+                error = %e,
+                "BackendEventService stream ended"
+            );
         }
         // when this task returns, `rx` is dropped → `tx.send()` will fail
         // → the event loop detects it and sets backend = None
@@ -123,7 +131,11 @@ async fn dispatch(event: Event, backend: &mut Option<BackendConnection>, buffer:
     match backend {
         Some(conn) => {
             if !conn.send(event.into()).await {
-                tracing::warn!("backend connection lost, will reconnect");
+                tracing::warn!(
+                    event = "event_bus.backend_connection.lost",
+                    dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                    "backend connection lost, will reconnect"
+                );
                 *backend = None;
                 DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
             }
@@ -131,11 +143,22 @@ async fn dispatch(event: Event, backend: &mut Option<BackendConnection>, buffer:
 
         None => {
             if buffer.len() < OVERFLOW_CAPACITY {
-                tracing::trace!(kind = ?event.kind, "no backend connection, buffering event");
+                tracing::trace!(
+                    event = "event_bus.buffered",
+                    kind = ?event.kind,
+                    buffered_events = buffer.len(),
+                    "no backend connection, buffering event"
+                );
                 buffer.push(event);
             } else {
-                DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
-                tracing::warn!(kind = ?event.kind, "overflow buffer full, event dropped");
+                let dropped_events = DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
+                tracing::warn!(
+                    event = "event_bus.event_dropped",
+                    kind = ?event.kind,
+                    buffered_events = buffer.len(),
+                    dropped_events,
+                    "overflow buffer full, event dropped"
+                );
             }
         }
     }
@@ -148,14 +171,25 @@ async fn attempt_reconnect(
 ) {
     match try_connect(socket_path).await {
         Ok(conn) => {
-            tracing::info!("reconnected to backend");
+            tracing::info!(
+                event = "event_bus.backend_connected",
+                socket_path,
+                buffered_events = buffer.len(),
+                dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                "reconnected to backend"
+            );
             *backend = Some(conn);
 
             emit(Event::new(EventKind::EventBusConnectedEvent {}));
             flush_batch(buffer, backend).await;
         }
         Err(e) => {
-            tracing::warn!(error = ?e, "reconnect attempt failed");
+            tracing::warn!(
+                event = "event_bus.backend_reconnect.failed",
+                socket_path,
+                error = ?e,
+                "reconnect attempt failed"
+            );
         }
     }
 }

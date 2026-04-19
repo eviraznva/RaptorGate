@@ -4,10 +4,12 @@ import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.
 import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
 import { EditNatRuleResponseDto } from '../dtos/edit-nat-rule-response.dto.js';
 import { EditNatRuleDto } from '../dtos/edit-nat-rule.dto.js';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class EditNatRuleUseCase {
+  private readonly logger = new Logger(EditNatRuleUseCase.name);
+
   constructor(
     @Inject(NAT_RULES_REPOSITORY_TOKEN)
     private readonly natRulesRepository: INatRulesRepository,
@@ -34,6 +36,18 @@ export class EditNatRuleUseCase {
     natRule.setUpdatedAt(new Date());
 
     await this.natRulesRepository.save(natRule);
+
+    this.logger.log({
+      event: 'nat_rule.update.succeeded',
+      message: 'NAT rule updated',
+      natRuleId: natRule.getId(),
+      type: natRule.getType().getValue(),
+      isActive: natRule.getIsActive(),
+      priority: natRule.getPriority().getValue(),
+      changedFields: Object.entries(dto)
+        .filter(([key, value]) => key !== 'id' && value !== undefined)
+        .map(([key]) => key),
+    });
 
     return { natRule };
   }

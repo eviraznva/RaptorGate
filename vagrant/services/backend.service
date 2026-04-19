@@ -22,6 +22,7 @@ Environment=JWT_SECRET=development-jwt-secret-change-me-1234567890
 Environment=REFRESH_TOKEN_SECRET=development-refresh-secret-change-me-1234567890
 Environment=COOKIE_SECRET=development-cookie-secret-change-me-1234567890
 Environment=AUTH_COOKIE_PATH=/api/auth/refresh
+Environment=BACKEND_LOG_LEVELS=log,error,warn
 User=root
 
 [Install]
