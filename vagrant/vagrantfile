@@ -53,6 +53,15 @@ def setup_nftables
     nft add rule inet filter input ct state established,related accept
     nft add rule inet filter input tcp dport 22 ct state new accept
     nft add rule inet filter input tcp dport 2201 ct state new accept
+
+    UPLINK_IF=$(ip route show default | awk '/default/ {print $5; exit}')
+    if [ -n "$UPLINK_IF" ]; then
+      nft add table ip nat
+      nft 'add chain ip nat postrouting { type nat hook postrouting priority srcnat; policy accept; }'
+      nft add rule inet filter forward iifname "eth2" oifname "$UPLINK_IF" ct state new,established,related accept
+      nft add rule inet filter forward iifname "$UPLINK_IF" oifname "eth2" ct state established,related accept
+      nft add rule ip nat postrouting oifname "$UPLINK_IF" ip saddr 192.168.20.0/24 masquerade
+    fi
   SHELL
 end
 def setup_backend_service
