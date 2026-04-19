@@ -7,12 +7,13 @@ use tokio::sync::Mutex;
 use crate::{
     data_plane::{
         dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection},
-        ips::ips::{Ips, IpsVerdict},
+        ips::ips::{Ips, IpsSignatureMatch, IpsVerdict},
         nat::NatEngine,
         packet_context::PacketContext,
         tcp_session_tracker::TcpSessionTracker,
     },
     dpi::{DpiClassifier, InspectResult},
+    events::{self, Event, EventKind},
     packet_validator::validate,
     pipeline::{Stage, StageOutcome},
     policy::provider::DiskPolicyProvider,
@@ -270,18 +271,83 @@ impl Stage for IpsStage {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         match self.inspection.inspect_packet(ctx) {
             IpsVerdict::Allow => StageOutcome::Continue,
-            IpsVerdict::Alert(msg) => {
+            IpsVerdict::Alert(matches) => {
+                let msg = matches
+                    .iter()
+                    .map(IpsSignatureMatch::message)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                for matched in matches {
+                    emit_ips_signature_matched(ctx, &matched);
+                }
                 tracing::debug!(reason = %msg, "IPS alert");
                 ctx.with_warnings_mut(|warnings| warnings.push(msg));
                 StageOutcome::Continue
             }
-            IpsVerdict::Block(msg) => {
+            IpsVerdict::Block(matched) => {
+                let msg = matched.message();
+                emit_ips_signature_matched(ctx, &matched);
                 tracing::debug!(reason = %msg, "IPS block");
                 ctx.with_warnings_mut(|warnings| warnings.push(msg));
                 StageOutcome::Halt
             }
         }
     }
+}
+
+fn emit_ips_signature_matched(ctx: &PacketContext, matched: &IpsSignatureMatch) {
+    let sliced_packet = ctx.borrow_sliced_packet();
+
+    let (src_ip, dst_ip) = match &sliced_packet.net {
+        Some(NetSlice::Ipv4(ipv4)) => (
+            ipv4.header().source_addr().to_string(),
+            ipv4.header().destination_addr().to_string(),
+        ),
+        Some(NetSlice::Ipv6(ipv6)) => (
+            ipv6.header().source_addr().to_string(),
+            ipv6.header().destination_addr().to_string(),
+        ),
+        _ => return,
+    };
+
+    let (src_port, dst_port, transport_protocol, payload_length) = match &sliced_packet.transport {
+        Some(etherparse::TransportSlice::Tcp(tcp)) => (
+            tcp.source_port(),
+            tcp.destination_port(),
+            "tcp",
+            tcp.payload().len(),
+        ),
+        Some(etherparse::TransportSlice::Udp(udp)) => (
+            udp.source_port(),
+            udp.destination_port(),
+            "udp",
+            udp.payload().len(),
+        ),
+        _ => return,
+    };
+
+    let app_protocol = ctx
+        .borrow_dpi_ctx()
+        .as_ref()
+        .and_then(|dpi_ctx| dpi_ctx.app_proto)
+        .map(|proto| proto.to_string().to_lowercase())
+        .unwrap_or_default();
+
+    events::emit(Event::new(EventKind::IpsSignatureMatched {
+        signature_id: matched.id.clone(),
+        signature_name: matched.name.clone(),
+        category: matched.category.clone(),
+        severity: matched.severity.as_str().to_string(),
+        action: matched.action.as_str().to_string(),
+        src_ip,
+        src_port,
+        dst_ip,
+        dst_port,
+        transport_protocol: transport_protocol.to_string(),
+        app_protocol,
+        interface: ctx.borrow_src_interface().to_string(),
+        payload_length: u32::try_from(payload_length).unwrap_or(u32::MAX),
+    }));
 }
 
 /// Stage ewaluacji polityk.

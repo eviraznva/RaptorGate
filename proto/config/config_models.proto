@@ -276,6 +276,18 @@ enum IpsAppProtocol {
   IPS_APP_PROTOCOL_UNKNOWN     = 10;
 }
 
+enum IpsMatchType {
+  IPS_MATCH_TYPE_UNSPECIFIED = 0;
+  IPS_MATCH_TYPE_LITERAL     = 1;
+  IPS_MATCH_TYPE_REGEX       = 2;
+}
+
+enum IpsPatternEncoding {
+  IPS_PATTERN_ENCODING_UNSPECIFIED = 0;
+  IPS_PATTERN_ENCODING_TEXT        = 1;
+  IPS_PATTERN_ENCODING_HEX         = 2;
+}
+
 message IpsGeneralConfig {
   bool enabled = 1;
 }
@@ -297,6 +309,9 @@ message IpsSignatureConfig {
   repeated IpsAppProtocol app_protocols = 8;
   repeated uint32     src_ports     = 9;
   repeated uint32     dst_ports     = 10;
+  IpsMatchType        match_type       = 11;
+  IpsPatternEncoding  pattern_encoding = 12;
+  bool                case_insensitive = 13;
 }
 
 message IpsConfig {
