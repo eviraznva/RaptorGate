@@ -47,7 +47,11 @@ impl InterfaceSniffer {
 
     pub fn sniff_new(&self, iface: String) -> Result<(), SnifferError> {
         if self.handles.contains_key(&iface) {
-            tracing::warn!(iface = %iface, "already sniffing interface, ignoring");
+            tracing::warn!(
+                event = "sniffer.start.skipped",
+                iface = %iface,
+                "already sniffing interface, ignoring"
+            );
             return Ok(());
         }
 
@@ -60,17 +64,33 @@ impl InterfaceSniffer {
         let mut cap = match Self::open_capture(&name, timeout) {
             Ok(c) => c,
             Err(e) => {
-                tracing::error!(iface = %name, error = %e, "failed to open capture");
+                tracing::error!(
+                    event = "sniffer.capture.open_failed",
+                    iface = %name,
+                    error = %e,
+                    "failed to open capture"
+                );
                 return Err(e.into());
             }
         };
+
+        tracing::info!(
+            event = "sniffer.capture.started",
+            iface = %name,
+            timeout_ms = timeout,
+            "packet capture started"
+        );
 
         tokio::task::spawn_blocking(move || {
             let iface_arc: Arc<str> = Arc::from(name.as_str());
 
             loop {
                 if child.is_cancelled() {
-                    tracing::info!(iface = %name, "capture cancelled");
+                    tracing::info!(
+                        event = "sniffer.capture.cancelled",
+                        iface = %name,
+                        "capture cancelled"
+                    );
                     break;
                 }
 
@@ -81,14 +101,24 @@ impl InterfaceSniffer {
                             iface: Arc::clone(&iface_arc),
                         };
                         if tx.blocking_send(packet).is_err() {
-                            tracing::info!(iface = %name, "channel closed, stopping capture");
+                            tracing::info!(
+                                event = "sniffer.capture.stopped",
+                                iface = %name,
+                                reason = "channel_closed",
+                                "channel closed, stopping capture"
+                            );
                             break;
                         }
                     }
                     // TODO: check if there's a way to cancel immediately without waiting for timeout
                     Err(pcap::Error::TimeoutExpired) => {}
                     Err(e) => {
-                        tracing::error!(iface = %name, error = %e, "capture error, stopping");
+                        tracing::error!(
+                            event = "sniffer.capture.failed",
+                            iface = %name,
+                            error = %e,
+                            "capture error, stopping"
+                        );
                         break;
                     }
                 }
@@ -103,10 +133,18 @@ impl InterfaceSniffer {
         match self.handles.remove(iface) {
             Some((_, token)) => {
                 token.cancel();
-                tracing::info!(iface = %iface, "capture cancellation requested");
+                tracing::info!(
+                    event = "sniffer.capture.cancel_requested",
+                    iface = %iface,
+                    "capture cancellation requested"
+                );
             }
             None => {
-                tracing::warn!(iface = %iface, "cancel_sniffing called for unknown interface");
+                tracing::warn!(
+                    event = "sniffer.capture.cancel_skipped",
+                    iface = %iface,
+                    "cancel_sniffing called for unknown interface"
+                );
             }
         }
     }
@@ -114,7 +152,11 @@ impl InterfaceSniffer {
     pub fn cancel_all(&self) {
         for entry in &self.handles {
             entry.value().cancel();
-            tracing::info!(iface = %entry.key(), "capture cancellation requested");
+            tracing::info!(
+                event = "sniffer.capture.cancel_requested",
+                iface = %entry.key(),
+                "capture cancellation requested"
+            );
         }
     }
 
@@ -130,7 +172,12 @@ impl InterfaceSniffer {
             .timeout(timeout_ms)
             .open()?;
         if let Err(e) = cap.direction(Direction::In) {
-            tracing::warn!(iface = %iface, error = %e, "could not set capture direction, capturing all");
+            tracing::warn!(
+                event = "sniffer.capture.direction_failed",
+                iface = %iface,
+                error = %e,
+                "could not set capture direction, capturing all"
+            );
         }
 
         Ok(cap)
@@ -152,7 +199,6 @@ impl ConfigObserver for InterfaceSniffer {
         let new_interfaces = &new_config.capture_interfaces;
 
         let old_timeout = Duration::from_millis(self.pcap_timeout_ms.load(Ordering::Relaxed) as u64);
-        let new_timeout = Duration::from_millis(new_config.pcap_timeout_ms as u64);
 
         for iface in &old_interfaces {
             if !new_interfaces.contains(iface) {
@@ -173,11 +219,20 @@ impl ConfigObserver for InterfaceSniffer {
         let new_timeout = Duration::from_millis(self.pcap_timeout_ms.load(Ordering::Relaxed) as u64);
 
         emit(Event::new(EventKind::SnifferConfigChanged {
-            old_interfaces,
-            new_interfaces,
+            old_interfaces: old_interfaces.clone(),
+            new_interfaces: new_interfaces.clone(),
             old_timeout,
             new_timeout,
         }));
+
+        tracing::info!(
+            event = "sniffer.config.changed",
+            old_interfaces = ?old_interfaces,
+            new_interfaces = ?new_interfaces,
+            old_timeout_ms = old_timeout.as_millis(),
+            new_timeout_ms = new_timeout.as_millis(),
+            "sniffer config changed"
+        );
 
         Ok(())
     }

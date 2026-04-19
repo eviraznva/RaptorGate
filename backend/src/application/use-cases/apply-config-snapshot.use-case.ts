@@ -1,5 +1,5 @@
 import { hash } from "node:crypto";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
 import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
 import type { IConfigSnapshotRepository } from "../../domain/repositories/config-snapshot.repository.js";
@@ -33,6 +33,8 @@ import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
 @Injectable()
 export class ApplyConfigSnapshotUseCase {
+  private readonly logger = new Logger(ApplyConfigSnapshotUseCase.name);
+
   constructor(
     @Inject(CONFIG_SNAPSHOT_REPOSITORY_TOKEN)
     private readonly configSnapshotRepository: IConfigSnapshotRepository,
@@ -161,6 +163,23 @@ export class ApplyConfigSnapshotUseCase {
         "apply",
       );
     }
+
+    this.logger.log({
+      event: "config_snapshot.apply.succeeded",
+      message: "configuration snapshot applied",
+      actorId: claims.sub,
+      snapshotId: newConfigSnapshot.getId(),
+      versionNumber: newConfigSnapshot.getVersionNumber(),
+      checksum,
+      isActive: dto.isActive,
+      counts: {
+        rules: activeRules.length,
+        zones: activeZones.length,
+        zonePairs: allZonePairs.length,
+        natRules: activeNatRules.length,
+        users: allUsers.length,
+      },
+    });
 
     return {
       id: newConfigSnapshot.getId(),

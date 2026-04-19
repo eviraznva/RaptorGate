@@ -8,10 +8,12 @@ import {
 } from 'src/domain/repositories/user.repository';
 import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
 import { DleteUserDto } from '../dtos/delete-user.dto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class DeleteUserUseCase {
+  private readonly logger = new Logger(DeleteUserUseCase.name);
+
   constructor(
     @Inject(USER_REPOSITORY_TOKEN)
     private readonly userRepository: IUserRepository,
@@ -33,5 +35,13 @@ export class DeleteUserUseCase {
     );
 
     await this.userRepository.deleteById(user.getId());
+
+    this.logger.log({
+      event: 'user.delete.succeeded',
+      message: 'user deleted',
+      userId: user.getId(),
+      username: user.getUsername(),
+      removedRoles: userRoles.map((role) => role.getName()),
+    });
   }
 }

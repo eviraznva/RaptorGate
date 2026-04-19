@@ -1,0 +1,73 @@
+data_dir: /var/lib/vector
+
+sources:
+  backend_logs:
+    type: file
+    include:
+      - /var/log/raptorgate/backend/*.log
+    read_from: beginning
+
+  firewall_logs:
+    type: file
+    include:
+      - /var/log/raptorgate/firewall/*.log
+    read_from: beginning
+
+transforms:
+  backend_normalized:
+    type: remap
+    inputs:
+      - backend_logs
+    source: |
+      raw_message = .message
+      parsed, err = parse_json(raw_message)
+      if err == null && is_object(parsed) {
+        . = merge!(., parsed)
+      } else {
+        .message = raw_message
+        .timestamp = now()
+        .level = "info"
+        .parse_error = true
+      }
+      level = to_string(.level) ?? "info"
+      .level = downcase(level)
+      .service = "backend"
+      .component = "raptorgate"
+      .source_file = .file
+      del(.source_type)
+
+  firewall_normalized:
+    type: remap
+    inputs:
+      - firewall_logs
+    source: |
+      raw_message = .message
+      parsed, err = parse_json(raw_message)
+      if err == null && is_object(parsed) {
+        . = merge!(., parsed)
+      } else {
+        .message = raw_message
+        .timestamp = now()
+        .level = "info"
+        .parse_error = true
+      }
+      level = to_string(.level) ?? "info"
+      .level = downcase(level)
+      .service = "firewall"
+      .component = "raptorgate"
+      .source_file = .file
+      del(.source_type)
+
+sinks:
+  victorialogs:
+    type: http
+    inputs:
+      - backend_normalized
+      - firewall_normalized
+    uri: "http://127.0.0.1:9428/insert/jsonline?_stream_fields=host,service,level,context,event&_msg_field=message&_time_field=timestamp"
+    method: post
+    compression: gzip
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited

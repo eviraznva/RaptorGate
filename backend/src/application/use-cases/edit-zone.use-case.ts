@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
 import { AtLeastOneFieldRequiredException } from "../../domain/exceptions/at-least-one-field-required.exception.js";
 import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
@@ -13,6 +13,8 @@ import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
 @Injectable()
 export class EditZoneUseCase {
+  private readonly logger = new Logger(EditZoneUseCase.name);
+
   constructor(
     @Inject(ZONE_REPOSITORY_TOKEN)
     private readonly zoneRepository: IZoneRepository,
@@ -37,6 +39,17 @@ export class EditZoneUseCase {
     if (dto.isActive !== undefined) zone.setIsActive(dto.isActive);
 
     await this.zoneRepository.save(zone, zone.getCreatedBy());
+    this.logger.log({
+      event: "zone.update.succeeded",
+      message: "zone updated",
+      actorId: claims.sub,
+      zoneId: zone.getId(),
+      zoneName: zone.getName(),
+      isActive: zone.getIsActive(),
+      changedFields: Object.entries(dto)
+        .filter(([key, value]) => key !== "id" && key !== "accessToken" && value !== undefined)
+        .map(([key]) => key),
+    });
     return { zone };
   }
 }

@@ -21,6 +21,7 @@ Environment="QUERY_SOCKET_PATH=/resources/ngfw/sockets/query.sock"
 Environment="CONTROL_PLANE_GRPC_SOCKET_PATH=/resources/ngfw/sockets/control-plane.sock"
 Environment="DUMMY_NAT_ENABLED=true"
 Environment="DUMMY_NAT_ALLOW_ALL=true"
+Environment="RAPTORGATE_LOG_LEVEL=info"
 
 [Install]
 WantedBy=multi-user.target

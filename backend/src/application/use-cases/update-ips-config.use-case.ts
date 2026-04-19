@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { IpsConfig } from "src/domain/entities/ips-config.entity";
 import { IpsSignature } from "src/domain/entities/ips-signature.entity";
 import {
@@ -20,6 +20,8 @@ import {
 
 @Injectable()
 export class UpdateIpsConfigUseCase {
+  private readonly logger = new Logger(UpdateIpsConfigUseCase.name);
+
   constructor(
     @Inject(IPS_CONFIG_REPOSITORY_TOKEN)
     private readonly ipsConfigRepository: IIpsConfigRepository,
@@ -54,6 +56,14 @@ export class UpdateIpsConfigUseCase {
     await this.ipsConfigRepository.save(newIpsConfig);
 
     await this.firewallIpsConfigQueryService.swapIpsConfig(newIpsConfig);
+
+    this.logger.log({
+      event: "ips.update.succeeded",
+      message: "IPS config updated",
+      enabled: newIpsConfig.getGeneral().enabled,
+      detectionEnabled: newIpsConfig.getDetection().enabled,
+      signatures: newIpsConfig.getSignatures().length,
+    });
 
     return { ipsConfig: newIpsConfig };
   }

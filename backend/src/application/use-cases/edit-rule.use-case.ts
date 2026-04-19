@@ -8,10 +8,12 @@ import { EditRuleResponseDto } from '../dtos/edit-rule-response.dto.js';
 import type { IRulesRepository } from '../../domain/repositories/rules-repository.js';
 import { Priority } from '../../domain/value-objects/priority.vo.js';
 import { EditRuleDto } from '../dtos/edit-rule.dto.js';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class EditRuleUseCase {
+  private readonly logger = new Logger(EditRuleUseCase.name);
+
   constructor(
     @Inject(RULES_REPOSITORY_TOKEN)
     private readonly rulesRepository: IRulesRepository,
@@ -53,6 +55,19 @@ export class EditRuleUseCase {
     rule.setUpdatedAt(new Date());
 
     await this.rulesRepository.save(rule);
+
+    this.logger.log({
+      event: 'rule.update.succeeded',
+      message: 'firewall rule updated',
+      ruleId: rule.getId(),
+      ruleName: rule.getName(),
+      zonePairId: rule.getZonePairId(),
+      isActive: rule.getIsActive(),
+      priority: rule.getPriority().getValue(),
+      changedFields: Object.entries(dto)
+        .filter(([key, value]) => key !== 'id' && value !== undefined)
+        .map(([key]) => key),
+    });
 
     return {
       id: rule.getId(),

@@ -46,7 +46,9 @@ impl TunForwarder {
         let raw = ctx.borrow_raw();
         if raw.len() <= ETH_HDR {
             tracing::warn!(
+                event = "tun.forward.drop",
                 iface = %ctx.borrow_src_interface(),
+                packet_len = raw.len(),
                 "packet too short to strip ethernet header, dropping"
             );
             return;
@@ -56,13 +58,18 @@ impl TunForwarder {
             Some(dev) => {
                 if let Err(e) = dev.send(&raw[ETH_HDR..]).await {
                     tracing::error!(
+                        event = "tun.forward.failed",
                         iface = %ctx.borrow_src_interface(),
                         error = %e,
                         "failed to forward packet to TUN"
                     );
                 }
             },
-            None => tracing::warn!("Tried forwarding packet, but TUN device not available"),
+            None => tracing::warn!(
+                event = "tun.forward.skipped",
+                iface = %ctx.borrow_src_interface(),
+                "TUN device not available"
+            ),
         }
     }
 }
@@ -96,6 +103,7 @@ impl ConfigObserver for TunForwarder {
         }));
 
         tracing::info!(
+            event = "tun.device.swapped",
             tun_device = %new_config.tun_device_name,
             tun_address = %new_config.tun_address,
             tun_netmask = %new_config.tun_netmask,

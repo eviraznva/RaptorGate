@@ -7,10 +7,12 @@ import { CreateZoneResponseDto } from '../dtos/create-zone-response.dto.js';
 import type { ITokenService } from '../ports/token-service.interface.js';
 import { Zone } from '../../domain/entities/zone.entity.js';
 import { CreateZoneDto } from '../dtos/create-zone.dto.js';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class CreateZoneUseCase {
+  private readonly logger = new Logger(CreateZoneUseCase.name);
+
   constructor(
     @Inject(ZONE_REPOSITORY_TOKEN)
     private readonly zoneRepository: IZoneRepository,
@@ -35,6 +37,15 @@ export class CreateZoneUseCase {
     );
 
     await this.zoneRepository.save(newZone, claims.sub);
+
+    this.logger.log({
+      event: 'zone.create.succeeded',
+      message: 'zone created',
+      actorId: claims.sub,
+      zoneId: newZone.getId(),
+      zoneName: newZone.getName(),
+      isActive: newZone.getIsActive(),
+    });
 
     return { zone: newZone };
   }

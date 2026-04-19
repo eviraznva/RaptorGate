@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { FirewallRule } from "../../domain/entities/firewall-rule.entity.js";
 import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
 import { EntityAlreadyExistsException } from "../../domain/exceptions/entity-already-exists-exception.js";
@@ -18,6 +18,8 @@ import {
 
 @Injectable()
 export class CreateRuleUseCase {
+  private readonly logger = new Logger(CreateRuleUseCase.name);
+
   constructor(
     @Inject(RULES_REPOSITORY_TOKEN)
     private readonly rulesRepository: IRulesRepository,
@@ -51,6 +53,17 @@ export class CreateRuleUseCase {
     );
 
     await this.rulesRepository.save(newRule);
+
+    this.logger.log({
+      event: "rule.create.succeeded",
+      message: "firewall rule created",
+      actorId: claims.sub,
+      ruleId: newRule.getId(),
+      ruleName: newRule.getName(),
+      zonePairId: newRule.getZonePairId(),
+      isActive: newRule.getIsActive(),
+      priority: newRule.getPriority().getValue(),
+    });
 
     return { rule: newRule };
   }

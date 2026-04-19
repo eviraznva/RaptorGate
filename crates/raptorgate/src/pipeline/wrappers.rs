@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use etherparse::NetSlice;
+use etherparse::{NetSlice, TransportSlice};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -40,7 +40,13 @@ impl Stage for ValidationStage {
         match validate(ctx.borrow_sliced_packet()) {
             Ok(()) => StageOutcome::Continue,
             Err(e) => {
-                tracing::debug!(reason = %e, "packet failed validation");
+                log_packet_decision(
+                    ctx,
+                    "packet.validation.failed",
+                    "validation",
+                    "drop",
+                    &e.to_string(),
+                );
                 StageOutcome::Halt
             }
         }
@@ -143,7 +149,16 @@ impl Stage for FtpAlgStage {
                 dpi_ctx,
             ) {
                 Ok(new_ctx) => *ctx = new_ctx,
-                Err(_) => return StageOutcome::Halt,
+                Err(err) => {
+                    tracing::warn!(
+                        event = "ftp_alg.reparse.failed",
+                        stage = "ftp_alg",
+                        verdict = "drop",
+                        error = %err,
+                        "FTP ALG rewrite produced an invalid packet"
+                    );
+                    return StageOutcome::Halt;
+                }
             }
         } else {
             // Safety: the backing allocation and length stay unchanged here.
@@ -201,7 +216,13 @@ impl Stage for DnsBlockListStage {
         match self.inspection.check_blocklist(&domain) {
             BlocklistVerdict::Allow => StageOutcome::Continue,
             BlocklistVerdict::Block(msg) => {
-                tracing::debug!(reason = %msg, "DNS blocklist block");
+                log_packet_decision(
+                    ctx,
+                    "dns.blocklist.blocked",
+                    "dns_blocklist",
+                    "drop",
+                    &msg,
+                );
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Halt
             }
@@ -240,12 +261,24 @@ impl Stage for DnsTunnelingStage {
         match self.inspection.inspect_tunneling(&domain, &qtype) {
             DnsInspectionVerdict::Allow => StageOutcome::Continue,
             DnsInspectionVerdict::Alert(msg) => {
-                tracing::debug!(reason = %msg, "DNS tunneling alert");
+                log_packet_decision(
+                    ctx,
+                    "dns.tunneling.alert",
+                    "dns_tunneling",
+                    "allow_warn",
+                    &msg,
+                );
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Continue
             }
             DnsInspectionVerdict::Block(msg) => {
-                tracing::debug!(reason = %msg, "DNS tunneling block");
+                log_packet_decision(
+                    ctx,
+                    "dns.tunneling.blocked",
+                    "dns_tunneling",
+                    "drop",
+                    &msg,
+                );
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Halt
             }
@@ -280,14 +313,14 @@ impl Stage for IpsStage {
                 for matched in matches {
                     emit_ips_signature_matched(ctx, &matched);
                 }
-                tracing::debug!(reason = %msg, "IPS alert");
+                log_packet_decision(ctx, "ips.signature.alert", "ips", "allow_warn", &msg);
                 ctx.with_warnings_mut(|warnings| warnings.push(msg));
                 StageOutcome::Continue
             }
             IpsVerdict::Block(matched) => {
                 let msg = matched.message();
                 emit_ips_signature_matched(ctx, &matched);
-                tracing::debug!(reason = %msg, "IPS block");
+                log_packet_decision(ctx, "ips.signature.blocked", "ips", "drop", &msg);
                 ctx.with_warnings_mut(|warnings| warnings.push(msg));
                 StageOutcome::Halt
             }
@@ -409,12 +442,35 @@ impl Stage for PolicyEvalStage {
 
         match verdict {
             Verdict::Allow => StageOutcome::Continue,
-            Verdict::Drop => StageOutcome::Halt,
+            Verdict::Drop => {
+                log_packet_decision(
+                    ctx,
+                    "policy.packet.dropped",
+                    "policy_eval",
+                    "drop",
+                    "policy returned drop verdict",
+                );
+                StageOutcome::Halt
+            }
             Verdict::AllowWarn(msg) => {
+                log_packet_decision(
+                    ctx,
+                    "policy.packet.allowed_with_warning",
+                    "policy_eval",
+                    "allow_warn",
+                    &msg,
+                );
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Continue
             }
             Verdict::DropWarn(msg) => {
+                log_packet_decision(
+                    ctx,
+                    "policy.packet.dropped_with_warning",
+                    "policy_eval",
+                    "drop_warn",
+                    &msg,
+                );
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Halt
             }
@@ -432,7 +488,13 @@ impl Stage for TcpClassificationStage {
         match self.tracker.process_packet(ctx.borrow_sliced_packet()) {
             Ok(_) => StageOutcome::Continue,
             Err(e) => {
-                tracing::error!(error = %e, "TCP session tracking error");
+                log_packet_decision(
+                    ctx,
+                    "tcp_session.tracking.failed",
+                    "tcp_classification",
+                    "drop",
+                    &e.to_string(),
+                );
                 StageOutcome::Halt
             }
         }
@@ -457,12 +519,100 @@ impl Stage for DpiStage {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         match self.classifier.inspect_packet(ctx.borrow_sliced_packet()) {
             InspectResult::Done(dpi_ctx) => {
-                tracing::debug!("DPI: classification done ctx={dpi_ctx:?}");
+                tracing::debug!(
+                    event = "dpi.classification.completed",
+                    stage = "dpi",
+                    app_proto = ?dpi_ctx.app_proto,
+                    "DPI classification completed"
+                );
                 ctx.with_dpi_ctx_mut(|c| *c = Some(dpi_ctx));
             }
             InspectResult::NeedMore => {}
             InspectResult::Skipped => {}
         }
         StageOutcome::Continue
+    }
+}
+
+fn log_packet_decision(
+    ctx: &PacketContext,
+    event: &'static str,
+    stage: &'static str,
+    verdict: &'static str,
+    reason: &str,
+) {
+    let fields = packet_log_fields(ctx);
+
+    tracing::warn!(
+        event,
+        stage,
+        verdict,
+        reason,
+        iface = %ctx.borrow_src_interface(),
+        packet_len = fields.packet_len,
+        src_ip = fields.src_ip.as_deref().unwrap_or(""),
+        dst_ip = fields.dst_ip.as_deref().unwrap_or(""),
+        src_port = fields.src_port.unwrap_or_default(),
+        dst_port = fields.dst_port.unwrap_or_default(),
+        protocol = fields.protocol.unwrap_or(""),
+        app_proto = fields.app_proto.as_deref().unwrap_or(""),
+        "packet decision"
+    );
+}
+
+struct PacketLogFields {
+    packet_len: usize,
+    src_ip: Option<String>,
+    dst_ip: Option<String>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    protocol: Option<&'static str>,
+    app_proto: Option<String>,
+}
+
+fn packet_log_fields(ctx: &PacketContext) -> PacketLogFields {
+    let sliced = ctx.borrow_sliced_packet();
+    let (src_ip, dst_ip) = match &sliced.net {
+        Some(NetSlice::Ipv4(ipv4)) => (
+            Some(ipv4.header().source_addr().to_string()),
+            Some(ipv4.header().destination_addr().to_string()),
+        ),
+        Some(NetSlice::Ipv6(ipv6)) => (
+            Some(ipv6.header().source_addr().to_string()),
+            Some(ipv6.header().destination_addr().to_string()),
+        ),
+        _ => (None, None),
+    };
+
+    let (src_port, dst_port, protocol) = match &sliced.transport {
+        Some(TransportSlice::Tcp(tcp)) => (
+            Some(tcp.source_port()),
+            Some(tcp.destination_port()),
+            Some("tcp"),
+        ),
+        Some(TransportSlice::Udp(udp)) => (
+            Some(udp.source_port()),
+            Some(udp.destination_port()),
+            Some("udp"),
+        ),
+        Some(TransportSlice::Icmpv4(_)) => (None, None, Some("icmpv4")),
+        Some(TransportSlice::Icmpv6(_)) => (None, None, Some("icmpv6")),
+        _ => (None, None, None),
+    };
+
+    let app_proto = ctx
+        .borrow_dpi_ctx()
+        .as_ref()
+        .and_then(|dpi_ctx| dpi_ctx.app_proto)
+        .map(|proto| proto.to_string().to_lowercase());
+
+    PacketLogFields {
+        packet_len: ctx.borrow_raw().len(),
+        src_ip,
+        dst_ip,
+        src_port,
+        dst_port,
+        protocol,
+        app_proto,
     }
 }

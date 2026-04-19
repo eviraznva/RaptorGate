@@ -2,7 +2,7 @@ import "module-alias/register";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { cwd } from "node:process";
-import { BadRequestException, ValidationPipe } from "@nestjs/common";
+import { BadRequestException, type LogLevel, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { type MicroserviceOptions, Transport } from "@nestjs/microservices";
@@ -21,6 +21,7 @@ async function bootstrap() {
   const appLogger = new DailyFileLogger({
     logDir: process.env.BACKEND_LOG_DIR ?? DEFAULT_BACKEND_LOG_DIR,
   });
+  appLogger.setLogLevels(parseBackendLogLevels(process.env.BACKEND_LOG_LEVELS));
   const logger = appLogger.withContext("Bootstrap");
   const certsDir = join(cwd(), "devCerts");
 
@@ -169,3 +170,20 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+function parseBackendLogLevels(raw: string | undefined): LogLevel[] {
+  const allowed = new Set<LogLevel>([
+    "log",
+    "error",
+    "warn",
+    "debug",
+    "verbose",
+  ]);
+
+  const levels = (raw ?? "log,error,warn")
+    .split(",")
+    .map((level) => level.trim())
+    .filter((level): level is LogLevel => allowed.has(level as LogLevel));
+
+  return levels.length > 0 ? levels : ["log", "error", "warn"];
+}

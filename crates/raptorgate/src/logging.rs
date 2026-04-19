@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 use time::{Date, OffsetDateTime};
 use std::fs::{self, File, OpenOptions};
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
 const DEFAULT_FIREWALL_LOG_DIR: &str = "/var/log/raptorgate/firewall";
@@ -16,14 +17,21 @@ pub fn init() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let writer = DailyLogMakeWriter::new(log_dir)?;
 
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
+        .with_env_filter(log_filter())
         .with_target(false)
         .with_thread_ids(false)
         .with_thread_names(false)
         .with_writer(writer)
+        .json()
+        .flatten_event(true)
         .try_init()?;
 
     Ok(())
+}
+
+fn log_filter() -> EnvFilter {
+    EnvFilter::try_from_env("RAPTORGATE_LOG_LEVEL")
+        .unwrap_or_else(|_| EnvFilter::new("info"))
 }
 
 #[derive(Clone)]

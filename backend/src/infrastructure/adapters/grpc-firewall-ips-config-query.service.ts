@@ -1,6 +1,7 @@
 import {
   Inject,
   Injectable,
+  Logger,
   OnModuleInit,
   ServiceUnavailableException,
 } from "@nestjs/common";
@@ -19,6 +20,8 @@ import { Severity } from "../grpc/generated/common/common";
 import {
   IpsAction,
   IpsAppProtocol,
+  IpsMatchType,
+  IpsPatternEncoding,
 } from "../grpc/generated/config/config_models";
 import {
   FIREWALL_QUERY_SERVICE_NAME,
@@ -30,6 +33,7 @@ import { FIREWALL_QUERY_GRPC_CLIENT_TOKEN } from "./grpc-firewall-dns-inspection
 export class GrpcFirewallIpsConfigQueryService
   implements IFirewallIpsConfigQueryService, OnModuleInit
 {
+  private readonly logger = new Logger(GrpcFirewallIpsConfigQueryService.name);
   private firewallQueryClient: FirewallQueryServiceClient;
 
   constructor(
@@ -46,6 +50,14 @@ export class GrpcFirewallIpsConfigQueryService
 
   async swapIpsConfig(config: IpsConfig): Promise<void> {
     try {
+      this.logger.log({
+        event: "firewall.ips.swap.started",
+        message: "swapping IPS config on firewall",
+        enabled: config.getGeneral().enabled,
+        detectionEnabled: config.getDetection().enabled,
+        signatures: config.getSignatures().length,
+      });
+
       await firstValueFrom(
         this.firewallQueryClient.swapIpsConfig({
           config: {
@@ -65,18 +77,47 @@ export class GrpcFirewallIpsConfigQueryService
                   .map((appProtocol) => IpsAppProtocol[appProtocol.getValue()]),
                 srcPorts: signature.getSrcPorts().map((port) => port.getValue),
                 dstPorts: signature.getDstPorts().map((port) => port.getValue),
+                matchType: IpsMatchType.IPS_MATCH_TYPE_REGEX,
+                patternEncoding: IpsPatternEncoding.IPS_PATTERN_ENCODING_TEXT,
+                caseInsensitive: false,
               };
             }),
           },
         }),
       );
+
+      this.logger.log({
+        event: "firewall.ips.swap.succeeded",
+        message: "IPS config swapped on firewall",
+        enabled: config.getGeneral().enabled,
+        signatures: config.getSignatures().length,
+      });
     } catch (error) {
-      throw new ServiceUnavailableException(error);
+      const reason =
+        error instanceof Error ? error.message : "Unknown gRPC error";
+
+      this.logger.error(
+        {
+          event: "firewall.ips.swap.failed",
+          message: "failed to swap IPS config on firewall",
+          error: reason,
+        },
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      throw new ServiceUnavailableException(
+        `Firewall query service failed to swap IPS config. ${reason}`,
+      );
     }
   }
 
   async getIpsConfig(): Promise<IpsConfig> {
     try {
+      this.logger.log({
+        event: "firewall.ips.get.started",
+        message: "loading IPS config from firewall",
+      });
+
       const response = await firstValueFrom(
         this.firewallQueryClient.getIpsConfig({}),
       );
@@ -87,7 +128,7 @@ export class GrpcFirewallIpsConfigQueryService
         );
       }
 
-      return IpsConfig.create(
+      const config = IpsConfig.create(
         response.config.general || {
           enabled: false,
         },
@@ -117,8 +158,31 @@ export class GrpcFirewallIpsConfigQueryService
           return newSignature;
         }),
       );
+
+      this.logger.log({
+        event: "firewall.ips.get.succeeded",
+        message: "loaded IPS config from firewall",
+        enabled: config.getGeneral().enabled,
+        signatures: config.getSignatures().length,
+      });
+
+      return config;
     } catch (error) {
-      throw new ServiceUnavailableException(error);
+      const reason =
+        error instanceof Error ? error.message : "Unknown gRPC error";
+
+      this.logger.error(
+        {
+          event: "firewall.ips.get.failed",
+          message: "failed to load IPS config from firewall",
+          error: reason,
+        },
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      throw new ServiceUnavailableException(
+        `Firewall query service failed to get IPS config. ${reason}`,
+      );
     }
   }
 }

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { NatRule } from "../../domain/entities/nat-rule.entity.js";
 import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
 import { NatConfigIsInvalidException } from "../../domain/exceptions/nat-config-is-invalid.exception.js";
@@ -13,6 +13,8 @@ import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
 @Injectable()
 export class CreateNatRuleUseCase {
+  private readonly logger = new Logger(CreateNatRuleUseCase.name);
+
   constructor(
     @Inject(NAT_RULES_REPOSITORY_TOKEN)
     private readonly natRulesRepository: INatRulesRepository,
@@ -52,6 +54,16 @@ export class CreateNatRuleUseCase {
       newNatRule.setTranslatedPort(dto.translatedPort);
 
     await this.natRulesRepository.save(newNatRule, claims.sub);
+
+    this.logger.log({
+      event: "nat_rule.create.succeeded",
+      message: "NAT rule created",
+      actorId: claims.sub,
+      natRuleId: newNatRule.getId(),
+      type: newNatRule.getType().getValue(),
+      isActive: newNatRule.getIsActive(),
+      priority: newNatRule.getPriority().getValue(),
+    });
 
     return { natRule: newNatRule };
   }

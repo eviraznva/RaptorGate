@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { EntityNotFoundException } from "src/domain/exceptions/entity-not-found-exception";
 import {
   type IUserRepository,
@@ -16,6 +16,8 @@ import {
 
 @Injectable()
 export class RecoverPasswordUseCase {
+  private readonly logger = new Logger(RecoverPasswordUseCase.name);
+
   constructor(
     @Inject(USER_REPOSITORY_TOKEN)
     private readonly userRepository: IUserRepository,
@@ -27,17 +29,39 @@ export class RecoverPasswordUseCase {
 
   async execute(dto: RecoveryPasswordDto): Promise<void> {
     const user = await this.userRepository.findByUsername(dto.username);
-    if (!user) throw new EntityNotFoundException("User", dto.username);
+    if (!user) {
+      this.logger.warn({
+        event: "auth.password_recovery.failed",
+        message: "password recovery failed for unknown user",
+        username: dto.username,
+      });
+      throw new EntityNotFoundException("User", dto.username);
+    }
 
-    if (user.getRecoveryToken() === null)
+    if (user.getRecoveryToken() === null) {
+      this.logger.warn({
+        event: "auth.password_recovery.failed",
+        message: "password recovery token is not set",
+        userId: user.getId(),
+        username: user.getUsername(),
+      });
       throw new Error("No recovery token found for user");
+    }
 
     const isValidToken = await this.passwordHasherService.compare(
       dto.recoveryToken,
       user.getRecoveryToken()!,
     );
 
-    if (!isValidToken) throw new Error("Invalid recovery token");
+    if (!isValidToken) {
+      this.logger.warn({
+        event: "auth.password_recovery.failed",
+        message: "invalid recovery token",
+        userId: user.getId(),
+        username: user.getUsername(),
+      });
+      throw new Error("Invalid recovery token");
+    }
 
     const hashedPassword = await this.passwordHasherService.hash(
       dto.newPassword,
@@ -47,5 +71,12 @@ export class RecoverPasswordUseCase {
     user.setShowRecoveryToken(true);
 
     await this.userRepository.save(user);
+
+    this.logger.log({
+      event: "auth.password_recovery.succeeded",
+      message: "password recovered",
+      userId: user.getId(),
+      username: user.getUsername(),
+    });
   }
 }

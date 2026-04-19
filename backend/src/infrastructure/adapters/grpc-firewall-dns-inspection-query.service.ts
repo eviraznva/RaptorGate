@@ -1,6 +1,7 @@
 import {
   Inject,
   Injectable,
+  Logger,
   OnModuleInit,
   ServiceUnavailableException,
 } from "@nestjs/common";
@@ -31,6 +32,7 @@ export const FIREWALL_QUERY_GRPC_CLIENT_TOKEN =
 export class GrpcFirewallDnsInspectionQueryService
   implements IFirewallDnsInspectionQueryService, OnModuleInit
 {
+  private readonly logger = new Logger(GrpcFirewallDnsInspectionQueryService.name);
   private firewallQueryClient: FirewallQueryServiceClient;
 
   constructor(
@@ -47,18 +49,46 @@ export class GrpcFirewallDnsInspectionQueryService
 
   async swapDnsInspectionConfig(config: DnsInspectionConfig): Promise<void> {
     try {
+      this.logger.log({
+        event: "firewall.dns_inspection.swap.started",
+        message: "swapping DNS inspection config on firewall",
+        enabled: config.getGeneral().enabled,
+        blocklistDomains: config.getBlocklist().domains.length,
+        dnsTunnelingEnabled: config.getDnsTunneling().enabled,
+        dnssecEnabled: config.getDnssec().enabled,
+      });
+
       await firstValueFrom(
         this.firewallQueryClient.swapDnsInspectionConfig({
           config: this.toProto(config),
         }),
       );
+
+      this.logger.log({
+        event: "firewall.dns_inspection.swap.succeeded",
+        message: "DNS inspection config swapped on firewall",
+        enabled: config.getGeneral().enabled,
+      });
     } catch (error) {
+      this.logger.error(
+        {
+          event: "firewall.dns_inspection.swap.failed",
+          message: "failed to swap DNS inspection config on firewall",
+          error: error instanceof Error ? error.message : "Unknown gRPC error",
+        },
+        error instanceof Error ? error.stack : undefined,
+      );
       throw this.toTransportException("swap DNS inspection config", error);
     }
   }
 
   async getDnsInspectionConfig(): Promise<DnsInspectionConfig> {
     try {
+      this.logger.log({
+        event: "firewall.dns_inspection.get.started",
+        message: "loading DNS inspection config from firewall",
+      });
+
       const response = await firstValueFrom(
         this.firewallQueryClient.getDnsInspectionConfig({}),
       );
@@ -69,12 +99,29 @@ export class GrpcFirewallDnsInspectionQueryService
         );
       }
 
-      return this.toDomain(response.config);
+      const config = this.toDomain(response.config);
+
+      this.logger.log({
+        event: "firewall.dns_inspection.get.succeeded",
+        message: "loaded DNS inspection config from firewall",
+        enabled: config.getGeneral().enabled,
+        blocklistDomains: config.getBlocklist().domains.length,
+      });
+
+      return config;
     } catch (error) {
       if (error instanceof ServiceUnavailableException) {
         throw error;
       }
 
+      this.logger.error(
+        {
+          event: "firewall.dns_inspection.get.failed",
+          message: "failed to load DNS inspection config from firewall",
+          error: error instanceof Error ? error.message : "Unknown gRPC error",
+        },
+        error instanceof Error ? error.stack : undefined,
+      );
       throw this.toTransportException("get DNS inspection config", error);
     }
   }

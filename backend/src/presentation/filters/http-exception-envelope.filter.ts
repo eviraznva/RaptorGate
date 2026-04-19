@@ -6,10 +6,11 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { IpsActionIsInvalidException } from "src/domain/exceptions/ips-action-is-invalid.exception.js";
 import { IpsAppProtocolIsInvalidException } from "src/domain/exceptions/ips-app-protocol-is-invalid.exception.js";
 import { SignatureSeverityIsInvalidException } from "src/domain/exceptions/signature-severity-is-invalid.exception.js";
@@ -39,8 +40,11 @@ import { UserSourceIsInvalidException } from "../../domain/exceptions/user-sourc
 
 @Catch()
 export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionEnvelopeFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost) {
     const context = host.switchToHttp();
+    const req = context.getRequest<Request>();
     const res = context.getResponse<Response>();
 
     const mapped = this.mapDomainToHttpException(exception);
@@ -59,6 +63,8 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
     const message = this.extractMessage(response); // normalizacja
 
     const error = this.extractError(response, status);
+
+    this.logException(exception, req, status, message, error);
 
     res.status(status).json({ statusCode: status, message, error });
   }
@@ -133,5 +139,33 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
       if (typeof err === "string") return err;
     }
     return HttpStatus[status] ?? "Error";
+  }
+
+  private logException(
+    exception: unknown,
+    req: Request,
+    statusCode: number,
+    message: string,
+    error: string,
+  ) {
+    const payload = {
+      event: "http.request.failed",
+      message,
+      method: req.method,
+      path: req.originalUrl ?? req.url,
+      statusCode,
+      error,
+    };
+
+    if (statusCode >= 500) {
+      if (exception instanceof Error && exception.stack) {
+        this.logger.error(payload, exception.stack);
+      } else {
+        this.logger.error(payload);
+      }
+      return;
+    }
+
+    this.logger.warn(payload);
   }
 }
