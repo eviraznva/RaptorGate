@@ -116,6 +116,7 @@ where
         let n = match reader.read(&mut buf).await {
             Ok(0) => {
                 if buffered.is_empty() {
+                    let _ = writer.shutdown().await;
                     return total_bytes;
                 }
                 let ctx = classify_or_fallback(&buffered, src_port, dst_port);
@@ -132,7 +133,10 @@ where
                 .await;
             }
             Ok(n) => n,
-            Err(_) => return total_bytes,
+            Err(_) => {
+                let _ = writer.shutdown().await;
+                return total_bytes;
+            }
         };
 
         buffered.extend_from_slice(&buf[..n]);
@@ -215,12 +219,14 @@ where
     emit_ips_match_event(meta, &decision.ctx, direction);
 
     if matches!(decision.disposition, InspectionDisposition::Drop) {
+        let _ = writer.shutdown().await;
         return total_bytes;
     }
 
     emit_classification_event(meta, &decision.ctx, direction);
 
     if writer.write_all(&decision.payload).await.is_err() {
+        let _ = writer.shutdown().await;
         return total_bytes;
     }
     total_bytes += decision.payload.len() as u64;
@@ -245,19 +251,27 @@ where
 
     loop {
         let n = match reader.read(&mut buf).await {
-            Ok(0) => return total_bytes,
+            Ok(0) => {
+                let _ = writer.shutdown().await;
+                return total_bytes;
+            }
             Ok(n) => n,
-            Err(_) => return total_bytes,
+            Err(_) => {
+                let _ = writer.shutdown().await;
+                return total_bytes;
+            }
         };
 
         let decision = inspector.inspect(&buf[..n], ctx, direction, meta).await;
         emit_ips_match_event(meta, &decision.ctx, direction);
 
         if matches!(decision.disposition, InspectionDisposition::Drop) {
+            let _ = writer.shutdown().await;
             return total_bytes;
         }
 
         if writer.write_all(&decision.payload).await.is_err() {
+            let _ = writer.shutdown().await;
             return total_bytes;
         }
         total_bytes += decision.payload.len() as u64;
@@ -333,6 +347,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
     use tokio::io::duplex;
+    use tokio::time::{timeout, Duration};
     use tonic::async_trait;
 
     struct RecordingInspector {
@@ -501,6 +516,53 @@ mod tests {
         assert!(!calls.is_empty());
         let (_payload, was_decrypted) = &calls[0];
         assert!(was_decrypted, "DpiContext.decrypted should be true");
+    }
+
+    #[tokio::test]
+    async fn eof_after_buffered_payload_closes_opposite_direction() {
+        let relay = InspectionRelay::new(Arc::new(
+            crate::tls::decrypted_chain::NoopDecryptedInspector,
+        ));
+        let meta = test_meta();
+
+        let (client_tls, mut client_peer) = duplex(1024);
+        let (server_tls, mut server_peer) = duplex(1024);
+        let (client_read, client_write) = tokio::io::split(client_tls);
+        let (server_read, server_write) = tokio::io::split(server_tls);
+
+        let relay_task = tokio::spawn(async move {
+            relay
+                .relay_bidirectional(
+                    client_read,
+                    server_write,
+                    server_read,
+                    client_write,
+                    &meta,
+                )
+                .await
+        });
+
+        let server_task = tokio::spawn(async move {
+            let mut received = Vec::new();
+            timeout(Duration::from_secs(1), server_peer.read_to_end(&mut received))
+                .await
+                .expect("server did not observe EOF")
+                .unwrap();
+            received
+        });
+
+        client_peer.write_all(b"\n").await.unwrap();
+        client_peer.shutdown().await.unwrap();
+
+        let received = server_task.await.unwrap();
+        assert_eq!(received, b"\n");
+
+        let (up, down) = timeout(Duration::from_secs(1), relay_task)
+            .await
+            .expect("relay hung")
+            .unwrap();
+        assert_eq!(up, 1);
+        assert_eq!(down, 0);
     }
 
     #[tokio::test]
