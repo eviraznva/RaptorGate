@@ -328,12 +328,15 @@ fn ports_for_direction(meta: &SessionMeta, direction: Direction) -> (u16, u16) {
 
 fn emit_classification_event(meta: &SessionMeta, ctx: &DpiContext, direction: Direction) {
     if let Some(ref proto) = ctx.app_proto {
-        tracing::debug!(
+        tracing::info!(
+            event = "tls.decrypted_traffic.classified",
             peer = %meta.peer,
             server = %meta.server,
             proto = %proto,
             http_version = ctx.http_version.as_deref().unwrap_or(""),
             direction = ?direction,
+            mode = ?meta.mode,
+            sni = meta.sni.as_deref().unwrap_or(""),
             "Decrypted traffic classified"
         );
         events::emit(events::Event::new(

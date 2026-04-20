@@ -15,7 +15,7 @@ StandardError=journal
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=GRPC_PORT=3001
-Environment=GRPC_SOCKET_PATH=../ngfw/sockets/firewall.sock
+Environment=GRPC_SOCKET_PATH=../ngfw/sockets/event.sock
 Environment=FIREWALL_GRPC_SOCKET_PATH=../ngfw/sockets/control-plane.sock
 Environment=FIREWALL_QUERY_SOCKET_PATH=../ngfw/sockets/query.sock
 Environment=FIREWALL_QUERY_GRPC_SOCKET_PATH=../ngfw/sockets/query.sock

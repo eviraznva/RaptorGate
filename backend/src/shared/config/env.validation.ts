@@ -10,7 +10,7 @@ const envSchema = z.object({
   REFRESH_TOKEN_SECRET: z.string().min(32),
   REFRESH_TOKEN_EXPIRES_IN: z.string().default('7d'),
   BCRYPT_SALT_ROUNDS: z.coerce.number().min(10).max(31).default(12),
-  GRPC_SOCKET_PATH: z.string().default('../sockets/firewall.sock'),
+  GRPC_SOCKET_PATH: z.string().default('../sockets/event.sock'),
   FIREWALL_GRPC_SOCKET_PATH: z
     .string()
     .default('../sockets/control-plane.sock'),

@@ -146,7 +146,15 @@ async fn handle_connection(
 
     if let Some(entry) = engine.server_key_store().get_entry(original_dst) {
         if matches!(action, TlsAction::Bypass) {
-            tracing::debug!(peer = %peer_addr, server = %original_dst, enabled = entry.enabled, "Inbound TLS bypass");
+            tracing::info!(
+                event = "tls.inbound.bypass.applied",
+                peer = %peer_addr,
+                server = %original_dst,
+                enabled = entry.enabled,
+                sni = sni.as_deref().unwrap_or(""),
+                tls_version = client_hello_version.as_deref().unwrap_or(""),
+                "Inbound TLS bypass"
+            );
             events::emit(events::Event::new(events::EventKind::InboundTlsBypassApplied {
                 peer: peer_addr,
                 server: original_dst,
@@ -155,7 +163,14 @@ async fn handle_connection(
             }));
             return relay_tcp_passthrough(client_tcp, original_dst).await;
         }
-        tracing::debug!(peer = %peer_addr, server = %original_dst, "Inbound TLS inspection");
+        tracing::info!(
+            event = "tls.inbound.intercept.started",
+            peer = %peer_addr,
+            server = %original_dst,
+            sni = sni.as_deref().unwrap_or(""),
+            tls_version = client_hello_version.as_deref().unwrap_or(""),
+            "Inbound TLS inspection"
+        );
         return handle_inbound_connection(
             client_tcp,
             peer_addr,
@@ -244,13 +259,24 @@ async fn handle_inbound_connection(
     {
         Ok(tls) => tls,
         Err(e) => {
+            let reason = describe_handshake_error(&e);
+            tracing::warn!(
+                event = "tls.inbound.handshake.failed",
+                peer = %peer_addr,
+                server = %server_addr,
+                stage = "server_handshake",
+                reason = %reason,
+                sni = sni.as_deref().unwrap_or(""),
+                tls_version = client_hello_version.as_deref().unwrap_or(""),
+                "Inbound TLS handshake failed"
+            );
             events::emit(events::Event::new(events::EventKind::TlsHandshakeFailed {
                 peer: peer_addr,
                 dst: server_addr,
                 sni: sni.clone(),
                 tls_version: client_hello_version.clone(),
                 stage: HandshakeStage::ServerHandshake,
-                reason: describe_handshake_error(&e),
+                reason,
                 mode: InspectionMode::Inbound,
             }));
             return Err(e.context("Inbound TLS connect to internal server failed"));
@@ -272,13 +298,26 @@ async fn handle_inbound_connection(
     {
         Ok(tls) => tls,
         Err(e) => {
+            let reason = describe_handshake_error(&e);
+            let tls_version = negotiated_version_from_client(&server_tls)
+                .or_else(|| client_hello_version.clone());
+            tracing::warn!(
+                event = "tls.inbound.handshake.failed",
+                peer = %peer_addr,
+                server = %server_addr,
+                stage = "client_hello",
+                reason = %reason,
+                sni = sni.as_deref().unwrap_or(""),
+                tls_version = tls_version.as_deref().unwrap_or(""),
+                "Inbound TLS handshake failed"
+            );
             events::emit(events::Event::new(events::EventKind::TlsHandshakeFailed {
                 peer: peer_addr,
                 dst: server_addr,
                 sni: sni.clone(),
-                tls_version: negotiated_version_from_client(&server_tls).or_else(|| client_hello_version.clone()),
+                tls_version,
                 stage: HandshakeStage::ClientHello,
-                reason: describe_handshake_error(&e),
+                reason,
                 mode: InspectionMode::Inbound,
             }));
             return Err(e.context("Inbound TLS accept from client failed"));
@@ -291,10 +330,13 @@ async fn handle_inbound_connection(
 
     let alpn = alpn_protocol_string(negotiated_alpn.as_deref());
 
-    tracing::debug!(
+    tracing::info!(
+        event = "tls.inbound.handshake.completed",
         peer = %peer_addr,
         server = %server_addr,
+        sni = sni.as_deref().unwrap_or(""),
         alpn = ?alpn,
+        tls_version = negotiated.as_deref().unwrap_or(""),
         "Inbound TLS sessions established"
     );
 
@@ -348,7 +390,14 @@ async fn handle_outbound_connection(
 ) -> anyhow::Result<()> {
     let domain = sni.clone().unwrap_or_else(|| original_dst.ip().to_string());
 
-    tracing::debug!(peer = %peer_addr, dst = %original_dst, "Outbound MITM intercepted");
+    tracing::info!(
+        event = "tls.intercept.started",
+        peer = %peer_addr,
+        dst = %original_dst,
+        sni = sni.as_deref().unwrap_or(""),
+        tls_version = client_hello_version.as_deref().unwrap_or(""),
+        "Outbound MITM intercepted"
+    );
 
     events::emit(events::Event::new(events::EventKind::TlsInterceptStarted {
         peer: peer_addr,
@@ -373,13 +422,24 @@ async fn handle_outbound_connection(
     {
         Ok(tls) => tls,
         Err(e) => {
+            let reason = describe_handshake_error(&e);
+            tracing::warn!(
+                event = "tls.handshake.failed",
+                peer = %peer_addr,
+                dst = %original_dst,
+                stage = "server_handshake",
+                reason = %reason,
+                sni = sni.as_deref().unwrap_or(""),
+                tls_version = client_hello_version.as_deref().unwrap_or(""),
+                "TLS handshake failed"
+            );
             events::emit(events::Event::new(events::EventKind::TlsHandshakeFailed {
                 peer: peer_addr,
                 dst: original_dst,
                 sni: sni.clone(),
                 tls_version: client_hello_version.clone(),
                 stage: HandshakeStage::ServerHandshake,
-                reason: describe_handshake_error(&e),
+                reason,
                 mode: InspectionMode::Outbound,
             }));
             return Err(e.context("TLS handshake with destination server failed"));
@@ -451,13 +511,24 @@ async fn handle_outbound_connection(
                     }));
                 }
             }
+            let reason = describe_handshake_error(&e);
+            tracing::warn!(
+                event = "tls.handshake.failed",
+                peer = %peer_addr,
+                dst = %original_dst,
+                stage = "client_finished",
+                reason = %reason,
+                sni = sni.as_deref().unwrap_or(""),
+                tls_version = version_for_event.as_deref().unwrap_or(""),
+                "TLS handshake failed"
+            );
             events::emit(events::Event::new(events::EventKind::TlsHandshakeFailed {
                 peer: peer_addr,
                 dst: original_dst,
                 sni: sni.clone(),
                 tls_version: version_for_event,
                 stage: HandshakeStage::ClientFinished,
-                reason: describe_handshake_error(&e),
+                reason,
                 mode: InspectionMode::Outbound,
             }));
             return Err(e).context("TLS accept from client failed");
@@ -470,9 +541,11 @@ async fn handle_outbound_connection(
 
     let alpn = alpn_protocol_string(negotiated_alpn.as_deref());
 
-    tracing::debug!(
+    tracing::info!(
+        event = "tls.handshake.completed",
         sni = sni.as_deref().unwrap_or("none"),
         alpn = ?alpn,
+        tls_version = negotiated.as_deref().unwrap_or(""),
         replicated_sans = extra_sans.len(),
         trusted = server_trusted,
         "MITM TLS sessions established"
