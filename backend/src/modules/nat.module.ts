@@ -11,9 +11,49 @@ import { FileStore } from "../infrastructure/persistence/json/file-store.js";
 import { Mutex } from "../infrastructure/persistence/json/file-mutex.js";
 import { JwtService } from "@nestjs/jwt";
 import { Module } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { ClientsModule, Transport } from "@nestjs/microservices";
+import { join } from "path";
+import { FIREWALL_NAT_CONFIG_QUERY_SERVICE_TOKEN } from "../application/ports/firewall-nat-config-query-service.interface.js";
+import { FIREWALL_QUERY_GRPC_CLIENT_TOKEN } from "../infrastructure/adapters/grpc-firewall-dns-inspection-query.service.js";
+import { GrpcFirewallNatConfigQueryService } from "../infrastructure/adapters/grpc-firewall-nat-config-query.service.js";
+import { Env } from "../shared/config/env.validation.js";
 
 @Module({
-	imports: [],
+	imports: [
+		ClientsModule.registerAsync([
+			{
+				name: FIREWALL_QUERY_GRPC_CLIENT_TOKEN,
+				useFactory: (configService: ConfigService<Env, true>) => {
+					const firewallQuerySocketPath = configService.get(
+						"FIREWALL_QUERY_GRPC_SOCKET_PATH",
+						{ infer: true },
+					);
+					const resolveGrpcUrl = (path: string): string =>
+						path.startsWith("unix://")
+							? path
+							: `unix://${join(process.cwd(), path)}`;
+
+					return {
+						transport: Transport.GRPC,
+						options: {
+							package: "raptorgate.services",
+							protoPath: join(
+								process.cwd(),
+								"..",
+								"proto",
+								"services",
+								"query_service.proto",
+							),
+							loader: { includeDirs: [join(process.cwd(), "..", "proto")] },
+							url: resolveGrpcUrl(firewallQuerySocketPath),
+						},
+					};
+				},
+				inject: [ConfigService],
+			},
+		]),
+	],
 	controllers: [NatRuleController],
 	providers: [
 		CreateNatRuleUseCase,
@@ -31,6 +71,10 @@ import { Module } from "@nestjs/common";
 			useClass: TokenService,
 		},
 		JwtService,
+		{
+			provide: FIREWALL_NAT_CONFIG_QUERY_SERVICE_TOKEN,
+			useClass: GrpcFirewallNatConfigQueryService,
+		},
 	],
 })
 export class NatModule {}
