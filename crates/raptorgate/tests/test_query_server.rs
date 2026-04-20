@@ -15,9 +15,9 @@ use ngfw::proto::config::{Rule, Zone, ZonePair};
 use ngfw::proto::services::firewall_config_snapshot_service_client::FirewallConfigSnapshotServiceClient;
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::proto::services::{
-    ActiveConfigSnapshot, ConfigBundle, GetConfigRequest, GetIpsConfigRequest,
+    ActiveConfigSnapshot, ConfigBundle, GetConfigRequest, GetIpsConfigRequest, GetNatConfigRequest,
     GetPoliciesRequest, GetZonePairsRequest, GetZonesRequest, PushActiveConfigSnapshotRequest,
-    SwapConfigRequest, SwapIpsConfigRequest,
+    SwapConfigRequest, SwapIpsConfigRequest, SwapNatConfigRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::zones::provider::ZoneInterfaceProvider;
@@ -480,4 +480,84 @@ async fn swap_and_get_ips_config_roundtrip() {
     assert_eq!(config.signatures.len(), 1);
     assert_eq!(config.signatures[0].id, "sig-http-sqli");
     assert_eq!(config.signatures[0].dst_ports, vec![80, 8080]);
+}
+
+#[tokio::test]
+#[serial(nat_config)]
+async fn swap_and_get_nat_config_roundtrip() {
+    let mut client = connect(&shared_server().socket).await;
+
+    let swapped = ngfw::proto::config::NatRuleSet {
+        items: vec![ngfw::proto::config::NatRule {
+            id: "dnat-http".into(),
+            r#type: ngfw::proto::common::NatRuleType::Dnat as i32,
+            src_ip: String::new(),
+            dst_ip: "203.0.113.10".into(),
+            src_port: None,
+            dst_port: Some(8080),
+            translated_ip: "192.168.10.10".into(),
+            translated_port: Some(80),
+            priority: 10,
+        }],
+    };
+
+    client
+        .swap_nat_config(SwapNatConfigRequest {
+            config: Some(swapped.clone()),
+        })
+        .await
+        .unwrap();
+
+    let response = client
+        .get_nat_config(GetNatConfigRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    let config = response.config.expect("get_nat_config returned no config");
+
+    assert_eq!(config.items.len(), 1);
+    assert_eq!(config.items[0].id, "dnat-http");
+    assert_eq!(
+        config.items[0].r#type,
+        ngfw::proto::common::NatRuleType::Dnat as i32
+    );
+    assert_eq!(config.items[0].dst_ip, "203.0.113.10");
+    assert_eq!(config.items[0].dst_port, Some(8080));
+    assert_eq!(config.items[0].translated_ip, "192.168.10.10");
+    assert_eq!(config.items[0].translated_port, Some(80));
+}
+
+#[tokio::test]
+#[serial(nat_config)]
+async fn swap_nat_config_rejects_missing_config() {
+    let mut client = connect(&shared_server().socket).await;
+
+    let err = client
+        .swap_nat_config(SwapNatConfigRequest { config: None })
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+}
+
+#[tokio::test]
+#[serial(nat_config)]
+async fn swap_nat_config_accepts_empty_rule_set() {
+    let mut client = connect(&shared_server().socket).await;
+
+    client
+        .swap_nat_config(SwapNatConfigRequest {
+            config: Some(ngfw::proto::config::NatRuleSet { items: vec![] }),
+        })
+        .await
+        .unwrap();
+
+    let response = client
+        .get_nat_config(GetNatConfigRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    let config = response.config.expect("get_nat_config returned no config");
+
+    assert!(config.items.is_empty());
 }

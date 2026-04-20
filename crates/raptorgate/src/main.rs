@@ -33,15 +33,12 @@ use crate::pipeline::wrappers::{
     NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage,
 };
 use crate::pipeline::{Chain, Stage, StageOutcome};
-use crate::policy::nat::nat_rule::{NatAction, NatProtocol, NatRule};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::CaManager;
 use etherparse::NetSlice;
-use ipnet::IpNet;
 use std::collections::HashMap;
-use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -153,7 +150,33 @@ async fn main() {
 
     tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
 
-    let nat_engine = build_test_nat();
+    let nat_rules = match NatRules::from_disk(&config.data_dir).await {
+        Ok(rules) if !rules.is_empty() => {
+            tracing::info!(
+                event = "startup.nat.loaded",
+                rules = rules.rules().len(),
+                "loaded NAT rules from config"
+            );
+            Some(Arc::new(rules))
+        }
+        Ok(_) => {
+            tracing::info!(
+                event = "startup.nat.empty",
+                "NAT rules config is empty"
+            );
+            None
+        }
+        Err(err) => {
+            tracing::warn!(
+                event = "startup.nat.load_failed",
+                error = %err,
+                data_dir = %config.data_dir.display(),
+                "failed to load NAT rules config, starting without NAT rules"
+            );
+            None
+        }
+    };
+    let nat_engine = Arc::new(Mutex::new(NatEngine::new(&nat_rules, HashMap::new())));
 
     // Inicjalizacja providera konfiguracji DNS inspection.
     let dns_inspection_store =
@@ -298,43 +321,4 @@ async fn main() {
             });
         }
     }
-}
-
-fn build_test_nat() -> Arc<Mutex<NatEngine>> {
-    let interface_ips = HashMap::from([
-        (
-            "eth1".to_string(),
-            vec![
-                "192.168.10.254".parse::<IpAddr>().unwrap(),
-                "fd10::fe".parse::<IpAddr>().unwrap(),
-            ],
-        ),
-        (
-            "eth2".to_string(),
-            vec![
-                "192.168.20.254".parse::<IpAddr>().unwrap(),
-                "fd20::fe".parse::<IpAddr>().unwrap(),
-            ],
-        ),
-    ]);
-
-    let rules = NatRules::new(vec![NatRule::new(
-        "dnat-portfwd-8080-to-h1-80".to_string(),
-        20,
-        Some("eth2".to_string()),
-        None,
-        None,
-        None,
-        None,
-        Some("192.168.10.10/32".parse::<IpNet>().unwrap()),
-        Some(NatProtocol::Tcp),
-        Some(80),
-        Some(8080),
-        NatAction::Dnat,
-    )]);
-
-    Arc::new(Mutex::new(NatEngine::new(
-        &Some(Arc::new(rules)),
-        interface_ips,
-    )))
 }

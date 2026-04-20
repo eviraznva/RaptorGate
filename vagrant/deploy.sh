@@ -49,6 +49,9 @@ rm -rf .router_sync/nginx && mkdir -p .router_sync/nginx
 rm -rf .router_sync/vector && mkdir -p .router_sync/vector
 cp -f ../bin/"$PROJECT_NAME" .router_sync/"$PROJECT_NAME"/"$PROJECT_NAME"
 cp -rf ../bin/backend/* .router_sync/backend/
+rm -rf .router_sync/backend/data/json-db
+mkdir -p .router_sync/backend/data
+cp -rf ../backend/data/json-db .router_sync/backend/data/
 cp -rf ../bin/frontend/dist .router_sync/frontend/
 cd "$SCRIPT_DIR"
 rm -rf .router_sync/backend/devCerts && mkdir -p .router_sync/backend/devCerts
