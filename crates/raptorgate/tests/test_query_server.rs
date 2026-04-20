@@ -8,7 +8,7 @@ use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use ngfw::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use ngfw::data_plane::ips::ips::Ips;
 use ngfw::data_plane::ips::provider::IpsConfigProvider;
-use ngfw::data_plane::nat::NatEngine;
+use ngfw::data_plane::nat::{NatConfigProvider, NatEngine};
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::proto::config::{Rule, Zone, ZonePair};
@@ -21,6 +21,7 @@ use ngfw::proto::services::{
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::tls::pinning_detector::{PinningConfig, PinningDetector};
+use ngfw::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
 use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
@@ -69,10 +70,20 @@ fn shared_server() -> &'static SharedServer {
                     Arc::new(IpsConfigProvider::from_disk(config.data_dir.clone()).await);
                 let ips_initial_config = ips_store.get_config().clone();
                 let ips = Ips::new((*ips_initial_config).clone()).expect("failed to init ips");
+                let nat_store =
+                    Arc::new(NatConfigProvider::from_disk(config.data_dir.clone()).await);
+                let server_key_store = Arc::new(ServerKeyStore::new(&config.pki_dir));
+                let decision_engine = Arc::new(TlsDecisionEngine::new(
+                    &config.ssl_bypass_domains,
+                    Arc::clone(&server_key_store),
+                    EchTlsPolicy::default(),
+                    PinningConfig::default(),
+                ));
 
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
                     nat_engine: Arc::new(Mutex::new(NatEngine::new(&None, HashMap::new()))),
+                    nat_store,
                     policy_store: Arc::new(policy),
                     zone_store: Arc::new(zones),
                     zone_pair_store: Arc::new(zone_pairs),
@@ -82,6 +93,8 @@ fn shared_server() -> &'static SharedServer {
                     dns_inspection,
                     ips_store,
                     ips,
+                    decision_engine,
+                    server_key_store,
                     pinning_detector: Arc::new(PinningDetector::new(PinningConfig::default())),
                 };
 

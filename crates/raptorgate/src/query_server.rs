@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -17,13 +17,15 @@ use crate::config::provider::AppConfigProvider;
 use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
+use crate::data_plane::nat::config::NatConfig;
 use crate::data_plane::ips::config::IpsConfig;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
-use crate::data_plane::nat::NatEngine;
+use crate::data_plane::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::policy::provider::PolicyManager;
 use crate::policy::{Policy, PolicyId};
+use crate::proto::common::CertificateType;
 use crate::proto::services::firewall_query_service_server::{
     FirewallQueryService, FirewallQueryServiceServer,
 };
@@ -44,6 +46,7 @@ use crate::proto::services::{
     PushActiveConfigSnapshotResponse,
 };
 use crate::tls::pinning_detector::PinningDetector;
+use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
 use crate::zones::Zone;
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use crate::zones::{ZonePair, ZoneInterface};
@@ -114,6 +117,7 @@ where
 {
     pub tcp_tracker: Arc<TcpSessionTracker>,
     pub nat_engine: Arc<Mutex<NatEngine>>,
+    pub nat_store: Arc<NatConfigProvider>,
     pub policy_store: Arc<PolicySwap>,
     pub zone_store: Arc<ZoneProvider>,
     pub zone_pair_store: Arc<ZonePairProvider>,
@@ -125,6 +129,8 @@ where
     pub dns_inspection: Arc<DnsInspection>,
     pub ips_store: Arc<IpsConfigProvider>,
     pub ips: Arc<Ips>,
+    pub decision_engine: Arc<TlsDecisionEngine>,
+    pub server_key_store: Arc<ServerKeyStore>,
     /// Detektor pinningu — wspoldzielony z TlsDecisionEngine do obserwacji stanu.
     pub pinning_detector: Arc<PinningDetector>,
 }
@@ -137,6 +143,7 @@ where
         Self {
             tcp_tracker: Arc::clone(&self.tcp_tracker),
             nat_engine: Arc::clone(&self.nat_engine),
+            nat_store: Arc::clone(&self.nat_store),
             policy_store: Arc::clone(&self.policy_store),
             zone_store: Arc::clone(&self.zone_store),
             zone_pair_store: Arc::clone(&self.zone_pair_store),
@@ -146,6 +153,8 @@ where
             dns_inspection: Arc::clone(&self.dns_inspection),
             ips_store: Arc::clone(&self.ips_store),
             ips: Arc::clone(&self.ips),
+            decision_engine: Arc::clone(&self.decision_engine),
+            server_key_store: Arc::clone(&self.server_key_store),
             pinning_detector: Arc::clone(&self.pinning_detector),
         }
     }
@@ -527,8 +536,51 @@ where
             }));
         }
 
-        // 3. Apply swaps in leaf-to-root dependency order:
-        //    Zones (no deps) → ZoneInterfaces & ZonePairs (depend on Zones) → Policies (depend on ZonePairs)
+        let bypass_domains: Vec<String> = bundle
+            .ssl_bypass_list
+            .iter()
+            .map(|e| e.domain.clone())
+            .collect();
+        self.decision_engine.reload_bypass(&bypass_domains);
+
+        if let Err(e) = self.reconcile_server_keys(&bundle.firewall_certificates) {
+            tracing::error!(error = %e, "server key reconciliation failed");
+            return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                correlation_id,
+                accepted: false,
+                message: format!("server key reconciliation failed: {e}"),
+                applied_snapshot_id: String::new(),
+            }));
+        }
+
+        if let Some(ref policy) = bundle.tls_inspection_policy {
+            self.decision_engine.reload_ech_policy(EchTlsPolicy {
+                block_ech_no_sni: policy.block_ech_no_sni,
+                block_all_ech: policy.block_all_ech,
+            });
+            self.decision_engine
+                .reload_known_pinned_domains(&policy.known_pinned_domains);
+            if let Err(e) = self.apply_dns_ech_policy(policy).await {
+                tracing::error!(error = %e, "DNS ECH policy apply failed");
+                return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                    correlation_id,
+                    accepted: false,
+                    message: format!("dns ech policy apply failed: {e}"),
+                    applied_snapshot_id: String::new(),
+                }));
+            }
+        }
+
+        if let Err(e) = self.apply_nat_rules(&bundle.nat_rules).await {
+            tracing::error!(error = %e, "NAT snapshot apply failed");
+            return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                correlation_id,
+                accepted: false,
+                message: format!("nat snapshot apply failed: {e}"),
+                applied_snapshot_id: String::new(),
+            }));
+        }
+
         self.zone_store
             .swap_zones(zones.into_iter().collect())
             .await
@@ -563,6 +615,130 @@ where
             applied_snapshot_id: snapshot_id,
         }))
     }
+}
+
+impl<PolicySwap> QueryHandler<PolicySwap>
+where
+    PolicySwap: PolicyManager,
+{
+    async fn apply_nat_rules(
+        &self,
+        rules: &[crate::proto::config::NatRule],
+    ) -> anyhow::Result<()> {
+        let nat_config = NatConfig::from_proto_rules(rules)?;
+        let runtime_rules = nat_config.to_runtime_rules()?;
+
+        self.nat_store.swap_config(nat_config).await?;
+
+        let mut engine = self.nat_engine.lock().await;
+        engine.replace_rules(&runtime_rules);
+        Ok(())
+    }
+
+    async fn apply_dns_ech_policy(
+        &self,
+        policy: &crate::proto::config::TlsInspectionPolicy,
+    ) -> anyhow::Result<()> {
+        let current = self.dns_inspection_store.get_config();
+        let mut new_config: DnsInspectionConfig = (**current).clone();
+        new_config.ech_mitigation.strip_ech_dns = policy.strip_ech_dns;
+        new_config.ech_mitigation.log_ech_attempts = policy.log_ech_attempts;
+        self.dns_inspection_store
+            .swap_config(new_config.clone())
+            .await?;
+        self.dns_inspection.update_config(&new_config)?;
+        Ok(())
+    }
+
+    fn reconcile_server_keys(
+        &self,
+        certs: &[crate::proto::config::FirewallCertificate],
+    ) -> anyhow::Result<()> {
+        let tls_server_certs: Vec<_> = certs
+            .iter()
+            .filter(|c| c.cert_type == CertificateType::TlsServer as i32)
+            .collect();
+
+        let current: std::collections::HashMap<SocketAddr, _> = self
+            .server_key_store
+            .list()
+            .into_iter()
+            .map(|entry| (entry.addr, entry))
+            .collect();
+        let mut desired = std::collections::HashMap::new();
+
+        for cert in tls_server_certs {
+            let addr = parse_bind_addr(cert)?;
+            if desired.insert(addr, cert).is_some() {
+                anyhow::bail!("duplicate TLS server certificate bind address: {addr}");
+            }
+        }
+
+        let missing: Vec<String> = desired
+            .iter()
+            .filter(|(addr, cert)| match current.get(addr) {
+                Some(e) => e.key_ref != cert.private_key_ref,
+                None => true,
+            })
+            .map(|(_, cert)| cert.id.clone())
+            .collect();
+
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "missing server keys on firewall (run UploadServerCertificate first): {}",
+                missing.join(", ")
+            );
+        }
+
+        for (addr, cert) in &desired {
+            let existing = current
+                .get(addr)
+                .expect("missing entries rejected above");
+            let desired_enabled = cert.is_active.unwrap_or(true);
+
+            let metadata_changed = existing.fingerprint != cert.fingerprint
+                || existing.certificate_pem != cert.certificate_pem
+                || existing.common_name != cert.common_name
+                || existing.bypass != cert.inspection_bypass;
+
+            if metadata_changed {
+                self.server_key_store.load(
+                    *addr,
+                    &cert.certificate_pem,
+                    &cert.private_key_ref,
+                    &cert.common_name,
+                    &cert.fingerprint,
+                    cert.inspection_bypass,
+                    desired_enabled,
+                )?;
+                tracing::debug!(%addr, cn = %cert.common_name, "server key metadata refreshed");
+            } else if existing.enabled != desired_enabled {
+                self.server_key_store.set_enabled(*addr, desired_enabled)?;
+            }
+        }
+
+        for entry in current.values() {
+            if !desired.contains_key(&entry.addr) {
+                let _ = self.server_key_store.remove(entry.addr, &entry.key_ref);
+                tracing::info!(addr = %entry.addr, "removed server key not in desired state");
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn parse_bind_addr(cert: &crate::proto::config::FirewallCertificate) -> anyhow::Result<SocketAddr> {
+    let ip = cert
+        .bind_address
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid bind_address '{}': {e}", cert.bind_address))?;
+    let port = if cert.bind_port == 0 {
+        443
+    } else {
+        cert.bind_port as u16
+    };
+    Ok(SocketAddr::new(ip, port))
 }
 
 fn prepare_socket(socket_path: &str) -> std::io::Result<()> {

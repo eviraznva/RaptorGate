@@ -56,7 +56,7 @@ import { Env } from '../shared/config/env.validation.js';
         name: CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN,
         useFactory: (configService: ConfigService<Env, true>) => {
           const firewallSocketPath = configService.get(
-            'FIREWALL_GRPC_SOCKET_PATH',
+            'FIREWALL_QUERY_GRPC_SOCKET_PATH',
             {
               infer: true,
             },

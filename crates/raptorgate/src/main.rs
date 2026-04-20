@@ -1,5 +1,4 @@
 mod config;
-mod config_snapshot_server;
 mod data_plane;
 mod disk_store;
 mod dpi;
@@ -231,6 +230,7 @@ async fn main() {
         QueryHandler {
             tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
+            nat_store: Arc::clone(&nat_store),
             policy_store: Arc::clone(&policy_provider),
             zone_store: zones,
             zone_pair_store: zone_pairs,
@@ -240,26 +240,14 @@ async fn main() {
             dns_inspection: Arc::clone(&dns_inspection),
             ips_store: Arc::clone(&ips_store),
             ips: Arc::clone(&ips),
+            decision_engine: Arc::clone(&decision_engine),
+            server_key_store: Arc::clone(&server_key_store),
             pinning_detector: decision_engine.pinning_detector_arc(),
         },
         &config.query_socket_path,
         CancellationToken::new(),
     );
     tokio::spawn(query_server.serve());
-
-    let snapshot_server = config_snapshot_server::SnapshotServer::new(
-        config_snapshot_server::SnapshotHandler {
-            decision_engine: Arc::clone(&decision_engine),
-            server_key_store: Arc::clone(&server_key_store),
-            dns_inspection_store: Arc::clone(&dns_inspection_store),
-            dns_inspection: Arc::clone(&dns_inspection),
-            nat_store: Arc::clone(&nat_store),
-            nat_engine: Arc::clone(&nat_engine),
-        },
-        &config.control_plane_socket_path,
-        CancellationToken::new(),
-    );
-    tokio::spawn(snapshot_server.serve());
 
     let server_cert_server = server_certificate_server::ServerCertificateServer::new(
         server_certificate_server::ServerCertificateHandler {
