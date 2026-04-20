@@ -1,10 +1,14 @@
-import { NatConfigIsInvalidException } from '../../domain/exceptions/nat-config-is-invalid.exception.js';
-import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
-import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
-import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
-import { EditNatRuleResponseDto } from '../dtos/edit-nat-rule-response.dto.js';
-import { EditNatRuleDto } from '../dtos/edit-nat-rule.dto.js';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
+import { NatConfigIsInvalidException } from "../../domain/exceptions/nat-config-is-invalid.exception.js";
+import type { INatRulesRepository } from "../../domain/repositories/nat-rules.repository.js";
+import { NAT_RULES_REPOSITORY_TOKEN } from "../../domain/repositories/nat-rules.repository.js";
+import { EditNatRuleDto } from "../dtos/edit-nat-rule.dto.js";
+import { EditNatRuleResponseDto } from "../dtos/edit-nat-rule-response.dto.js";
+import {
+  FIREWALL_NAT_CONFIG_QUERY_SERVICE_TOKEN,
+  type IFirewallNatConfigQueryService,
+} from "../ports/firewall-nat-config-query-service.interface.js";
 
 @Injectable()
 export class EditNatRuleUseCase {
@@ -13,11 +17,14 @@ export class EditNatRuleUseCase {
   constructor(
     @Inject(NAT_RULES_REPOSITORY_TOKEN)
     private readonly natRulesRepository: INatRulesRepository,
+
+    @Inject(FIREWALL_NAT_CONFIG_QUERY_SERVICE_TOKEN)
+    private readonly firewallNatConfigQueryService: IFirewallNatConfigQueryService,
   ) {}
 
   async execute(dto: EditNatRuleDto): Promise<EditNatRuleResponseDto> {
     const natRule = await this.natRulesRepository.findById(dto.id);
-    if (!natRule) throw new EntityNotFoundException('nat rule', dto.id);
+    if (!natRule) throw new EntityNotFoundException("nat rule", dto.id);
 
     this.validateRequiredFields(dto);
 
@@ -38,167 +45,171 @@ export class EditNatRuleUseCase {
     await this.natRulesRepository.save(natRule);
 
     this.logger.log({
-      event: 'nat_rule.update.succeeded',
-      message: 'NAT rule updated',
+      event: "nat_rule.update.succeeded",
+      message: "NAT rule updated",
       natRuleId: natRule.getId(),
       type: natRule.getType().getValue(),
       isActive: natRule.getIsActive(),
       priority: natRule.getPriority().getValue(),
       changedFields: Object.entries(dto)
-        .filter(([key, value]) => key !== 'id' && value !== undefined)
+        .filter(([key, value]) => key !== "id" && value !== undefined)
         .map(([key]) => key),
     });
+
+    const allNatRules = await this.natRulesRepository.findAll();
+
+    await this.firewallNatConfigQueryService.swapNatConfig(allNatRules);
 
     return { natRule };
   }
 
   private validateRequiredFields(dto: EditNatRuleDto): void {
-    if (dto.type === 'SNAT') {
+    if (dto.type === "SNAT") {
       if (dto.sourceIp === null || dto.sourceIp === undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'sourceIp',
-          'Source IP is required for SNAT rule',
+          "sourceIp",
+          "Source IP is required for SNAT rule",
         );
       }
 
       if (dto.translatedIp === null || dto.translatedIp === undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'translatedIp',
-          'Translated IP is required for SNAT rule',
+          "translatedIp",
+          "Translated IP is required for SNAT rule",
         );
       }
 
       if (dto.destinationIp !== null && dto.destinationIp !== undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'destinationIp',
-          'Destination IP is not allowed for SNAT rule',
+          "destinationIp",
+          "Destination IP is not allowed for SNAT rule",
         );
       }
 
       if (dto.sourcePort !== null && dto.sourcePort !== undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'sourcePort',
-          'Source port is not allowed for SNAT rule',
+          "sourcePort",
+          "Source port is not allowed for SNAT rule",
         );
       }
 
       if (dto.destinationPort !== null && dto.destinationPort !== undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'destinationPort',
-          'Destination port is not allowed for SNAT rule',
+          "destinationPort",
+          "Destination port is not allowed for SNAT rule",
         );
       }
 
       if (dto.translatedPort !== null && dto.translatedPort !== undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'translatedPort',
-          'Translated port is not allowed for SNAT rule',
+          "translatedPort",
+          "Translated port is not allowed for SNAT rule",
         );
       }
     }
 
-    if (dto.type === 'DNAT') {
+    if (dto.type === "DNAT") {
       if (dto.destinationIp === null || dto.destinationIp === undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'destinationIp',
-          'Destination IP is required for DNAT rule',
+          "destinationIp",
+          "Destination IP is required for DNAT rule",
         );
       }
 
       if (dto.translatedIp === null || dto.translatedIp === undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'translatedIp',
-          'Translated IP is required for DNAT rule',
+          "translatedIp",
+          "Translated IP is required for DNAT rule",
         );
       }
 
       if (dto.sourceIp !== null && dto.sourceIp !== undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'sourceIp',
-          'Source IP is not allowed for DNAT rule',
+          "sourceIp",
+          "Source IP is not allowed for DNAT rule",
         );
       }
 
       if (dto.sourcePort !== null && dto.sourcePort !== undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'sourcePort',
-          'Source port is not allowed for DNAT rule',
+          "sourcePort",
+          "Source port is not allowed for DNAT rule",
         );
       }
 
       if (dto.destinationPort !== null && dto.destinationPort !== undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'destinationPort',
-          'Destination port is not allowed for DNAT rule',
+          "destinationPort",
+          "Destination port is not allowed for DNAT rule",
         );
       }
 
       if (dto.translatedPort !== null && dto.translatedPort !== undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'translatedPort',
-          'Translated port is not allowed for DNAT rule',
+          "translatedPort",
+          "Translated port is not allowed for DNAT rule",
         );
       }
     }
 
-    if (dto.type === 'PAT') {
+    if (dto.type === "PAT") {
       if (dto.destinationIp === null || dto.destinationIp === undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'destinationIp',
-          'Destination IP is required for PAT rule',
+          "destinationIp",
+          "Destination IP is required for PAT rule",
         );
       }
 
       if (dto.destinationPort === null || dto.destinationPort === undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'destinationPort',
-          'Destination port is required for PAT rule',
+          "destinationPort",
+          "Destination port is required for PAT rule",
         );
       }
 
       if (dto.translatedIp === null || dto.translatedIp === undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'translatedIp',
-          'Translated IP is required for PAT rule',
+          "translatedIp",
+          "Translated IP is required for PAT rule",
         );
       }
 
       if (dto.translatedPort === null || dto.translatedPort === undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'translatedPort',
-          'Translated port is required for PAT rule',
+          "translatedPort",
+          "Translated port is required for PAT rule",
         );
       }
 
       if (dto.sourceIp !== null && dto.sourceIp !== undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'sourceIp',
-          'Source IP is not allowed for PAT rule',
+          "sourceIp",
+          "Source IP is not allowed for PAT rule",
         );
       }
 
       if (dto.sourcePort !== null && dto.sourcePort !== undefined) {
         throw new NatConfigIsInvalidException(
           dto.type,
-          'sourcePort',
-          'Source port is not allowed for PAT rule',
+          "sourcePort",
+          "Source port is not allowed for PAT rule",
         );
       }
     }

@@ -8,6 +8,10 @@ import { NatType } from "../../domain/value-objects/nat-type.vo.js";
 import { Priority } from "../../domain/value-objects/priority.vo.js";
 import { CreateNatRuleDto } from "../dtos/create-nat-rule.dto.js";
 import { CreateNatRuleResponseDto } from "../dtos/create-nat-rule-response.dto.js";
+import {
+  FIREWALL_NAT_CONFIG_QUERY_SERVICE_TOKEN,
+  type IFirewallNatConfigQueryService,
+} from "../ports/firewall-nat-config-query-service.interface.js";
 import type { ITokenService } from "../ports/token-service.interface.js";
 import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
@@ -19,6 +23,8 @@ export class CreateNatRuleUseCase {
     @Inject(NAT_RULES_REPOSITORY_TOKEN)
     private readonly natRulesRepository: INatRulesRepository,
     @Inject(TOKEN_SERVICE_TOKEN) private readonly tokenService: ITokenService,
+    @Inject(FIREWALL_NAT_CONFIG_QUERY_SERVICE_TOKEN)
+    private readonly firewallNatConfigQueryService: IFirewallNatConfigQueryService,
   ) {}
 
   async execute(dto: CreateNatRuleDto): Promise<CreateNatRuleResponseDto> {
@@ -64,6 +70,10 @@ export class CreateNatRuleUseCase {
       isActive: newNatRule.getIsActive(),
       priority: newNatRule.getPriority().getValue(),
     });
+
+    const allNatRules = await this.natRulesRepository.findAll();
+
+    await this.firewallNatConfigQueryService.swapNatConfig(allNatRules);
 
     return { natRule: newNatRule };
   }

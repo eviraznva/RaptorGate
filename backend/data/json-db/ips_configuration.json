@@ -9,7 +9,7 @@
   },
   "signatures": [
     {
-      "id": "2c93c142-f825-40e1-886c-75418002deaa",
+      "id": "8d3fae59-d1b7-4812-9f31-caf772a9252c",
       "name": "SQL Injection Attempt",
       "isActive": true,
       "category": "sqli",
@@ -28,11 +28,11 @@
         80,
         443
       ],
-      "createdAt": "2026-04-17T19:13:56.754Z",
-      "updatedAt": "2026-04-17T19:13:56.754Z"
+      "createdAt": "2026-04-20T15:23:56.626Z",
+      "updatedAt": "2026-04-20T15:23:56.626Z"
     },
     {
-      "id": "1dccf00d-1599-4828-abf0-0cf36f025bc3",
+      "id": "32d9e411-4675-45fa-afa3-3bf0bd2d638b",
       "name": "Test Signature",
       "isActive": true,
       "category": "other",
@@ -51,8 +51,28 @@
       "dstPorts": [
         8080
       ],
-      "createdAt": "2026-04-17T19:13:56.754Z",
-      "updatedAt": "2026-04-17T19:13:56.754Z"
+      "createdAt": "2026-04-20T15:23:56.626Z",
+      "updatedAt": "2026-04-20T15:23:56.626Z"
+    },
+    {
+      "id": "05bda602-cba9-4b6c-a550-3ccf68b11993",
+      "name": "Test",
+      "isActive": true,
+      "category": "other",
+      "pattern": "sdtghsfghsdfghdfghfgd",
+      "severity": "SEVERITY_HIGH",
+      "action": "IPS_ACTION_BLOCK",
+      "appProtocols": [
+        "IPS_APP_PROTOCOL_HTTP"
+      ],
+      "srcPorts": [
+        80
+      ],
+      "dstPorts": [
+        8080
+      ],
+      "createdAt": "2026-04-20T15:23:56.626Z",
+      "updatedAt": "2026-04-20T15:23:56.626Z"
     }
   ]
 }
