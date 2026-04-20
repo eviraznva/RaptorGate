@@ -4,6 +4,7 @@ import type {
   FirewallConfigSnapshotServiceClient,
   FirewallQueryServiceClient,
 } from './grpc-client';
+import type { ConfigBundle } from '../generated/services/config_snapshot_service';
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
   captureInterfaces: ['eth1', 'eth2'],
@@ -54,23 +55,32 @@ export const DEFAULT_POLICIES: Rule[] = [{
 	`
 }];
 
-export function createDefaultSnapshotBundle(policyOverrides?: Partial<Rule>) {
-  const zones = DEFAULT_ZONES.map((zone) => ({ ...zone }));
-  const zonePairs = DEFAULT_ZONE_PAIRS.map((zonePair) => ({ ...zonePair }));
-  const defaultRule = {
-    ...DEFAULT_POLICIES[0]!,
-    id: crypto.randomUUID(),
-    zonePairId: zonePairs[0]!.id,
-  };
+export function createDefaultSnapshotBundle(overrides?: Partial<ConfigBundle>): ConfigBundle {
+  const zones = overrides?.zones ?? DEFAULT_ZONES.map((zone) => ({ ...zone }));
+  const zonePairs = overrides?.zonePairs ?? DEFAULT_ZONE_PAIRS.map((zonePair) => ({ ...zonePair }));
+  
+  let rules = overrides?.rules;
+  if (!rules) {
+    const defaultRule = {
+      ...DEFAULT_POLICIES[0]!,
+      id: crypto.randomUUID(),
+      zonePairId: zonePairs[0]!.id,
+    };
+    rules = [defaultRule];
+  }
 
   return {
-    rules: [{
-      ...defaultRule,
-      ...policyOverrides,
-      zonePairId: policyOverrides?.zonePairId ?? defaultRule.zonePairId,
-    }],
+    rules,
     zones,
     zonePairs,
+    zoneInterfaces: overrides?.zoneInterfaces ?? [],
+    natRules: overrides?.natRules ?? [],
+    dnsBlacklist: overrides?.dnsBlacklist ?? [],
+    sslBypassList: overrides?.sslBypassList ?? [],
+    ipsSignatures: overrides?.ipsSignatures ?? [],
+    firewallCertificates: overrides?.firewallCertificates ?? [],
+    ...(overrides?.mlModel ? { mlModel: overrides.mlModel } : {}),
+    ...(overrides?.identity ? { identity: overrides.identity } : {}),
   };
 }
 
@@ -92,7 +102,7 @@ export async function resetFirewallState(
         reason: 'apply',
         snapshot: {
           id: crypto.randomUUID(),
-          versionNumber: BigInt(1),
+          versionNumber: 1,
           snapshotType: 'manual_import',
           checksum: 'test-env-default-checksum',
           isActive: true,
