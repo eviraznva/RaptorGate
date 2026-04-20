@@ -1,11 +1,11 @@
 mod config;
-mod config_provider;
 mod config_snapshot_server;
 mod data_plane;
 mod disk_store;
 mod dpi;
 mod events;
 mod ip_defrag;
+mod logging;
 mod packet_validator;
 mod pipeline;
 mod policy;
@@ -15,8 +15,10 @@ mod rule_tree;
 mod server_certificate_server;
 mod tls;
 mod zones;
+mod swapper;
+mod integrity;
 
-use crate::config_provider::AppConfigProvider;
+use crate::config::provider::AppConfigProvider;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -45,7 +47,6 @@ use pcap::Device;
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -84,26 +85,50 @@ async fn main() {
         >,
     >;
 
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_thread_names(false)
-        .init();
+    if let Err(err) = logging::init() {
+        eprintln!("failed to initialize daily firewall logging: {err}");
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_env("RAPTORGATE_LOG_LEVEL")
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .with_target(false)
+            .with_thread_ids(false)
+            .with_thread_names(false)
+            .json()
+            .flatten_event(true)
+            .init();
+    }
 
     let config_provider = match AppConfigProvider::from_env().await {
         Ok(provider) => Arc::new(provider),
         Err(err) => {
-            tracing::error!("Configuration error: {err}");
+            tracing::error!(
+                event = "startup.config.failed",
+                error = %err,
+                "configuration error"
+            );
             return;
         }
     };
 
     let config = config_provider.get_config();
+    tracing::info!(
+        event = "startup.config.loaded",
+        capture_interfaces = ?config.capture_interfaces,
+        data_dir = %config.data_dir.display(),
+        query_socket_path = %config.query_socket_path,
+        event_socket_path = %config.event_socket_path,
+        "firewall config loaded"
+    );
 
     let (_ca_info, tls_cert_forger, tls_untrust_forger) = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
-            tracing::info!(fingerprint = %ca.ca_info().fingerprint, "CA initialized");
+            tracing::info!(
+                event = "startup.ca.initialized",
+                fingerprint = %ca.ca_info().fingerprint,
+                "CA initialized"
+            );
             let info = ca.ca_info();
             let forger = Arc::new(ca.cert_forger(1024).expect("Failed to create cert forger"));
             let untrust = Arc::new(
@@ -114,7 +139,11 @@ async fn main() {
             (Some(info), Some(forger), Some(untrust))
         }
         Err(err) => {
-            eprintln!("Warning: CA initialization failed: {err}");
+            tracing::warn!(
+                event = "startup.ca.failed",
+                error = %err,
+                "CA initialization failed"
+            );
             (None, None, None)
         }
     };
@@ -136,6 +165,7 @@ async fn main() {
     );
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
+    let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
 
     config_provider
         .register(Arc::clone(&policy_provider), "DiskPolicyProvider")
@@ -146,32 +176,11 @@ async fn main() {
     config_provider
         .register(Arc::clone(&zone_pairs), "ZonePairProvider")
         .await;
+    config_provider
+        .register(Arc::clone(&zone_interfaces), "ZoneInterfaceProvider")
+        .await;
 
-    tokio::spawn(events::init_event_queue());
-
-    // Reconnect loop dla event sink -- laczy sie z backendem i restartuje po rozlaczeniu.
-    let event_socket = config.grpc_socket_path.clone();
-    tokio::spawn(async move {
-        let mut backoff = Duration::from_secs(1);
-        const MAX_BACKOFF: Duration = Duration::from_secs(30);
-        loop {
-            match events::BackendEventSink::connect(&event_socket).await {
-                Ok((sink, disconnect_rx)) => {
-                    tracing::info!("BackendEventSink connected");
-                    events::set_backend_sink(sink);
-                    backoff = Duration::from_secs(1);
-                    let _ = disconnect_rx.await;
-                    events::clear_backend_sink();
-                    tracing::warn!("BackendEventSink disconnected, reconnecting...");
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, backoff_s = backoff.as_secs(), "BackendEventSink connect failed");
-                }
-            }
-            tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(MAX_BACKOFF);
-        }
-    });
+    tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
 
     let interface_ips = resolve_interface_ips(&config.capture_interfaces);
     let local_ips = collect_local_ips(&interface_ips);
@@ -193,7 +202,11 @@ async fn main() {
     let dns_inspection = match DnsInspection::new((*dns_initial_config).clone()) {
         Ok(inspection) => inspection,
         Err(err) => {
-            tracing::error!(error = %err, "failed to initialize DNS inspection");
+            tracing::error!(
+                event = "startup.dns_inspection.failed",
+                error = %err,
+                "failed to initialize DNS inspection"
+            );
             return;
         }
     };
@@ -203,7 +216,11 @@ async fn main() {
     let ips = match Ips::new((*ips_initial_config).clone()) {
         Ok(inspection) => inspection,
         Err(err) => {
-            tracing::error!(error = %err, "failed to initialize IPS");
+            tracing::error!(
+                event = "startup.ips.failed",
+                error = %err,
+                "failed to initialize IPS"
+            );
             return;
         }
     };
@@ -217,6 +234,7 @@ async fn main() {
             policy_store: Arc::clone(&policy_provider),
             zone_store: zones,
             zone_pair_store: zone_pairs,
+            zone_interface_store: Arc::clone(&zone_interfaces),
             config_provider: Arc::clone(&config_provider),
             dns_inspection_store: Arc::clone(&dns_inspection_store),
             dns_inspection: Arc::clone(&dns_inspection),
@@ -385,7 +403,11 @@ async fn main() {
         .register(Arc::clone(&sniffer), "InterfaceSniffer")
         .await;
     for e in errs {
-        tracing::error!(error = %e, "interface sniffer error");
+        tracing::error!(
+            event = "startup.sniffer.failed",
+            error = %e,
+            "interface sniffer error"
+        );
     }
 
     while let Some(raw_packet) = raw_rx.recv().await {

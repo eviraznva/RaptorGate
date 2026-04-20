@@ -1,15 +1,17 @@
-import { RefreshTokenIsInvalidException } from '../../domain/exceptions/refresh-token-is-invalid.exception.js';
-import { UserNotFoundException } from '../../domain/exceptions/user-not-found.exception.js';
-import { USER_REPOSITORY_TOKEN } from '../../domain/repositories/user.repository.js';
-import type { IUserRepository } from '../../domain/repositories/user.repository.js';
-import { RefreshTokenResponseDto } from '../dtos/refresh-token-response.dto.js';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
-import type { ITokenService } from '../ports/token-service.interface.js';
-import { RefreshTokenDto } from '../dtos/refresh-token.dto.js';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { RefreshTokenIsInvalidException } from "../../domain/exceptions/refresh-token-is-invalid.exception.js";
+import { UserNotFoundException } from "../../domain/exceptions/user-not-found.exception.js";
+import type { IUserRepository } from "../../domain/repositories/user.repository.js";
+import { USER_REPOSITORY_TOKEN } from "../../domain/repositories/user.repository.js";
+import { RefreshTokenDto } from "../dtos/refresh-token.dto.js";
+import { RefreshTokenResponseDto } from "../dtos/refresh-token-response.dto.js";
+import type { ITokenService } from "../ports/token-service.interface.js";
+import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
 @Injectable()
 export class RefreshTokenUseCase {
+  private readonly logger = new Logger(RefreshTokenUseCase.name);
+
   constructor(
     @Inject(TOKEN_SERVICE_TOKEN) private readonly tokenService: ITokenService,
     @Inject(USER_REPOSITORY_TOKEN)
@@ -31,6 +33,12 @@ export class RefreshTokenUseCase {
     if (!user) throw new UserNotFoundException(payload.sub);
 
     if (user.getRefreshToken() !== dto.refreshToken) {
+      this.logger.warn({
+        event: "auth.refresh.failed",
+        message: "refresh token mismatch",
+        userId: user.getId(),
+        username: user.getUsername(),
+      });
       throw new RefreshTokenIsInvalidException();
     }
 
@@ -47,6 +55,12 @@ export class RefreshTokenUseCase {
       user.setRefreshToken(null);
 
       await this.userRepository.setRefreshToken(user.getId(), null, null);
+      this.logger.warn({
+        event: "auth.refresh.failed",
+        message: "refresh token expired outside grace period",
+        userId: user.getId(),
+        username: user.getUsername(),
+      });
       throw new RefreshTokenIsInvalidException();
     }
 
@@ -67,6 +81,13 @@ export class RefreshTokenUseCase {
         user.getRefreshTokenExpiry(),
       );
 
+      this.logger.log({
+        event: "auth.refresh.rotated",
+        message: "refresh token rotated",
+        userId: user.getId(),
+        username: user.getUsername(),
+      });
+
       return {
         accessToken: newTokenPair.accessToken,
         refreshToken: newTokenPair.refreshToken,
@@ -74,6 +95,13 @@ export class RefreshTokenUseCase {
     } else {
       const accessToken = await this.tokenService.generateAccessToken({
         sub: user.getId(),
+        username: user.getUsername(),
+      });
+
+      this.logger.log({
+        event: "auth.refresh.succeeded",
+        message: "access token refreshed",
+        userId: user.getId(),
         username: user.getUsername(),
       });
 

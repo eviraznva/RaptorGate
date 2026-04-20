@@ -1,38 +1,48 @@
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import { cwd } from 'node:process';
-import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { NestFactory } from '@nestjs/core';
-import { type MicroserviceOptions, Transport } from '@nestjs/microservices';
-import type { NestExpressApplication } from '@nestjs/platform-express';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { apiReference } from '@scalar/nestjs-api-reference';
-import cookieParser from 'cookie-parser';
-import { AppModule } from './app.module.js';
-import type { Env } from './shared/config/env.validation.js';
+import "module-alias/register";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { cwd } from "node:process";
+import { BadRequestException, type LogLevel, ValidationPipe } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { NestFactory } from "@nestjs/core";
+import { type MicroserviceOptions, Transport } from "@nestjs/microservices";
+import type { NestExpressApplication } from "@nestjs/platform-express";
+import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import { apiReference } from "@scalar/nestjs-api-reference";
+import cookieParser from "cookie-parser";
+import { AppModule } from "./app.module.js";
+import type { Env } from "./shared/config/env.validation.js";
+import {
+  DailyFileLogger,
+  DEFAULT_BACKEND_LOG_DIR,
+} from "./shared/logging/daily-file.logger.js";
 
 async function bootstrap() {
-  const logger = new Logger('Bootstrap');
-  const certsDir = join(cwd(), 'devCerts');
+  const appLogger = new DailyFileLogger({
+    logDir: process.env.BACKEND_LOG_DIR ?? DEFAULT_BACKEND_LOG_DIR,
+  });
+  appLogger.setLogLevels(parseBackendLogLevels(process.env.BACKEND_LOG_LEVELS));
+  const logger = appLogger.withContext("Bootstrap");
+  const certsDir = join(cwd(), "devCerts");
 
   const httpsOptions = {
-    key: readFileSync(join(certsDir, 'key.pem')),
-    cert: readFileSync(join(certsDir, 'cert.pem')),
+    key: readFileSync(join(certsDir, "key.pem")),
+    cert: readFileSync(join(certsDir, "cert.pem")),
   };
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     httpsOptions,
+    logger: appLogger,
   });
 
-  app.set('query parser', 'extended');
+  app.set("query parser", "extended");
 
   const configService = app.get(ConfigService<Env, true>);
-  const corsOrigins = configService.get('CORS_ORIGIN', { infer: true });
-  const httpPort = configService.get('PORT', { infer: true });
-  const cookieSecret = configService.get('COOKIE_SECRET', { infer: true });
-  const grpcSocketPath = configService.get('GRPC_SOCKET_PATH', { infer: true });
-  const protoRoot = join(process.cwd(), '..', 'proto');
+  const corsOrigins = configService.get("CORS_ORIGIN", { infer: true });
+  const httpPort = configService.get("PORT", { infer: true });
+  const cookieSecret = configService.get("COOKIE_SECRET", { infer: true });
+  const grpcSocketPath = configService.get("GRPC_SOCKET_PATH", { infer: true });
+  const protoRoot = join(process.cwd(), "..", "proto");
 
   app.use(cookieParser(cookieSecret));
 
@@ -42,11 +52,11 @@ async function bootstrap() {
   });
 
   const server = app.getHttpAdapter().getInstance();
-  server.set('trust proxy', 1);
+  server.set("trust proxy", 1);
 
   const absoluteSocketPath = join(process.cwd(), grpcSocketPath);
   if (existsSync(absoluteSocketPath)) {
-    logger.log('Cleaning up stale socket file...');
+    logger.log("Cleaning up stale socket file...");
 
     try {
       unlinkSync(absoluteSocketPath);
@@ -66,17 +76,17 @@ async function bootstrap() {
   const grpcUrl = `unix://${absoluteSocketPath}`;
   const protoPath = join(
     process.cwd(),
-    '..',
-    'proto',
-    'services',
-    'event_service.proto',
+    "..",
+    "proto",
+    "services",
+    "event_service.proto",
   );
 
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.GRPC,
     options: {
-      package: 'raptorgate.services',
-      protoPath: join(protoRoot, 'services', 'event_service.proto'),
+      package: "raptorgate.services",
+      protoPath: join(protoRoot, "services", "event_service.proto"),
       loader: {
         includeDirs: [protoRoot],
       },
@@ -91,58 +101,58 @@ async function bootstrap() {
       transform: true,
       exceptionFactory: (errors) => {
         const first = Object.values(errors[0]?.constraints ?? {})[0];
-        return new BadRequestException(first ?? 'Validation failed');
+        return new BadRequestException(first ?? "Validation failed");
       },
     }),
   );
 
   const config = new DocumentBuilder()
-    .setTitle('RaptorGateApi')
+    .setTitle("RaptorGateApi")
     .addBearerAuth(
-      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
-      'bearer',
+      { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+      "bearer",
     )
-    .addSecurityRequirements('bearer')
-    .setDescription('The RaptorGateApi API')
-    .setVersion('1.0')
-    .addTag('RaptorGateApi')
+    .addSecurityRequirements("bearer")
+    .setDescription("The RaptorGateApi API")
+    .setVersion("1.0")
+    .addTag("RaptorGateApi")
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
 
-  SwaggerModule.setup('api', app, document);
+  SwaggerModule.setup("api", app, document);
 
   app.use(
-    '/reference',
+    "/reference",
     apiReference({
-      theme: 'default',
+      theme: "default",
       content: document,
       darkMode: true,
       hideClientButton: false,
       hideModels: false,
       hideDownloadButton: false,
       hideTestRequestButton: false,
-      layout: 'modern',
-      searchHotKey: 'k',
+      layout: "modern",
+      searchHotKey: "k",
       defaultHttpClient: {
-        targetKey: 'js',
-        clientKey: 'fetch',
+        targetKey: "js",
+        clientKey: "fetch",
       },
       authentication: {
-        preferredSecurityScheme: 'bearer',
+        preferredSecurityScheme: "bearer",
         securitySchemes: {
           bearer: {
-            token: '',
+            token: "",
           },
         },
       },
       showSidebar: true,
       defaultOpenAllTags: true,
       hideSearch: false,
-      favicon: '/favicon.ico',
+      favicon: "/favicon.ico",
       metaData: {
-        title: 'RaptorGate API Documentation',
-        description: 'Interactive API reference for RaptorGate',
+        title: "RaptorGate API Documentation",
+        description: "Interactive API reference for RaptorGate",
       },
     }),
   );
@@ -160,3 +170,20 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+function parseBackendLogLevels(raw: string | undefined): LogLevel[] {
+  const allowed = new Set<LogLevel>([
+    "log",
+    "error",
+    "warn",
+    "debug",
+    "verbose",
+  ]);
+
+  const levels = (raw ?? "log,error,warn")
+    .split(",")
+    .map((level) => level.trim())
+    .filter((level): level is LogLevel => allowed.has(level as LogLevel));
+
+  return levels.length > 0 ? levels : ["log", "error", "warn"];
+}

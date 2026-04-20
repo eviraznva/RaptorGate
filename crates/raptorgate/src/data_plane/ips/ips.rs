@@ -5,9 +5,11 @@ use arc_swap::ArcSwap;
 use regex::bytes::Regex;
 use anyhow::{Context, Result};
 use etherparse::TransportSlice;
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 
 use crate::data_plane::ips::config::{
-    IpsAction, IpsAppProtocol, IpsConfig, IpsSeverity, IpsSignatureConfig,
+    IpsAction, IpsAppProtocol, IpsConfig, IpsMatchType, IpsSeverity, IpsSignatureConfig,
+    decode_literal_pattern,
 };
 
 use crate::dpi::AppProto;
@@ -16,8 +18,30 @@ use crate::data_plane::packet_context::PacketContext;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpsVerdict {
     Allow,
-    Alert(String),
-    Block(String),
+    Alert(Vec<IpsSignatureMatch>),
+    Block(IpsSignatureMatch),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IpsSignatureMatch {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub severity: IpsSeverity,
+    pub action: IpsAction,
+}
+
+impl IpsSignatureMatch {
+    pub fn message(&self) -> String {
+        format!(
+            "IPS {}: signature '{}' matched (id={}, category={}, severity={})",
+            self.action.as_str(),
+            self.name,
+            self.id,
+            self.category,
+            self.severity.as_str(),
+        )
+    }
 }
 
 pub struct Ips {
@@ -38,10 +62,13 @@ impl Ips {
     pub fn update_config(&self, config: &IpsConfig) -> Result<()> {
         self.enabled
             .store(config.general.enabled, Ordering::Release);
+
         self.detection_enabled
             .store(config.detection.enabled, Ordering::Release);
+
         self.state
             .store(Arc::new(CompiledIpsState::from_config(config)?));
+
         Ok(())
     }
 
@@ -55,7 +82,7 @@ impl Ips {
         let dpi_app_proto = dpi_ctx.as_ref().and_then(|dpi_ctx| dpi_ctx.app_proto);
 
         let sliced_packet = ctx.borrow_sliced_packet();
-        
+
         let (payload, src_port, dst_port) = match &sliced_packet.transport {
             Some(TransportSlice::Tcp(tcp)) => {
                 (tcp.payload(), tcp.source_port(), tcp.destination_port())
@@ -86,33 +113,7 @@ impl Ips {
             inspected_payload
         };
 
-        let mut alerts = Vec::new();
-        let mut matches = 0usize;
-
-        for signature in &state.signatures {
-            if matches >= state.max_matches_per_packet {
-                break;
-            }
-            if !signature.matches_filters(dpi_app_proto, src_port, dst_port) {
-                continue;
-            }
-            if !signature.regex.is_match(inspected) {
-                continue;
-            }
-
-            matches += 1;
-            let message = signature.verdict_message();
-            if signature.action == IpsAction::Block {
-                return IpsVerdict::Block(message);
-            }
-            alerts.push(message);
-        }
-
-        if alerts.is_empty() {
-            IpsVerdict::Allow
-        } else {
-            IpsVerdict::Alert(alerts.join("; "))
-        }
+        state.inspect(inspected, dpi_app_proto, src_port, dst_port)
     }
 
     // Inspekcja odszyfrowanego payloadu (bez PacketContext).
@@ -140,55 +141,165 @@ impl Ips {
             payload
         };
 
+        state.inspect(inspected, app_proto, src_port, dst_port)
+    }
+}
+
+struct CompiledIpsState {
+    max_payload_bytes: usize,
+    max_matches_per_packet: usize,
+    literal_ac: Option<AhoCorasick>,
+    literal_signatures: Vec<CompiledSignature>,
+    literal_ci_ac: Option<AhoCorasick>,
+    literal_ci_signatures: Vec<CompiledSignature>,
+    regex_signatures: Vec<CompiledRegexSignature>,
+}
+
+impl CompiledIpsState {
+    fn from_config(config: &IpsConfig) -> Result<Self> {
+        let mut literal_patterns = Vec::new();
+        let mut literal_signatures = Vec::new();
+        let mut literal_ci_patterns = Vec::new();
+        let mut literal_ci_signatures = Vec::new();
+        let mut regex_signatures = Vec::new();
+
+        for signature in config.signatures.iter().filter(|signature| signature.enabled) {
+            let compiled = CompiledSignature::from_config(signature);
+
+            match signature.match_type {
+                IpsMatchType::Literal => {
+                    let pattern = decode_literal_pattern(
+                        &signature.pattern,
+                        signature.pattern_encoding,
+                    )
+                    .with_context(|| {
+                        format!("failed to decode ips signature '{}'", signature.id)
+                    })?;
+
+                    if signature.case_insensitive {
+                        literal_ci_patterns.push(pattern);
+                        literal_ci_signatures.push(compiled);
+                    } else {
+                        literal_patterns.push(pattern);
+                        literal_signatures.push(compiled);
+                    }
+                }
+                IpsMatchType::Regex => {
+                    regex_signatures.push(CompiledRegexSignature::from_config(signature)?);
+                }
+            }
+        }
+
+        Ok(Self {
+            max_payload_bytes: config.detection.max_payload_bytes,
+            max_matches_per_packet: config.detection.max_matches_per_packet,
+            literal_ac: build_automaton(&literal_patterns, false)?,
+            literal_signatures,
+            literal_ci_ac: build_automaton(&literal_ci_patterns, true)?,
+            literal_ci_signatures,
+            regex_signatures,
+        })
+    }
+
+    fn inspect(
+        &self,
+        payload: &[u8],
+        app_proto: Option<AppProto>,
+        src_port: u16,
+        dst_port: u16,
+    ) -> IpsVerdict {
         let mut alerts = Vec::new();
         let mut matches = 0usize;
 
-        for signature in &state.signatures {
-            if matches >= state.max_matches_per_packet {
+        if let Some(block) = self.inspect_automaton(
+            &self.literal_ac,
+            &self.literal_signatures,
+            payload,
+            app_proto,
+            src_port,
+            dst_port,
+            &mut matches,
+            &mut alerts,
+        ) {
+            return IpsVerdict::Block(block);
+        }
+
+        if let Some(block) = self.inspect_automaton(
+            &self.literal_ci_ac,
+            &self.literal_ci_signatures,
+            payload,
+            app_proto,
+            src_port,
+            dst_port,
+            &mut matches,
+            &mut alerts,
+        ) {
+            return IpsVerdict::Block(block);
+        }
+
+        for signature in &self.regex_signatures {
+            if matches >= self.max_matches_per_packet {
                 break;
             }
-            if !signature.matches_filters(app_proto, src_port, dst_port) {
+            if !signature.signature.matches_filters(app_proto, src_port, dst_port) {
                 continue;
             }
-            if !signature.regex.is_match(inspected) {
+            if !signature.regex.is_match(payload) {
                 continue;
             }
 
             matches += 1;
-            let message = signature.verdict_message();
-            if signature.action == IpsAction::Block {
-                return IpsVerdict::Block(message);
+            let signature_match = signature.signature.to_match();
+            if signature.signature.action == IpsAction::Block {
+                return IpsVerdict::Block(signature_match);
             }
-            alerts.push(message);
+            alerts.push(signature_match);
         }
 
         if alerts.is_empty() {
             IpsVerdict::Allow
         } else {
-            IpsVerdict::Alert(alerts.join("; "))
+            IpsVerdict::Alert(alerts)
         }
     }
-}
 
-#[derive(Clone)]
-struct CompiledIpsState {
-    max_payload_bytes: usize,
-    max_matches_per_packet: usize,
-    signatures: Vec<CompiledSignature>,
-}
+    #[allow(clippy::too_many_arguments)]
+    fn inspect_automaton(
+        &self,
+        ac: &Option<AhoCorasick>,
+        signatures: &[CompiledSignature],
+        payload: &[u8],
+        app_proto: Option<AppProto>,
+        src_port: u16,
+        dst_port: u16,
+        matches: &mut usize,
+        alerts: &mut Vec<IpsSignatureMatch>,
+    ) -> Option<IpsSignatureMatch> {
+        let ac = ac.as_ref()?;
 
-impl CompiledIpsState {
-    fn from_config(config: &IpsConfig) -> Result<Self> {
-        Ok(Self {
-            max_payload_bytes: config.detection.max_payload_bytes,
-            max_matches_per_packet: config.detection.max_matches_per_packet,
-            signatures: config
-                .signatures
-                .iter()
-                .filter(|signature| signature.enabled)
-                .map(CompiledSignature::from_config)
-                .collect::<Result<Vec<_>>>()?,
-        })
+        for matched in ac.find_iter(payload) {
+            if *matches >= self.max_matches_per_packet {
+                break;
+            }
+
+            let signature = &signatures[matched.pattern().as_usize()];
+
+            if !signature.matches_filters(app_proto, src_port, dst_port) {
+                continue;
+            }
+
+            *matches += 1;
+
+            let signature_match = signature.to_match();
+
+            if signature.action == IpsAction::Block {
+                return Some(signature_match);
+            }
+
+            alerts.push(signature_match);
+        }
+
+        None
     }
 }
 
@@ -202,12 +313,11 @@ struct CompiledSignature {
     app_protocols: Vec<IpsAppProtocol>,
     src_ports: Vec<u16>,
     dst_ports: Vec<u16>,
-    regex: Regex,
 }
 
 impl CompiledSignature {
-    fn from_config(config: &IpsSignatureConfig) -> Result<Self> {
-        Ok(Self {
+    fn from_config(config: &IpsSignatureConfig) -> Self {
+        Self {
             id: config.id.clone(),
             name: config.name.clone(),
             category: config.category.clone(),
@@ -216,9 +326,7 @@ impl CompiledSignature {
             app_protocols: config.app_protocols.clone(),
             src_ports: config.src_ports.clone(),
             dst_ports: config.dst_ports.clone(),
-            regex: Regex::new(&config.pattern)
-                .with_context(|| format!("failed to compile ips signature '{}'", config.id))?,
-        })
+        }
     }
 
     fn matches_filters(&self, app_proto: Option<AppProto>, src_port: u16, dst_port: u16) -> bool {
@@ -232,16 +340,43 @@ impl CompiledSignature {
             && (self.dst_ports.is_empty() || self.dst_ports.contains(&dst_port))
     }
 
-    fn verdict_message(&self) -> String {
-        format!(
-            "IPS {}: signature '{}' matched (id={}, category={}, severity={})",
-            self.action.as_str(),
-            self.name,
-            self.id,
-            self.category,
-            self.severity.as_str(),
-        )
+    fn to_match(&self) -> IpsSignatureMatch {
+        IpsSignatureMatch {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            category: self.category.clone(),
+            severity: self.severity,
+            action: self.action,
+        }
     }
+}
+
+#[derive(Clone)]
+struct CompiledRegexSignature {
+    signature: CompiledSignature,
+    regex: Regex,
+}
+
+impl CompiledRegexSignature {
+    fn from_config(config: &IpsSignatureConfig) -> Result<Self> {
+        Ok(Self {
+            signature: CompiledSignature::from_config(config),
+            regex: Regex::new(&config.pattern)
+                .with_context(|| format!("failed to compile ips signature '{}'", config.id))?,
+        })
+    }
+}
+
+fn build_automaton(patterns: &[Vec<u8>], case_insensitive: bool) -> Result<Option<AhoCorasick>> {
+    if patterns.is_empty() {
+        return Ok(None);
+    }
+
+    AhoCorasickBuilder::new()
+        .ascii_case_insensitive(case_insensitive)
+        .build(patterns)
+        .map(Some)
+        .context("failed to build ips aho-corasick automaton")
 }
 
 #[cfg(test)]
@@ -252,7 +387,10 @@ mod tests {
     use etherparse::PacketBuilder;
 
     use super::*;
-    use crate::data_plane::ips::config::{IpsDetectionConfig, IpsGeneralConfig};
+    use crate::data_plane::ips::config::{
+        IpsDetectionConfig, IpsGeneralConfig, IpsMatchType, IpsPatternEncoding,
+    };
+
     use crate::dpi::{AppProto, DpiContext};
 
     fn make_config() -> IpsConfig {
@@ -270,6 +408,9 @@ mod tests {
                     enabled: true,
                     category: "sqli".into(),
                     pattern: "(?i)union\\s+select".into(),
+                    match_type: IpsMatchType::Regex,
+                    pattern_encoding: IpsPatternEncoding::Text,
+                    case_insensitive: false,
                     severity: IpsSeverity::High,
                     action: IpsAction::Block,
                     app_protocols: vec![IpsAppProtocol::Http],
@@ -282,6 +423,9 @@ mod tests {
                     enabled: true,
                     category: "other".into(),
                     pattern: "(?i)curl/".into(),
+                    match_type: IpsMatchType::Regex,
+                    pattern_encoding: IpsPatternEncoding::Text,
+                    case_insensitive: false,
                     severity: IpsSeverity::Low,
                     action: IpsAction::Alert,
                     app_protocols: vec![IpsAppProtocol::Http],
@@ -329,7 +473,7 @@ mod tests {
         let ctx = build_tcp_packet(b"GET /?q=UNION SELECT 1 HTTP/1.1\r\nHost: x\r\n\r\n", 80);
 
         let verdict = ips.inspect_packet(&ctx);
-        assert!(matches!(verdict, IpsVerdict::Block(msg) if msg.contains("SQLi")));
+        assert!(matches!(verdict, IpsVerdict::Block(matched) if matched.name == "SQLi"));
     }
 
     #[test]
@@ -341,7 +485,7 @@ mod tests {
         );
 
         let verdict = ips.inspect_packet(&ctx);
-        assert!(matches!(verdict, IpsVerdict::Alert(msg) if msg.contains("Curl UA")));
+        assert!(matches!(verdict, IpsVerdict::Alert(matches) if matches.iter().any(|matched| matched.name == "Curl UA")));
     }
 
     #[test]
@@ -391,6 +535,35 @@ mod tests {
     }
 
     #[test]
+    fn literal_signature_uses_aho_corasick() {
+        let mut config = make_config();
+        config.signatures[0].pattern = "UNION SELECT".into();
+        config.signatures[0].match_type = IpsMatchType::Literal;
+        config.signatures[0].case_insensitive = true;
+        let ips = Ips::new(config).expect("ips should initialize");
+        let ctx = build_tcp_packet(b"GET /?q=union select 1 HTTP/1.1\r\nHost: x\r\n\r\n", 80);
+
+        let verdict = ips.inspect_packet(&ctx);
+        assert!(matches!(verdict, IpsVerdict::Block(matched) if matched.id == "http-sqli"));
+    }
+
+    #[test]
+    fn hex_literal_signature_matches_bytes() {
+        let mut config = make_config();
+        config.signatures[0].pattern = "90909090".into();
+        config.signatures[0].match_type = IpsMatchType::Literal;
+        config.signatures[0].pattern_encoding = IpsPatternEncoding::Hex;
+        config.signatures[0].case_insensitive = false;
+        config.signatures[0].app_protocols.clear();
+        config.signatures[0].dst_ports.clear();
+        let ips = Ips::new(config).expect("ips should initialize");
+        let ctx = build_tcp_packet(b"\x90\x90\x90\x90/bin/sh", 4444);
+
+        let verdict = ips.inspect_packet(&ctx);
+        assert!(matches!(verdict, IpsVerdict::Block(matched) if matched.id == "http-sqli"));
+    }
+
+    #[test]
     fn global_disable_skips_detection() {
         let mut config = make_config();
         config.general.enabled = false;
@@ -417,6 +590,6 @@ mod tests {
         );
 
         let verdict = ips.inspect_packet(&ctx);
-        assert!(matches!(verdict, IpsVerdict::Block(msg) if msg.contains("SQLi")));
+        assert!(matches!(verdict, IpsVerdict::Block(matched) if matched.name == "SQLi"));
     }
 }

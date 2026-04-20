@@ -1,6 +1,5 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import Navbar from "../components/Navbar";
 import { useAppDispatch, useAppSelector } from "../app/hooks";
 import DnsActionsBar from "../components/dns/DnsActionsBar";
 import DnsHeader from "../components/dns/DnsHeader";
@@ -18,6 +17,7 @@ import {
   setBlocklistConfig,
   setBlocklistDomains,
   setDnsInspectionActiveTab,
+  setDnsInspectionDraftConfig,
   setDnssecCacheConfig,
   setDnssecCacheTtlConfig,
   setDnssecConfig,
@@ -28,15 +28,57 @@ import {
   setDnsTunnelingIgnoreDomains,
   setGeneralConfig,
 } from "../features/dnsInspectionSlice";
+import {
+  useGetDnsInspectionConfigQuery,
+  useUpdateDnsInspectionConfigMutation,
+} from "../services/dnsInspection";
+import type { ApiFailure, ApiSuccess } from "../types/ApiResponse";
+import type { DnsInspectionConfig } from "../types/dnsInspection/DnsInspectionConfig";
+
+type DnsInspectionPayload = {
+  dnsInspection: DnsInspectionConfig;
+};
 
 export default function Dns() {
   const dispatch = useAppDispatch();
   const dnsState = useAppSelector((state) => state.dnsInspection);
+  const [requestError, setRequestError] = useState<string | null>(null);
+
+  const { data, isLoading, isError } = useGetDnsInspectionConfigQuery();
+  const [updateDnsInspectionConfig, { isLoading: isSaving }] =
+    useUpdateDnsInspectionConfigMutation();
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+
+    const payload = (data as ApiSuccess<DnsInspectionPayload>).data
+      .dnsInspection;
+
+    setRequestError(null);
+    dispatch(setDnsInspectionDraftConfig(payload));
+    dispatch(applyDnsInspectionDraft());
+  }, [data, dispatch]);
 
   const errors = useMemo(
     () => validateDnsInspectionConfig(dnsState.draftConfig),
     [dnsState.draftConfig],
   );
+
+  const uiErrors = useMemo(() => {
+    const next = [...errors];
+
+    if (isError) {
+      next.unshift("DNS inspection: failed to load config from backend.");
+    }
+
+    if (requestError) {
+      next.unshift(`DNS inspection: ${requestError}`);
+    }
+
+    return next;
+  }, [errors, isError, requestError]);
 
   const hasChanges = useMemo(
     () =>
@@ -45,10 +87,26 @@ export default function Dns() {
     [dnsState.draftConfig, dnsState.appliedConfig],
   );
 
+  const handleApply = async () => {
+    try {
+      setRequestError(null);
+
+      const response = await updateDnsInspectionConfig(
+        dnsState.draftConfig,
+      ).unwrap();
+
+      const payload = (response as ApiSuccess<DnsInspectionPayload>).data
+        .dnsInspection;
+
+      dispatch(setDnsInspectionDraftConfig(payload));
+      dispatch(applyDnsInspectionDraft());
+    } catch (error) {
+      setRequestError((error as ApiFailure).message);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0c0c0c] flex flex-col text-[#f5f5f5]">
-      <Navbar />
-
       <div className="flex-1 flex justify-center p-8">
         <div className="w-full max-w-6xl">
           <div className="flex items-center justify-center mb-10">
@@ -135,11 +193,13 @@ export default function Dns() {
             </motion.div>
           </div>
 
-          <DnsValidationErrors errors={errors} />
+          <DnsValidationErrors errors={uiErrors} />
 
           <DnsActionsBar
-            canApply={hasChanges && errors.length === 0}
-            onApply={() => dispatch(applyDnsInspectionDraft())}
+            canApply={
+              hasChanges && errors.length === 0 && !isLoading && !isSaving
+            }
+            onApply={handleApply}
             onResetTab={() => dispatch(resetDnsInspectionTab())}
             onResetAll={() => dispatch(resetDnsInspectionAll())}
           />
@@ -147,7 +207,7 @@ export default function Dns() {
           <div className="text-center text-xs text-[#4a4a4a]">
             DNS inspection module
             <span className="text-[#06b6d4] mx-3">|</span>
-            Local config editor
+            Backend-synced config editor
             <span className="text-[#06b6d4] mx-3">|</span>
             RaptorGate UI
           </div>

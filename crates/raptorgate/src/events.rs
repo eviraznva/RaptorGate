@@ -2,10 +2,9 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
-use arc_swap::ArcSwapOption;
 use prost_types::Timestamp;
 use std::sync::OnceLock;
-use tokio::{select, sync::mpsc, sync::oneshot, time::interval};
+use tokio::{select, sync::mpsc, time::interval};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
@@ -76,109 +75,181 @@ pub fn format_tls_version(raw: u16) -> String {
 const CHANNEL_CAPACITY: usize = 1024;
 const FLUSH_INTERVAL_MS: u64 = 500;
 const MAX_BATCH_SIZE: usize = 64;
+const OVERFLOW_CAPACITY: usize = 512;
+const RECONNECT_INTERVAL_SECS: u64 = 2;
 
 static EVENT_TX: OnceLock<mpsc::Sender<Event>> = OnceLock::new();
-static BACKEND_SINK: ArcSwapOption<BackendEventSink> = ArcSwapOption::const_empty();
 static DROPPED_EVENTS: AtomicU64 = AtomicU64::new(0);
 
-pub struct BackendEventSink {
+struct BackendConnection {
     tx: mpsc::Sender<proto::Event>,
 }
 
-impl BackendEventSink {
-    // Zwraca sink + sygnal rozlaczenia (oneshot fires gdy gRPC stream padnie).
-    pub async fn connect(socket_path: &str) -> Result<(Self, oneshot::Receiver<()>), tonic::transport::Error> {
-        let socket_path = socket_path.to_owned();
+impl BackendConnection {
+    /// Returns false if the gRPC task has died (receiver dropped).
+    async fn send(&self, event: proto::Event) -> bool {
+        tracing::trace!(
+            event = "event_bus.dispatch.started",
+            kind = ?event.kind,
+            "sending event to backend stream"
+        );
 
-        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
-            .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
-                let path = socket_path.clone();
-                async move {
-                    let stream = tokio::net::UnixStream::connect(&path).await?;
-                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(stream))
-                }
-            }))
-            .await?;
+        self.tx.send(event).await.is_ok()
+    }
+}
 
-        let (tx, rx) = mpsc::channel::<proto::Event>(CHANNEL_CAPACITY);
-        let mut client = BackendEventServiceClient::new(channel);
-        let (disconnect_tx, disconnect_rx) = oneshot::channel();
+async fn try_connect(socket_path: &str) -> Result<BackendConnection, tonic::transport::Error> {
+    let socket_path = socket_path.to_owned();
 
-        tokio::spawn(async move {
-            if let Err(e) = client.push_events(ReceiverStream::new(rx)).await {
-                tracing::warn!(error = %e, "BackendEventService stream closed");
+    let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+        .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
+            let path = socket_path.clone();
+            async move {
+                let stream = tokio::net::UnixStream::connect(&path).await?;
+                Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(stream))
             }
-            let _ = disconnect_tx.send(());
-        });
+        }))
+        .await?;
 
-        Ok((Self { tx }, disconnect_rx))
-    }
+    let (tx, rx) = mpsc::channel::<proto::Event>(CHANNEL_CAPACITY);
+    let mut client = BackendEventServiceClient::new(channel);
 
-    pub async fn forward(&self, event: proto::Event) -> bool {
-        if self.tx.send(event).await.is_err() {
-            DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
-            return false;
+    tokio::spawn(async move {
+        if let Err(e) = client.push_events(ReceiverStream::new(rx)).await {
+            tracing::warn!(
+                event = "event_bus.backend_stream.ended",
+                error = %e,
+                "BackendEventService stream ended"
+            );
         }
-        true
-    }
-}
+        // when this task returns, `rx` is dropped → `tx.send()` will fail
+        // → the event loop detects it and sets backend = None
+    });
 
-pub fn set_backend_sink(sink: BackendEventSink) {
-    BACKEND_SINK.store(Some(std::sync::Arc::new(sink)));
-}
-
-pub fn clear_backend_sink() {
-    BACKEND_SINK.store(None);
+    Ok(BackendConnection { tx })
 }
 
 pub fn emit(event: Event) {
     if let Some(tx) = EVENT_TX.get()
         && tx.try_send(event).is_err() {
             DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!("event queue full, event dropped");
         }
 }
 
-pub async fn init_event_queue() {
+pub async fn init_event_system(socket_path: String) {
     let (tx, mut rx) = mpsc::channel::<Event>(CHANNEL_CAPACITY);
     EVENT_TX.set(tx).unwrap_or_else(|_| panic!("event queue already initialised"));
 
+    let mut backend: Option<BackendConnection> = None;
     let mut buffer: Vec<Event> = Vec::new();
     let mut flush_tick = interval(Duration::from_millis(FLUSH_INTERVAL_MS));
+    let mut reconnect_interval = interval(Duration::from_secs(RECONNECT_INTERVAL_SECS));
+
+    // Skip the first tick immediately
+    reconnect_interval.tick().await;
 
     loop {
         select! {
             Some(event) = rx.recv() => {
-                if event.kind.is_immediate() {
-                    flush_batch(&mut buffer).await; // flush as we want to preserve event ordering
-                    dispatch(event).await;
-                } else {
-                    buffer.push(event);
-                    if buffer.len() >= MAX_BATCH_SIZE {
-                        flush_batch(&mut buffer).await;
-                    }
-                }
+                handle_incoming(event, &mut buffer, &mut backend).await;
             }
-            _ = flush_tick.tick() => flush_batch(&mut buffer).await,
+            _ = flush_tick.tick() => {
+                flush_batch(&mut buffer, &mut backend).await;
+            }
+            _ = reconnect_interval.tick(), if backend.is_none() => {
+                attempt_reconnect(&socket_path, &mut backend, &mut buffer).await;
+            }
         }
     }
 }
 
-async fn flush_batch(buffer: &mut Vec<Event>) {
-    if buffer.is_empty() { return; }
-    for event in buffer.drain(..) {
-        dispatch(event).await;
+async fn handle_incoming(event: Event, buffer: &mut Vec<Event>, backend: &mut Option<BackendConnection>) {
+    if event.kind.is_immediate() {
+        flush_batch(buffer, backend).await;
+        dispatch(event, backend, buffer).await;
+    } else {
+        buffer.push(event);
+        if buffer.len() >= MAX_BATCH_SIZE {
+            flush_batch(buffer, backend).await;
+        }
     }
 }
 
-async fn dispatch(event: Event) {
-    tracing::debug!(kind = ?event.kind, "event dispatched");
-    let guard = BACKEND_SINK.load();
-    if let Some(sink) = guard.as_ref() {
-        if !sink.forward(event.into()).await {
-            drop(guard);
-            clear_backend_sink();
-            tracing::warn!("backend sink send failed, sink cleared");
+async fn flush_batch(buffer: &mut Vec<Event>, backend: &mut Option<BackendConnection>) {
+    if backend.is_none() {
+        return;
+    }
+
+    let batch = std::mem::take(buffer);
+
+    for event in batch {
+        dispatch(event, backend, buffer).await;
+    }
+}
+
+async fn dispatch(event: Event, backend: &mut Option<BackendConnection>, buffer: &mut Vec<Event>) {
+    match backend {
+        Some(conn) => {
+            if !conn.send(event.into()).await {
+                tracing::warn!(
+                    event = "event_bus.backend_connection.lost",
+                    dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                    "backend connection lost, will reconnect"
+                );
+                *backend = None;
+                DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        None => {
+            if buffer.len() < OVERFLOW_CAPACITY {
+                tracing::trace!(
+                    event = "event_bus.buffered",
+                    kind = ?event.kind,
+                    buffered_events = buffer.len(),
+                    "no backend connection, buffering event"
+                );
+                buffer.push(event);
+            } else {
+                let dropped_events = DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
+                tracing::warn!(
+                    event = "event_bus.event_dropped",
+                    kind = ?event.kind,
+                    buffered_events = buffer.len(),
+                    dropped_events,
+                    "overflow buffer full, event dropped"
+                );
+            }
+        }
+    }
+}
+
+async fn attempt_reconnect(
+    socket_path: &str,
+    backend: &mut Option<BackendConnection>,
+    buffer: &mut Vec<Event>,
+) {
+    match try_connect(socket_path).await {
+        Ok(conn) => {
+            tracing::info!(
+                event = "event_bus.backend_connected",
+                socket_path,
+                buffered_events = buffer.len(),
+                dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                "reconnected to backend"
+            );
+            *backend = Some(conn);
+
+            emit(Event::new(EventKind::EventBusConnectedEvent {}));
+            flush_batch(buffer, backend).await;
+        }
+        Err(e) => {
+            tracing::warn!(
+                event = "event_bus.backend_reconnect.failed",
+                socket_path,
+                error = ?e,
+                "reconnect attempt failed"
+            );
         }
     }
 }
@@ -201,6 +272,7 @@ pub enum EventKind {
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpConnectionRejected { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionAbortedMidClose { src: EndpointIdentifier, dst: EndpointIdentifier },
+    TcpSessionEnteredTimeWait { src: EndpointIdentifier, dst: EndpointIdentifier },
     TunDeviceSwapped { old_device: String, new_device: String, old_address: String, new_address: String },
     SnifferConfigChanged { old_interfaces: Vec<String>, new_interfaces: Vec<String>, old_timeout: Duration, new_timeout: Duration },
     TlsInterceptStarted { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, tls_version: Option<String> },
@@ -218,6 +290,22 @@ pub enum EventKind {
     PinningAutoBypassActivated { source_ip: IpAddr, domain: String, reason: String },
     TlsHandshakeFailed { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, tls_version: Option<String>, stage: HandshakeStage, reason: String, mode: InspectionMode },
     EchAttemptDetected { source_ip: Option<IpAddr>, domain: String, origin: EchOrigin, action: EchAction },
+    IpsSignatureMatched {
+        signature_id: String,
+        signature_name: String,
+        category: String,
+        severity: String,
+        action: String,
+        src_ip: String,
+        src_port: u16,
+        dst_ip: String,
+        dst_port: u16,
+        transport_protocol: String,
+        app_protocol: String,
+        interface: String,
+        payload_length: u32,
+    },
+    EventBusConnectedEvent {}
 }
 
 impl EventKind {
@@ -228,6 +316,7 @@ impl EventKind {
             | E::TcpSessionRemoved { .. }
             | E::TcpConnectionRejected { .. }
             | E::TcpSessionAbortedMidClose { .. }
+            | E::TcpSessionEnteredTimeWait { .. }
             | E::TunDeviceSwapped { .. }
             | E::SnifferConfigChanged { .. }
             | E::TlsInterceptStarted { .. }
@@ -244,7 +333,9 @@ impl EventKind {
             | E::PinningFailureDetected { .. }
             | E::PinningAutoBypassActivated { .. }
             | E::TlsHandshakeFailed { .. }
-            | E::EchAttemptDetected { .. } => true,
+            | E::EchAttemptDetected { .. }
+            | E::IpsSignatureMatched { .. }
+            | E::EventBusConnectedEvent { .. } => true,
         }
     }
 }
@@ -293,6 +384,12 @@ impl From<EventKind> for proto::EventKind {
                         src: Some(src.into()),
                         dst: Some(dst.into()),
                     }),
+                EventKind::TcpSessionEnteredTimeWait { src, dst } =>
+                    Item::TcpSessionEnteredTimewait(proto::TcpSessionEnteredTimeWaitEvent {
+                        src: Some(src.into()),
+                        dst: Some(dst.into()),
+                    }),
+
                 EventKind::TunDeviceSwapped { old_device, new_device, old_address, new_address } =>
                     Item::TunDeviceSwapped(proto::TunDeviceSwappedEvent {
                         old_device,
@@ -455,6 +552,36 @@ impl From<EventKind> for proto::EventKind {
                         origin: origin.as_str().to_string(),
                         action: action.as_str().to_string(),
                     }),
+                EventKind::IpsSignatureMatched {
+                    signature_id,
+                    signature_name,
+                    category,
+                    severity,
+                    action,
+                    src_ip,
+                    src_port,
+                    dst_ip,
+                    dst_port,
+                    transport_protocol,
+                    app_protocol,
+                    interface,
+                    payload_length,
+                } => Item::IpsSignatureMatched(proto::IpsSignatureMatchedEvent {
+                    signature_id,
+                    signature_name,
+                    category,
+                    severity,
+                    action,
+                    src_ip,
+                    src_port: u32::from(src_port),
+                    dst_ip,
+                    dst_port: u32::from(dst_port),
+                    transport_protocol,
+                    app_protocol,
+                    interface,
+                    payload_length,
+                }),
+                EventKind::EventBusConnectedEvent { .. } => Item::EventBusConnected(proto::EventBusConnectedEvent {})
             }),
         }
     }

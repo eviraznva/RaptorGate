@@ -1,4 +1,4 @@
-import { IpAddressIsInvalidException } from '../exceptions/ip-address-is-invalid.exception.js';
+import { IpAddressIsInvalidException } from "../exceptions/ip-address-is-invalid.exception.js";
 
 export class IpAddress {
   private readonly value: string;
@@ -8,7 +8,7 @@ export class IpAddress {
   }
 
   public static create(ip: string): IpAddress {
-    if (!this.isValid(ip)) {
+    if (!IpAddress.isValid(ip)) {
       throw new IpAddressIsInvalidException(ip);
     }
 
@@ -16,7 +16,7 @@ export class IpAddress {
   }
 
   private static isValidIPv4(ip: string): boolean {
-    const parts = ip.split('.');
+    const parts = ip.split(".");
     if (parts.length !== 4) return false;
 
     return parts.every((part) => {
@@ -30,17 +30,17 @@ export class IpAddress {
   }
 
   private static isValidIPv6(ip: string): boolean {
-    if (ip.includes('::')) {
-      const parts = ip.split('::');
+    if (ip.includes("::")) {
+      const parts = ip.split("::");
       if (parts.length > 2) return false;
-      const left = parts[0] ? parts[0].split(':') : [];
-      const right = parts[1] ? parts[1].split(':') : [];
+      const left = parts[0] ? parts[0].split(":") : [];
+      const right = parts[1] ? parts[1].split(":") : [];
       return (
         left.length + right.length <= 8 &&
         [...left, ...right].every((g) => IpAddress.isValidIPv6Group(g))
       );
     }
-    const groups = ip.split(':');
+    const groups = ip.split(":");
     return (
       groups.length === 8 && groups.every((g) => IpAddress.isValidIPv6Group(g))
     );

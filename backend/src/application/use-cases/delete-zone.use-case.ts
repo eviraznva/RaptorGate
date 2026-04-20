@@ -5,10 +5,12 @@ import {
 import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
 import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class DeleteZoneUseCase {
+  private readonly logger = new Logger(DeleteZoneUseCase.name);
+
   constructor(
     @Inject(ZONE_REPOSITORY_TOKEN)
     private readonly zoneRepository: IZoneRepository,
@@ -34,5 +36,13 @@ export class DeleteZoneUseCase {
       );
 
     await this.zoneRepository.delete(id);
+
+    this.logger.log({
+      event: 'zone.delete.succeeded',
+      message: 'zone deleted',
+      zoneId: isExisting.getId(),
+      zoneName: isExisting.getName(),
+      deletedZonePairs: zonePairsByDst.length + zonePairsBySrc.length,
+    });
   }
 }

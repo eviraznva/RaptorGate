@@ -1,10 +1,11 @@
 // ── Equal: IpVer ──────────────────────────────────────────
 // Mirrors: equal_ip_ver_match / equal_ip_ver_no_match
 
+use ngfw::dpi::AppProto;
 use ngfw::rule_tree::{
     matcher::{Match, MatchBuilder},
     parsing::parse_rule_tree,
-    ArmEnd, ArrivalInfo, FieldValue, Hour, IpGlobbable as IP, IpVer, MatchKind, Octet, Operation,
+    ArmEnd, FieldValue, Hour, IpGlobbable as IP, IpVer, MatchKind, Octet, Operation,
     Pattern, Port, Protocol, Verdict, Weekday,
 };
 
@@ -74,6 +75,29 @@ test_parse_and_stringify!(
         MatchKind::Protocol,
         Pattern::Equal(FieldValue::Protocol(Protocol::Udp)),
         ArmEnd::Verdict(Verdict::Drop),
+    )
+);
+
+test_parse_and_stringify!(
+    lower_equal_app_proto_http,
+    "match app_proto { = http : verdict drop }",
+    MatchBuilder::with_arm(
+        MatchKind::AppProto,
+        Pattern::Equal(FieldValue::AppProto(AppProto::Http)),
+        ArmEnd::Verdict(Verdict::Drop),
+    )
+);
+
+test_parse_and_stringify!(
+    lower_or_app_proto_http_tls,
+    "match app_proto { |(= http = tls) : verdict allow }",
+    MatchBuilder::with_arm(
+        MatchKind::AppProto,
+        Pattern::Or(vec![
+            Pattern::Equal(FieldValue::AppProto(AppProto::Http)),
+            Pattern::Equal(FieldValue::AppProto(AppProto::Tls)),
+        ]),
+        ArmEnd::Verdict(Verdict::Allow),
     )
 );
 

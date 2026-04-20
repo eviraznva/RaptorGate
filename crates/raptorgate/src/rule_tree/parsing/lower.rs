@@ -1,10 +1,12 @@
-use derive_more::Display;
 use thiserror::Error;
+use derive_more::Display;
 
 use crate::rule_tree::matcher::Match;
 use crate::rule_tree::parsing::ast::{
     AstBody, AstMatch, AstPattern, AstValue, Spanned, Verdict as AstVerdict,
 };
+
+use crate::dpi::AppProto;
 use crate::rule_tree::parsing::lexer::Position;
 use crate::data_plane::dns_inspection::types::DnssecStatus;
 use crate::rule_tree::types::{Hour, IpGlobbable, IpVer, Port, Protocol, Weekday};
@@ -52,6 +54,7 @@ fn lower_kind(s: &Spanned<String>) -> Result<MatchKind, LowerError> {
         "day_of_week" => Ok(MatchKind::DayOfWeek),
         "hour" => Ok(MatchKind::Hour),
         "protocol" => Ok(MatchKind::Protocol),
+        "app_proto" => Ok(MatchKind::AppProto),
         "src_port" => Ok(MatchKind::SrcPort),
         "dst_port" => Ok(MatchKind::DstPort),
         "dns_dnssec_status" => Ok(MatchKind::DnssecStatus),
@@ -89,6 +92,23 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
                 "tcp" => Ok(FieldValue::Protocol(Protocol::Tcp)),
                 "udp" => Ok(FieldValue::Protocol(Protocol::Udp)),
                 "icmp" => Ok(FieldValue::Protocol(Protocol::Icmp)),
+                other => Err(LowerError::UnknownValue {
+                    kind,
+                    value: other.to_string(),
+                    pos,
+                }),
+            },
+            MatchKind::AppProto => match s.val.as_str() {
+                "http" => Ok(FieldValue::AppProto(AppProto::Http)),
+                "tls" => Ok(FieldValue::AppProto(AppProto::Tls)),
+                "dns" => Ok(FieldValue::AppProto(AppProto::Dns)),
+                "ssh" => Ok(FieldValue::AppProto(AppProto::Ssh)),
+                "ftp" => Ok(FieldValue::AppProto(AppProto::Ftp)),
+                "smtp" => Ok(FieldValue::AppProto(AppProto::Smtp)),
+                "rdp" => Ok(FieldValue::AppProto(AppProto::Rdp)),
+                "smb" => Ok(FieldValue::AppProto(AppProto::Smb)),
+                "quic" => Ok(FieldValue::AppProto(AppProto::Quic)),
+                "unknown" => Ok(FieldValue::AppProto(AppProto::Unknown)),
                 other => Err(LowerError::UnknownValue {
                     kind,
                     value: other.to_string(),
@@ -273,6 +293,7 @@ mod tests {
     use super::*;
     use crate::rule_tree::parsing::ast::AstArm;
     use crate::rule_tree::parsing::lexer::Position;
+    use crate::dpi::AppProto;
     use crate::rule_tree::types::{Hour, IpGlobbable, IpVer, Octet, Port, Protocol, Weekday};
     use crate::rule_tree::{
         ArmEnd, FieldValue, MatchBuilder, MatchKind, Operation, Pattern, Verdict,
@@ -386,6 +407,14 @@ mod tests {
     }
 
     #[test]
+    fn lower_kind_app_proto() {
+        assert_eq!(
+            lower_kind(&sp("app_proto".into())).unwrap(),
+            MatchKind::AppProto
+        );
+    }
+
+    #[test]
     fn lower_kind_src_port() {
         assert_eq!(
             lower_kind(&sp("src_port".into())).unwrap(),
@@ -489,6 +518,28 @@ mod tests {
             err,
             LowerError::UnknownValue {
                 kind: MatchKind::Protocol,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn lower_value_app_proto_http() {
+        let fv = lower_value(MatchKind::AppProto, sp(AstValue::Ident(sp("http".into())))).unwrap();
+        assert_eq!(fv, FieldValue::AppProto(AppProto::Http));
+    }
+
+    #[test]
+    fn lower_value_app_proto_unknown_ident() {
+        let err = lower_value(
+            MatchKind::AppProto,
+            sp(AstValue::Ident(sp("websocket".into()))),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LowerError::UnknownValue {
+                kind: MatchKind::AppProto,
                 ..
             }
         ));
@@ -1336,5 +1387,15 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn lower_app_proto_comparison_returns_error() {
+        let ast = ast_match(
+            "app_proto",
+            vec![arm(greater_ident("http"), verdict_body(AstVerdict::Allow))],
+        );
+        let err = lower(ast).unwrap_err();
+        assert!(matches!(err, LowerError::Rule(RuleError::InvalidPattern(_))));
     }
 }

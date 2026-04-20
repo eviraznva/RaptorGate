@@ -15,10 +15,12 @@ import { EntityNotFoundException } from '../../domain/exceptions/entity-not-foun
 import { RoleIsInvalidException } from '../../domain/exceptions/role-is-invalid.exception.js';
 import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
 import { EditUserDto } from '../dtos/edit-user.dto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class EditUserUseCase {
+  private readonly logger = new Logger(EditUserUseCase.name);
+
   constructor(
     @Inject(USER_REPOSITORY_TOKEN)
     private readonly userRepository: IUserRepository,
@@ -73,6 +75,17 @@ export class EditUserUseCase {
 
     const userRoles = await this.roleRepository.findByUserId(user.getId());
     user.setRoles(userRoles);
+
+    this.logger.log({
+      event: 'user.update.succeeded',
+      message: 'user updated',
+      userId: user.getId(),
+      username: user.getUsername(),
+      roles: userRoles.map((role) => role.getName()),
+      changedFields: Object.entries(dto)
+        .filter(([key, value]) => key !== 'id' && value !== undefined)
+        .map(([key]) => key),
+    });
 
     return { user };
   }

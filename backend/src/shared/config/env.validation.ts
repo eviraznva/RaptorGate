@@ -15,9 +15,15 @@ const envSchema = z.object({
     .string()
     .default('../sockets/control-plane.sock'),
   FIREWALL_QUERY_SOCKET_PATH: z.string().default('../sockets/query.sock'),
+  FIREWALL_QUERY_GRPC_SOCKET_PATH: z
+    .string()
+    .default('../sockets/query.sock'),
   SERVER_CERT_GRPC_SOCKET_PATH: z
     .string()
     .default('../sockets/server-cert.sock'),
+  BACKEND_LOG_DIR: z.string().default('/var/log/raptorgate/backend'),
+  BACKEND_LOG_LEVELS: z.string().default('log,error,warn'),
+  AUTH_COOKIE_PATH: z.string().min(1).default('/auth/refresh'),
   COOKIE_SECRET: z
     .string()
     .min(32, 'COOKIE_SECRET must be at least 32 characters'),

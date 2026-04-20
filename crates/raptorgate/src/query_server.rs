@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
@@ -11,7 +13,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::config_provider::AppConfigProvider;
+use crate::config::provider::AppConfigProvider;
 use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -25,6 +27,9 @@ use crate::policy::{Policy, PolicyId};
 use crate::proto::services::firewall_query_service_server::{
     FirewallQueryService, FirewallQueryServiceServer,
 };
+use crate::proto::services::firewall_config_snapshot_service_server::{
+    FirewallConfigSnapshotService, FirewallConfigSnapshotServiceServer,
+};
 use crate::proto::services::{
     GetConfigRequest, GetConfigResponse, GetDnsInspectionConfigRequest,
     GetDnsInspectionConfigResponse, GetIpsConfigRequest, GetIpsConfigResponse,
@@ -35,13 +40,13 @@ use crate::proto::services::{
     GetZonePairsResponse, GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse,
     SwapConfigRequest, SwapConfigResponse, SwapDnsInspectionConfigRequest,
     SwapDnsInspectionConfigResponse, SwapIpsConfigRequest, SwapIpsConfigResponse,
-    SwapPoliciesRequest, SwapPoliciesResponse, SwapZonePairsRequest, SwapZonePairsResponse,
-    SwapZonesRequest, SwapZonesResponse,
+    GetSystemTimeRequest, GetSystemTimeResponse, PushActiveConfigSnapshotRequest,
+    PushActiveConfigSnapshotResponse,
 };
 use crate::tls::pinning_detector::PinningDetector;
 use crate::zones::Zone;
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
-use crate::zones::{ZoneId, ZoneInterfaceId, ZonePair, ZonePairId};
+use crate::zones::{ZonePair, ZoneInterface};
 
 pub struct QueryServer<PolicySwap>
 where
@@ -82,12 +87,17 @@ where
             }
         };
 
-        tracing::info!(socket = self.socket_path, "FirewallQueryService listening");
+        tracing::info!(
+            event = "grpc.query_service.listening",
+            socket = self.socket_path,
+            "FirewallQueryService listening"
+        );
 
         let incoming = UnixListenerStream::new(listener);
 
         if let Err(e) = tonic::transport::Server::builder()
-            .add_service(FirewallQueryServiceServer::new(self.handler))
+            .add_service(FirewallQueryServiceServer::new(self.handler.clone()))
+            .add_service(FirewallConfigSnapshotServiceServer::new(self.handler))
             .serve_with_incoming_shutdown(incoming, self.shutdown.cancelled())
             .await
         {
@@ -98,7 +108,6 @@ where
     }
 }
 
-#[derive(Clone)]
 pub struct QueryHandler<PolicySwap>
 where
     PolicySwap: PolicyManager,
@@ -108,6 +117,7 @@ where
     pub policy_store: Arc<PolicySwap>,
     pub zone_store: Arc<ZoneProvider>,
     pub zone_pair_store: Arc<ZonePairProvider>,
+    pub zone_interface_store: Arc<crate::zones::provider::ZoneInterfaceProvider>,
     pub config_provider: Arc<AppConfigProvider>,
     /// Provider konfiguracji inspekcji DNS — zarządza trwałym przechowywaniem.
     pub dns_inspection_store: Arc<DnsInspectionConfigProvider>,
@@ -117,6 +127,44 @@ where
     pub ips: Arc<Ips>,
     /// Detektor pinningu — wspoldzielony z TlsDecisionEngine do obserwacji stanu.
     pub pinning_detector: Arc<PinningDetector>,
+}
+
+impl<PolicySwap> Clone for QueryHandler<PolicySwap>
+where
+    PolicySwap: PolicyManager,
+{
+    fn clone(&self) -> Self {
+        Self {
+            tcp_tracker: Arc::clone(&self.tcp_tracker),
+            nat_engine: Arc::clone(&self.nat_engine),
+            policy_store: Arc::clone(&self.policy_store),
+            zone_store: Arc::clone(&self.zone_store),
+            zone_pair_store: Arc::clone(&self.zone_pair_store),
+            zone_interface_store: Arc::clone(&self.zone_interface_store),
+            config_provider: Arc::clone(&self.config_provider),
+            dns_inspection_store: Arc::clone(&self.dns_inspection_store),
+            dns_inspection: Arc::clone(&self.dns_inspection),
+            ips_store: Arc::clone(&self.ips_store),
+            ips: Arc::clone(&self.ips),
+            pinning_detector: Arc::clone(&self.pinning_detector),
+        }
+    }
+}
+
+fn parse_proto_collection<P, Id, V>(
+    items: Vec<P>,
+    converter: impl Fn(P) -> Result<(Id, V), anyhow::Error>,
+    label: &str,
+) -> Result<HashMap<Id, V>, Status>
+where
+    Id: Eq + std::hash::Hash,
+{
+    items
+        .into_iter()
+        .map(|item| {
+            converter(item).map_err(|e| Status::invalid_argument(format!("invalid {label}: {e}")))
+        })
+        .collect()
 }
 
 #[tonic::async_trait]
@@ -129,36 +177,6 @@ where
         _request: Request<GetTcpSessionsRequest>,
     ) -> Result<Response<GetTcpSessionsResponse>, Status> {
         Err(Status::unimplemented("not yet implemented"))
-    }
-
-    async fn swap_policies(
-        &self,
-        request: Request<SwapPoliciesRequest>,
-    ) -> Result<Response<SwapPoliciesResponse>, Status> {
-        let rules = request.into_inner().rules;
-        let mut policies = Vec::with_capacity(rules.len());
-
-        for rule in rules {
-            match Policy::try_from_rule(rule) {
-                Ok(policy) => policies.push(policy),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to parse policy from SwapPoliciesRequest");
-                    return Err(Status::invalid_argument(format!(
-                        "failed to parse policy: {err}"
-                    )));
-                }
-            }
-        }
-
-        let response = match self.policy_store.swap_policies(policies).await {
-            Ok(()) => SwapPoliciesResponse {},
-            Err(err) => {
-                tracing::error!(error = %err, "failed to swap policies");
-                return Err(Status::internal(format!("failed to swap policies: {err}")));
-            }
-        };
-
-        Ok(Response::new(response))
     }
 
     async fn get_policies(
@@ -197,36 +215,6 @@ where
         Err(Status::unimplemented("not yet implemented"))
     }
 
-    async fn swap_zones(
-        &self,
-        request: Request<SwapZonesRequest>,
-    ) -> Result<Response<SwapZonesResponse>, Status> {
-        let zones = request.into_inner().zones;
-        let mut zones_domain = Vec::with_capacity(zones.len());
-
-        for zone in zones {
-            match Zone::try_from_proto(zone) {
-                Ok(pair) => zones_domain.push(pair),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to parse zone from SwapZonesRequest");
-                    return Err(Status::invalid_argument(format!(
-                        "failed to parse zone: {err}"
-                    )));
-                }
-            }
-        }
-
-        let response = match self.zone_store.swap_zones(zones_domain).await {
-            Ok(()) => SwapZonesResponse {},
-            Err(err) => {
-                tracing::error!(error = %err, "failed to swap zones");
-                return Err(Status::internal(format!("failed to swap zones: {err}")));
-            }
-        };
-
-        Ok(Response::new(response))
-    }
-
     async fn get_zones(
         &self,
         _request: Request<GetZonesRequest>,
@@ -254,42 +242,6 @@ where
             })),
             None => Err(Status::not_found(format!("policy with id {id} not found"))),
         }
-    }
-
-    async fn swap_zone_pairs(
-        &self,
-        request: Request<SwapZonePairsRequest>,
-    ) -> Result<Response<SwapZonePairsResponse>, Status> {
-        let zone_pairs = request.into_inner().zone_pairs;
-        let mut zone_pairs_domain = Vec::with_capacity(zone_pairs.len());
-
-        for zp in zone_pairs {
-            match ZonePair::try_from_proto(zp) {
-                Ok(pair) => zone_pairs_domain.push(pair),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to parse zone pair from SwapZonePairsRequest");
-                    return Err(Status::invalid_argument(format!(
-                        "failed to parse zone pair: {err}"
-                    )));
-                }
-            }
-        }
-
-        let response = match self
-            .zone_pair_store
-            .swap_zone_pairs(zone_pairs_domain)
-            .await
-        {
-            Ok(()) => SwapZonePairsResponse {},
-            Err(err) => {
-                tracing::error!(error = %err, "failed to swap zone pairs");
-                return Err(Status::internal(format!(
-                    "failed to swap zone pairs: {err}"
-                )));
-            }
-        };
-
-        Ok(Response::new(response))
     }
 
     async fn get_zone_pairs(
@@ -335,10 +287,23 @@ where
         let new_config = AppConfig::from_proto(proto_config)
             .map_err(|e| Status::invalid_argument(format!("invalid config: {e}")))?;
 
+        tracing::info!(
+            event = "config.swap.started",
+            capture_interfaces = ?new_config.capture_interfaces,
+            query_socket_path = %new_config.query_socket_path,
+            event_socket_path = %new_config.event_socket_path,
+            "received AppConfig swap request"
+        );
+
         self.config_provider
             .swap_config(new_config)
             .await
             .map_err(|e| Status::internal(format!("failed to swap config: {e}")))?;
+
+        tracing::info!(
+            event = "config.swap.succeeded",
+            "AppConfig swap request applied"
+        );
 
         Ok(Response::new(SwapConfigResponse {}))
     }
@@ -350,6 +315,15 @@ where
         let config = self.config_provider.get_config();
         Ok(Response::new(GetConfigResponse {
             config: Some(config.to_proto()),
+        }))
+    }
+
+    async fn get_system_time(
+        &self,
+        _request: Request<GetSystemTimeRequest>,
+    ) -> Result<Response<GetSystemTimeResponse>, Status> {
+        Ok(Response::new(GetSystemTimeResponse {
+            time: Some(SystemTime::now().into()),
         }))
     }
 
@@ -365,6 +339,15 @@ where
         let new_config = DnsInspectionConfig::from_proto(proto_config)
             .map_err(|e| Status::invalid_argument(format!("invalid dns inspection config: {e}")))?;
 
+        tracing::info!(
+            event = "dns_inspection.swap.started",
+            enabled = new_config.general.enabled,
+            blocklist_domains = new_config.blocklist.domains.len(),
+            dns_tunneling_enabled = new_config.dns_tunneling.enabled,
+            dnssec_enabled = new_config.dnssec.enabled,
+            "received DNS inspection config swap request"
+        );
+
         self.dns_inspection_store
             .swap_config(new_config.clone())
             .await
@@ -373,6 +356,12 @@ where
         self.dns_inspection
             .update_config(&new_config)
             .map_err(|e| Status::internal(format!("failed to apply dns inspection config: {e}")))?;
+
+        tracing::info!(
+            event = "dns_inspection.swap.succeeded",
+            enabled = new_config.general.enabled,
+            "DNS inspection config applied"
+        );
 
         Ok(Response::new(SwapDnsInspectionConfigResponse {}))
     }
@@ -399,6 +388,14 @@ where
         let new_config = IpsConfig::from_proto(proto_config)
             .map_err(|e| Status::invalid_argument(format!("invalid ips config: {e}")))?;
 
+        tracing::info!(
+            event = "ips.swap.started",
+            enabled = new_config.general.enabled,
+            detection_enabled = new_config.detection.enabled,
+            signatures = new_config.signatures.len(),
+            "received IPS config swap request"
+        );
+
         self.ips_store
             .swap_config(new_config.clone())
             .await
@@ -407,6 +404,13 @@ where
         self.ips
             .update_config(&new_config)
             .map_err(|e| Status::internal(format!("failed to apply ips config: {e}")))?;
+
+        tracing::info!(
+            event = "ips.swap.succeeded",
+            enabled = new_config.general.enabled,
+            signatures = new_config.signatures.len(),
+            "IPS config applied"
+        );
 
         Ok(Response::new(SwapIpsConfigResponse {}))
     }
@@ -455,6 +459,109 @@ where
         };
 
         Ok(Response::new(response))
+    }
+}
+
+#[tonic::async_trait]
+impl<Swapper> FirewallConfigSnapshotService for QueryHandler<Swapper>
+where
+    Swapper: PolicyManager + Send + Sync + 'static,
+{
+    async fn push_active_config_snapshot(
+        &self,
+        request: Request<PushActiveConfigSnapshotRequest>,
+    ) -> Result<Response<PushActiveConfigSnapshotResponse>, Status> {
+        let inner = request.into_inner();
+        let correlation_id = inner.correlation_id.clone();
+
+        // Extract snapshot_id before consuming the snapshot
+        let snapshot = inner
+            .snapshot
+            .ok_or_else(|| Status::invalid_argument("missing snapshot"))?;
+        let snapshot_id = snapshot.id.clone();
+        let bundle = snapshot
+            .bundle
+            .ok_or_else(|| Status::invalid_argument("missing bundle in snapshot"))?;
+
+        tracing::info!(
+            event = "config_snapshot.push.started",
+            correlation_id,
+            snapshot_id,
+            rules = bundle.rules.len(),
+            zones = bundle.zones.len(),
+            zone_pairs = bundle.zone_pairs.len(),
+            zone_interfaces = bundle.zone_interfaces.len(),
+            "received active config snapshot push"
+        );
+
+        // 1. Parse all proto types into domain-type HashMaps
+        let policies = parse_proto_collection(bundle.rules, Policy::try_from_rule, "rule")?;
+        let zones = parse_proto_collection(bundle.zones, Zone::try_from_proto, "zone")?;
+        let zone_pairs =
+            parse_proto_collection(bundle.zone_pairs, ZonePair::try_from_proto, "zone pair")?;
+        let zone_interfaces = parse_proto_collection(
+            bundle.zone_interfaces,
+            ZoneInterface::try_from_proto,
+            "zone interface",
+        )?;
+
+        // 2. Validate referential integrity across the entire bundle
+        let errors =
+            crate::integrity::validate_bundle(&policies, &zone_pairs, &zones, &zone_interfaces);
+
+        if !errors.is_empty() {
+            let messages: Vec<String> = errors.iter().map(std::string::ToString::to_string).collect();
+            tracing::warn!(
+                event = "config_snapshot.push.rejected",
+                correlation_id,
+                snapshot_id,
+                error_count = messages.len(),
+                message = %messages.join("; "),
+                "active config snapshot rejected by integrity validation"
+            );
+            return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                correlation_id,
+                accepted: false,
+                message: messages.join("; "),
+                applied_snapshot_id: String::new(),
+            }));
+        }
+
+        // 3. Apply swaps in leaf-to-root dependency order:
+        //    Zones (no deps) → ZoneInterfaces & ZonePairs (depend on Zones) → Policies (depend on ZonePairs)
+        self.zone_store
+            .swap_zones(zones.into_iter().collect())
+            .await
+            .map_err(|e| Status::internal(format!("failed to swap zones: {e}")))?;
+
+        self.zone_interface_store
+            .swap_zone_interfaces(zone_interfaces.into_iter().collect())
+            .await
+            .map_err(|e| Status::internal(format!("failed to swap zone interfaces: {e}")))?;
+
+        self.zone_pair_store
+            .swap_zone_pairs(zone_pairs.into_iter().collect())
+            .await
+            .map_err(|e| Status::internal(format!("failed to swap zone pairs: {e}")))?;
+
+        self.policy_store
+            .swap_policies(policies.into_iter().collect())
+            .await
+            .map_err(|e| Status::internal(format!("failed to swap policies: {e}")))?;
+
+        tracing::info!(
+            event = "config_snapshot.push.succeeded",
+            correlation_id,
+            snapshot_id,
+            "active config snapshot applied"
+        );
+
+        Ok(Response::new(PushActiveConfigSnapshotResponse {
+            correlation_id,
+            accepted: true,
+            message: String::new(),
+            applied_snapshot_id: snapshot_id,
+        }))
     }
 }
 

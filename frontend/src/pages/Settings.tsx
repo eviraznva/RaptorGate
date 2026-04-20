@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import Navbar from "../components/Navbar";
 
 interface NetworkInterface {
   name: string;
@@ -47,8 +46,6 @@ export default function Settings() {
 
   return (
     <div className="min-h-screen bg-[#0c0c0c] flex flex-col text-[#f5f5f5]">
-      <Navbar />
-
       <div className="flex-1 flex justify-center p-8">
         <div className="w-full max-w-6xl">
           {/* FLOW LINE */}
@@ -235,4 +232,3 @@ export default function Settings() {
     </div>
   );
 }
-

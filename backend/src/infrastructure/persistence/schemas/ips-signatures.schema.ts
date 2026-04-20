@@ -1,14 +1,25 @@
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
-import { z } from 'zod';
+import { RegexPattern } from "src/domain/value-objects/regex-pattern.vo.js";
+import { z } from "zod";
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from "./_common.js";
 
 export const IpsSignatureRecordSchema = z
   .object({
     id: uuidSchema,
     name: z.string().min(1).max(128),
-    category: z.string().min(1).max(32),
-    pattern: z.string().min(1),
-    severity: z.string().min(1).max(16),
     isActive: z.boolean(),
+    category: z.string().min(1).max(32),
+
+    pattern: z.string().refine(
+      (val) => {
+        return RegexPattern.isValid(val);
+      },
+      { message: "Invalid regex pattern according to VO" },
+    ),
+    severity: z.string().min(1).max(16),
+    action: z.string().min(1).max(16),
+    appProtocols: z.array(z.string().min(1).max(32)).max(16),
+    srcPorts: z.array(z.number().int().min(1).max(65535)).max(16),
+    dstPorts: z.array(z.number().int().min(1).max(65535)).max(16),
     createdAt: isoDateTimeSchema,
     updatedAt: isoDateTimeSchema,
   })

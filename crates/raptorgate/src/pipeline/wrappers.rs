@@ -6,16 +6,16 @@ use etherparse::{NetSlice, TransportSlice};
 use tokio::sync::Mutex;
 
 use crate::{
-    config::AppConfig,
-    config_provider::AppConfigProvider,
+    config::{provider::AppConfigProvider, AppConfig},
     data_plane::{
         dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection, EchMitigationVerdict},
-        ips::ips::{Ips, IpsVerdict},
+        ips::ips::{Ips, IpsSignatureMatch, IpsVerdict},
         nat::NatEngine,
         packet_context::PacketContext,
         tcp_session_tracker::TcpSessionTracker,
     },
     dpi::{DpiClassifier, InspectResult},
+    events::{self, Event, EventKind},
     packet_validator::validate,
     pipeline::{Stage, StageOutcome},
     policy::provider::DiskPolicyProvider,
@@ -25,7 +25,7 @@ use crate::{
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 use crate::dpi::AppProto;
-use crate::policy::policy_evaluator::DnsEvalContext;
+use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext};
 
 #[derive(Clone)]
 pub struct ValidationStage;
@@ -42,7 +42,13 @@ impl Stage for ValidationStage {
         match validate(ctx.borrow_sliced_packet()) {
             Ok(()) => StageOutcome::Continue,
             Err(e) => {
-                tracing::debug!(reason = %e, "packet failed validation");
+                log_packet_decision(
+                    ctx,
+                    "packet.validation.failed",
+                    "validation",
+                    "drop",
+                    &e.to_string(),
+                );
                 StageOutcome::Halt
             }
         }
@@ -223,7 +229,16 @@ impl Stage for FtpAlgStage {
                 dpi_ctx,
             ) {
                 Ok(new_ctx) => *ctx = new_ctx,
-                Err(_) => return StageOutcome::Halt,
+                Err(err) => {
+                    tracing::warn!(
+                        event = "ftp_alg.reparse.failed",
+                        stage = "ftp_alg",
+                        verdict = "drop",
+                        error = %err,
+                        "FTP ALG rewrite produced an invalid packet"
+                    );
+                    return StageOutcome::Halt;
+                }
             }
         } else {
             // Safety: the backing allocation and length stay unchanged here.
@@ -281,7 +296,13 @@ impl Stage for DnsBlockListStage {
         match self.inspection.check_blocklist(&domain) {
             BlocklistVerdict::Allow => StageOutcome::Continue,
             BlocklistVerdict::Block(msg) => {
-                tracing::debug!(reason = %msg, "DNS blocklist block");
+                log_packet_decision(
+                    ctx,
+                    "dns.blocklist.blocked",
+                    "dns_blocklist",
+                    "drop",
+                    &msg,
+                );
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Halt
             }
@@ -320,12 +341,24 @@ impl Stage for DnsTunnelingStage {
         match self.inspection.inspect_tunneling(&domain, &qtype) {
             DnsInspectionVerdict::Allow => StageOutcome::Continue,
             DnsInspectionVerdict::Alert(msg) => {
-                tracing::debug!(reason = %msg, "DNS tunneling alert");
+                log_packet_decision(
+                    ctx,
+                    "dns.tunneling.alert",
+                    "dns_tunneling",
+                    "allow_warn",
+                    &msg,
+                );
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Continue
             }
             DnsInspectionVerdict::Block(msg) => {
-                tracing::debug!(reason = %msg, "DNS tunneling block");
+                log_packet_decision(
+                    ctx,
+                    "dns.tunneling.blocked",
+                    "dns_tunneling",
+                    "drop",
+                    &msg,
+                );
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Halt
             }
@@ -399,36 +432,102 @@ impl Stage for IpsStage {
 
         match self.inspection.inspect_packet(ctx) {
             IpsVerdict::Allow => StageOutcome::Continue,
-            IpsVerdict::Alert(msg) => {
-                tracing::debug!(reason = %msg, "IPS alert");
+            IpsVerdict::Alert(matches) => {
+                let msg = matches
+                    .iter()
+                    .map(IpsSignatureMatch::message)
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 ctx.with_dpi_ctx_mut(|dpi| {
                     if let Some(dpi) = dpi.as_mut() {
+                        let first = matches.first().expect("alert matches should not be empty");
                         dpi.ips_match = Some(crate::dpi::IpsMatch {
-                            signature_name: msg.clone(),
-                            severity: "medium".to_string(),
+                            signature_name: first.name.clone(),
+                            severity: first.severity.as_str().to_string(),
                             blocked: false,
                         });
                     }
                 });
+                for matched in matches {
+                    emit_ips_signature_matched(ctx, &matched);
+                }
+                log_packet_decision(ctx, "ips.signature.alert", "ips", "allow_warn", &msg);
                 ctx.with_warnings_mut(|warnings| warnings.push(msg));
                 StageOutcome::Continue
             }
-            IpsVerdict::Block(msg) => {
-                tracing::debug!(reason = %msg, "IPS block");
+            IpsVerdict::Block(matched) => {
+                let msg = matched.message();
                 ctx.with_dpi_ctx_mut(|dpi| {
                     if let Some(dpi) = dpi.as_mut() {
                         dpi.ips_match = Some(crate::dpi::IpsMatch {
-                            signature_name: msg.clone(),
-                            severity: "high".to_string(),
+                            signature_name: matched.name.clone(),
+                            severity: matched.severity.as_str().to_string(),
                             blocked: true,
                         });
                     }
                 });
+                emit_ips_signature_matched(ctx, &matched);
+                log_packet_decision(ctx, "ips.signature.blocked", "ips", "drop", &msg);
                 ctx.with_warnings_mut(|warnings| warnings.push(msg));
                 StageOutcome::Halt
             }
         }
     }
+}
+
+fn emit_ips_signature_matched(ctx: &PacketContext, matched: &IpsSignatureMatch) {
+    let sliced_packet = ctx.borrow_sliced_packet();
+
+    let (src_ip, dst_ip) = match &sliced_packet.net {
+        Some(NetSlice::Ipv4(ipv4)) => (
+            ipv4.header().source_addr().to_string(),
+            ipv4.header().destination_addr().to_string(),
+        ),
+        Some(NetSlice::Ipv6(ipv6)) => (
+            ipv6.header().source_addr().to_string(),
+            ipv6.header().destination_addr().to_string(),
+        ),
+        _ => return,
+    };
+
+    let (src_port, dst_port, transport_protocol, payload_length) = match &sliced_packet.transport {
+        Some(etherparse::TransportSlice::Tcp(tcp)) => (
+            tcp.source_port(),
+            tcp.destination_port(),
+            "tcp",
+            tcp.payload().len(),
+        ),
+        Some(etherparse::TransportSlice::Udp(udp)) => (
+            udp.source_port(),
+            udp.destination_port(),
+            "udp",
+            udp.payload().len(),
+        ),
+        _ => return,
+    };
+
+    let app_protocol = ctx
+        .borrow_dpi_ctx()
+        .as_ref()
+        .and_then(|dpi_ctx| dpi_ctx.app_proto)
+        .map(|proto| proto.to_string().to_lowercase())
+        .unwrap_or_default();
+
+    events::emit(Event::new(EventKind::IpsSignatureMatched {
+        signature_id: matched.id.clone(),
+        signature_name: matched.name.clone(),
+        category: matched.category.clone(),
+        severity: matched.severity.as_str().to_string(),
+        action: matched.action.as_str().to_string(),
+        src_ip,
+        src_port,
+        dst_ip,
+        dst_port,
+        transport_protocol: transport_protocol.to_string(),
+        app_protocol,
+        interface: ctx.borrow_src_interface().to_string(),
+        payload_length: u32::try_from(payload_length).unwrap_or(u32::MAX),
+    }));
 }
 
 /// Stage ewaluacji polityk.
@@ -482,20 +581,44 @@ impl Stage for PolicyEvalStage {
             dnssec_status: Some(status),
         });
 
-        let verdict = self.provider.get_evaluator().evaluate(
-            ctx.borrow_sliced_packet(),
-            &arrival,
-            dns_ctx.as_ref(),
-        );
+        let verdict = self.provider.get_evaluator().evaluate(PolicyEvalContext {
+            packet: ctx.borrow_sliced_packet(),
+            arrival: &arrival,
+            dns: dns_ctx.as_ref(),
+            dpi: ctx.borrow_dpi_ctx().as_ref(),
+        });
 
         match verdict {
             Verdict::Allow => StageOutcome::Continue,
-            Verdict::Drop => StageOutcome::Halt,
+            Verdict::Drop => {
+                log_packet_decision(
+                    ctx,
+                    "policy.packet.dropped",
+                    "policy_eval",
+                    "drop",
+                    "policy returned drop verdict",
+                );
+                StageOutcome::Halt
+            }
             Verdict::AllowWarn(msg) => {
+                log_packet_decision(
+                    ctx,
+                    "policy.packet.allowed_with_warning",
+                    "policy_eval",
+                    "allow_warn",
+                    &msg,
+                );
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Continue
             }
             Verdict::DropWarn(msg) => {
+                log_packet_decision(
+                    ctx,
+                    "policy.packet.dropped_with_warning",
+                    "policy_eval",
+                    "drop_warn",
+                    &msg,
+                );
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Halt
             }
@@ -517,7 +640,13 @@ impl Stage for TcpClassificationStage {
         match self.tracker.process_packet(ctx.borrow_sliced_packet()) {
             Ok(_) => StageOutcome::Continue,
             Err(e) => {
-                tracing::error!(error = %e, "TCP session tracking error");
+                log_packet_decision(
+                    ctx,
+                    "tcp_session.tracking.failed",
+                    "tcp_classification",
+                    "drop",
+                    &e.to_string(),
+                );
                 StageOutcome::Halt
             }
         }
@@ -543,7 +672,12 @@ impl Stage for DpiStage {
         match self.classifier.inspect_packet(ctx.borrow_sliced_packet()) {
             InspectResult::Done(mut dpi_ctx) => {
                 merge_preserved_dpi_fields(ctx.borrow_dpi_ctx().as_ref(), &mut dpi_ctx);
-                tracing::debug!("DPI: classification done ctx={dpi_ctx:?}");
+                tracing::debug!(
+                    event = "dpi.classification.completed",
+                    stage = "dpi",
+                    app_proto = ?dpi_ctx.app_proto,
+                    "DPI classification completed"
+                );
                 ctx.with_dpi_ctx_mut(|c| *c = Some(dpi_ctx));
             }
             InspectResult::NeedMore => {}
@@ -600,6 +734,89 @@ fn merge_preserved_dpi_fields(existing: Option<&crate::dpi::DpiContext>, next: &
     next.dst_port = next.dst_port.or(existing.dst_port);
 }
 
+fn log_packet_decision(
+    ctx: &PacketContext,
+    event: &'static str,
+    stage: &'static str,
+    verdict: &'static str,
+    reason: &str,
+) {
+    let fields = packet_log_fields(ctx);
+
+    tracing::warn!(
+        event,
+        stage,
+        verdict,
+        reason,
+        iface = %ctx.borrow_src_interface(),
+        packet_len = fields.packet_len,
+        src_ip = fields.src_ip.as_deref().unwrap_or(""),
+        dst_ip = fields.dst_ip.as_deref().unwrap_or(""),
+        src_port = fields.src_port.unwrap_or_default(),
+        dst_port = fields.dst_port.unwrap_or_default(),
+        protocol = fields.protocol.unwrap_or(""),
+        app_proto = fields.app_proto.as_deref().unwrap_or(""),
+        "packet decision"
+    );
+}
+
+struct PacketLogFields {
+    packet_len: usize,
+    src_ip: Option<String>,
+    dst_ip: Option<String>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    protocol: Option<&'static str>,
+    app_proto: Option<String>,
+}
+
+fn packet_log_fields(ctx: &PacketContext) -> PacketLogFields {
+    let sliced = ctx.borrow_sliced_packet();
+    let (src_ip, dst_ip) = match &sliced.net {
+        Some(NetSlice::Ipv4(ipv4)) => (
+            Some(ipv4.header().source_addr().to_string()),
+            Some(ipv4.header().destination_addr().to_string()),
+        ),
+        Some(NetSlice::Ipv6(ipv6)) => (
+            Some(ipv6.header().source_addr().to_string()),
+            Some(ipv6.header().destination_addr().to_string()),
+        ),
+        _ => (None, None),
+    };
+
+    let (src_port, dst_port, protocol) = match &sliced.transport {
+        Some(TransportSlice::Tcp(tcp)) => (
+            Some(tcp.source_port()),
+            Some(tcp.destination_port()),
+            Some("tcp"),
+        ),
+        Some(TransportSlice::Udp(udp)) => (
+            Some(udp.source_port()),
+            Some(udp.destination_port()),
+            Some("udp"),
+        ),
+        Some(TransportSlice::Icmpv4(_)) => (None, None, Some("icmpv4")),
+        Some(TransportSlice::Icmpv6(_)) => (None, None, Some("icmpv6")),
+        _ => (None, None, None),
+    };
+
+    let app_proto = ctx
+        .borrow_dpi_ctx()
+        .as_ref()
+        .and_then(|dpi_ctx| dpi_ctx.app_proto)
+        .map(|proto| proto.to_string().to_lowercase());
+
+    PacketLogFields {
+        packet_len: ctx.borrow_raw().len(),
+        src_ip,
+        dst_ip,
+        src_port,
+        dst_port,
+        protocol,
+        app_proto,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -614,7 +831,7 @@ mod tests {
             tun_address: "10.254.254.1".parse().unwrap(),
             tun_netmask: "255.255.255.0".parse().unwrap(),
             data_dir: PathBuf::from("/tmp"),
-            grpc_socket_path: "/tmp/firewall.sock".into(),
+            event_socket_path: "/tmp/firewall.sock".into(),
             query_socket_path: "/tmp/query.sock".into(),
             dev_config: None,
             pki_dir: "/tmp/pki".into(),

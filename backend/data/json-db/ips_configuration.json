@@ -1,0 +1,58 @@
+{
+  "general": {
+    "enabled": true
+  },
+  "detection": {
+    "enabled": true,
+    "maxPayloadBytes": 8192,
+    "maxMatchesPerPacket": 10
+  },
+  "signatures": [
+    {
+      "id": "2c93c142-f825-40e1-886c-75418002deaa",
+      "name": "SQL Injection Attempt",
+      "isActive": true,
+      "category": "sqli",
+      "pattern": "(?i)(UNION.*SELECT)",
+      "severity": "SEVERITY_HIGH",
+      "action": "IPS_ACTION_BLOCK",
+      "appProtocols": [
+        "IPS_APP_PROTOCOL_HTTP",
+        "IPS_APP_PROTOCOL_TLS"
+      ],
+      "srcPorts": [
+        80,
+        443
+      ],
+      "dstPorts": [
+        80,
+        443
+      ],
+      "createdAt": "2026-04-17T19:13:56.754Z",
+      "updatedAt": "2026-04-17T19:13:56.754Z"
+    },
+    {
+      "id": "1dccf00d-1599-4828-abf0-0cf36f025bc3",
+      "name": "Test Signature",
+      "isActive": true,
+      "category": "other",
+      "pattern": "sdasfghwqehadsfgadfg",
+      "severity": "SEVERITY_LOW",
+      "action": "IPS_ACTION_BLOCK",
+      "appProtocols": [
+        "IPS_APP_PROTOCOL_HTTP",
+        "IPS_APP_PROTOCOL_TLS",
+        "IPS_APP_PROTOCOL_FTP"
+      ],
+      "srcPorts": [
+        80,
+        443
+      ],
+      "dstPorts": [
+        8080
+      ],
+      "createdAt": "2026-04-17T19:13:56.754Z",
+      "updatedAt": "2026-04-17T19:13:56.754Z"
+    }
+  ]
+}

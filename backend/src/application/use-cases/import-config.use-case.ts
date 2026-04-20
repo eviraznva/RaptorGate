@@ -1,5 +1,5 @@
 import { hash } from 'node:crypto';
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
 import { FirewallCertificate } from '../../domain/entities/firewall-certificate.entity.js';
 import { FirewallRule } from '../../domain/entities/firewall-rule.entity.js';
@@ -60,6 +60,8 @@ import {
 
 @Injectable()
 export class ImportConfigUseCase {
+  private readonly logger = new Logger(ImportConfigUseCase.name);
+
   constructor(
     @Inject(CONFIG_SNAPSHOT_REPOSITORY_TOKEN)
     private readonly configSnapshotRepository: IConfigSnapshotRepository,
@@ -240,6 +242,22 @@ export class ImportConfigUseCase {
         'import',
       );
     }
+
+    this.logger.log({
+      event: "config_snapshot.import.succeeded",
+      message: "configuration snapshot imported",
+      actorId: claims.sub,
+      snapshotId: importedSnapshot.getId(),
+      versionNumber: importedSnapshot.getVersionNumber(),
+      checksum: calculatedChecksum,
+      isActive: dto.snapshotData.isActive,
+      counts: {
+        rules: payload.bundle.rules.items.length,
+        zones: payload.bundle.zones.items.length,
+        zonePairs: payload.bundle.zone_pairs.items.length,
+        natRules: payload.bundle.nat_rules.items.length,
+      },
+    });
 
     return {
       configSnapshot: importedSnapshot,

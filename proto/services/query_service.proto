@@ -1,27 +1,26 @@
 syntax = "proto3";
 
 package raptorgate.services;
+import "google/protobuf/timestamp.proto";
 
 import "config/config_models.proto";
 
 service FirewallQueryService {
   rpc GetTcpSessions  (GetTcpSessionsRequest) returns (GetTcpSessionsResponse);
 
-  rpc SwapPolicies  (SwapPoliciesRequest) returns (SwapPoliciesResponse);
   rpc GetPolicies   (GetPoliciesRequest)       returns (GetPoliciesResponse);
   rpc GetPolicy     (GetPolicyRequest)         returns (GetPolicyResponse);
   rpc GetNatBindings(GetNatBindingsRequest)    returns (GetNatBindingsResponse);
 
-  rpc SwapZones     (SwapZonesRequest)         returns (SwapZonesResponse);
   rpc GetZones      (GetZonesRequest)          returns (GetZonesResponse);
   rpc GetZone       (GetZoneRequest)           returns (GetZoneResponse);
-  rpc SwapZonePairs (SwapZonePairsRequest)     returns (SwapZonePairsResponse);
   rpc GetZonePairs  (GetZonePairsRequest)      returns (GetZonePairsResponse);
   rpc GetZonePair   (GetZonePairRequest)       returns (GetZonePairResponse);
 
   rpc SwapConfig    (SwapConfigRequest)        returns (SwapConfigResponse);
   rpc GetConfig     (GetConfigRequest)         returns (GetConfigResponse);
 
+  rpc GetSystemTime (GetSystemTimeRequest)     returns (GetSystemTimeResponse);
   rpc SwapDnsInspectionConfig (SwapDnsInspectionConfigRequest) returns (SwapDnsInspectionConfigResponse);
   rpc GetDnsInspectionConfig  (GetDnsInspectionConfigRequest)  returns (GetDnsInspectionConfigResponse);
   rpc SwapIpsConfig           (SwapIpsConfigRequest)           returns (SwapIpsConfigResponse);
@@ -33,10 +32,6 @@ service FirewallQueryService {
 
 message GetTcpSessionsRequest {}
 message GetTcpSessionsResponse {}
-
-message SwapPoliciesRequest {
-  repeated config.Rule rules = 1;
-}
 
 message GetPoliciesRequest {}
 message GetPoliciesResponse {
@@ -51,18 +46,8 @@ message GetPolicyResponse {
   config.Rule rule = 1;
 }
 
-message SwapPoliciesResponse {
-  // optional string error = 1;
-}
-
 message GetNatBindingsRequest {}
 message GetNatBindingsResponse {}
-
-message SwapZonesRequest {
-  repeated config.Zone zones = 1;
-}
-
-message SwapZonesResponse {}
 
 message GetZonesRequest {}
 
@@ -79,12 +64,6 @@ message GetZoneResponse {
 }
 
 // Zone Pairs
-
-message SwapZonePairsRequest {
-  repeated config.ZonePair zone_pairs = 1;
-}
-
-message SwapZonePairsResponse {}
 
 message GetZonePairsRequest {}
 
@@ -114,6 +93,11 @@ message GetConfigResponse {
   config.AppConfig config = 1;
 }
 
+message GetSystemTimeRequest {}
+
+message GetSystemTimeResponse {
+  google.protobuf.Timestamp time = 1;
+}
 // ── DNS Inspection Config ─────────────────────────────────────────────────────
 
 message SwapDnsInspectionConfigRequest {

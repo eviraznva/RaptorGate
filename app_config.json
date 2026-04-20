@@ -1,14 +1,11 @@
 {
-  "capture_interfaces": [
-    "eth1",
-    "eth2"
-  ],
+  "capture_interfaces": ["eth1", "eth2"],
   "pcap_timeout_ms": 5000,
   "tun_device_name": "tun0",
   "tun_address": "10.254.254.1",
   "tun_netmask": "255.255.255.0",
   "data_dir": "./",
-  "grpc_socket_path": "./sockets/firewall.sock",
+  "event_socket_path": "./sockets/event.sock",
   "query_socket_path": "./sockets/query.sock",
   "pki_dir": "/var/lib/raptorgate/pki",
   "ssl_inspection_enabled": true,

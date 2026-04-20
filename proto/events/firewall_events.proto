@@ -23,29 +23,50 @@ message EventKind {
     TcpSessionRemovedEvent         tcp_session_removed      = 2;
     TcpConnectionRejectedEvent     tcp_connection_rejected  = 3;
     TcpSessionAbortedMidCloseEvent tcp_session_aborted      = 4;
-    TunDeviceSwappedEvent          tun_device_swapped       = 5;
-    SnifferConfigChangedEvent      sniffer_config_changed   = 6;
-    TlsInterceptStartedEvent          tls_intercept_started           = 7;
-    TlsHandshakeCompleteEvent         tls_handshake_complete          = 8;
-    TlsSessionClosedEvent             tls_session_closed              = 9;
-    InboundTlsInterceptStartedEvent   inbound_tls_intercept_started   = 10;
-    InboundTlsHandshakeCompleteEvent  inbound_tls_handshake_complete  = 11;
-    InboundTlsSessionClosedEvent      inbound_tls_session_closed      = 12;
-    DecryptedTrafficClassifiedEvent   decrypted_traffic_classified    = 13;
-    DecryptedIpsMatchEvent            decrypted_ips_match             = 14;
-    TlsUntrustedCertDetectedEvent     tls_untrusted_cert_detected     = 15;
-    TlsBypassAppliedEvent             tls_bypass_applied              = 16;
-    InboundTlsBypassAppliedEvent      inbound_tls_bypass_applied      = 17;
-    PinningFailureDetectedEvent       pinning_failure_detected        = 18;
-    PinningAutoBypassActivatedEvent   pinning_auto_bypass_activated   = 19;
-    TlsHandshakeFailedEvent           tls_handshake_failed            = 20;
-    EchAttemptDetectedEvent           ech_attempt_detected            = 21;
+    TcpSessionEnteredTimeWaitEvent tcp_session_entered_timewait = 5;
+    TunDeviceSwappedEvent          tun_device_swapped       = 6;
+    SnifferConfigChangedEvent      sniffer_config_changed   = 7;
+    EventBusConnectedEvent         event_bus_connected      = 8;
+    IpsSignatureMatchedEvent       ips_signature_matched    = 9;
+    TlsInterceptStartedEvent       tls_intercept_started    = 10;
+    TlsHandshakeCompleteEvent      tls_handshake_complete   = 11;
+    TlsSessionClosedEvent          tls_session_closed       = 12;
+    InboundTlsInterceptStartedEvent   inbound_tls_intercept_started   = 13;
+    InboundTlsHandshakeCompleteEvent  inbound_tls_handshake_complete  = 14;
+    InboundTlsSessionClosedEvent      inbound_tls_session_closed      = 15;
+    DecryptedTrafficClassifiedEvent   decrypted_traffic_classified    = 16;
+    DecryptedIpsMatchEvent            decrypted_ips_match             = 17;
+    TlsUntrustedCertDetectedEvent     tls_untrusted_cert_detected     = 18;
+    TlsBypassAppliedEvent             tls_bypass_applied              = 19;
+    InboundTlsBypassAppliedEvent      inbound_tls_bypass_applied      = 20;
+    PinningFailureDetectedEvent       pinning_failure_detected        = 21;
+    PinningAutoBypassActivatedEvent   pinning_auto_bypass_activated   = 22;
+    TlsHandshakeFailedEvent           tls_handshake_failed            = 23;
+    EchAttemptDetectedEvent           ech_attempt_detected            = 24;
   }
 }
 
 message TcpEndpoint {
   string ip   = 1;
   uint32 port = 2;
+}
+
+message EventBusConnectedEvent {}
+
+message IpsSignatureMatchedEvent {
+  string signature_id = 1;
+  string signature_name = 2;
+  string category = 3;
+  string severity = 4;
+  string action = 5;
+  string src_ip = 6;
+  uint32 src_port = 7;
+  string dst_ip = 8;
+  uint32 dst_port = 9;
+  string transport_protocol = 10;
+  string app_protocol = 11;
+  string interface = 12;
+  uint32 payload_length = 13;
 }
 
 message SnifferConfigChangedEvent {
@@ -71,6 +92,11 @@ message TcpConnectionRejectedEvent {
 }
 
 message TcpSessionAbortedMidCloseEvent {
+  TcpEndpoint src = 1;
+  TcpEndpoint dst = 2;
+}
+
+message TcpSessionEnteredTimeWaitEvent {
   TcpEndpoint src = 1;
   TcpEndpoint dst = 2;
 }

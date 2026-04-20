@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   Inject,
   Injectable,
+  Logger,
   OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -35,6 +36,7 @@ export const CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN =
 export class GrpcConfigSnapshotPushService
   implements IConfigSnapshotPushService, OnModuleInit
 {
+  private readonly logger = new Logger(GrpcConfigSnapshotPushService.name);
   private configSnapshotPushClient: FirewallConfigSnapshotServiceClient;
 
   constructor(
@@ -54,9 +56,10 @@ export class GrpcConfigSnapshotPushService
     reason: ConfigSnapshotPushReason,
   ): Promise<void> {
     const payload = snapshot.deserializePayload();
+    const correlationId = randomUUID();
 
     const request: PushActiveConfigSnapshotRequest = {
-      correlationId: randomUUID(),
+      correlationId,
       reason,
       snapshot: {
         id: snapshot.getId(),
@@ -71,19 +74,57 @@ export class GrpcConfigSnapshotPushService
       },
     };
 
+    this.logger.log({
+      event: "firewall.snapshot.push.started",
+      message: "pushing active config snapshot to firewall",
+      correlationId,
+      reason,
+      snapshotId: snapshot.getId(),
+      versionNumber: snapshot.getVersionNumber(),
+      counts: bundleCounts(payload),
+    });
+
     try {
       const response = await firstValueFrom(
         this.configSnapshotPushClient.pushActiveConfigSnapshot(request),
       );
 
       if (!response.accepted) {
+        this.logger.warn({
+          event: "firewall.snapshot.push.rejected",
+          message: response.message || "firewall rejected active snapshot push",
+          correlationId,
+          reason,
+          snapshotId: snapshot.getId(),
+        });
         throw new Error(
           `Firewall rejected active snapshot push: ${response.message || 'unknown reason'}`,
         );
       }
+
+      this.logger.log({
+        event: "firewall.snapshot.push.succeeded",
+        message: "firewall accepted active config snapshot",
+        correlationId,
+        reason,
+        snapshotId: snapshot.getId(),
+        appliedSnapshotId: response.appliedSnapshotId,
+      });
     } catch (error) {
       const reasonText =
         error instanceof Error ? error.message : 'Unknown gRPC error';
+
+      this.logger.error(
+        {
+          event: "firewall.snapshot.push.failed",
+          message: "failed to push active config snapshot to firewall",
+          correlationId,
+          reason,
+          snapshotId: snapshot.getId(),
+          error: reasonText,
+        },
+        error instanceof Error ? error.stack : undefined,
+      );
 
       throw new ServiceUnavailableException(
         `Firewall config snapshot push service is unavailable. ${reasonText}`,
@@ -143,7 +184,7 @@ export class GrpcConfigSnapshotPushService
         name: i.getName(),
         category: i.getCategory().getValue(),
         pattern: i.getPattern().getValue(),
-        severity: this.toSeverity(i.getSeverity()),
+        severity: this.toSeverity(i.getSeverity().getValue()),
       })),
       mlModel: b.ml_model
         ? {
@@ -246,4 +287,17 @@ export class GrpcConfigSnapshotPushService
         return CertificateType.CERTIFICATE_TYPE_UNSPECIFIED;
     }
   }
+}
+
+function bundleCounts(payload: ConfigSnapshotPayload) {
+  const bundle = payload.bundle;
+
+  return {
+    rules: bundle.rules.items.length,
+    zones: bundle.zones.items.length,
+    zonePairs: bundle.zone_pairs.items.length,
+    natRules: bundle.nat_rules.items.length,
+    dnsBlacklist: bundle.dns_blacklist.items.length,
+    ipsSignatures: bundle.ips_signatures.items.length,
+  };
 }
