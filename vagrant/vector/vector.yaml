@@ -31,7 +31,9 @@ transforms:
       }
       level = to_string(.level) ?? "info"
       .level = downcase(level)
-      .service = "backend"
+      if !exists(.service) || is_null(.service) || .service == "" {
+        .service = "backend"
+      }
       .component = "raptorgate"
       .source_file = .file
       del(.source_type)
@@ -53,7 +55,9 @@ transforms:
       }
       level = to_string(.level) ?? "info"
       .level = downcase(level)
-      .service = "firewall"
+      if !exists(.service) || is_null(.service) || .service == "" {
+        .service = "firewall"
+      }
       .component = "raptorgate"
       .source_file = .file
       del(.source_type)

@@ -1,6 +1,8 @@
 import { Controller, Logger } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { Observable } from 'rxjs';
 import { Event } from '../../infrastructure/grpc/generated/events/firewall_events.js';
+import { IsPublic } from '../../infrastructure/decorators/public.decorator.js';
 import {
   BackendEventServiceController,
   BackendEventServiceControllerMethods,
@@ -8,6 +10,8 @@ import {
 import { FirewallEventsService } from './firewall-events.service.js';
 
 @Controller()
+@IsPublic()
+@SkipThrottle()
 @BackendEventServiceControllerMethods()
 export class FirewallEventsController implements BackendEventServiceController {
   private readonly logger = new Logger(FirewallEventsController.name);

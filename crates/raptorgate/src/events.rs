@@ -229,28 +229,44 @@ async fn attempt_reconnect(
     backend: &mut Option<BackendConnection>,
     buffer: &mut Vec<Event>,
 ) {
-    match try_connect(socket_path).await {
-        Ok(conn) => {
-            tracing::info!(
-                event = "event_bus.backend_connected",
-                socket_path,
-                buffered_events = buffer.len(),
-                dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
-                "reconnected to backend"
-            );
-            *backend = Some(conn);
+    let mut attempted_paths = vec![socket_path.to_string()];
+    if socket_path.ends_with("/event.sock") {
+        attempted_paths.push(socket_path.replacen("/event.sock", "/firewall.sock", 1));
+    }
 
-            emit(Event::new(EventKind::EventBusConnectedEvent {}));
-            flush_batch(buffer, backend).await;
+    let mut last_error = None;
+
+    for attempted_socket_path in attempted_paths {
+        match try_connect(&attempted_socket_path).await {
+            Ok(conn) => {
+                tracing::info!(
+                    event = "event_bus.backend_connected",
+                    socket_path = attempted_socket_path,
+                    configured_socket_path = socket_path,
+                    buffered_events = buffer.len(),
+                    dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                    "reconnected to backend"
+                );
+                *backend = Some(conn);
+
+                emit(Event::new(EventKind::EventBusConnectedEvent {}));
+                flush_batch(buffer, backend).await;
+                return;
+            }
+            Err(err) => {
+                last_error = Some((attempted_socket_path, err));
+            }
         }
-        Err(e) => {
-            tracing::warn!(
-                event = "event_bus.backend_reconnect.failed",
-                socket_path,
-                error = ?e,
-                "reconnect attempt failed"
-            );
-        }
+    }
+
+    if let Some((attempted_socket_path, err)) = last_error {
+        tracing::warn!(
+            event = "event_bus.backend_reconnect.failed",
+            socket_path,
+            attempted_socket_path,
+            error = ?err,
+            "reconnect attempt failed"
+        );
     }
 }
 
