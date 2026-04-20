@@ -8,6 +8,10 @@ import { NatType } from "../../domain/value-objects/nat-type.vo.js";
 import { Priority } from "../../domain/value-objects/priority.vo.js";
 import { CreateNatRuleDto } from "../dtos/create-nat-rule.dto.js";
 import { CreateNatRuleResponseDto } from "../dtos/create-nat-rule-response.dto.js";
+import {
+  FIREWALL_NAT_CONFIG_QUERY_SERVICE_TOKEN,
+  type IFirewallNatConfigQueryService,
+} from "../ports/firewall-nat-config-query-service.interface.js";
 import type { ITokenService } from "../ports/token-service.interface.js";
 import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
@@ -19,6 +23,8 @@ export class CreateNatRuleUseCase {
     @Inject(NAT_RULES_REPOSITORY_TOKEN)
     private readonly natRulesRepository: INatRulesRepository,
     @Inject(TOKEN_SERVICE_TOKEN) private readonly tokenService: ITokenService,
+    @Inject(FIREWALL_NAT_CONFIG_QUERY_SERVICE_TOKEN)
+    private readonly firewallNatConfigQueryService: IFirewallNatConfigQueryService,
   ) {}
 
   async execute(dto: CreateNatRuleDto): Promise<CreateNatRuleResponseDto> {
@@ -64,6 +70,10 @@ export class CreateNatRuleUseCase {
       isActive: newNatRule.getIsActive(),
       priority: newNatRule.getPriority().getValue(),
     });
+
+    const allNatRules = await this.natRulesRepository.findAll();
+
+    await this.firewallNatConfigQueryService.swapNatConfig(allNatRules);
 
     return { natRule: newNatRule };
   }
@@ -120,15 +130,15 @@ export class CreateNatRuleUseCase {
     }
 
     if (dto.type === "DNAT") {
-      if (dto.destinationIp === null || dto.destinationIp === undefined) {
+      // Wymagane
+      if (dto.destinationIp == null) {
         throw new NatConfigIsInvalidException(
           dto.type,
           "destinationIp",
           "Destination IP is required for DNAT rule",
         );
       }
-
-      if (dto.translatedIp === null || dto.translatedIp === undefined) {
+      if (dto.translatedIp == null) {
         throw new NatConfigIsInvalidException(
           dto.type,
           "translatedIp",
@@ -136,15 +146,15 @@ export class CreateNatRuleUseCase {
         );
       }
 
-      if (dto.sourceIp !== null && dto.sourceIp !== undefined) {
+      // Niedozwolone
+      if (dto.sourceIp != null) {
         throw new NatConfigIsInvalidException(
           dto.type,
           "sourceIp",
           "Source IP is not allowed for DNAT rule",
         );
       }
-
-      if (dto.sourcePort !== null && dto.sourcePort !== undefined) {
+      if (dto.sourcePort != null) {
         throw new NatConfigIsInvalidException(
           dto.type,
           "sourcePort",
@@ -152,19 +162,14 @@ export class CreateNatRuleUseCase {
         );
       }
 
-      if (dto.destinationPort !== null && dto.destinationPort !== undefined) {
+      // destinationPort i translatedPort są OPCJONALNE — nie blokuj ich
+
+      // Spójność portów: jeśli translatedPort podany, destinationPort też powinien być
+      if (dto.translatedPort != null && dto.destinationPort == null) {
         throw new NatConfigIsInvalidException(
           dto.type,
           "destinationPort",
-          "Destination port is not allowed for DNAT rule",
-        );
-      }
-
-      if (dto.translatedPort !== null && dto.translatedPort !== undefined) {
-        throw new NatConfigIsInvalidException(
-          dto.type,
-          "translatedPort",
-          "Translated port is not allowed for DNAT rule",
+          "Destination port is required when translated port is specified for DNAT rule",
         );
       }
     }

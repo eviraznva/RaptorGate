@@ -76,6 +76,10 @@ impl NatEngine {
         self.bindings.insert(binding);
     }
 
+    pub fn nat_rules(&self) -> Option<Arc<NatRules>> {
+        self.nat_rules.clone()
+    }
+
     /// Zwraca kolejny dostępny identyfikator powiązania
     pub fn next_binding_id(&mut self) -> u64 {
         let binding_id = self.bindings.next_binding_id();
@@ -311,7 +315,6 @@ impl NatEngine {
                         return false;
                     }
                 }
-
                 if let Some(cidr) = rule.dst_cidr() {
                     if !cidr.contains(&flow.dst_ip) {
                         return false;
@@ -401,7 +404,7 @@ impl NatEngine {
                     public_ip,
                     original_forward.proto,
                     original_forward.src_port,
-                    rule.src_port().map(|port| PortRange::new(port, port)),
+                    rule.translated_port().map(|port| PortRange::new(port, port)),
                 )?;
 
                 (
@@ -425,7 +428,7 @@ impl NatEngine {
                         translated_dst = %dst_ip,
                         "nat rejected dnat binding due to mixed address families"
                     );
-                    
+
                     return None;
                 }
 
@@ -434,7 +437,7 @@ impl NatEngine {
                         src_ip: original_forward.src_ip,
                         src_port: original_forward.src_port,
                         dst_ip,
-                        dst_port: original_forward.dst_port,
+                        dst_port: rule.translated_port().unwrap_or(original_forward.dst_port),
                         proto: original_forward.proto,
                     },
                     None,

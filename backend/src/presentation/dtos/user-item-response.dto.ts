@@ -29,4 +29,7 @@ export class UserItemResponseDto {
     enumName: 'Role',
   })
   roles: string[];
+
+  @ApiProperty({ example: false })
+  isFirstLogin: boolean;
 }

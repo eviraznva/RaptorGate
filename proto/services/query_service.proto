@@ -11,6 +11,8 @@ service FirewallQueryService {
   rpc GetPolicies   (GetPoliciesRequest)       returns (GetPoliciesResponse);
   rpc GetPolicy     (GetPolicyRequest)         returns (GetPolicyResponse);
   rpc GetNatBindings(GetNatBindingsRequest)    returns (GetNatBindingsResponse);
+  rpc SwapNatConfig (SwapNatConfigRequest)     returns (SwapNatConfigResponse);
+  rpc GetNatConfig  (GetNatConfigRequest)      returns (GetNatConfigResponse);
 
   rpc GetZones      (GetZonesRequest)          returns (GetZonesResponse);
   rpc GetZone       (GetZoneRequest)           returns (GetZoneResponse);
@@ -48,6 +50,20 @@ message GetPolicyResponse {
 
 message GetNatBindingsRequest {}
 message GetNatBindingsResponse {}
+
+// ── NAT Config ──────────────────────────────────────────────────────────────
+
+message SwapNatConfigRequest {
+  config.NatRuleSet config = 1;
+}
+
+message SwapNatConfigResponse {}
+
+message GetNatConfigRequest {}
+
+message GetNatConfigResponse {
+  config.NatRuleSet config = 1;
+}
 
 message GetZonesRequest {}
 

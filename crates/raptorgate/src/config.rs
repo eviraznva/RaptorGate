@@ -168,7 +168,7 @@ mod tests {
             tun_address: "10.254.254.1".parse().unwrap(),
             tun_netmask: "255.255.255.0".parse().unwrap(),
             data_dir: "/tmp".into(),
-            event_socket_path: "/tmp/firewall.sock".into(),
+            event_socket_path: "/tmp/event.sock".into(),
             query_socket_path: "/tmp/query.sock".into(),
             dev_config: None,
             pki_dir: "/tmp/pki".into(),
@@ -201,7 +201,7 @@ mod tests {
           "tun_address": "10.254.254.1",
           "tun_netmask": "255.255.255.0",
           "data_dir": "./",
-          "event_socket_path": "./sockets/firewall.sock",
+          "event_socket_path": "./sockets/event.sock",
           "query_socket_path": "./sockets/query.sock",
           "pki_dir": "/var/lib/raptorgate/pki"
         }"#;

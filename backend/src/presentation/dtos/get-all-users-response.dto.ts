@@ -11,6 +11,7 @@ export class GetAllUsersResponseDto {
         createdAt: '2026-03-28T10:15:30.000Z',
         updatedAt: '2026-03-28T10:15:30.000Z',
         roles: ['Admin', 'Viewer'],
+        isFirstLogin: false,
       },
     ],
   })

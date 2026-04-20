@@ -1,4 +1,5 @@
 mod config;
+mod control_server;
 mod data_plane;
 mod disk_store;
 mod dpi;
@@ -18,6 +19,7 @@ mod swapper;
 mod integrity;
 
 use crate::config::provider::AppConfigProvider;
+use crate::control_server::ControlServer;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -180,7 +182,6 @@ async fn main() {
         .await;
 
     tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
-
     let interface_ips = resolve_interface_ips(&config.capture_interfaces);
     let local_ips = collect_local_ips(&interface_ips);
     let nat_store = Arc::new(NatConfigProvider::from_disk(config.data_dir.clone()).await);
@@ -248,7 +249,6 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(query_server.serve());
-
     let server_cert_server = server_certificate_server::ServerCertificateServer::new(
         server_certificate_server::ServerCertificateHandler {
             server_key_store: Arc::clone(&server_key_store),
@@ -257,6 +257,12 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(server_cert_server.serve());
+
+    let control_server = ControlServer::new(
+        config.control_plane_socket_path.clone(),
+        CancellationToken::new(),
+    );
+    tokio::spawn(control_server.serve());
 
     // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
     let dnssec_provider: Arc<dyn DnssecProvider> =

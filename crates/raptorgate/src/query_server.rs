@@ -23,6 +23,7 @@ use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::data_plane::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
+use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::PolicyManager;
 use crate::policy::{Policy, PolicyId};
 use crate::proto::common::CertificateType;
@@ -35,13 +36,14 @@ use crate::proto::services::firewall_config_snapshot_service_server::{
 use crate::proto::services::{
     GetConfigRequest, GetConfigResponse, GetDnsInspectionConfigRequest,
     GetDnsInspectionConfigResponse, GetIpsConfigRequest, GetIpsConfigResponse,
-    GetNatBindingsRequest, GetNatBindingsResponse, GetPinningBypassRequest,
-    GetPinningBypassResponse, GetPinningStatsRequest, GetPinningStatsResponse, GetPoliciesRequest,
-    GetPoliciesResponse, GetPolicyRequest, GetPolicyResponse, GetTcpSessionsRequest,
-    GetTcpSessionsResponse, GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest,
-    GetZonePairsResponse, GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse,
-    SwapConfigRequest, SwapConfigResponse, SwapDnsInspectionConfigRequest,
-    SwapDnsInspectionConfigResponse, SwapIpsConfigRequest, SwapIpsConfigResponse,
+    GetNatBindingsRequest, GetNatBindingsResponse, GetNatConfigRequest, GetNatConfigResponse,
+    GetPinningBypassRequest, GetPinningBypassResponse, GetPinningStatsRequest,
+    GetPinningStatsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest,
+    GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse,
+    GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
+    GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest,
+    SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
+    SwapIpsConfigRequest, SwapIpsConfigResponse, SwapNatConfigRequest, SwapNatConfigResponse,
     GetSystemTimeRequest, GetSystemTimeResponse, PushActiveConfigSnapshotRequest,
     PushActiveConfigSnapshotResponse,
 };
@@ -222,6 +224,52 @@ where
         _request: Request<GetNatBindingsRequest>,
     ) -> Result<Response<GetNatBindingsResponse>, Status> {
         Err(Status::unimplemented("not yet implemented"))
+    }
+
+    async fn swap_nat_config(
+        &self,
+        request: Request<SwapNatConfigRequest>,
+    ) -> Result<Response<SwapNatConfigResponse>, Status> {
+        let proto_config = request
+            .into_inner()
+            .config
+            .ok_or_else(|| Status::invalid_argument("missing config field in request"))?;
+
+        let rule_count = proto_config.items.len();
+
+        tracing::info!(
+            event = "nat.swap.started",
+            rules = rule_count,
+            "received NAT config swap request"
+        );
+
+        self.apply_nat_rules(&proto_config.items)
+            .await
+            .map_err(|e| Status::invalid_argument(format!("invalid nat config: {e}")))?;
+
+        tracing::info!(
+            event = "nat.swap.succeeded",
+            rules = rule_count,
+            "NAT config applied"
+        );
+
+        Ok(Response::new(SwapNatConfigResponse {}))
+    }
+
+    async fn get_nat_config(
+        &self,
+        _request: Request<GetNatConfigRequest>,
+    ) -> Result<Response<GetNatConfigResponse>, Status> {
+        let engine = self.nat_engine.lock().await;
+        let config = engine
+            .nat_rules()
+            .as_deref()
+            .map(NatRules::into_proto)
+            .unwrap_or_else(|| crate::proto::config::NatRuleSet { items: vec![] });
+
+        Ok(Response::new(GetNatConfigResponse {
+            config: Some(config),
+        }))
     }
 
     async fn get_zones(
@@ -497,6 +545,7 @@ where
             correlation_id,
             snapshot_id,
             rules = bundle.rules.len(),
+            nat_rules = bundle.nat_rules.len(),
             zones = bundle.zones.len(),
             zone_pairs = bundle.zone_pairs.len(),
             zone_interfaces = bundle.zone_interfaces.len(),
@@ -513,6 +562,10 @@ where
             ZoneInterface::try_from_proto,
             "zone interface",
         )?;
+        NatRules::try_from_proto(crate::proto::config::NatRuleSet {
+            items: bundle.nat_rules.clone(),
+        })
+        .map_err(|e| Status::invalid_argument(format!("invalid nat config: {e}")))?;
 
         // 2. Validate referential integrity across the entire bundle
         let errors =

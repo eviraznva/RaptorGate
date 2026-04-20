@@ -25,6 +25,15 @@ def setup_tun_device
   SHELL
 end
 
+def configure_dns_path(iface, dns)
+  <<-SHELL
+    resolvectl dns #{iface} #{dns}
+    resolvectl domain #{iface} '~.'
+    resolvectl default-route #{iface} yes
+    resolvectl default-route eth0 no 2>/dev/null || true
+  SHELL
+end
+
 def setup_nftables
   <<-SHELL
     apt-get update
@@ -257,12 +266,14 @@ Vagrant.configure("2") do |config|
 
     h1.vm.provision "shell", inline: "apt-get update -qq && apt-get install -y --no-install-recommends hping3 python3 ncat ethtool python3-scapy"
 
-    h1.vm.provision "shell", inline:
+    h1_provision =
       configure_interface("eth1", "192.168.10.10", "24", "192.168.10.254") + <<-SHELL
       ip route del default 2>/dev/null || true
       ip route add default via 192.168.10.254
       ethtool -K eth1 tx off
     SHELL
+    h1_provision += configure_dns_path("eth1", "8.8.8.8")
+    h1.vm.provision "shell", inline: h1_provision
   end
 
   # --- Host 2 (subnet 2) ----------------------------------------
@@ -275,11 +286,13 @@ Vagrant.configure("2") do |config|
 
     h2.vm.provision "shell", inline: "apt-get update -qq && apt-get install -y --no-install-recommends hping3 python3 ncat ethtool python3-scapy"
 
-    h2.vm.provision "shell", inline: configure_interface("eth1", "192.168.20.10", "24", "192.168.20.254") + <<-SHELL
+    h2_provision = configure_interface("eth1", "192.168.20.10", "24", "192.168.20.254") + <<-SHELL
     # ip route del default 2>/dev/null || true
     # ip route add default via 192.168.20.254
     ethtool -K eth1 tx off
     SHELL
+    h2_provision += configure_dns_path("eth1", "8.8.8.8")
+    h2.vm.provision "shell", inline: h2_provision
   end
 
   # --- Router (between both subnets) + Backend API -------------

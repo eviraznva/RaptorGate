@@ -9,6 +9,7 @@ export class UserResponseMapper {
       createdAt: user.getCreatedAt().toISOString(),
       updatedAt: user.getUpdatedAt().toISOString(),
       roles: user.getRoles().map((role) => role.getName()),
+      isFirstLogin: user.getIsFirstLogin(),
     };
   }
 }

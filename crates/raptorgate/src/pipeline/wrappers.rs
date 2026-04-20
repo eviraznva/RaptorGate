@@ -831,7 +831,7 @@ mod tests {
             tun_address: "10.254.254.1".parse().unwrap(),
             tun_netmask: "255.255.255.0".parse().unwrap(),
             data_dir: PathBuf::from("/tmp"),
-            event_socket_path: "/tmp/firewall.sock".into(),
+            event_socket_path: "/tmp/event.sock".into(),
             query_socket_path: "/tmp/query.sock".into(),
             dev_config: None,
             pki_dir: "/tmp/pki".into(),

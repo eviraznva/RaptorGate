@@ -13,6 +13,7 @@ const navItems = [
   { name: "Zones", path: "/dashboard/zones" },
   { name: "NAT Rules", path: "/dashboard/nat-rules" },
   { name: "Connections", path: "/dashboard/connections" },
+  { name: "Users", path: "/dashboard/users" },
   { name: "Settings", path: "/dashboard/settings" },
 ];
 
