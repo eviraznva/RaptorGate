@@ -12,7 +12,7 @@ use serde::ser::SerializeStruct;
 
 use derive_more::{Debug, Display, Error, PartialEq};
 
-use crate::{policy::parse_rule_tree, rule_tree::matcher::Match};
+use crate::{dpi::AppProto, policy::parse_rule_tree, rule_tree::matcher::Match};
 pub use matcher::MatchBuilder;
 
 #[derive(Clone, Debug, Display)]
@@ -137,6 +137,7 @@ pub enum FieldValue {
     DayOfWeek(Weekday),
     Hour(Hour),
     Protocol(Protocol),
+    AppProto(AppProto),
     Port(Port),
     /// Status walidacji DNSSEC — dopasowywany przez `match dns_dnssec_status { = secure : ... }`.
     #[display("{_0}")]
@@ -151,6 +152,7 @@ pub enum MatchKind {
     DayOfWeek,
     Hour,
     Protocol,
+    AppProto,
     SrcPort,
     DstPort,
     /// Status walidacji DNSSEC — pasuje do wartości `FieldValue::DnssecStatus`.
@@ -166,6 +168,7 @@ impl std::fmt::Display for MatchKind {
             MatchKind::DayOfWeek   => "day_of_week",
             MatchKind::Hour        => "hour",
             MatchKind::Protocol    => "protocol",
+            MatchKind::AppProto    => "app_proto",
             MatchKind::SrcPort     => "src_port",
             MatchKind::DstPort     => "dst_port",
             MatchKind::DnssecStatus => "dns_dnssec_status",
@@ -291,6 +294,7 @@ mod tests {
             MatchKind::DstIp,
             MatchKind::IpVer,
             MatchKind::Protocol,
+            MatchKind::AppProto,
         ];
         for kind in invalid {
             assert!(
