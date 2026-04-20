@@ -35,26 +35,32 @@ export default function Zones() {
   const zonesState = useAppSelector((state) => state.zones);
   const zonePairsState = useAppSelector((state) => state.zonePairs);
 
-  const { data: zonesData, isLoading: isZonesLoading, isError: isZonesError } = useGetZonesQuery();
-  const { data: zonePairsData, isLoading: isZonePairsLoading, isError: isZonePairsError } = useGetZonePairsQuery();
+  const { data: zonesData } = useGetZonesQuery();
+  const { data: zonePairsData } = useGetZonePairsQuery();
 
   const [createZone] = useCreateZoneMutation();
   const [updateZone] = useUpdateZoneMutation();
-  const [deleteZone, { isError: isDeletingZoneError }] = useDeleteZoneMutation();
+  const [deleteZone, { isError: isDeletingZoneError }] =
+    useDeleteZoneMutation();
 
   const [createZonePair] = useCreateZonePairMutation();
   const [updateZonePair] = useUpdateZonePairMutation();
-  const [deleteZonePair, { isError: isDeletingZonePairError }] = useDeleteZonePairMutation();
+  const [deleteZonePair, { isError: isDeletingZonePairError }] =
+    useDeleteZonePairMutation();
 
   useEffect(() => {
     if (!zonesData) return;
+
     const payload = zonesData as ApiSuccess<ZonesPayload>;
+
     dispatch(zonesSliceReducers.setZones(payload.data.zones));
   }, [zonesData, dispatch]);
 
   useEffect(() => {
     if (!zonePairsData) return;
+
     const payload = zonePairsData as ApiSuccess<ZonePairsPayload>;
+
     dispatch(zonePairsSliceReducers.setZonePairs(payload.data.zonePairs));
   }, [zonePairsData, dispatch]);
 
@@ -62,11 +68,15 @@ export default function Zones() {
 
   const [isZoneFormOpen, setIsZoneFormOpen] = useState(false);
   const [editingZone, setEditingZone] = useState<Zone | null>(null);
-  const [confirmDeleteZoneId, setConfirmDeleteZoneId] = useState<string | null>(null);
+  const [confirmDeleteZoneId, setConfirmDeleteZoneId] = useState<string | null>(
+    null,
+  );
 
   const [isZonePairFormOpen, setIsZonePairFormOpen] = useState(false);
   const [editingZonePair, setEditingZonePair] = useState<ZonePair | null>(null);
-  const [confirmDeletePairId, setConfirmDeletePairId] = useState<string | null>(null);
+  const [confirmDeletePairId, setConfirmDeletePairId] = useState<string | null>(
+    null,
+  );
 
   // ── Zone handlers ──
   const handleCreateZone = async function (data: CreateZoneBody) {
@@ -79,7 +89,10 @@ export default function Zones() {
     } catch (error) {}
   };
 
-  const handleUpdateZone = async function (id: string, data: Partial<CreateZoneBody>) {
+  const handleUpdateZone = async function (
+    id: string,
+    data: Partial<CreateZoneBody>,
+  ) {
     try {
       const res = await updateZone({ id, ...data }).unwrap();
       if (res.statusCode === 200) {
@@ -137,15 +150,23 @@ export default function Zones() {
     [dispatch],
   );
 
-  const handleZoneDeleteClick = useCallback((id: string) => setConfirmDeleteZoneId(id), []);
-  const handleZoneDeleteCancel = useCallback(() => setConfirmDeleteZoneId(null), []);
+  const handleZoneDeleteClick = useCallback(
+    (id: string) => setConfirmDeleteZoneId(id),
+    [],
+  );
+  const handleZoneDeleteCancel = useCallback(
+    () => setConfirmDeleteZoneId(null),
+    [],
+  );
 
-  const handleZoneDeleteConfirm = useCallback(async (id: string) => {
-    await handleDeleteZoneApi(id);
-    if (!isDeletingZoneError) dispatch(zonesSliceReducers.deleteZone(id));
-    setConfirmDeleteZoneId(null);
-  }, [dispatch, isDeletingZoneError]);
-
+  const handleZoneDeleteConfirm = useCallback(
+    async (id: string) => {
+      await handleDeleteZoneApi(id);
+      if (!isDeletingZoneError) dispatch(zonesSliceReducers.deleteZone(id));
+      setConfirmDeleteZoneId(null);
+    },
+    [dispatch, isDeletingZoneError],
+  );
 
   // ── Zone pair handlers ──
   const handleCreateZonePair = async function (data: CreateZonePairBody) {
@@ -158,7 +179,10 @@ export default function Zones() {
     } catch (error) {}
   };
 
-  const handleUpdateZonePair = async function (id: string, data: Partial<CreateZonePairBody>) {
+  const handleUpdateZonePair = async function (
+    id: string,
+    data: Partial<CreateZonePairBody>,
+  ) {
     try {
       const res = await updateZonePair({ id, ...data }).unwrap();
       if (res.statusCode === 200) {
@@ -185,7 +209,10 @@ export default function Zones() {
     setIsZonePairFormOpen(true);
   }, []);
 
-  const handleCloseZonePairForm = useCallback(() => setIsZonePairFormOpen(false), []);
+  const handleCloseZonePairForm = useCallback(
+    () => setIsZonePairFormOpen(false),
+    [],
+  );
 
   const handleZonePairSuccess = useCallback(
     async (pair: ZonePair, mode: "create" | "edit") => {
@@ -214,14 +241,24 @@ export default function Zones() {
     [dispatch],
   );
 
-  const handlePairDeleteClick = useCallback((id: string) => setConfirmDeletePairId(id), []);
-  const handlePairDeleteCancel = useCallback(() => setConfirmDeletePairId(null), []);
+  const handlePairDeleteClick = useCallback(
+    (id: string) => setConfirmDeletePairId(id),
+    [],
+  );
+  const handlePairDeleteCancel = useCallback(
+    () => setConfirmDeletePairId(null),
+    [],
+  );
 
-  const handlePairDeleteConfirm = useCallback(async (id: string) => {
-    await handleDeleteZonePairApi(id);
-    if (!isDeletingZonePairError) dispatch(zonePairsSliceReducers.deleteZonePair(id));
-    setConfirmDeletePairId(null);
-  }, [dispatch, isDeletingZonePairError]);
+  const handlePairDeleteConfirm = useCallback(
+    async (id: string) => {
+      await handleDeleteZonePairApi(id);
+      if (!isDeletingZonePairError)
+        dispatch(zonePairsSliceReducers.deleteZonePair(id));
+      setConfirmDeletePairId(null);
+    },
+    [dispatch, isDeletingZonePairError],
+  );
 
   return (
     <>

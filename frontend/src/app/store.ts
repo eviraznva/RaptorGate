@@ -16,35 +16,40 @@ import { zonePairsApi } from "../services/zonePairs";
 import ZonePairsReducer from "../features/zonePairsSlice";
 import { natRulesApi } from "../services/natRules";
 import NatRulesReducer from "../features/natRulesSlice";
+import { usersApi } from "../services/users";
+import UsersManagementSlice from "../features/usersManagementSlice";
 
 export const store = configureStore({
   reducer: {
+    usersManagement: UsersManagementSlice,
     dnsInspection: DnsInspectionReducer,
     resetPassword: ResetPasswordReducer,
     loginData: LoginDataReducer,
     ipsConfig: IpsConfigReducer,
-    zones: ZonesReducer,
     zonePairs: ZonePairsReducer,
     natRules: NatRulesReducer,
+    zones: ZonesReducer,
     rules: RulesReducer,
     user: UserReducer,
     [dnsInspectionApi.reducerPath]: dnsInspectionApi.reducer,
     [ipsConfigApi.reducerPath]: ipsConfigApi.reducer,
-    [rulesApi.reducerPath]: rulesApi.reducer,
-    [zonesApi.reducerPath]: zonesApi.reducer,
     [zonePairsApi.reducerPath]: zonePairsApi.reducer,
     [natRulesApi.reducerPath]: natRulesApi.reducer,
+    [usersApi.reducerPath]: usersApi.reducer,
+    [rulesApi.reducerPath]: rulesApi.reducer,
+    [zonesApi.reducerPath]: zonesApi.reducer,
     [authApi.reducerPath]: authApi.reducer,
   },
 
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(
       dnsInspectionApi.middleware,
-      ipsConfigApi.middleware,
-      rulesApi.middleware,
-      zonesApi.middleware,
       zonePairsApi.middleware,
+      ipsConfigApi.middleware,
       natRulesApi.middleware,
+      usersApi.middleware,
+      zonesApi.middleware,
+      rulesApi.middleware,
       authApi.middleware,
     ),
 });
