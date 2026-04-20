@@ -1,4 +1,5 @@
 mod config;
+mod control_server;
 mod data_plane;
 mod disk_store;
 mod dpi;
@@ -17,6 +18,7 @@ mod swapper;
 mod integrity;
 
 use crate::config::provider::AppConfigProvider;
+use crate::control_server::ControlServer;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -229,6 +231,11 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(query_server.serve());
+
+    let control_socket_path = std::env::var("CONTROL_PLANE_GRPC_SOCKET_PATH")
+        .unwrap_or_else(|_| "./sockets/control-plane.sock".into());
+    let control_server = ControlServer::new(control_socket_path, CancellationToken::new());
+    tokio::spawn(control_server.serve());
 
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
