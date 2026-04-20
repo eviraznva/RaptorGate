@@ -156,8 +156,19 @@ pub async fn init_event_system(socket_path: String) {
             _ = flush_tick.tick() => {
                 flush_batch(&mut buffer, &mut backend).await;
             }
-            _ = reconnect_interval.tick(), if backend.is_none() => {
-                attempt_reconnect(&socket_path, &mut backend, &mut buffer).await;
+            _ = reconnect_interval.tick() => {
+                if backend.as_ref().is_some_and(|conn| conn.tx.is_closed()) {
+                    tracing::warn!(
+                        event = "event_bus.backend_connection.lost",
+                        dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                        "backend connection lost, will reconnect"
+                    );
+                    backend = None;
+                }
+
+                if backend.is_none() {
+                    attempt_reconnect(&socket_path, &mut backend, &mut buffer).await;
+                }
             }
         }
     }
