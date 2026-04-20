@@ -35,8 +35,8 @@ export default function Zones() {
   const zonesState = useAppSelector((state) => state.zones);
   const zonePairsState = useAppSelector((state) => state.zonePairs);
 
-  const { data: zonesData, isLoading: isZonesLoading, isError: isZonesError } = useGetZonesQuery();
-  const { data: zonePairsData, isLoading: isZonePairsLoading, isError: isZonePairsError } = useGetZonePairsQuery();
+  const { data: zonesData } = useGetZonesQuery();
+  const { data: zonePairsData } = useGetZonePairsQuery();
 
   const [createZone] = useCreateZoneMutation();
   const [updateZone] = useUpdateZoneMutation();

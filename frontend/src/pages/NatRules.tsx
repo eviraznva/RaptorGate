@@ -21,7 +21,7 @@ export default function NatRules() {
   const dispatch = useAppDispatch();
   const natRulesState = useAppSelector((state) => state.natRules);
 
-  const { data, isLoading, isError } = useGetNatRulesQuery();
+  const { data } = useGetNatRulesQuery();
   const [createNatRule] = useCreateNatRuleMutation();
   const [updateNatRule] = useUpdateNatRuleMutation();
   const [deleteNatRule, { isError: isDeletingError }] = useDeleteNatRuleMutation();
