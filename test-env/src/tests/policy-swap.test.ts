@@ -30,7 +30,7 @@ describe('Policy Swap', () => {
       reason: 'apply',
       snapshot: {
         id: crypto.randomUUID(),
-        versionNumber: BigInt(1),
+        versionNumber: 1,
         snapshotType: 'manual_import',
         checksum: 'policy-swap-valid-checksum',
         isActive: true,
@@ -56,7 +56,7 @@ describe('Policy Swap', () => {
       reason: 'apply',
       snapshot: {
         id: crypto.randomUUID(),
-        versionNumber: BigInt(1),
+        versionNumber: 1,
         snapshotType: 'manual_import',
         checksum: 'policy-swap-integrity-checksum',
         isActive: true,
@@ -85,7 +85,7 @@ describe('Policy Swap', () => {
         reason: 'apply',
         snapshot: {
           id: crypto.randomUUID(),
-          versionNumber: BigInt(1),
+          versionNumber: 1,
           snapshotType: 'manual_import',
           checksum: 'policy-swap-invalid-checksum',
           isActive: true,
@@ -112,7 +112,7 @@ describe('Policy Swap', () => {
       reason: 'apply',
       snapshot: {
         id: crypto.randomUUID(),
-        versionNumber: BigInt(1),
+        versionNumber: 1,
         snapshotType: 'manual_import',
         checksum: 'policy-swap-get-checksum',
         isActive: true,

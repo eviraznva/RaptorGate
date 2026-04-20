@@ -71,6 +71,12 @@ export function createDefaultSnapshotBundle(policyOverrides?: Partial<Rule>) {
     }],
     zones,
     zonePairs,
+    zoneInterfaces: [],
+    natRules: [],
+    dnsBlacklist: [],
+    sslBypassList: [],
+    ipsSignatures: [],
+    firewallCertificates: [],
   };
 }
 
@@ -92,7 +98,7 @@ export async function resetFirewallState(
         reason: 'apply',
         snapshot: {
           id: crypto.randomUUID(),
-          versionNumber: BigInt(1),
+          versionNumber: 1,
           snapshotType: 'manual_import',
           checksum: 'test-env-default-checksum',
           isActive: true,
