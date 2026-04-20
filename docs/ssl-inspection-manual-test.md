@@ -315,6 +315,50 @@ Oczekiwany wynik:
   faktu, że MITM i inspekcja działają
 - na `r1` nadal powinieneś widzieć `TlsHandshakeComplete` i `proto=Http`
 
+### 9. Opcjonalny test na `www.google.com` po `HTTP/2`
+
+Ten wariant nie używa `openssl s_client` do ręcznego wysłania `GET / HTTP/1.1`,
+bo to nie jest klient `HTTP/2`. Do testu `h2` użyj `curl`.
+
+Na `h2`:
+
+```bash
+curl -V
+```
+
+Oczekiwany wynik:
+
+- w liście features albo protokołów powinno być widoczne `HTTP2`
+
+Na `h2`:
+
+```bash
+curl -vk --http2 https://www.google.com/ -o /tmp/google-http2.html
+```
+
+Opcjonalnie, jeśli chcesz test bez ostrzeżeń o zaufaniu do certyfikatu firewalla,
+podaj CA firewalla jawnie zamiast `-k`:
+
+```bash
+curl -v --http2 --cacert ./ca.crt https://www.google.com/ -o /tmp/google-http2.html
+```
+
+Opcjonalnie podejrzyj początek odpowiedzi:
+
+```bash
+head -n 20 /tmp/google-http2.html
+```
+
+Oczekiwany wynik:
+
+- verbose output z `curl` powinien pokazać negocjację `h2`
+- odpowiedź HTTP powinna być po `HTTP/2`, typowo `200`, czasem `301` albo `302`
+- treść strony powinna zostać zapisana do `/tmp/google-http2.html`
+- na `r1` powinieneś zobaczyć:
+  - `TlsHandshakeComplete`
+  - `proto=Http`
+  - `http_version="2"`
+
 ### Kryterium zaliczenia dla ruchu wychodzącego do Internetu
 
 Test uznaj za zaliczony, jeśli:
