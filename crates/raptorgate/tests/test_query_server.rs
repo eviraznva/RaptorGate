@@ -226,7 +226,7 @@ fn create_snapshot_request(
 }
 
 #[tokio::test]
-#[serial(snapshot_bundle)]
+#[serial(snapshot_bundle, nat_config)]
 async fn push_active_config_snapshot_happy_path() {
     let mut client = connect_snapshot(&shared_server().socket).await;
     let valid = create_valid_bundle(
@@ -291,7 +291,7 @@ async fn push_active_config_snapshot_raptorlang_error() {
 }
 
 #[tokio::test]
-#[serial(snapshot_bundle)]
+#[serial(snapshot_bundle, nat_config)]
 async fn fetch_policies_returns_ok() {
     let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
     let mut query_client = connect(&shared_server().socket).await;
@@ -321,7 +321,7 @@ async fn fetch_policies_returns_ok() {
 }
 
 #[tokio::test]
-#[serial(snapshot_bundle)]
+#[serial(snapshot_bundle, nat_config)]
 async fn fetch_zones_returns_ok() {
     let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
     let mut query_client = connect(&shared_server().socket).await;
@@ -356,7 +356,7 @@ async fn fetch_zones_returns_ok() {
 }
 
 #[tokio::test]
-#[serial(snapshot_bundle)]
+#[serial(snapshot_bundle, nat_config)]
 async fn fetch_zone_pairs_returns_ok() {
     let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
     let mut query_client = connect(&shared_server().socket).await;
