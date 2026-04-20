@@ -1,3 +1,4 @@
+import { Icon } from "@iconify/react";
 import type { Zone } from "../../types/zones/Zone";
 
 type ZonesTableProps = {
@@ -65,7 +66,14 @@ function EmptyState({ onNew }: { onNew: () => void }) {
   );
 }
 
-const TABLE_HEADERS = ["Status", "Name", "Description", "ID", "Created", "Actions"];
+const TABLE_HEADERS = [
+  "Status",
+  "Name",
+  "Description",
+  "ID",
+  "Created",
+  "Actions",
+];
 
 export default function ZonesTable({
   zones,
@@ -80,7 +88,9 @@ export default function ZonesTable({
     <>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
-          <span className="text-[11px] tracking-[0.25em] uppercase">Zone List</span>
+          <span className="text-[11px] tracking-[0.25em] uppercase">
+            Zone List
+          </span>
           <span className="text-[10px] text-[#4a4a4a] font-mono">
             [{zones.length} {zones.length === 1 ? "entry" : "entries"}]
           </span>
@@ -122,7 +132,9 @@ export default function ZonesTable({
                   <ZoneStatusDot isActive={zone.isActive} />
                 </td>
                 <td className="p-4">
-                  <div className="text-[#f5f5f5] text-sm font-mono">{zone.name}</div>
+                  <div className="text-[#f5f5f5] text-sm font-mono">
+                    {zone.name}
+                  </div>
                 </td>
                 <td className="p-4 hidden lg:table-cell">
                   <div
@@ -176,7 +188,7 @@ export default function ZonesTable({
                         className="text-[#8a8a8a] hover:text-[#06b6d4] transition-colors text-lg"
                         title="Edit"
                       >
-                        ✎
+                        <Icon icon="lucide:edit" width="16" height="16" />
                       </button>
                       <button
                         type="button"
@@ -184,7 +196,7 @@ export default function ZonesTable({
                         className="text-[#8a8a8a] hover:text-[#f43f5e] transition-colors text-lg"
                         title="Delete"
                       >
-                        ✕
+                        <Icon icon="lucide:x" width="16" height="16" />
                       </button>
                     </div>
                   )}

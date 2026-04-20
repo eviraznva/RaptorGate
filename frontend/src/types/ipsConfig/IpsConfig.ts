@@ -88,4 +88,3 @@ export const defaultIpsConfig: IpsConfig = {
   },
   signatures: [],
 };
-

@@ -21,10 +21,11 @@ export default function NatRules() {
   const dispatch = useAppDispatch();
   const natRulesState = useAppSelector((state) => state.natRules);
 
-  const { data, isLoading, isError } = useGetNatRulesQuery();
+  const { data } = useGetNatRulesQuery();
   const [createNatRule] = useCreateNatRuleMutation();
   const [updateNatRule] = useUpdateNatRuleMutation();
-  const [deleteNatRule, { isError: isDeletingError }] = useDeleteNatRuleMutation();
+  const [deleteNatRule, { isError: isDeletingError }] =
+    useDeleteNatRuleMutation();
 
   useEffect(() => {
     if (!data) return;
@@ -48,7 +49,10 @@ export default function NatRules() {
     } catch (error) {}
   };
 
-  const handleUpdateNatRule = async function (id: string, data: Partial<CreateNatRuleBody>) {
+  const handleUpdateNatRule = async function (
+    id: string,
+    data: Partial<CreateNatRuleBody>,
+  ) {
     try {
       const res = await updateNatRule({ id, ...data }).unwrap();
       if (res.statusCode === 200) {
@@ -109,14 +113,20 @@ export default function NatRules() {
     [dispatch],
   );
 
-  const handleDeleteClick = useCallback((id: string) => setConfirmDeleteId(id), []);
+  const handleDeleteClick = useCallback(
+    (id: string) => setConfirmDeleteId(id),
+    [],
+  );
   const handleDeleteCancel = useCallback(() => setConfirmDeleteId(null), []);
 
-  const handleDeleteConfirm = useCallback(async (id: string) => {
-    await handleDeleteNatRuleApi(id);
-    if (!isDeletingError) dispatch(natRulesSliceReducers.deleteNatRule(id));
-    setConfirmDeleteId(null);
-  }, [dispatch, isDeletingError]);
+  const handleDeleteConfirm = useCallback(
+    async (id: string) => {
+      await handleDeleteNatRuleApi(id);
+      if (!isDeletingError) dispatch(natRulesSliceReducers.deleteNatRule(id));
+      setConfirmDeleteId(null);
+    },
+    [dispatch, isDeletingError],
+  );
 
   return (
     <>

@@ -37,7 +37,7 @@ function PriorityBar({ priority }: { priority: number }) {
 export default function PolicyEngine() {
   const dispatch = useAppDispatch();
   const rulesState = useAppSelector((state) => state.rules);
-  const { data, isLoading, isError } = useGetRulesQuery();
+  const { data, isLoading } = useGetRulesQuery();
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<Rule | null>(null);

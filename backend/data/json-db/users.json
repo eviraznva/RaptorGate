@@ -4,37 +4,37 @@
       "id": "00000000-0000-4000-8000-000000000001",
       "username": "admin",
       "passwordHash": "$2b$12$IvZ.EXRyRNI9y7iQFoV.8emVe9hYXwK8lF.lkj.aPLmnFVUaD5KjW",
-      "refreshToken": "914f4484-f1e2-4c21-95a2-1836576193cd",
-      "refreshTokenExpiry": "2026-04-19T18:05:19.511Z",
+      "refreshToken": "36b7fbfb-14ff-403a-bf4b-89fd01bfef4a",
+      "refreshTokenExpiry": "2026-04-20T15:33:48.957Z",
       "recoveryToken": "$2b$12$EBKZ.2QHgdezJcSes0418OLzPquOobeA9KwG7YbTdZLMfmtnBnCZG",
       "isFirstLogin": false,
       "showRecoveryToken": false,
       "createdAt": "2026-03-18T21:30:42.644Z",
-      "updatedAt": "2026-04-19T17:05:15.876Z"
+      "updatedAt": "2026-04-20T14:30:49.477Z"
     },
     {
-      "id": "055ded25-1861-427a-bd26-029ceeeeee7c",
-      "username": "jankowal",
-      "passwordHash": "$2b$12$cTWLqe9om7G3oC/JIlE58eAXsq2wfLkFII78vkMjNr1bY0QbXGNMu",
-      "refreshToken": "9e710d80-2d93-4928-ac34-0333b78c771e",
-      "refreshTokenExpiry": "2026-03-29T13:53:53.061Z",
+      "id": "d57e7252-90af-4c8f-9b3e-8ca453657c66",
+      "username": "Tymoteusz",
+      "passwordHash": "$2b$12$YZRiqcL.O9hki155aEGbUeMP3zKAFlJFtAfpTjLZnhCHaj38nR6fq",
+      "refreshToken": null,
+      "refreshTokenExpiry": null,
+      "recoveryToken": "$2b$12$0/P6tBzYxgasnWeWNpjWA.nXOhBn3lXVzYJisp3f9wZJSQ84X6KUm",
+      "isFirstLogin": false,
+      "showRecoveryToken": false,
+      "createdAt": "2026-04-20T14:16:42.967Z",
+      "updatedAt": "2026-04-20T14:34:21.829Z"
+    },
+    {
+      "id": "4b13a9ed-a230-4409-b19b-8b86933849cf",
+      "username": "Marek",
+      "passwordHash": "$2b$12$wD8mOiyqoANwjFZ5av9hlug.z3JPIqxHyh.pVKSUnBVS04rBZEAJO",
+      "refreshToken": null,
+      "refreshTokenExpiry": null,
       "recoveryToken": null,
       "isFirstLogin": true,
       "showRecoveryToken": true,
-      "createdAt": "2026-03-29T12:41:49.032Z",
-      "updatedAt": "2026-03-29T12:42:05.429Z"
-    },
-    {
-      "id": "25e32ec8-1912-4e73-aa26-74cdcf8c1711",
-      "username": "Marek",
-      "passwordHash": "$2b$12$zwghmI8.csJcoB78/sYU9egThz6WE/21cP7sKPPk.8BcXGs0t7HD2",
-      "refreshToken": "ff5b8e5c-1f60-4043-aa6f-454cb775b0bf",
-      "refreshTokenExpiry": "2026-03-29T14:59:42.492Z",
-      "recoveryToken": null,
-      "isFirstLogin": true,
-      "showRecoveryToken": false,
-      "createdAt": "2026-03-29T13:59:21.376Z",
-      "updatedAt": "2026-03-29T13:59:21.376Z"
+      "createdAt": "2026-04-20T14:22:08.006Z",
+      "updatedAt": "2026-04-20T14:22:08.006Z"
     }
   ]
 }
