@@ -23,7 +23,7 @@ use crate::{
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 use crate::dpi::AppProto;
-use crate::policy::policy_evaluator::DnsEvalContext;
+use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext};
 
 #[derive(Clone)]
 pub struct ValidationStage;
@@ -434,11 +434,12 @@ impl Stage for PolicyEvalStage {
             dnssec_status: Some(status),
         });
 
-        let verdict = self.provider.get_evaluator().evaluate(
-            ctx.borrow_sliced_packet(),
-            &arrival,
-            dns_ctx.as_ref(),
-        );
+        let verdict = self.provider.get_evaluator().evaluate(PolicyEvalContext {
+            packet: ctx.borrow_sliced_packet(),
+            arrival: &arrival,
+            dns: dns_ctx.as_ref(),
+            dpi: ctx.borrow_dpi_ctx().as_ref(),
+        });
 
         match verdict {
             Verdict::Allow => StageOutcome::Continue,

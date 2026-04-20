@@ -4,19 +4,24 @@ use std::net::IpAddr;
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use crate::data_plane::dns_inspection::types::DnssecStatus;
+use crate::dpi::DpiContext;
 use crate::rule_tree::{
     ArrivalInfo, FieldValue, IpVer, MatchKind, Operation, Pattern, Port, Protocol, RuleTree, Step,
     TreeWalker, Verdict,
 };
 
 /// Kontekst DNS przekazywany do ewaluatora polityk — zawiera wyniki inspekcji DNS.
-///
-/// Przekazywany opcjonalnie do [`PolicyEvaluator::evaluate`]. Dla pakietów nieDNS
-/// należy przekazać `None`.
 pub struct DnsEvalContext {
     /// Status walidacji DNSSEC dla domeny z zapytania DNS (wyznaczany leniwie przez
     /// [`DnssecProvider`][crate::data_plane::dns_inspection::dnssec::DnssecProvider]).
     pub dnssec_status: Option<DnssecStatus>,
+}
+
+pub(crate) struct PolicyEvalContext<'a, 'p> {
+    pub packet: &'a SlicedPacket<'p>,
+    pub arrival: &'a ArrivalInfo,
+    pub dns: Option<&'a DnsEvalContext>,
+    pub dpi: Option<&'a DpiContext>,
 }
 
 pub struct PolicyEvaluator {
@@ -32,26 +37,16 @@ impl PolicyEvaluator {
         }
     }
 
-    /// Ewaluuje polityki dla podanego pakietu i opcjonalnego kontekstu DNS.
-    ///
-    /// Dla pakietów DNS należy przekazać `Some(&DnsEvalContext)` z wypełnionym
-    /// statusem DNSSEC. Dla pozostałych pakietów — `None`.
-    pub(crate) fn evaluate(
-        &self,
-        packet: &SlicedPacket,
-        arrival: &ArrivalInfo,
-        dns: Option<&DnsEvalContext>,
-    ) -> Verdict {
+    pub(crate) fn evaluate(&self, ctx: PolicyEvalContext<'_, '_>) -> Verdict {
         let mut walker = TreeWalker::new(&self.rules);
 
         loop {
             match walker.current_step() {
                 Step::NeedsMatch { kind, pattern } => {
-                    let Some(value) = Self::extract(*kind, packet, arrival, dns) else {
-                        walker.advance(false);
-                        continue;
+                    let matched = match Self::extract(*kind, &ctx) {
+                        Some(value) => Self::pattern_matches(pattern, value),
+                        None => Self::missing_value_matches(*kind, pattern),
                     };
-                    let matched = Self::pattern_matches(pattern, value);
                     if let Step::Verdict(v) = walker.advance(matched) {
                         return v.clone();
                     }
@@ -62,27 +57,22 @@ impl PolicyEvaluator {
         }
     }
 
-    fn extract(
-        kind: MatchKind,
-        packet: &SlicedPacket,
-        arrival: &ArrivalInfo,
-        dns: Option<&DnsEvalContext>,
-    ) -> Option<FieldValue> {
+    fn extract(kind: MatchKind, ctx: &PolicyEvalContext<'_, '_>) -> Option<FieldValue> {
         match kind {
             MatchKind::SrcIp => {
-                let ipv4 = packet.net.as_ref()?.ipv4_ref()?;
+                let ipv4 = ctx.packet.net.as_ref()?.ipv4_ref()?;
                 Some(FieldValue::Ip(
                     IpAddr::V4(ipv4.header().source_addr()).into(),
                 ))
             }
             MatchKind::DstIp => {
-                let ipv4 = packet.net.as_ref()?.ipv4_ref()?;
+                let ipv4 = ctx.packet.net.as_ref()?.ipv4_ref()?;
                 Some(FieldValue::Ip(
                     IpAddr::V4(ipv4.header().destination_addr()).into(),
                 ))
             }
             MatchKind::IpVer => {
-                let ver = match &packet.net {
+                let ver = match &ctx.packet.net {
                     Some(NetSlice::Ipv4(_)) => IpVer::V4,
                     Some(NetSlice::Ipv6(_)) => IpVer::V6,
                     _ => return None,
@@ -90,7 +80,7 @@ impl PolicyEvaluator {
                 Some(FieldValue::IpVer(ver))
             }
             MatchKind::Protocol => {
-                let proto = match &packet.transport {
+                let proto = match &ctx.packet.transport {
                     Some(TransportSlice::Tcp(_)) => Protocol::Tcp,
                     Some(TransportSlice::Udp(_)) => Protocol::Udp,
                     Some(TransportSlice::Icmpv4(_)) => Protocol::Icmp,
@@ -98,7 +88,11 @@ impl PolicyEvaluator {
                 };
                 Some(FieldValue::Protocol(proto))
             }
-            MatchKind::SrcPort => match &packet.transport {
+            MatchKind::AppProto => {
+                let proto = ctx.dpi?.app_proto?;
+                Some(FieldValue::AppProto(proto))
+            }
+            MatchKind::SrcPort => match &ctx.packet.transport {
                 Some(TransportSlice::Tcp(tcp)) => {
                     Some(FieldValue::Port(Port::from(tcp.source_port())))
                 }
@@ -107,7 +101,7 @@ impl PolicyEvaluator {
                 }
                 _ => None,
             },
-            MatchKind::DstPort => match &packet.transport {
+            MatchKind::DstPort => match &ctx.packet.transport {
                 Some(TransportSlice::Tcp(tcp)) => {
                     Some(FieldValue::Port(Port::from(tcp.destination_port())))
                 }
@@ -116,12 +110,28 @@ impl PolicyEvaluator {
                 }
                 _ => None,
             },
-            MatchKind::Hour => Some(FieldValue::Hour(arrival.hour)),
-            MatchKind::DayOfWeek => Some(FieldValue::DayOfWeek(arrival.day_of_week)),
+            MatchKind::Hour => Some(FieldValue::Hour(ctx.arrival.hour)),
+            MatchKind::DayOfWeek => Some(FieldValue::DayOfWeek(ctx.arrival.day_of_week)),
             MatchKind::DnssecStatus => {
-                let status = dns?.dnssec_status?;
+                let status = ctx.dns?.dnssec_status?;
                 Some(FieldValue::DnssecStatus(status))
             }
+        }
+    }
+
+    fn missing_value_matches(kind: MatchKind, pattern: &Pattern) -> bool {
+        match kind {
+            MatchKind::AppProto => Self::pattern_accepts_missing(pattern),
+            _ => false,
+        }
+    }
+
+    fn pattern_accepts_missing(pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Wildcard => true,
+            Pattern::Or(patterns) => patterns.iter().any(Self::pattern_accepts_missing),
+            Pattern::And(patterns) => patterns.iter().all(Self::pattern_accepts_missing),
+            _ => false,
         }
     }
 
@@ -155,9 +165,6 @@ impl PolicyEvaluator {
 
             (Pattern::Or(patterns), _) => patterns.iter().any(|p| Self::pattern_matches(p, value)),
             (Pattern::And(patterns), _) => patterns.iter().all(|p| Self::pattern_matches(p, value)),
-
-            // DnssecStatus obsługuje wyłącznie Equal (comparisons odrzucane przez validate_for).
-            (_, FieldValue::DnssecStatus(_)) => false,
         }
     }
 }
@@ -177,6 +184,7 @@ mod tests {
     use etherparse::{PacketBuilder, SlicedPacket};
 
     use super::*;
+    use crate::dpi::{AppProto, DpiContext};
     use crate::rule_tree::{
         ArmEnd, ArrivalInfo, Hour, IpGlobbable, IpVer, MatchBuilder, Octet, Port, Protocol, Weekday,
     };
@@ -235,9 +243,23 @@ mod tests {
     }
 
     fn eval(tree: RuleTree, raw: &[u8], arrival: &ArrivalInfo) -> Verdict {
+        eval_with_dpi(tree, raw, arrival, None)
+    }
+
+    fn eval_with_dpi(
+        tree: RuleTree,
+        raw: &[u8],
+        arrival: &ArrivalInfo,
+        dpi: Option<&DpiContext>,
+    ) -> Verdict {
         let sliced = SlicedPacket::from_ethernet(raw).unwrap();
         let evaluator = PolicyEvaluator::new(tree, Verdict::Drop);
-        evaluator.evaluate(&sliced, arrival, None)
+        evaluator.evaluate(PolicyEvalContext {
+            packet: &sliced,
+            arrival,
+            dns: None,
+            dpi,
+        })
     }
 
     // ── Wildcard ──────────────────────────────────────────────
@@ -328,6 +350,82 @@ mod tests {
         assert_eq!(
             eval(tree, &default_packet(), &default_arrival()),
             Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn equal_app_proto_match() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::AppProto,
+                Pattern::Equal(FieldValue::AppProto(AppProto::Http)),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let dpi = DpiContext {
+            app_proto: Some(AppProto::Http),
+            ..Default::default()
+        };
+        assert_eq!(
+            eval_with_dpi(tree, &default_packet(), &default_arrival(), Some(&dpi)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn equal_app_proto_no_match() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::AppProto,
+                Pattern::Equal(FieldValue::AppProto(AppProto::Http)),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let dpi = DpiContext {
+            app_proto: Some(AppProto::Tls),
+            ..Default::default()
+        };
+        assert_eq!(
+            eval_with_dpi(tree, &default_packet(), &default_arrival(), Some(&dpi)),
+            Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn equal_app_proto_without_dpi_no_match() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::AppProto,
+                Pattern::Equal(FieldValue::AppProto(AppProto::Http)),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        assert_eq!(
+            eval_with_dpi(tree, &default_packet(), &default_arrival(), None),
+            Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn wildcard_app_proto_without_dpi_matches() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::AppProto,
+                Pattern::Wildcard,
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        assert_eq!(
+            eval_with_dpi(tree, &default_packet(), &default_arrival(), None),
+            Verdict::Allow
         );
     }
 
