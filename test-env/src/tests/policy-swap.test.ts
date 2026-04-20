@@ -9,13 +9,19 @@ import {
 import { P } from 'ts-pattern';
 import {
   createDefaultSnapshotBundle,
+  DEFAULT_POLICIES,
 } from '../harness/fixtures';
 
 function buildSnapshotBundle(ruleContent: string, ruleName: string, zonePairId?: string) {
+  const defaultRule = DEFAULT_POLICIES[0]!;
   return createDefaultSnapshotBundle({
-    name: ruleName,
-    content: ruleContent,
-    zonePairId,
+    rules: [{
+      ...defaultRule,
+      id: crypto.randomUUID(),
+      name: ruleName,
+      content: ruleContent,
+      zonePairId: zonePairId ?? defaultRule.zonePairId,
+    }],
   });
 }
 
