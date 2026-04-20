@@ -130,15 +130,15 @@ export class CreateNatRuleUseCase {
     }
 
     if (dto.type === "DNAT") {
-      if (dto.destinationIp === null || dto.destinationIp === undefined) {
+      // Wymagane
+      if (dto.destinationIp == null) {
         throw new NatConfigIsInvalidException(
           dto.type,
           "destinationIp",
           "Destination IP is required for DNAT rule",
         );
       }
-
-      if (dto.translatedIp === null || dto.translatedIp === undefined) {
+      if (dto.translatedIp == null) {
         throw new NatConfigIsInvalidException(
           dto.type,
           "translatedIp",
@@ -146,15 +146,15 @@ export class CreateNatRuleUseCase {
         );
       }
 
-      if (dto.sourceIp !== null && dto.sourceIp !== undefined) {
+      // Niedozwolone
+      if (dto.sourceIp != null) {
         throw new NatConfigIsInvalidException(
           dto.type,
           "sourceIp",
           "Source IP is not allowed for DNAT rule",
         );
       }
-
-      if (dto.sourcePort !== null && dto.sourcePort !== undefined) {
+      if (dto.sourcePort != null) {
         throw new NatConfigIsInvalidException(
           dto.type,
           "sourcePort",
@@ -162,19 +162,14 @@ export class CreateNatRuleUseCase {
         );
       }
 
-      if (dto.destinationPort !== null && dto.destinationPort !== undefined) {
+      // destinationPort i translatedPort są OPCJONALNE — nie blokuj ich
+
+      // Spójność portów: jeśli translatedPort podany, destinationPort też powinien być
+      if (dto.translatedPort != null && dto.destinationPort == null) {
         throw new NatConfigIsInvalidException(
           dto.type,
           "destinationPort",
-          "Destination port is not allowed for DNAT rule",
-        );
-      }
-
-      if (dto.translatedPort !== null && dto.translatedPort !== undefined) {
-        throw new NatConfigIsInvalidException(
-          dto.type,
-          "translatedPort",
-          "Translated port is not allowed for DNAT rule",
+          "Destination port is required when translated port is specified for DNAT rule",
         );
       }
     }
