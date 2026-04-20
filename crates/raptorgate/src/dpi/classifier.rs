@@ -72,6 +72,8 @@ impl DpiClassifier {
         let mut entry = self.sessions.entry(key).or_insert_with(DpiSessionEntry::new);
         let session = entry.value_mut();
 
+        session.append_payload(payload);
+
         if let Some(ref mut ctx) = session.result {
             if ctx.app_proto == Some(AppProto::Dns) {
                 if let Some(parsed) = dns::parse_dns(payload) {
@@ -93,11 +95,13 @@ impl DpiClassifier {
                         *ctx = dns::dns_to_dpi_context(&parsed);
                     }
                 }
+            } else if ctx.app_proto == Some(AppProto::Http) {
+                if let Some(parsed) = http::parse_http(&session.buffer) {
+                    http::merge_http_dpi_context(ctx, &parsed);
+                }
             }
             return InspectResult::Done(ctx.clone());
         }
-
-        session.append_payload(payload);
 
         if let Some(ctx) = Self::try_classify(&session.buffer) {
             session.result = Some(ctx.clone());

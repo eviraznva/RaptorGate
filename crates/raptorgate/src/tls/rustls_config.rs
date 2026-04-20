@@ -10,8 +10,39 @@ use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
 use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig};
 
-fn default_alpn_protocols() -> Vec<Vec<u8>> {
+pub fn default_alpn_protocols() -> Vec<Vec<u8>> {
     vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+}
+
+pub fn sanitize_alpn_protocols(protocols: &[Vec<u8>]) -> Vec<Vec<u8>> {
+    let mut sanitized = Vec::with_capacity(protocols.len());
+    for protocol in protocols {
+        if protocol.is_empty() || sanitized.iter().any(|existing| existing == protocol) {
+            continue;
+        }
+        sanitized.push(protocol.clone());
+    }
+    sanitized
+}
+
+fn resolve_alpn_protocols(protocols: Option<&[Vec<u8>]>) -> Vec<Vec<u8>> {
+    match protocols {
+        Some(protocols) => sanitize_alpn_protocols(protocols),
+        None => default_alpn_protocols(),
+    }
+}
+
+pub fn build_certified_key_from_pem(
+    cert_pem: &str,
+    key_pem: &str,
+) -> anyhow::Result<Arc<CertifiedKey>> {
+    let certs = parse_cert_chain_pem(cert_pem)?;
+    let key = parse_private_key_pem(key_pem)?;
+
+    let signing_key = rustls_ring::sign::any_supported_type(&key)
+        .context("Unsupported private key type")?;
+
+    Ok(Arc::new(CertifiedKey::new(certs, signing_key)))
 }
 
 /// Konfiguracja serwera TLS ze statycznym certyfikatem PEM dla trybu inbound
@@ -19,25 +50,16 @@ pub fn build_server_config_from_pem(
     cert_pem: &str,
     key_pem: &str,
 ) -> anyhow::Result<Arc<ServerConfig>> {
-    let certs = parse_cert_chain_pem(cert_pem)?;
-    let key = parse_private_key_pem(key_pem)?;
+    build_server_config_from_pem_with_alpn(cert_pem, key_pem, &default_alpn_protocols())
+}
 
-    let signing_key = rustls_ring::sign::any_supported_type(&key)
-        .context("Unsupported private key type")?;
-
-    let certified = Arc::new(CertifiedKey::new(certs, signing_key));
-
-    let resolver = SingleCertResolver(certified);
-
-    let mut config = ServerConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
-        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
-        .context("Failed to set TLS protocol versions")?
-        .with_no_client_auth()
-        .with_cert_resolver(Arc::new(resolver));
-
-    config.alpn_protocols = default_alpn_protocols();
-
-    Ok(Arc::new(config))
+pub fn build_server_config_from_pem_with_alpn(
+    cert_pem: &str,
+    key_pem: &str,
+    alpn_protocols: &[Vec<u8>],
+) -> anyhow::Result<Arc<ServerConfig>> {
+    let certified = build_certified_key_from_pem(cert_pem, key_pem)?;
+    build_server_config_for_key_with_alpn(certified, alpn_protocols)
 }
 
 pub fn parse_cert_chain_pem(pem: &str) -> anyhow::Result<Vec<CertificateDer<'static>>> {
@@ -57,6 +79,12 @@ pub fn parse_private_key_pem(pem: &str) -> anyhow::Result<PrivateKeyDer<'static>
 
 /// Klient TLS do re-encryption w trybie inbound
 pub fn build_client_config_no_verify() -> anyhow::Result<Arc<ClientConfig>> {
+    build_client_config_no_verify_with_alpn(&default_alpn_protocols())
+}
+
+pub fn build_client_config_no_verify_with_alpn(
+    alpn_protocols: &[Vec<u8>],
+) -> anyhow::Result<Arc<ClientConfig>> {
     let mut config: ClientConfig = ClientConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
         .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
         .context("Failed to set TLS protocol versions")?
@@ -64,13 +92,20 @@ pub fn build_client_config_no_verify() -> anyhow::Result<Arc<ClientConfig>> {
         .with_custom_certificate_verifier(Arc::new(NoVerifier))
         .with_no_client_auth();
 
-    config.alpn_protocols = default_alpn_protocols();
+    config.alpn_protocols = resolve_alpn_protocols(Some(alpn_protocols));
 
     Ok(Arc::new(config))
 }
 
 /// Konfiguracja serwera TLS ze sfałszowanym certyfikatem dla outbound MITM
 pub fn build_server_config_for_key(key: Arc<CertifiedKey>) -> anyhow::Result<Arc<ServerConfig>> {
+    build_server_config_for_key_with_alpn(key, &default_alpn_protocols())
+}
+
+pub fn build_server_config_for_key_with_alpn(
+    key: Arc<CertifiedKey>,
+    alpn_protocols: &[Vec<u8>],
+) -> anyhow::Result<Arc<ServerConfig>> {
     let resolver = SingleCertResolver(key);
 
     let mut config = ServerConfig::builder_with_provider(Arc::new(rustls_ring::default_provider()))
@@ -79,7 +114,7 @@ pub fn build_server_config_for_key(key: Arc<CertifiedKey>) -> anyhow::Result<Arc
         .with_no_client_auth()
         .with_cert_resolver(Arc::new(resolver));
 
-    config.alpn_protocols = default_alpn_protocols();
+    config.alpn_protocols = resolve_alpn_protocols(Some(alpn_protocols));
 
     Ok(Arc::new(config))
 }
@@ -190,6 +225,12 @@ impl ServerCertVerifier for RecordingVerifier {
 
 // Klient TLS rejestrujący zaufanie certyfikatu serwera (do Forward Untrust CA).
 pub fn build_client_config_recording() -> anyhow::Result<(Arc<ClientConfig>, Arc<AtomicBool>)> {
+    build_client_config_recording_with_alpn(&default_alpn_protocols())
+}
+
+pub fn build_client_config_recording_with_alpn(
+    alpn_protocols: &[Vec<u8>],
+) -> anyhow::Result<(Arc<ClientConfig>, Arc<AtomicBool>)> {
     let mut root_store = RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
@@ -214,7 +255,7 @@ pub fn build_client_config_recording() -> anyhow::Result<(Arc<ClientConfig>, Arc
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
 
-    config.alpn_protocols = default_alpn_protocols();
+    config.alpn_protocols = resolve_alpn_protocols(Some(alpn_protocols));
 
     Ok((Arc::new(config), trusted))
 }
@@ -258,15 +299,31 @@ mod tests {
     }
 
     #[test]
+    fn server_config_from_pem_respects_custom_alpn() {
+        let (cert_pem, key_pem) = make_self_signed();
+        let config = build_server_config_from_pem_with_alpn(&cert_pem, &key_pem, &[b"http/1.1".to_vec()]).unwrap();
+        assert_eq!(config.alpn_protocols, vec![b"http/1.1".to_vec()]);
+    }
+
+    #[test]
     fn server_config_for_key_builds_successfully() {
         let (cert_pem, key_pem) = make_self_signed();
-        let certs = parse_cert_chain_pem(&cert_pem).unwrap();
-        let key = parse_private_key_pem(&key_pem).unwrap();
-        let signing_key = rustls_ring::sign::any_supported_type(&key).unwrap();
-        let certified = Arc::new(CertifiedKey::new(certs, signing_key));
+        let certified = build_certified_key_from_pem(&cert_pem, &key_pem).unwrap();
 
         let config = build_server_config_for_key(certified).unwrap();
         assert_eq!(config.alpn_protocols, default_alpn_protocols());
+    }
+
+    #[test]
+    fn sanitize_alpn_protocols_removes_duplicates_and_empty() {
+        let protocols = sanitize_alpn_protocols(&[
+            b"h2".to_vec(),
+            Vec::new(),
+            b"http/1.1".to_vec(),
+            b"h2".to_vec(),
+        ]);
+
+        assert_eq!(protocols, vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
     }
 
     #[test]
@@ -299,5 +356,11 @@ mod tests {
     fn client_config_recording_builds_successfully() {
         let (config, _trusted) = build_client_config_recording().unwrap();
         assert_eq!(config.alpn_protocols, default_alpn_protocols());
+    }
+
+    #[test]
+    fn client_config_recording_respects_custom_alpn() {
+        let (config, _trusted) = build_client_config_recording_with_alpn(&[b"http/1.1".to_vec()]).unwrap();
+        assert_eq!(config.alpn_protocols, vec![b"http/1.1".to_vec()]);
     }
 }

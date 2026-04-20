@@ -29,6 +29,7 @@ const INDEX_TEMPLATE = {
         alpn: { type: 'keyword' },
         domain: { type: 'keyword' },
         app_proto: { type: 'keyword' },
+        http_version: { type: 'keyword' },
         direction: { type: 'keyword' },
         mode: { type: 'keyword' },
         signature_name: { type: 'keyword' },

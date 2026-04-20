@@ -51,10 +51,8 @@ impl Ips {
             return IpsVerdict::Allow;
         }
 
-        let dpi_app_proto = ctx
-            .borrow_dpi_ctx()
-            .as_ref()
-            .and_then(|dpi_ctx| dpi_ctx.app_proto);
+        let dpi_ctx = ctx.borrow_dpi_ctx();
+        let dpi_app_proto = dpi_ctx.as_ref().and_then(|dpi_ctx| dpi_ctx.app_proto);
 
         let sliced_packet = ctx.borrow_sliced_packet();
         
@@ -73,11 +71,19 @@ impl Ips {
         }
 
         let state = self.state.load();
-        
-        let inspected = if payload.len() > state.max_payload_bytes {
-            &payload[..state.max_payload_bytes]
+        let inspected_payload = dpi_ctx
+            .as_ref()
+            .and_then(|dpi_ctx| {
+                (dpi_ctx.app_proto == Some(AppProto::Http)
+                    && dpi_ctx.http_version.as_deref() == Some("2"))
+                    .then_some(dpi_ctx.http_normalized_payload.as_deref())
+                    .flatten()
+            })
+            .unwrap_or(payload);
+        let inspected = if inspected_payload.len() > state.max_payload_bytes {
+            &inspected_payload[..state.max_payload_bytes]
         } else {
-            payload
+            inspected_payload
         };
 
         let mut alerts = Vec::new();
@@ -287,6 +293,17 @@ mod tests {
     }
 
     fn build_tcp_packet(payload: &[u8], dst_port: u16) -> PacketContext {
+        build_tcp_packet_with_ctx(
+            payload,
+            dst_port,
+            DpiContext {
+                app_proto: Some(AppProto::Http),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn build_tcp_packet_with_ctx(payload: &[u8], dst_port: u16, dpi_ctx: DpiContext) -> PacketContext {
         let builder = PacketBuilder::ethernet2([1, 1, 1, 1, 1, 1], [2, 2, 2, 2, 2, 2])
             .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
             .tcp(12345, dst_port, 1, 1024);
@@ -301,10 +318,7 @@ mod tests {
             Arc::<str>::from("eth1"),
             Vec::new(),
             SystemTime::now(),
-            Some(DpiContext {
-                app_proto: Some(AppProto::Http),
-                ..Default::default()
-            }),
+            Some(dpi_ctx),
         )
         .expect("packet context should parse")
     }
@@ -384,5 +398,25 @@ mod tests {
         let ctx = build_tcp_packet(b"GET /?q=UNION SELECT 1 HTTP/1.1\r\nHost: x\r\n\r\n", 80);
 
         assert_eq!(ips.inspect_packet(&ctx), IpsVerdict::Allow);
+    }
+
+    #[test]
+    fn http2_uses_normalized_payload_for_matching() {
+        let ips = Ips::new(make_config()).expect("ips should initialize");
+        let ctx = build_tcp_packet_with_ctx(
+            b"\x00\x00\x00\x01",
+            80,
+            DpiContext {
+                app_proto: Some(AppProto::Http),
+                http_version: Some("2".into()),
+                http_normalized_payload: Some(
+                    b"GET /search?q=UNION SELECT HTTP/2\r\nHost: example.com\r\n\r\n".to_vec(),
+                ),
+                ..Default::default()
+            },
+        );
+
+        let verdict = ips.inspect_packet(&ctx);
+        assert!(matches!(verdict, IpsVerdict::Block(msg) if msg.contains("SQLi")));
     }
 }

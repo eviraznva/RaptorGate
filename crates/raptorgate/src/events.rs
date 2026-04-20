@@ -209,7 +209,7 @@ pub enum EventKind {
     InboundTlsInterceptStarted { peer: SocketAddr, server: SocketAddr, sni: Option<String>, common_name: String, tls_version: Option<String> },
     InboundTlsHandshakeComplete { peer: SocketAddr, server: SocketAddr, sni: Option<String>, alpn: Option<String>, tls_version: Option<String> },
     InboundTlsSessionClosed { peer: SocketAddr, server: SocketAddr, sni: Option<String>, bytes_up: u64, bytes_down: u64 },
-    DecryptedTrafficClassified { peer: SocketAddr, server: SocketAddr, sni: Option<String>, app_proto: String, direction: Direction, mode: InspectionMode },
+    DecryptedTrafficClassified { peer: SocketAddr, server: SocketAddr, sni: Option<String>, app_proto: String, http_version: Option<String>, direction: Direction, mode: InspectionMode },
     DecryptedIpsMatch { peer: SocketAddr, server: SocketAddr, sni: Option<String>, signature_name: String, severity: String, blocked: bool, direction: Direction, mode: InspectionMode, log_id: String },
     TlsUntrustedCertDetected { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, domain: String, tls_version: Option<String> },
     TlsBypassApplied { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, domain: String, tls_version: Option<String> },
@@ -366,7 +366,7 @@ impl From<EventKind> for proto::EventKind {
                         bytes_up,
                         bytes_down,
                     }),
-                EventKind::DecryptedTrafficClassified { peer, server, sni, app_proto, direction, mode } =>
+                EventKind::DecryptedTrafficClassified { peer, server, sni, app_proto, http_version, direction, mode } =>
                     Item::DecryptedTrafficClassified(proto::DecryptedTrafficClassifiedEvent {
                         peer_ip: peer.ip().to_string(),
                         peer_port: u32::from(peer.port()),
@@ -374,6 +374,7 @@ impl From<EventKind> for proto::EventKind {
                         server_port: u32::from(server.port()),
                         sni: sni.unwrap_or_default(),
                         app_proto,
+                        http_version: http_version.unwrap_or_default(),
                         direction: format!("{direction:?}"),
                         mode: format!("{mode:?}"),
                     }),

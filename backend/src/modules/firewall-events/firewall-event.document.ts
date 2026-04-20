@@ -20,6 +20,7 @@ export interface FirewallEventDocument {
   alpn?: string;
   domain?: string;
   app_proto?: string;
+  http_version?: string;
   direction?: string;
   mode?: string;
   signature_name?: string;

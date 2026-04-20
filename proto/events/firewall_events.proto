@@ -141,8 +141,9 @@ message DecryptedTrafficClassifiedEvent {
   uint32 server_port = 4;
   string sni         = 5;
   string app_proto   = 6;
-  string direction   = 7;
-  string mode        = 8;
+  string http_version = 7;
+  string direction   = 8;
+  string mode        = 9;
 }
 
 message DecryptedIpsMatchEvent {

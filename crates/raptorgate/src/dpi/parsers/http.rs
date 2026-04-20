@@ -3,38 +3,83 @@ use httparse::{Header, Request, Response, Status, EMPTY_HEADER};
 use crate::dpi::context::DpiContext;
 use crate::dpi::AppProto;
 
+use super::http2;
+
 const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const MAX_HEADERS: usize = 32;
 
-// Wynik parsowania HTTP: metoda, nagłówki i wersja protokołu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpParseResult {
-    pub is_http2: bool,
+    pub version: Option<String>,
     pub method: Option<String>,
     pub host: Option<String>,
     pub user_agent: Option<String>,
     pub content_type: Option<String>,
+    pub normalized_payload: Option<Vec<u8>>,
 }
 
-// Parsuje payload HTTP/1.1 (request/response) lub rozpoznaje HTTP/2 preface.
-// TODO: Po wdrożeniu inspekcji ssl/tls (proxy mitm) dodać dekompresję HPACK
-// dla HTTP/2 parsowanie ramek HEADERS (type 0x01) i ekstrakcja :authority, :method.
 pub fn parse_http(buf: &[u8]) -> Option<HttpParseResult> {
     if buf.len() >= HTTP2_PREFACE.len() && buf.starts_with(HTTP2_PREFACE) {
-        return Some(HttpParseResult {
-            is_http2: true,
-            method: None,
-            host: None,
-            user_agent: None,
-            content_type: None,
-        });
+        return http2::parse_http2(buf).map(http2_to_http_result);
     }
 
     if let Some(result) = try_parse_request(buf) {
         return Some(result);
     }
 
-    try_parse_response(buf)
+    if let Some(result) = try_parse_response(buf) {
+        return Some(result);
+    }
+
+    http2::parse_http2(buf).map(http2_to_http_result)
+}
+
+pub fn merge_http_dpi_context(ctx: &mut DpiContext, result: &HttpParseResult) {
+    ctx.app_proto = Some(AppProto::Http);
+    if ctx.http_version.is_none() {
+        ctx.http_version = result.version.clone();
+    }
+    if ctx.http_method.is_none() {
+        ctx.http_method = result.method.clone();
+    }
+    if ctx.http_host.is_none() {
+        ctx.http_host = result.host.clone();
+    }
+    if ctx.http_user_agent.is_none() {
+        ctx.http_user_agent = result.user_agent.clone();
+    }
+    if ctx.http_content_type.is_none() {
+        ctx.http_content_type = result.content_type.clone();
+    }
+    match (&ctx.http_normalized_payload, &result.normalized_payload) {
+        (Some(existing), Some(new_payload)) if new_payload.len() > existing.len() => {
+            ctx.http_normalized_payload = Some(new_payload.clone());
+        }
+        (None, Some(new_payload)) => {
+            ctx.http_normalized_payload = Some(new_payload.clone());
+        }
+        _ => {}
+    }
+}
+
+fn http2_to_http_result(result: http2::Http2ParseResult) -> HttpParseResult {
+    HttpParseResult {
+        version: Some("2".into()),
+        method: result.method,
+        host: result.host,
+        user_agent: result.user_agent,
+        content_type: result.content_type,
+        normalized_payload: result.normalized_payload,
+    }
+}
+
+fn http_version(version: Option<u8>) -> Option<String> {
+    match version {
+        Some(0) => Some("1.0".into()),
+        Some(1) => Some("1.1".into()),
+        Some(other) => Some(format!("1.{other}")),
+        None => None,
+    }
 }
 
 fn try_parse_request(buf: &[u8]) -> Option<HttpParseResult> {
@@ -54,11 +99,12 @@ fn try_parse_request(buf: &[u8]) -> Option<HttpParseResult> {
     let content_type = find_header(req.headers, "content-type");
 
     Some(HttpParseResult {
-        is_http2: false,
+        version: http_version(req.version),
         method,
         host,
         user_agent,
         content_type,
+        normalized_payload: None,
     })
 }
 
@@ -76,11 +122,12 @@ fn try_parse_response(buf: &[u8]) -> Option<HttpParseResult> {
     let content_type = find_header(resp.headers, "content-type");
 
     Some(HttpParseResult {
-        is_http2: false,
+        version: http_version(resp.version),
         method: None,
         host: None,
         user_agent: None,
         content_type,
+        normalized_payload: None,
     })
 }
 
@@ -92,16 +139,10 @@ fn find_header(headers: &[Header], name: &str) -> Option<String> {
         .map(|v| v.to_owned())
 }
 
-// Konwertuje wynik parsowania HTTP na DpiContext.
 pub fn http_to_dpi_context(result: &HttpParseResult) -> DpiContext {
-    DpiContext {
-        app_proto: Some(AppProto::Http),
-        http_host: result.host.clone(),
-        http_method: result.method.clone(),
-        http_user_agent: result.user_agent.clone(),
-        http_content_type: result.content_type.clone(),
-        ..Default::default()
-    }
+    let mut ctx = DpiContext::default();
+    merge_http_dpi_context(&mut ctx, result);
+    ctx
 }
 
 #[cfg(test)]
@@ -112,7 +153,7 @@ mod tests {
     fn get_request_basic() {
         let buf = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
         let result = parse_http(buf).unwrap();
-        assert!(!result.is_http2);
+        assert_eq!(result.version.as_deref(), Some("1.1"));
         assert_eq!(result.method.as_deref(), Some("GET"));
         assert_eq!(result.host.as_deref(), Some("example.com"));
     }
@@ -121,6 +162,7 @@ mod tests {
     fn post_with_headers() {
         let buf = b"POST /api HTTP/1.1\r\nHost: api.example.com\r\nContent-Type: application/json\r\nUser-Agent: test/1.0\r\n\r\n";
         let result = parse_http(buf).unwrap();
+        assert_eq!(result.version.as_deref(), Some("1.1"));
         assert_eq!(result.method.as_deref(), Some("POST"));
         assert_eq!(result.host.as_deref(), Some("api.example.com"));
         assert_eq!(result.content_type.as_deref(), Some("application/json"));
@@ -131,6 +173,7 @@ mod tests {
     fn partial_request_with_method() {
         let buf = b"GET /path HTTP/1.1\r\nHost: partial.com\r\n";
         let result = parse_http(buf).unwrap();
+        assert_eq!(result.version.as_deref(), Some("1.1"));
         assert_eq!(result.method.as_deref(), Some("GET"));
         assert_eq!(result.host.as_deref(), Some("partial.com"));
     }
@@ -139,7 +182,7 @@ mod tests {
     fn response_with_content_type() {
         let buf = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
         let result = parse_http(buf).unwrap();
-        assert!(!result.is_http2);
+        assert_eq!(result.version.as_deref(), Some("1.1"));
         assert_eq!(result.method, None);
         assert_eq!(result.content_type.as_deref(), Some("text/html"));
     }
@@ -147,7 +190,7 @@ mod tests {
     #[test]
     fn http2_preface() {
         let result = parse_http(HTTP2_PREFACE).unwrap();
-        assert!(result.is_http2);
+        assert_eq!(result.version.as_deref(), Some("2"));
         assert_eq!(result.method, None);
         assert_eq!(result.host, None);
     }
@@ -157,7 +200,7 @@ mod tests {
         let mut buf = HTTP2_PREFACE.to_vec();
         buf.extend_from_slice(&[0x00, 0x00, 0x12, 0x04, 0x00]);
         let result = parse_http(&buf).unwrap();
-        assert!(result.is_http2);
+        assert_eq!(result.version.as_deref(), Some("2"));
     }
 
     #[test]
@@ -208,6 +251,7 @@ mod tests {
     fn no_host_header() {
         let buf = b"GET / HTTP/1.0\r\n\r\n";
         let result = parse_http(buf).unwrap();
+        assert_eq!(result.version.as_deref(), Some("1.0"));
         assert_eq!(result.method.as_deref(), Some("GET"));
         assert_eq!(result.host, None);
     }
@@ -238,14 +282,16 @@ mod tests {
     #[test]
     fn to_dpi_context_full() {
         let result = HttpParseResult {
-            is_http2: false,
+            version: Some("1.1".into()),
             method: Some("POST".into()),
             host: Some("example.com".into()),
             user_agent: Some("curl/8.0".into()),
             content_type: Some("application/json".into()),
+            normalized_payload: None,
         };
         let ctx = http_to_dpi_context(&result);
         assert_eq!(ctx.app_proto, Some(AppProto::Http));
+        assert_eq!(ctx.http_version.as_deref(), Some("1.1"));
         assert_eq!(ctx.http_method.as_deref(), Some("POST"));
         assert_eq!(ctx.http_host.as_deref(), Some("example.com"));
         assert_eq!(ctx.http_user_agent.as_deref(), Some("curl/8.0"));
@@ -255,25 +301,29 @@ mod tests {
     #[test]
     fn to_dpi_context_http2() {
         let result = HttpParseResult {
-            is_http2: true,
+            version: Some("2".into()),
             method: None,
             host: None,
             user_agent: None,
             content_type: None,
+            normalized_payload: Some(b"HTTP/2\r\n\r\n".to_vec()),
         };
         let ctx = http_to_dpi_context(&result);
         assert_eq!(ctx.app_proto, Some(AppProto::Http));
+        assert_eq!(ctx.http_version.as_deref(), Some("2"));
         assert_eq!(ctx.http_host, None);
+        assert_eq!(ctx.http_normalized_payload.as_deref(), Some(&b"HTTP/2\r\n\r\n"[..]));
     }
 
     #[test]
     fn to_dpi_context_no_optional_headers() {
         let result = HttpParseResult {
-            is_http2: false,
+            version: Some("1.1".into()),
             method: Some("GET".into()),
             host: None,
             user_agent: None,
             content_type: None,
+            normalized_payload: None,
         };
         let ctx = http_to_dpi_context(&result);
         assert_eq!(ctx.app_proto, Some(AppProto::Http));

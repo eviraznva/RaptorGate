@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use dashmap::DashMap;
-use rustls::ServerConfig;
+use rustls::sign::CertifiedKey;
 
 use super::cert_storage::{decrypt_pem, encrypt_pem, read_encryption_key};
-use super::rustls_config::build_server_config_from_pem;
+use super::rustls_config::build_certified_key_from_pem;
 
 use serde::{Deserialize, Serialize};
 
@@ -93,7 +93,7 @@ fn delete_key_from_disk(pki_dir: &Path, id: &str) -> anyhow::Result<()> {
 
 // Wpis inbound TLS dla jednego serwera.
 struct InboundServerEntry {
-    server_config: Arc<ServerConfig>,
+    certified_key: Arc<CertifiedKey>,
     common_name: String,
     fingerprint: String,
     certificate_pem: String,
@@ -116,7 +116,7 @@ pub struct InboundServerInfo {
 
 // Wynik get_entry, ServerConfig + flagi runtime.
 pub struct InboundEntryRef {
-    pub server_config: Arc<ServerConfig>,
+    pub certified_key: Arc<CertifiedKey>,
     pub common_name: String,
     pub bypass: bool,
     pub enabled: bool,
@@ -186,13 +186,13 @@ impl ServerKeyStore {
             },
         )?;
 
-        let server_config = build_server_config_from_pem(cert_pem, key_pem)
-            .with_context(|| format!("Failed to build TLS config for {addr}"))?;
+        let certified_key = build_certified_key_from_pem(cert_pem, key_pem)
+            .with_context(|| format!("Failed to build inbound TLS certified key for {addr}"))?;
 
         self.replace_entry(
             addr,
             InboundServerEntry {
-                server_config,
+                certified_key,
                 common_name: common_name.to_string(),
                 fingerprint: fingerprint.to_string(),
                 certificate_pem: cert_pem.to_string(),
@@ -221,13 +221,13 @@ impl ServerKeyStore {
         let key_pem = load_key_from_disk(Path::new(&self.pki_dir), key_ref)
             .with_context(|| format!("Failed to load server key {key_ref}"))?;
 
-        let server_config = build_server_config_from_pem(cert_pem, &key_pem)
-            .with_context(|| format!("Failed to build TLS config for {addr}"))?;
+        let certified_key = build_certified_key_from_pem(cert_pem, &key_pem)
+            .with_context(|| format!("Failed to build inbound TLS certified key for {addr}"))?;
 
         self.replace_entry(
             addr,
             InboundServerEntry {
-                server_config,
+                certified_key,
                 common_name: common_name.to_string(),
                 fingerprint: fingerprint.to_string(),
                 certificate_pem: cert_pem.to_string(),
@@ -244,7 +244,7 @@ impl ServerKeyStore {
     // Surowy lookup (uzywany przez reconcile i query).
     pub fn get_entry(&self, addr: SocketAddr) -> Option<InboundEntryRef> {
         self.entries.get(&addr).map(|entry| InboundEntryRef {
-            server_config: Arc::clone(&entry.server_config),
+            certified_key: Arc::clone(&entry.certified_key),
             common_name: entry.common_name.clone(),
             bypass: entry.bypass,
             enabled: entry.enabled,

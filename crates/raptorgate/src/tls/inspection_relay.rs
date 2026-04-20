@@ -248,6 +248,7 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut buf = [0u8; CHUNK_SIZE];
+    let mut current_ctx = ctx.clone();
 
     loop {
         let n = match reader.read(&mut buf).await {
@@ -262,13 +263,18 @@ where
             }
         };
 
-        let decision = inspector.inspect(&buf[..n], ctx, direction, meta).await;
+        let decision = inspector.inspect(&buf[..n], &current_ctx, direction, meta).await;
         emit_ips_match_event(meta, &decision.ctx, direction);
 
         if matches!(decision.disposition, InspectionDisposition::Drop) {
             let _ = writer.shutdown().await;
             return total_bytes;
         }
+
+        if classification_changed(&current_ctx, &decision.ctx) {
+            emit_classification_event(meta, &decision.ctx, direction);
+        }
+        current_ctx = decision.ctx.clone();
 
         if writer.write_all(&decision.payload).await.is_err() {
             let _ = writer.shutdown().await;
@@ -326,6 +332,7 @@ fn emit_classification_event(meta: &SessionMeta, ctx: &DpiContext, direction: Di
             peer = %meta.peer,
             server = %meta.server,
             proto = %proto,
+            http_version = ctx.http_version.as_deref().unwrap_or(""),
             direction = ?direction,
             "Decrypted traffic classified"
         );
@@ -335,11 +342,16 @@ fn emit_classification_event(meta: &SessionMeta, ctx: &DpiContext, direction: Di
                 server: meta.server,
                 sni: meta.sni.clone(),
                 app_proto: proto.to_string(),
+                http_version: ctx.http_version.clone(),
                 direction,
                 mode: meta.mode,
             },
         ));
     }
+}
+
+fn classification_changed(previous: &DpiContext, next: &DpiContext) -> bool {
+    previous.app_proto != next.app_proto || previous.http_version != next.http_version
 }
 
 #[cfg(test)]

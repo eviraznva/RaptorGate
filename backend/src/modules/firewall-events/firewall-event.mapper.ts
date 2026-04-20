@@ -169,6 +169,7 @@ export function mapEventToDocument(event: Event): FirewallEventDocument | null {
         dst_port: e.serverPort,
         sni: undefinedIfEmpty(e.sni),
         app_proto: undefinedIfEmpty(e.appProto),
+        http_version: undefinedIfEmpty(e.httpVersion),
         direction: undefinedIfEmpty(e.direction),
         mode: undefinedIfEmpty(e.mode),
       };

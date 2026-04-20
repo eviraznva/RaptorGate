@@ -65,6 +65,32 @@ describe('mapEventToDocument', () => {
     expect(doc!.signature_name).toBe('ET MALWARE Test');
   });
 
+  it('maps decrypted traffic classified with http_version', () => {
+    const doc = mapEventToDocument(
+      makeEvent({
+        item: {
+          $case: 'decryptedTrafficClassified',
+          decryptedTrafficClassified: {
+            peerIp: '10.0.0.1',
+            peerPort: 33000,
+            serverIp: '10.0.0.2',
+            serverPort: 443,
+            sni: 'example.com',
+            appProto: 'Http',
+            httpVersion: '2',
+            direction: 'ClientToServer',
+            mode: 'Outbound',
+          },
+        },
+      }),
+    );
+
+    expect(doc!.decision).toBe('observe');
+    expect(doc!.app_proto).toBe('Http');
+    expect(doc!.http_version).toBe('2');
+    expect(doc!.direction).toBe('ClientToServer');
+  });
+
   it('maps bypass applied to bypass decision', () => {
     const doc = mapEventToDocument(
       makeEvent({

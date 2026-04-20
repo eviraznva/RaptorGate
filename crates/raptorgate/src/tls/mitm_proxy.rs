@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
-use rustls::{ProtocolVersion, ServerConfig};
+use rustls::ProtocolVersion;
+use rustls::sign::CertifiedKey;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::server::TlsStream as ServerTlsStream;
@@ -113,7 +114,7 @@ async fn handle_connection(
     let original_dst = original_dst::get_original_dst(&client_tcp)
         .context("Failed to read original destination address")?;
 
-    let PeekedClientHello { sni, client_hello_version, ech_detected, looks_like_tls } =
+    let PeekedClientHello { sni, client_hello_version, ech_detected, looks_like_tls, alpn_protocols } =
         peek_client_hello(&client_tcp).await;
 
     if !looks_like_tls {
@@ -161,8 +162,9 @@ async fn handle_connection(
             original_dst,
             sni,
             client_hello_version,
+            alpn_protocols,
             entry.common_name,
-            entry.server_config,
+            entry.certified_key,
             relay,
         )
         .await;
@@ -196,7 +198,7 @@ async fn handle_connection(
 
     handle_outbound_connection(
         client_tcp, peer_addr, original_dst, sni, client_hello_version,
-        cert_forger, untrust_forger, engine, relay,
+        alpn_protocols, cert_forger, untrust_forger, engine, relay,
     )
     .await
 }
@@ -207,8 +209,9 @@ async fn handle_inbound_connection(
     server_addr: SocketAddr,
     sni: Option<String>,
     client_hello_version: Option<String>,
+    client_alpn_protocols: Vec<Vec<u8>>,
     common_name: String,
-    inbound_server_config: Arc<ServerConfig>,
+    inbound_certified_key: Arc<CertifiedKey>,
     relay: Arc<InspectionRelay>,
 ) -> anyhow::Result<()> {
     events::emit(events::Event::new(
@@ -221,32 +224,11 @@ async fn handle_inbound_connection(
         },
     ));
 
-    let client_tls = match dual_session::accept_client_tls(AcceptParams {
-        tcp_stream: client_tcp,
-        server_config: inbound_server_config,
-    })
-    .await
-    {
-        Ok(tls) => tls,
-        Err(e) => {
-            events::emit(events::Event::new(events::EventKind::TlsHandshakeFailed {
-                peer: peer_addr,
-                dst: server_addr,
-                sni: sni.clone(),
-                tls_version: client_hello_version.clone(),
-                stage: HandshakeStage::ClientHello,
-                reason: describe_handshake_error(&e),
-                mode: InspectionMode::Inbound,
-            }));
-            return Err(e.context("Inbound TLS accept from client failed"));
-        }
-    };
-
     let server_tcp = TcpStream::connect(server_addr)
         .await
         .context("Failed to connect to internal server")?;
 
-    let re_encrypt_config = rustls_config::build_client_config_no_verify()
+    let re_encrypt_config = rustls_config::build_client_config_no_verify_with_alpn(&client_alpn_protocols)
         .context("Failed to build re-encryption client config")?;
 
     let server_name = sni
@@ -266,7 +248,7 @@ async fn handle_inbound_connection(
                 peer: peer_addr,
                 dst: server_addr,
                 sni: sni.clone(),
-                tls_version: negotiated_version_from_server(&client_tls).or_else(|| client_hello_version.clone()),
+                tls_version: client_hello_version.clone(),
                 stage: HandshakeStage::ServerHandshake,
                 reason: describe_handshake_error(&e),
                 mode: InspectionMode::Inbound,
@@ -275,15 +257,39 @@ async fn handle_inbound_connection(
         }
     };
 
+    let negotiated_alpn = server_tls.get_ref().1.alpn_protocol().map(|protocol| protocol.to_vec());
+    let inbound_server_config = rustls_config::build_server_config_for_key_with_alpn(
+        inbound_certified_key,
+        &selected_alpn_protocols(negotiated_alpn.as_deref()),
+    )
+    .context("Failed to build inbound server config")?;
+
+    let client_tls = match dual_session::accept_client_tls(AcceptParams {
+        tcp_stream: client_tcp,
+        server_config: inbound_server_config,
+    })
+    .await
+    {
+        Ok(tls) => tls,
+        Err(e) => {
+            events::emit(events::Event::new(events::EventKind::TlsHandshakeFailed {
+                peer: peer_addr,
+                dst: server_addr,
+                sni: sni.clone(),
+                tls_version: negotiated_version_from_client(&server_tls).or_else(|| client_hello_version.clone()),
+                stage: HandshakeStage::ClientHello,
+                reason: describe_handshake_error(&e),
+                mode: InspectionMode::Inbound,
+            }));
+            return Err(e.context("Inbound TLS accept from client failed"));
+        }
+    };
+
     let negotiated = negotiated_version_from_client(&server_tls)
         .or_else(|| negotiated_version_from_server(&client_tls))
         .or_else(|| client_hello_version.clone());
 
-    let alpn = server_tls
-        .get_ref()
-        .1
-        .alpn_protocol()
-        .and_then(|a| String::from_utf8(a.to_vec()).ok());
+    let alpn = alpn_protocol_string(negotiated_alpn.as_deref());
 
     tracing::debug!(
         peer = %peer_addr,
@@ -334,6 +340,7 @@ async fn handle_outbound_connection(
     original_dst: SocketAddr,
     sni: Option<String>,
     client_hello_version: Option<String>,
+    client_alpn_protocols: Vec<Vec<u8>>,
     cert_forger: Arc<CertForger>,
     untrust_forger: Arc<CertForger>,
     engine: Arc<TlsDecisionEngine>,
@@ -354,7 +361,7 @@ async fn handle_outbound_connection(
         .await
         .context("Failed to connect to destination server")?;
 
-    let (recording_config, trusted_flag) = rustls_config::build_client_config_recording()
+    let (recording_config, trusted_flag) = rustls_config::build_client_config_recording_with_alpn(&client_alpn_protocols)
         .context("Failed to build recording client config")?;
 
     let server_tls = match dual_session::connect_to_server(ConnectParams {
@@ -408,7 +415,12 @@ async fn handle_outbound_connection(
         .to_certified_key()
         .context("Failed to convert forged certificate")?;
 
-    let forged_server_config = rustls_config::build_server_config_for_key(certified_key)
+    let negotiated_alpn = server_tls.get_ref().1.alpn_protocol().map(|protocol| protocol.to_vec());
+
+    let forged_server_config = rustls_config::build_server_config_for_key_with_alpn(
+        certified_key,
+        &selected_alpn_protocols(negotiated_alpn.as_deref()),
+    )
         .context("Failed to build server config")?;
 
     let client_tls = match dual_session::accept_client_tls(AcceptParams {
@@ -456,11 +468,7 @@ async fn handle_outbound_connection(
         .or(upstream_version)
         .or_else(|| client_hello_version.clone());
 
-    let alpn = server_tls
-        .get_ref()
-        .1
-        .alpn_protocol()
-        .and_then(|a| String::from_utf8(a.to_vec()).ok());
+    let alpn = alpn_protocol_string(negotiated_alpn.as_deref());
 
     tracing::debug!(
         sni = sni.as_deref().unwrap_or("none"),
@@ -510,6 +518,7 @@ struct PeekedClientHello {
     client_hello_version: Option<String>,
     ech_detected: bool,
     looks_like_tls: bool,
+    alpn_protocols: Vec<Vec<u8>>,
 }
 
 async fn peek_client_hello(stream: &TcpStream) -> PeekedClientHello {
@@ -520,6 +529,7 @@ async fn peek_client_hello(stream: &TcpStream) -> PeekedClientHello {
             client_hello_version: None,
             ech_detected: false,
             looks_like_tls: false,
+            alpn_protocols: Vec::new(),
         };
     };
     let looks_like_tls = looks_like_tls_client_hello_prefix(&buf[..n]);
@@ -529,6 +539,7 @@ async fn peek_client_hello(stream: &TcpStream) -> PeekedClientHello {
             client_hello_version: None,
             ech_detected: false,
             looks_like_tls,
+            alpn_protocols: Vec::new(),
         };
     };
     PeekedClientHello {
@@ -536,7 +547,16 @@ async fn peek_client_hello(stream: &TcpStream) -> PeekedClientHello {
         client_hello_version: Some(events::format_tls_version(result.version)),
         ech_detected: result.ech_detected,
         looks_like_tls: true,
+        alpn_protocols: result.alpn_protocols,
     }
+}
+
+fn alpn_protocol_string(protocol: Option<&[u8]>) -> Option<String> {
+    protocol.and_then(|protocol| String::from_utf8(protocol.to_vec()).ok())
+}
+
+fn selected_alpn_protocols(protocol: Option<&[u8]>) -> Vec<Vec<u8>> {
+    protocol.map(|protocol| vec![protocol.to_vec()]).unwrap_or_default()
 }
 
 fn looks_like_tls_client_hello_prefix(buf: &[u8]) -> bool {
