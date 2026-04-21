@@ -67,7 +67,6 @@ def setup_nftables
     if [ -n "$UPLINK_IF" ]; then
       nft add table ip nat
       nft 'add chain ip nat postrouting { type nat hook postrouting priority srcnat; policy accept; }'
-      nft add rule inet filter forward iifname "eth2" oifname "$UPLINK_IF" ct state new,established,related accept
       nft add rule inet filter forward iifname "$UPLINK_IF" oifname "eth2" ct state established,related accept
       nft add rule ip nat postrouting oifname "$UPLINK_IF" ip saddr 192.168.20.0/24 masquerade
     fi
