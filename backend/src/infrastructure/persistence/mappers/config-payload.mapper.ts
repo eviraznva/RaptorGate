@@ -1,20 +1,26 @@
-import { ConfigurationSnapshot } from "src/domain/entities/configuration-snapshot.entity";
-import { ConfigSnapshotPayload } from "src/domain/value-objects/config-snapshot-payload.interface";
-import { DnsBlacklistFile } from "../schemas/dns-blacklist.schema";
-import { FirewallCertificatesFile } from "../schemas/firewall-certificates.schema";
-import { IpsSignaturesFile } from "../schemas/ips-signatures.schema";
-import { NatRulesFile } from "../schemas/nat-rules.schema";
-import { RulesFile } from "../schemas/rules.schema";
-import { SslBypassListFile } from "../schemas/ssl-bypass-list.schema";
-import { UsersFile } from "../schemas/users.schema";
-import { ZoneInterfacesFile } from "../schemas/zone-interfaces.schema";
-import { ZonePairsFile } from "../schemas/zone-pairs.schema";
-import { ZonesFile } from "../schemas/zones.schema";
-import { NatRuleJsonMapper } from "./nat-rule-json.mapper";
-import { RuleJsonMapper } from "./rule-json.mapper";
-import { UserJsonMapper } from "./user-json.mapper";
-import { ZoneJsonMapper } from "./zone-json.mapper";
-import { ZonePairJsonMapper } from "./zone-pair-json.mapper";
+import { ConfigurationSnapshot } from '../../../domain/entities/configuration-snapshot.entity.js';
+import {
+  ConfigSnapshotPayload,
+  type TlsInspectionPolicyPayload,
+  normalizeTlsInspectionPolicy,
+} from '../../../domain/value-objects/config-snapshot-payload.interface.js';
+import { DnsBlacklistFile } from '../schemas/dns-blacklist.schema';
+import { FirewallCertificatesFile } from '../schemas/firewall-certificates.schema';
+import { IpsSignaturesFile } from '../schemas/ips-signatures.schema';
+import { NatRulesFile } from '../schemas/nat-rules.schema';
+import { RulesFile } from '../schemas/rules.schema';
+import { SslBypassListFile } from '../schemas/ssl-bypass-list.schema';
+import { UsersFile } from '../schemas/users.schema';
+import { ZoneInterfacesFile } from '../schemas/zone-interfaces.schema';
+import { ZonePairsFile } from '../schemas/zone-pairs.schema';
+import { ZonesFile } from '../schemas/zones.schema';
+import { FirewallCertificateJsonMapper } from './firewall-certificate-json.mapper';
+import { NatRuleJsonMapper } from './nat-rule-json.mapper';
+import { RuleJsonMapper } from './rule-json.mapper';
+import { SslBypassJsonMapper } from './ssl-bypass-json.mapper';
+import { UserJsonMapper } from './user-json.mapper';
+import { ZoneJsonMapper } from './zone-json.mapper';
+import { ZonePairJsonMapper } from './zone-pair-json.mapper';
 
 export interface ConfigBundlePayloadSchema {
   rules: RulesFile;
@@ -27,6 +33,7 @@ export interface ConfigBundlePayloadSchema {
   ips_signatures: IpsSignaturesFile;
   ml_model: null;
   firewall_certificates: FirewallCertificatesFile;
+  tls_inspection_policy?: TlsInspectionPolicyPayload;
   users: UsersFile;
   // roles: RolesFile;
   // permissions: PermissionsFile;
@@ -63,6 +70,14 @@ export function mapConfigSnapshotToPayloadRecord(
     UserJsonMapper.toRecord(user),
   );
 
+  const toSslBypassFile = payload.bundle.ssl_bypass_list.items.map((entry) =>
+    SslBypassJsonMapper.toRecord(entry, crypto.randomUUID()),
+  );
+
+  const toCertsFile = payload.bundle.firewall_certificates.items.map((cert) =>
+    FirewallCertificateJsonMapper.toRecord(cert, crypto.randomUUID()),
+  );
+
   return {
     bundle: {
       rules: {
@@ -84,15 +99,18 @@ export function mapConfigSnapshotToPayloadRecord(
         items: [],
       },
       ssl_bypass_list: {
-        items: [],
+        items: toSslBypassFile,
       },
       ips_signatures: {
         items: [],
       },
       ml_model: null,
       firewall_certificates: {
-        items: [],
+        items: toCertsFile,
       },
+      tls_inspection_policy: normalizeTlsInspectionPolicy(
+        payload.bundle.tls_inspection_policy,
+      ),
       users: {
         items: toUsersFile,
       },
@@ -128,6 +146,14 @@ export function mapConfigBundlePayloadToDomain(
     UserJsonMapper.toDomain(user),
   );
 
+  const toSslBypassDomain = payload.bundle.ssl_bypass_list.items.map((entry) =>
+    SslBypassJsonMapper.toDomain(entry),
+  );
+
+  const toCertsDomain = payload.bundle.firewall_certificates.items.map(
+    (cert) => FirewallCertificateJsonMapper.toDomain(cert),
+  );
+
   return {
     bundle: {
       rules: {
@@ -149,15 +175,18 @@ export function mapConfigBundlePayloadToDomain(
         items: [],
       },
       ssl_bypass_list: {
-        items: [],
+        items: toSslBypassDomain,
       },
       ips_signatures: {
         items: [],
       },
       ml_model: null,
       firewall_certificates: {
-        items: [],
+        items: toCertsDomain,
       },
+      tls_inspection_policy: normalizeTlsInspectionPolicy(
+        payload.bundle.tls_inspection_policy,
+      ),
       users: {
         items: toUsersDomain,
       },

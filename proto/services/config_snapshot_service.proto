@@ -41,6 +41,7 @@ syntax = "proto3";
     raptorgate.config.MlModel ml_model = 9;
     repeated raptorgate.config.FirewallCertificate firewall_certificates = 10;
     raptorgate.config.IdentityBundle identity = 11;
+    raptorgate.config.TlsInspectionPolicy tls_inspection_policy = 12;
   }
 
   message PushActiveConfigSnapshotResponse {

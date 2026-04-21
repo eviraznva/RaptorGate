@@ -1,35 +1,43 @@
-import { hash } from "node:crypto";
-import { Inject, Injectable, Logger } from "@nestjs/common";
-import { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
-import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
-import type { IConfigSnapshotRepository } from "../../domain/repositories/config-snapshot.repository.js";
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from "../../domain/repositories/config-snapshot.repository.js";
-import type { INatRulesRepository } from "../../domain/repositories/nat-rules.repository.js";
-import { NAT_RULES_REPOSITORY_TOKEN } from "../../domain/repositories/nat-rules.repository.js";
-import type { IPermissionRepository } from "../../domain/repositories/permission.repository.js";
-import { PERMISSION_REPOSITORY_TOKEN } from "../../domain/repositories/permission.repository.js";
-import type { IRoleRepository } from "../../domain/repositories/role.repository.js";
-import { ROLE_REPOSITORY_TOKEN } from "../../domain/repositories/role.repository.js";
-import type { IRolePermissionsRepository } from "../../domain/repositories/role-permissions.repository.js";
-import { ROLE_PERMISSIONS_REPOSITORY_TOKEN } from "../../domain/repositories/role-permissions.repository.js";
-import type { IRulesRepository } from "../../domain/repositories/rules-repository.js";
-import { RULES_REPOSITORY_TOKEN } from "../../domain/repositories/rules-repository.js";
-import type { IUserRepository } from "../../domain/repositories/user.repository.js";
-import { USER_REPOSITORY_TOKEN } from "../../domain/repositories/user.repository.js";
-import type { IUserRolesRepository } from "../../domain/repositories/user-roles.repository.js";
-import { USER_ROLES_REPOSITORY_TOKEN } from "../../domain/repositories/user-roles.repository.js";
-import type { IZoneRepository } from "../../domain/repositories/zone.repository.js";
-import { ZONE_REPOSITORY_TOKEN } from "../../domain/repositories/zone.repository.js";
-import type { IZonePairRepository } from "../../domain/repositories/zone-pair.repository.js";
-import { ZONE_PAIR_REPOSITORY_TOKEN } from "../../domain/repositories/zone-pair.repository.js";
-import { Checksum } from "../../domain/value-objects/checksum.vo.js";
-import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
-import type { ApplyConfigSnapshotDto } from "../dtos/apply-config-snapshot.dto.js";
-import type { ApplyConfigSnapshotResponseDto } from "../dtos/apply-config-snapshot-response.dto.js";
-import type { IConfigSnapshotPushService } from "../ports/config-snapshot-push-service.interface.js";
-import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from "../ports/config-snapshot-push-service.interface.js";
-import type { ITokenService } from "../ports/token-service.interface.js";
-import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
+import { hash } from 'node:crypto';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
+import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
+import type { IConfigSnapshotRepository } from '../../domain/repositories/config-snapshot.repository.js';
+import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
+import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
+import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
+import type { IPermissionRepository } from '../../domain/repositories/permission.repository.js';
+import { PERMISSION_REPOSITORY_TOKEN } from '../../domain/repositories/permission.repository.js';
+import type { IRoleRepository } from '../../domain/repositories/role.repository.js';
+import { ROLE_REPOSITORY_TOKEN } from '../../domain/repositories/role.repository.js';
+import type { IRolePermissionsRepository } from '../../domain/repositories/role-permissions.repository.js';
+import { ROLE_PERMISSIONS_REPOSITORY_TOKEN } from '../../domain/repositories/role-permissions.repository.js';
+import type { IRulesRepository } from '../../domain/repositories/rules-repository.js';
+import { RULES_REPOSITORY_TOKEN } from '../../domain/repositories/rules-repository.js';
+import type { IUserRepository } from '../../domain/repositories/user.repository.js';
+import { USER_REPOSITORY_TOKEN } from '../../domain/repositories/user.repository.js';
+import type { IUserRolesRepository } from '../../domain/repositories/user-roles.repository.js';
+import { USER_ROLES_REPOSITORY_TOKEN } from '../../domain/repositories/user-roles.repository.js';
+import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
+import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
+import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
+import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
+import type { IFirewallCertificateRepository } from '../../domain/repositories/firewall-certificate.repository.js';
+import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../../domain/repositories/firewall-certificate.repository.js';
+import type { ISslBypassRepository } from '../../domain/repositories/ssl-bypass.repository.js';
+import { SSL_BYPASS_REPOSITORY_TOKEN } from '../../domain/repositories/ssl-bypass.repository.js';
+import {
+  normalizeTlsInspectionPolicy,
+  type ConfigSnapshotPayload,
+} from '../../domain/value-objects/config-snapshot-payload.interface.js';
+import { Checksum } from '../../domain/value-objects/checksum.vo.js';
+import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
+import type { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.js';
+import type { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
+import type { IConfigSnapshotPushService } from '../ports/config-snapshot-push-service.interface.js';
+import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from '../ports/config-snapshot-push-service.interface.js';
+import type { ITokenService } from '../ports/token-service.interface.js';
+import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
 
 @Injectable()
 export class ApplyConfigSnapshotUseCase {
@@ -59,6 +67,10 @@ export class ApplyConfigSnapshotUseCase {
     private readonly userRolesRepository: IUserRolesRepository,
     @Inject(CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN)
     private readonly configSnapshotPushService: IConfigSnapshotPushService,
+    @Inject(FIREWALL_CERTIFICATE_REPOSITORY_TOKEN)
+    private readonly firewallCertificateRepository: IFirewallCertificateRepository,
+    @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
+    private readonly sslBypassRepository: ISslBypassRepository,
   ) {}
 
   async execute(
@@ -74,6 +86,20 @@ export class ApplyConfigSnapshotUseCase {
     const allUsers = await this.userRepository.findAll();
     const activeZones = await this.zoneRepository.findActive();
     const allZonePairs = await this.zonePairRepository.findAll();
+    const allCerts = await this.firewallCertificateRepository.findAll();
+    const snapshotCerts = allCerts.filter((cert) =>
+      cert.getCertType() === 'TLS_SERVER' ? true : cert.getIsActive(),
+    );
+    const activeBypass = await this.sslBypassRepository.findActive();
+    const allConfigSnapshots =
+      await this.configSnapshotRepository.findAllSnapshots();
+    const currentActiveSnapshot = allConfigSnapshots.find((snapshot) =>
+      snapshot.getIsActive(),
+    );
+    const tlsInspectionPolicy = this.resolveTlsInspectionPolicy(
+      currentActiveSnapshot?.deserializePayload(),
+    );
+
     // const rolePermissions = await this.rolePermissionsRepository.findAll();
     // const userRoles = await this.userRolesRepository.findAll();
 
@@ -98,15 +124,16 @@ export class ApplyConfigSnapshotUseCase {
           items: [], // TODO: implement dns blacklist repository and add to snapshot
         },
         ssl_bypass_list: {
-          items: [], // TODO: implement ssl bypass list repository and add to snapshot
+          items: [...activeBypass],
         },
         ips_signatures: {
           items: [], // TODO: implement ips signatures repository and add to snapshot
         },
         ml_model: null,
         firewall_certificates: {
-          items: [], // TODO: implement firewall certificates repository and add to snapshot
+          items: [...snapshotCerts],
         },
+        tls_inspection_policy: tlsInspectionPolicy,
         users: {
           items: [...allUsers],
         },
@@ -125,19 +152,11 @@ export class ApplyConfigSnapshotUseCase {
       },
     };
 
-    const allConfigSnapshots =
-      await this.configSnapshotRepository.findAllSnapshots();
-
     const highestVersionNumber = allConfigSnapshots.reduce((prev, curr) => {
       if (curr.getVersionNumber() > prev) return curr.getVersionNumber();
     }, 0);
 
-    const checksum = hash("sha256", JSON.stringify(configSnposhotPayload));
-
-    const currentActiveSnapshot = allConfigSnapshots.find((snapshot) =>
-      snapshot.getIsActive(),
-    );
-
+    const checksum = hash('sha256', JSON.stringify(configSnposhotPayload));
     const newConfigSnapshot = ConfigurationSnapshot.create(
       crypto.randomUUID(),
       highestVersionNumber !== undefined ? highestVersionNumber + 1 : 1,
@@ -160,7 +179,7 @@ export class ApplyConfigSnapshotUseCase {
     if (dto.isActive) {
       await this.configSnapshotPushService.pushActiveConfigSnapshot(
         newConfigSnapshot,
-        "apply",
+        'apply',
       );
     }
 
@@ -192,5 +211,11 @@ export class ApplyConfigSnapshotUseCase {
       createdAt: newConfigSnapshot.getCreatedAt(),
       createdBy: newConfigSnapshot.getCreatedBy(),
     };
+  }
+
+  private resolveTlsInspectionPolicy(payload?: ConfigSnapshotPayload) {
+    return normalizeTlsInspectionPolicy(
+      payload?.bundle.tls_inspection_policy,
+    );
   }
 }

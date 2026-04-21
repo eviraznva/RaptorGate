@@ -1,16 +1,76 @@
-use std::sync::{
-    OnceLock,
-    atomic::{AtomicU64, Ordering},
-};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use prost_types::Timestamp;
+use std::sync::OnceLock;
 use tokio::{select, sync::mpsc, time::interval};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
 use crate::proto::events as proto;
 use crate::proto::services::backend_event_service_client::BackendEventServiceClient;
+use crate::tls::inspection_relay::{Direction, InspectionMode};
+
+#[derive(Debug, Clone, Copy)]
+pub enum HandshakeStage {
+    ClientHello,
+    ServerHandshake,
+    ClientFinished,
+}
+
+impl HandshakeStage {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ClientHello => "client_hello",
+            Self::ServerHandshake => "server_handshake",
+            Self::ClientFinished => "client_finished",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum EchOrigin {
+    DnsHttpsRecord,
+    ClientHelloOuterSni,
+}
+
+impl EchOrigin {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DnsHttpsRecord => "dns_https_rr",
+            Self::ClientHelloOuterSni => "client_hello_outer_sni",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum EchAction {
+    Logged,
+    Stripped,
+    Blocked,
+}
+
+impl EchAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Logged => "logged",
+            Self::Stripped => "stripped",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+pub fn format_tls_version(raw: u16) -> String {
+    match raw {
+        0x0304 => "TLS1.3".to_string(),
+        0x0303 => "TLS1.2".to_string(),
+        0x0302 => "TLS1.1".to_string(),
+        0x0301 => "TLS1.0".to_string(),
+        0x0300 => "SSL3.0".to_string(),
+        other => format!("0x{other:04x}"),
+    }
+}
 
 const CHANNEL_CAPACITY: usize = 1024;
 const FLUSH_INTERVAL_MS: u64 = 500;
@@ -96,8 +156,19 @@ pub async fn init_event_system(socket_path: String) {
             _ = flush_tick.tick() => {
                 flush_batch(&mut buffer, &mut backend).await;
             }
-            _ = reconnect_interval.tick(), if backend.is_none() => {
-                attempt_reconnect(&socket_path, &mut backend, &mut buffer).await;
+            _ = reconnect_interval.tick() => {
+                if backend.as_ref().is_some_and(|conn| conn.tx.is_closed()) {
+                    tracing::warn!(
+                        event = "event_bus.backend_connection.lost",
+                        dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                        "backend connection lost, will reconnect"
+                    );
+                    backend = None;
+                }
+
+                if backend.is_none() {
+                    attempt_reconnect(&socket_path, &mut backend, &mut buffer).await;
+                }
             }
         }
     }
@@ -169,28 +240,44 @@ async fn attempt_reconnect(
     backend: &mut Option<BackendConnection>,
     buffer: &mut Vec<Event>,
 ) {
-    match try_connect(socket_path).await {
-        Ok(conn) => {
-            tracing::info!(
-                event = "event_bus.backend_connected",
-                socket_path,
-                buffered_events = buffer.len(),
-                dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
-                "reconnected to backend"
-            );
-            *backend = Some(conn);
+    let mut attempted_paths = vec![socket_path.to_string()];
+    if socket_path.ends_with("/event.sock") {
+        attempted_paths.push(socket_path.replacen("/event.sock", "/firewall.sock", 1));
+    }
 
-            emit(Event::new(EventKind::EventBusConnectedEvent {}));
-            flush_batch(buffer, backend).await;
+    let mut last_error = None;
+
+    for attempted_socket_path in attempted_paths {
+        match try_connect(&attempted_socket_path).await {
+            Ok(conn) => {
+                tracing::info!(
+                    event = "event_bus.backend_connected",
+                    socket_path = attempted_socket_path,
+                    configured_socket_path = socket_path,
+                    buffered_events = buffer.len(),
+                    dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                    "reconnected to backend"
+                );
+                *backend = Some(conn);
+
+                emit(Event::new(EventKind::EventBusConnectedEvent {}));
+                flush_batch(buffer, backend).await;
+                return;
+            }
+            Err(err) => {
+                last_error = Some((attempted_socket_path, err));
+            }
         }
-        Err(e) => {
-            tracing::warn!(
-                event = "event_bus.backend_reconnect.failed",
-                socket_path,
-                error = ?e,
-                "reconnect attempt failed"
-            );
-        }
+    }
+
+    if let Some((attempted_socket_path, err)) = last_error {
+        tracing::warn!(
+            event = "event_bus.backend_reconnect.failed",
+            socket_path,
+            attempted_socket_path,
+            error = ?err,
+            "reconnect attempt failed"
+        );
     }
 }
 
@@ -215,6 +302,21 @@ pub enum EventKind {
     TcpSessionEnteredTimeWait { src: EndpointIdentifier, dst: EndpointIdentifier },
     TunDeviceSwapped { old_device: String, new_device: String, old_address: String, new_address: String },
     SnifferConfigChanged { old_interfaces: Vec<String>, new_interfaces: Vec<String>, old_timeout: Duration, new_timeout: Duration },
+    TlsInterceptStarted { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, tls_version: Option<String> },
+    TlsHandshakeComplete { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, alpn: Option<String>, tls_version: Option<String> },
+    TlsSessionClosed { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, bytes_up: u64, bytes_down: u64 },
+    InboundTlsInterceptStarted { peer: SocketAddr, server: SocketAddr, sni: Option<String>, common_name: String, tls_version: Option<String> },
+    InboundTlsHandshakeComplete { peer: SocketAddr, server: SocketAddr, sni: Option<String>, alpn: Option<String>, tls_version: Option<String> },
+    InboundTlsSessionClosed { peer: SocketAddr, server: SocketAddr, sni: Option<String>, bytes_up: u64, bytes_down: u64 },
+    DecryptedTrafficClassified { peer: SocketAddr, server: SocketAddr, sni: Option<String>, app_proto: String, http_version: Option<String>, direction: Direction, mode: InspectionMode },
+    DecryptedIpsMatch { peer: SocketAddr, server: SocketAddr, sni: Option<String>, signature_name: String, severity: String, blocked: bool, direction: Direction, mode: InspectionMode, log_id: String },
+    TlsUntrustedCertDetected { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, domain: String, tls_version: Option<String> },
+    TlsBypassApplied { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, domain: String, tls_version: Option<String> },
+    InboundTlsBypassApplied { peer: SocketAddr, server: SocketAddr, sni: Option<String>, tls_version: Option<String> },
+    PinningFailureDetected { peer: SocketAddr, dst: SocketAddr, sni: String, tls_version: Option<String> },
+    PinningAutoBypassActivated { source_ip: IpAddr, domain: String, reason: String },
+    TlsHandshakeFailed { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, tls_version: Option<String>, stage: HandshakeStage, reason: String, mode: InspectionMode },
+    EchAttemptDetected { source_ip: Option<IpAddr>, domain: String, origin: EchOrigin, action: EchAction },
     IpsSignatureMatched {
         signature_id: String,
         signature_name: String,
@@ -243,9 +345,24 @@ impl EventKind {
             | E::TcpSessionAbortedMidClose { .. }
             | E::TcpSessionEnteredTimeWait { .. }
             | E::TunDeviceSwapped { .. }
+            | E::SnifferConfigChanged { .. }
+            | E::TlsInterceptStarted { .. }
+            | E::TlsHandshakeComplete { .. }
+            | E::TlsSessionClosed { .. }
+            | E::InboundTlsInterceptStarted { .. }
+            | E::InboundTlsHandshakeComplete { .. }
+            | E::InboundTlsSessionClosed { .. }
+            | E::DecryptedTrafficClassified { .. }
+            | E::DecryptedIpsMatch { .. }
+            | E::TlsUntrustedCertDetected { .. }
+            | E::TlsBypassApplied { .. }
+            | E::InboundTlsBypassApplied { .. }
+            | E::PinningFailureDetected { .. }
+            | E::PinningAutoBypassActivated { .. }
+            | E::TlsHandshakeFailed { .. }
+            | E::EchAttemptDetected { .. }
             | E::IpsSignatureMatched { .. }
-            | E::EventBusConnectedEvent { .. }
-            | E::SnifferConfigChanged { .. } => true,
+            | E::EventBusConnectedEvent { .. } => true,
         }
     }
 }
@@ -313,6 +430,154 @@ impl From<EventKind> for proto::EventKind {
                         new_interfaces,
                         old_timeout: Some(duration_to_proto(old_timeout)),
                         new_timeout: Some(duration_to_proto(new_timeout)),
+                    }),
+                EventKind::TlsInterceptStarted { peer, dst, sni, tls_version } =>
+                    Item::TlsInterceptStarted(proto::TlsInterceptStartedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::TlsHandshakeComplete { peer, dst, sni, alpn, tls_version } =>
+                    Item::TlsHandshakeComplete(proto::TlsHandshakeCompleteEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        alpn: alpn.unwrap_or_default(),
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::TlsSessionClosed { peer, dst, sni, bytes_up, bytes_down } =>
+                    Item::TlsSessionClosed(proto::TlsSessionClosedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        bytes_up,
+                        bytes_down,
+                    }),
+                EventKind::InboundTlsInterceptStarted { peer, server, sni, common_name, tls_version } =>
+                    Item::InboundTlsInterceptStarted(proto::InboundTlsInterceptStartedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        common_name,
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::InboundTlsHandshakeComplete { peer, server, sni, alpn, tls_version } =>
+                    Item::InboundTlsHandshakeComplete(proto::InboundTlsHandshakeCompleteEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        alpn: alpn.unwrap_or_default(),
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::InboundTlsSessionClosed { peer, server, sni, bytes_up, bytes_down } =>
+                    Item::InboundTlsSessionClosed(proto::InboundTlsSessionClosedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        bytes_up,
+                        bytes_down,
+                    }),
+                EventKind::DecryptedTrafficClassified { peer, server, sni, app_proto, http_version, direction, mode } =>
+                    Item::DecryptedTrafficClassified(proto::DecryptedTrafficClassifiedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        app_proto,
+                        http_version: http_version.unwrap_or_default(),
+                        direction: format!("{direction:?}"),
+                        mode: format!("{mode:?}"),
+                    }),
+                EventKind::DecryptedIpsMatch { peer, server, sni, signature_name, severity, blocked, direction, mode, log_id } =>
+                    Item::DecryptedIpsMatch(proto::DecryptedIpsMatchEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        signature_name,
+                        severity,
+                        blocked,
+                        direction: format!("{direction:?}"),
+                        mode: format!("{mode:?}"),
+                        log_id,
+                    }),
+                EventKind::TlsUntrustedCertDetected { peer, dst, sni, domain, tls_version } =>
+                    Item::TlsUntrustedCertDetected(proto::TlsUntrustedCertDetectedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        domain,
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::TlsBypassApplied { peer, dst, sni, domain, tls_version } =>
+                    Item::TlsBypassApplied(proto::TlsBypassAppliedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        domain,
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::InboundTlsBypassApplied { peer, server, sni, tls_version } =>
+                    Item::InboundTlsBypassApplied(proto::InboundTlsBypassAppliedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::PinningFailureDetected { peer, dst, sni, tls_version } =>
+                    Item::PinningFailureDetected(proto::PinningFailureDetectedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni,
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::PinningAutoBypassActivated { source_ip, domain, reason } =>
+                    Item::PinningAutoBypassActivated(proto::PinningAutoBypassActivatedEvent {
+                        source_ip: source_ip.to_string(),
+                        domain,
+                        reason,
+                    }),
+                EventKind::TlsHandshakeFailed { peer, dst, sni, tls_version, stage, reason, mode } =>
+                    Item::TlsHandshakeFailed(proto::TlsHandshakeFailedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        tls_version: tls_version.unwrap_or_default(),
+                        stage: stage.as_str().to_string(),
+                        reason,
+                        mode: format!("{mode:?}"),
+                    }),
+                EventKind::EchAttemptDetected { source_ip, domain, origin, action } =>
+                    Item::EchAttemptDetected(proto::EchAttemptDetectedEvent {
+                        source_ip: source_ip.map(|ip| ip.to_string()).unwrap_or_default(),
+                        domain,
+                        origin: origin.as_str().to_string(),
+                        action: action.as_str().to_string(),
                     }),
                 EventKind::IpsSignatureMatched {
                     signature_id,

@@ -1,5 +1,5 @@
-import { Zone } from "src/domain/entities/zone.entity";
-import { ZoneItemResponseDto } from "../dtos/zone-item-response.dto";
+import { Zone } from '../../domain/entities/zone.entity.js';
+import { ZoneItemResponseDto } from '../dtos/zone-item-response.dto';
 
 export class ZoneResponseMapper {
   static toDto(zone: Zone): ZoneItemResponseDto {

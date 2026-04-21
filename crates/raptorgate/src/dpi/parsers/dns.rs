@@ -24,6 +24,8 @@ pub enum DnsRecordType {
     Nsec3Param,
     Cds,
     Cdnskey,
+    Svcb,
+    Https,
     Any,
     Other(u16),
 }
@@ -49,6 +51,8 @@ impl From<u16> for DnsRecordType {
             51 => Self::Nsec3Param,
             59 => Self::Cds,
             60 => Self::Cdnskey,
+            64 => Self::Svcb,
+            65 => Self::Https,
             255 => Self::Any,
             other => Self::Other(other),
         }
@@ -76,6 +80,8 @@ impl From<DnsRecordType> for u16 {
             DnsRecordType::Nsec3Param => 51,
             DnsRecordType::Cds => 59,
             DnsRecordType::Cdnskey => 60,
+            DnsRecordType::Svcb => 64,
+            DnsRecordType::Https => 65,
             DnsRecordType::Any => 255,
             DnsRecordType::Other(v) => v,
         }
@@ -100,6 +106,7 @@ pub struct DnsParseResult {
     pub checking_disabled: bool,
     pub rcode: u16,
     pub has_dnssec_records: bool,
+    pub dns_has_ech_hints: bool,
     pub response_size: u16,
 }
 
@@ -133,6 +140,11 @@ pub fn parse_dns(buf: &[u8]) -> Option<DnsParseResult> {
         .chain(additional_types.iter())
         .any(|record_type| record_type.is_dnssec());
 
+    let dns_has_ech_hints = is_response
+        && answer_types
+            .iter()
+            .any(|t| matches!(t, DnsRecordType::Https | DnsRecordType::Svcb));
+
     Some(DnsParseResult {
         is_response,
         query_name: Some(question.qname.to_string()),
@@ -149,6 +161,7 @@ pub fn parse_dns(buf: &[u8]) -> Option<DnsParseResult> {
         checking_disabled,
         rcode: rcode_to_u16(packet.rcode()),
         has_dnssec_records,
+        dns_has_ech_hints,
         response_size: buf.len() as u16,
     })
 }
@@ -163,6 +176,7 @@ pub fn dns_to_dpi_context(result: &DnsParseResult) -> DpiContext {
         dns_answer_count: result.answer_count,
         dns_answer_types: result.answer_types.clone(),
         dns_response_size: result.response_size,
+        dns_has_ech_hints: result.dns_has_ech_hints,
         ..Default::default()
     }
 }
@@ -715,6 +729,38 @@ mod tests {
     }
 
     #[test]
+    fn response_with_https_record_marks_ech_hints() {
+        let pkt = build_dns_response_with_answers(
+            &["example", "com"],
+            65,
+            &[(65, &[0x00, 0x01, 0x00])],
+        );
+        let result = parse_dns(&pkt).unwrap();
+        assert!(result.is_response);
+        assert!(result.dns_has_ech_hints);
+    }
+
+    #[test]
+    fn response_with_svcb_record_marks_ech_hints() {
+        let pkt = build_dns_response_with_answers(
+            &["example", "com"],
+            64,
+            &[(64, &[0x00, 0x01, 0x00])],
+        );
+        let result = parse_dns(&pkt).unwrap();
+        assert!(result.is_response);
+        assert!(result.dns_has_ech_hints);
+    }
+
+    #[test]
+    fn query_does_not_mark_ech_hints() {
+        let pkt = build_dns_query(&["example", "com"], 65);
+        let result = parse_dns(&pkt).unwrap();
+        assert!(!result.is_response);
+        assert!(!result.dns_has_ech_hints);
+    }
+
+    #[test]
     fn to_dpi_context_maps_fields() {
         let result = DnsParseResult {
             is_response: false,
@@ -732,6 +778,7 @@ mod tests {
             checking_disabled: false,
             rcode: 0,
             has_dnssec_records: false,
+            dns_has_ech_hints: false,
             response_size: 128,
         };
         let ctx = dns_to_dpi_context(&result);
@@ -765,6 +812,7 @@ mod tests {
             checking_disabled: false,
             rcode: 0,
             has_dnssec_records: false,
+            dns_has_ech_hints: false,
             response_size: 64,
         };
         let ctx = dns_to_dpi_context(&result);

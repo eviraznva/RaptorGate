@@ -29,7 +29,6 @@ impl NatEngine {
         nat_rules: &Option<Arc<NatRules>>,
         interface_ips: HashMap<String, Vec<IpAddr>>,
     ) -> Self {
-
         tracing::debug!(
             nat_rule_count = nat_rules.as_ref().map_or(0, |rules| rules.rules().len()),
             interface_count = interface_ips.len(),
@@ -42,6 +41,17 @@ impl NatEngine {
             port_store: PortStore::new(PortRange::new(40000, 60000)),
             interface_ips,
         }
+    }
+
+    pub fn replace_rules(&mut self, nat_rules: &Option<Arc<NatRules>>) {
+        self.nat_rules = nat_rules.clone();
+        self.bindings = BindingTable::new();
+        self.port_store = PortStore::new(PortRange::new(40000, 60000));
+
+        tracing::info!(
+            nat_rule_count = self.nat_rules.as_ref().map_or(0, |rules| rules.rules().len()),
+            "nat engine rules replaced"
+        );
     }
 
     /// Wyszukuje oryginalny adres źródłowy na podstawie publicznego IP
@@ -64,13 +74,6 @@ impl NatEngine {
         );
 
         self.bindings.insert(binding);
-    }
-
-    pub fn replace_rules(&mut self, nat_rules: NatRules) {
-        let nat_rule_count = nat_rules.rules().len();
-        self.nat_rules = (!nat_rules.is_empty()).then(|| Arc::new(nat_rules));
-
-        tracing::info!(nat_rule_count, "nat rules swapped");
     }
 
     pub fn nat_rules(&self) -> Option<Arc<NatRules>> {
@@ -271,10 +274,10 @@ impl NatEngine {
         out_zone: Option<&str>,
     ) -> Option<NatRule> {
         let nat_rules = self.nat_rules.as_ref()?;
-        
+
         let stage_actions: &[NatAction] = match stage {
-            NatStage::Prerouting => &[NatAction::Dnat],
-            NatStage::Postrouting => &[NatAction::Snat, NatAction::Pat, NatAction::Masquerade],
+            NatStage::Prerouting => &[NatAction::Dnat, NatAction::Pat],
+            NatStage::Postrouting => &[NatAction::Snat, NatAction::Masquerade],
         };
 
         let matched = nat_rules.rules().iter()
@@ -282,42 +285,40 @@ impl NatEngine {
                 if !stage_actions.contains(&rule.action()) {
                     return false;
                 }
-                
+
                 if let Some(rule_in) = rule.in_interface() {
                     if in_interface != Some(rule_in) {
                         return false;
                     }
                 }
-                
+
                 if let Some(rule_out) = rule.out_interface() {
                     if out_interface != Some(rule_out) {
                         return false;
                     }
                 }
-                
+
                 if let Some(rule_zone) = rule.in_zone() {
                     if in_zone != Some(rule_zone) {
                         return false;
                     }
                 }
-                
+
                 if let Some(rule_zone) = rule.out_zone() {
                     if out_zone != Some(rule_zone) {
                         return false;
                     }
                 }
-                
+
                 if let Some(cidr) = rule.src_cidr() {
                     if !cidr.contains(&flow.src_ip) {
                         return false;
                     }
                 }
-                
-                if (rule.action() != NatAction::Dnat || rule.translated_ip().is_some())
-                    && let Some(cidr) = rule.dst_cidr()
-                    && !cidr.contains(&flow.dst_ip)
-                {
-                    return false;
+                if let Some(cidr) = rule.dst_cidr() {
+                    if !cidr.contains(&flow.dst_ip) {
+                        return false;
+                    }
                 }
 
                 if let Some(rule_proto) = rule.protocol() {
@@ -326,9 +327,7 @@ impl NatEngine {
                     }
                 }
 
-                if (rule.action() != NatAction::Dnat || rule.translated_port().is_some())
-                    && let Some(src_port) = rule.src_port()
-                {
+                if let Some(src_port) = rule.src_port() {
                     if flow.src_port != src_port {
                         return false;
                     }
@@ -364,31 +363,43 @@ impl NatEngine {
             original = ?original_forward,
             "nat creating binding"
         );
-        
+
         let timeout = binding_timeout_for(original_forward.proto);
-        
+
         let binding_id = self.bindings.next_binding_id();
 
         let (translated_forward, allocated_port) = match rule.action() {
-            NatAction::Snat | NatAction::Pat | NatAction::Masquerade => {
-                let public_ip = match rule.translated_ip() {
-                    Some(ip) if same_ip_family(ip, original_forward.src_ip) => ip,
-                    Some(ip) => {
-                        tracing::debug!(
-                            rule_id = %rule.id(),
-                            original_src = %original_forward.src_ip,
-                            translated_src = %ip,
-                            "nat rejected source binding due to mixed address families"
-                        );
+            NatAction::Snat => {
+                let translated_ip = rule.translated_ip()?;
 
-                        return None;
-                    }
-                    None => self.interface_ip_for(
-                        rule.out_interface()?,
-                        original_forward.src_ip,
-                    )?,
-                };
-                
+                if !same_ip_family(translated_ip, original_forward.src_ip) {
+                    tracing::debug!(
+                        rule_id = %rule.id(),
+                        original_src = %original_forward.src_ip,
+                        translated_src = %translated_ip,
+                        "nat rejected snat binding due to mixed address families"
+                    );
+
+                    return None;
+                }
+
+                (
+                    FlowTuple {
+                        src_ip: translated_ip,
+                        src_port: original_forward.src_port,
+                        dst_ip: original_forward.dst_ip,
+                        dst_port: original_forward.dst_port,
+                        proto: original_forward.proto,
+                    },
+                    None,
+                )
+            }
+            NatAction::Masquerade => {
+                let public_ip = self.interface_ip_for(
+                    rule.out_interface()?,
+                    original_forward.src_ip,
+                )?;
+
                 let port = self.port_store.add(
                     public_ip,
                     original_forward.proto,
@@ -408,10 +419,8 @@ impl NatEngine {
                 )
             }
             NatAction::Dnat => {
-                let dst_ip = rule
-                    .translated_ip()
-                    .or_else(|| rule.dst_cidr().map(|cidr| cidr.addr()))?;
-                
+                let dst_ip = rule.translated_ip()?;
+
                 if !same_ip_family(dst_ip, original_forward.dst_ip) {
                     tracing::debug!(
                         rule_id = %rule.id(),
@@ -419,7 +428,7 @@ impl NatEngine {
                         translated_dst = %dst_ip,
                         "nat rejected dnat binding due to mixed address families"
                     );
-                    
+
                     return None;
                 }
 
@@ -429,6 +438,32 @@ impl NatEngine {
                         src_port: original_forward.src_port,
                         dst_ip,
                         dst_port: rule.translated_port().unwrap_or(original_forward.dst_port),
+                        proto: original_forward.proto,
+                    },
+                    None,
+                )
+            }
+            NatAction::Pat => {
+                let dst_ip = rule.translated_ip()?;
+                let dst_port = rule.translated_port()?;
+
+                if !same_ip_family(dst_ip, original_forward.dst_ip) {
+                    tracing::debug!(
+                        rule_id = %rule.id(),
+                        original_dst = %original_forward.dst_ip,
+                        translated_dst = %dst_ip,
+                        "nat rejected pat binding due to mixed address families"
+                    );
+
+                    return None;
+                }
+
+                (
+                    FlowTuple {
+                        src_ip: original_forward.src_ip,
+                        src_port: original_forward.src_port,
+                        dst_ip,
+                        dst_port,
                         proto: original_forward.proto,
                     },
                     None,
@@ -444,7 +479,7 @@ impl NatEngine {
             allocated_port,
             timeout,
         );
-        
+
         tracing::trace!(
             binding_id = binding.binding_id,
             rule_id = %binding.rule_id,
@@ -453,7 +488,7 @@ impl NatEngine {
             allocated_port = binding.allocated_port,
             "nat binding created"
         );
-        
+
         Some(binding)
     }
 
@@ -461,14 +496,14 @@ impl NatEngine {
     fn interface_ip_for(&self, interface: &str, same_family_as: IpAddr) -> Option<IpAddr> {
         let selected = self.interface_ips.get(interface)?.iter().copied()
             .find(|candidate| same_ip_family(*candidate, same_family_as));
-        
+
         tracing::trace!(
             interface,
             same_family_as = %same_family_as,
             ?selected,
             "nat resolved interface address"
         );
-        
+
         selected
     }
 }
@@ -496,7 +531,7 @@ pub(crate) fn build_binding(
         last_seen: now,
         expires_at: now + timeout,
     };
-    
+
     tracing::trace!(
         binding_id = binding.binding_id,
         rule_id = %binding.rule_id,
@@ -505,7 +540,7 @@ pub(crate) fn build_binding(
         timeout_secs = timeout.as_secs(),
         "nat built binding"
     );
-    
+
     binding
 }
 
@@ -530,4 +565,83 @@ fn flow_nat_protocol(proto: L4Proto) -> NatProtocol {
 /// Sprawdza, czy dany flow może być translantowany (np. nie translantujemy ICMPv6)
 fn can_translate_flow(flow: &FlowTuple) -> bool {
     !(flow.proto == L4Proto::Icmp && matches!(flow.src_ip, IpAddr::V6(_)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    fn flow(src: [u8; 4], src_port: u16, dst: [u8; 4], dst_port: u16) -> FlowTuple {
+        FlowTuple {
+            src_ip: IpAddr::V4(Ipv4Addr::from(src)),
+            dst_ip: IpAddr::V4(Ipv4Addr::from(dst)),
+            src_port,
+            dst_port,
+            proto: L4Proto::Tcp,
+        }
+    }
+
+    #[test]
+    fn pat_binding_rewrites_destination_ip_and_port() {
+        let mut engine = NatEngine::new(&None, HashMap::new());
+        let rule = NatRule::new(
+            "pat-1".into(),
+            10,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("192.0.2.10/32".parse().unwrap()),
+            Some(NatProtocol::Tcp),
+            None,
+            Some(443),
+            Some("10.0.0.10".parse().unwrap()),
+            Some(8443),
+            NatAction::Pat,
+        );
+
+        let binding = engine
+            .create_binding(&rule, &flow([198, 51, 100, 25], 50000, [192, 0, 2, 10], 443))
+            .unwrap();
+
+        assert_eq!(
+            binding.translated_forward.dst_ip,
+            "10.0.0.10".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(binding.translated_forward.dst_port, 8443);
+    }
+
+    #[test]
+    fn snat_binding_rewrites_source_ip_without_port_translation() {
+        let mut engine = NatEngine::new(&None, HashMap::new());
+        let rule = NatRule::new(
+            "snat-1".into(),
+            10,
+            None,
+            None,
+            None,
+            None,
+            Some("10.0.0.10/32".parse().unwrap()),
+            None,
+            None,
+            None,
+            None,
+            Some("198.51.100.10".parse().unwrap()),
+            None,
+            NatAction::Snat,
+        );
+
+        let binding = engine
+            .create_binding(&rule, &flow([10, 0, 0, 10], 51000, [203, 0, 113, 20], 443))
+            .unwrap();
+
+        assert_eq!(
+            binding.translated_forward.src_ip,
+            "198.51.100.10".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(binding.translated_forward.src_port, 51000);
+        assert!(binding.allocated_port.is_none());
+    }
 }

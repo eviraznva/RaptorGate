@@ -8,18 +8,21 @@ use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use ngfw::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use ngfw::data_plane::ips::ips::Ips;
 use ngfw::data_plane::ips::provider::IpsConfigProvider;
-use ngfw::data_plane::nat::NatEngine;
+use ngfw::data_plane::nat::{NatConfigProvider, NatEngine};
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::proto::config::{Rule, Zone, ZonePair};
 use ngfw::proto::services::firewall_config_snapshot_service_client::FirewallConfigSnapshotServiceClient;
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::proto::services::{
-    ActiveConfigSnapshot, ConfigBundle, GetConfigRequest, GetIpsConfigRequest, GetNatConfigRequest,
-    GetPoliciesRequest, GetZonePairsRequest, GetZonesRequest, PushActiveConfigSnapshotRequest,
-    SwapConfigRequest, SwapIpsConfigRequest, SwapNatConfigRequest,
+    ActiveConfigSnapshot, ConfigBundle, GetConfigRequest, GetIpsConfigRequest,
+    GetNatConfigRequest, GetPinningBypassRequest, GetPinningStatsRequest, GetPoliciesRequest,
+    GetZonePairsRequest, GetZonesRequest, PushActiveConfigSnapshotRequest, SwapConfigRequest,
+    SwapIpsConfigRequest, SwapNatConfigRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
+use ngfw::tls::pinning_detector::PinningConfig;
+use ngfw::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
 use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
@@ -68,10 +71,20 @@ fn shared_server() -> &'static SharedServer {
                     Arc::new(IpsConfigProvider::from_disk(config.data_dir.clone()).await);
                 let ips_initial_config = ips_store.get_config().clone();
                 let ips = Ips::new((*ips_initial_config).clone()).expect("failed to init ips");
+                let nat_store =
+                    Arc::new(NatConfigProvider::from_disk(config.data_dir.clone()).await);
+                let server_key_store = Arc::new(ServerKeyStore::new(&config.pki_dir));
+                let decision_engine = Arc::new(TlsDecisionEngine::new(
+                    &config.ssl_bypass_domains,
+                    Arc::clone(&server_key_store),
+                    EchTlsPolicy::default(),
+                    PinningConfig::default(),
+                ));
 
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
                     nat_engine: Arc::new(Mutex::new(NatEngine::new(&None, HashMap::new()))),
+                    nat_store,
                     policy_store: Arc::new(policy),
                     zone_store: Arc::new(zones),
                     zone_pair_store: Arc::new(zone_pairs),
@@ -81,6 +94,9 @@ fn shared_server() -> &'static SharedServer {
                     dns_inspection,
                     ips_store,
                     ips,
+                    decision_engine: Arc::clone(&decision_engine),
+                    server_key_store,
+                    pinning_detector: decision_engine.pinning_detector_arc(),
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();
@@ -210,7 +226,7 @@ fn create_snapshot_request(
 }
 
 #[tokio::test]
-#[serial(snapshot_bundle)]
+#[serial(snapshot_bundle, nat_config)]
 async fn push_active_config_snapshot_happy_path() {
     let mut client = connect_snapshot(&shared_server().socket).await;
     let valid = create_valid_bundle(
@@ -275,7 +291,7 @@ async fn push_active_config_snapshot_raptorlang_error() {
 }
 
 #[tokio::test]
-#[serial(snapshot_bundle)]
+#[serial(snapshot_bundle, nat_config)]
 async fn fetch_policies_returns_ok() {
     let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
     let mut query_client = connect(&shared_server().socket).await;
@@ -305,7 +321,7 @@ async fn fetch_policies_returns_ok() {
 }
 
 #[tokio::test]
-#[serial(snapshot_bundle)]
+#[serial(snapshot_bundle, nat_config)]
 async fn fetch_zones_returns_ok() {
     let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
     let mut query_client = connect(&shared_server().socket).await;
@@ -340,7 +356,7 @@ async fn fetch_zones_returns_ok() {
 }
 
 #[tokio::test]
-#[serial(snapshot_bundle)]
+#[serial(snapshot_bundle, nat_config)]
 async fn fetch_zone_pairs_returns_ok() {
     let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
     let mut query_client = connect(&shared_server().socket).await;
@@ -385,9 +401,16 @@ async fn swap_config_happy_path_returns_no_error() {
                 tun_address: "10.254.254.1".into(),
                 tun_netmask: "255.255.255.0".into(),
                 data_dir: "/tmp".into(),
-                event_socket_path: "./sockets/firewall.sock".into(),
+                event_socket_path: "./sockets/event.sock".into(),
                 query_socket_path: "/tmp/test-query-shared.sock".into(),
                 pki_dir: "/tmp/pki".into(),
+                ssl_inspection_enabled: false,
+                mitm_listen_addr: "127.0.0.1:8443".into(),
+                control_plane_socket_path: "./sockets/control-plane.sock".into(),
+                server_cert_socket_path: "./sockets/server-cert.sock".into(),
+                ssl_bypass_domains: vec![],
+                tls_inspection_ports: vec![443],
+                block_tls_on_undeclared_ports: false,
             }),
         })
         .await
@@ -406,9 +429,16 @@ async fn get_config_returns_ok() {
         tun_address: "192.168.1.1".into(),
         tun_netmask: "255.255.0.0".into(),
         data_dir: "/tmp".into(),
-        event_socket_path: "./sockets/firewall.sock".into(),
+        event_socket_path: "./sockets/event.sock".into(),
         query_socket_path: "/tmp/test-query-shared.sock".into(),
         pki_dir: "/tmp/pki".into(),
+        ssl_inspection_enabled: false,
+        mitm_listen_addr: "127.0.0.1:8443".into(),
+        control_plane_socket_path: "./sockets/control-plane.sock".into(),
+        server_cert_socket_path: "./sockets/server-cert.sock".into(),
+        ssl_bypass_domains: vec![],
+        tls_inspection_ports: vec![443],
+        block_tls_on_undeclared_ports: false,
     };
 
     client
@@ -480,6 +510,51 @@ async fn swap_and_get_ips_config_roundtrip() {
     assert_eq!(config.signatures.len(), 1);
     assert_eq!(config.signatures[0].id, "sig-http-sqli");
     assert_eq!(config.signatures[0].dst_ports, vec![80, 8080]);
+}
+
+#[tokio::test]
+#[serial(pinning)]
+async fn get_pinning_stats_returns_ok() {
+    let mut client = connect(&shared_server().socket).await;
+    let resp = client
+        .get_pinning_stats(GetPinningStatsRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    // Shared server startuje ze swiezym detektorem — zerowe liczniki sa oczekiwane.
+    assert_eq!(resp.active_bypasses, 0);
+    assert_eq!(resp.tracked_failures, 0);
+}
+
+#[tokio::test]
+#[serial(pinning)]
+async fn get_pinning_bypass_invalid_ip_returns_error() {
+    let mut client = connect(&shared_server().socket).await;
+    let err = client
+        .get_pinning_bypass(GetPinningBypassRequest {
+            source_ip: "not-an-ip".into(),
+            domain: "example.com".into(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+}
+
+#[tokio::test]
+#[serial(pinning)]
+async fn get_pinning_bypass_missing_returns_not_found() {
+    let mut client = connect(&shared_server().socket).await;
+    let resp = client
+        .get_pinning_bypass(GetPinningBypassRequest {
+            source_ip: "10.0.0.99".into(),
+            domain: "definitely-not-pinned.example".into(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!resp.found);
+    assert_eq!(resp.failure_count, 0);
+    assert!(resp.reason.is_empty());
 }
 
 #[tokio::test]

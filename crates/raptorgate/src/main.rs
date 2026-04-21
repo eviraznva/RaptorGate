@@ -12,6 +12,7 @@ mod policy;
 mod proto;
 mod query_server;
 mod rule_tree;
+mod server_certificate_server;
 mod tls;
 mod zones;
 mod swapper;
@@ -25,22 +26,27 @@ use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
-use crate::data_plane::nat::NatEngine;
+use crate::data_plane::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
-    DnsBlockListStage, DnsTunnelingStage, DpiStage, FtpAlgStage, IpsStage, NatPostroutingStage,
-    NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, ValidationStage,
+    DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
+    IpsStage, LocalOwnershipStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
+    TcpClassificationStage, TlsPortEnforcementStage, ValidationStage,
 };
 use crate::pipeline::{Chain, Stage, StageOutcome};
-use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
-use crate::tls::CaManager;
+use crate::tls::{
+    CaManager, DecryptedChainInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig,
+    PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
+};
 use etherparse::NetSlice;
-use std::collections::HashMap;
+use pcap::Device;
+use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -51,18 +57,27 @@ async fn main() {
     type DataPipeline = Chain<
         ValidationStage,
         Chain<
-            DpiStage,
+            LocalOwnershipStage,
             Chain<
-                DnsBlockListStage,
+                DpiStage,
                 Chain<
-                    DnsTunnelingStage,
+                    TlsPortEnforcementStage,
                     Chain<
-                        IpsStage,
+                        DnsBlockListStage,
                         Chain<
-                            NatPreroutingStage,
+                            DnsTunnelingStage,
                             Chain<
-                                TcpClassificationStage,
-                                Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                DnsEchMitigationStage,
+                                Chain<
+                                    IpsStage,
+                                    Chain<
+                                        NatPreroutingStage,
+                                        Chain<
+                                            TcpClassificationStage,
+                                            Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                        >,
+                                    >,
+                                >,
                             >,
                         >,
                     >,
@@ -108,14 +123,21 @@ async fn main() {
         "firewall config loaded"
     );
 
-    let ca_info = match CaManager::init(&config.pki_dir) {
+    let (_ca_info, tls_cert_forger, tls_untrust_forger) = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
             tracing::info!(
                 event = "startup.ca.initialized",
                 fingerprint = %ca.ca_info().fingerprint,
                 "CA initialized"
             );
-            Some(ca.ca_info())
+            let info = ca.ca_info();
+            let forger = Arc::new(ca.cert_forger(1024).expect("Failed to create cert forger"));
+            let untrust = Arc::new(
+                ca.untrust_cert_forger(256)
+                    .expect("Failed to create untrust cert forger"),
+            );
+            tracing::info!("Cert forgers ready (trust: 1024, untrust: 256)");
+            (Some(info), Some(forger), Some(untrust))
         }
         Err(err) => {
             tracing::warn!(
@@ -123,9 +145,18 @@ async fn main() {
                 error = %err,
                 "CA initialization failed"
             );
-            None
+            (None, None, None)
         }
     };
+
+    let server_key_store = Arc::new(ServerKeyStore::new(&config.pki_dir));
+    server_key_store.load_all_from_disk();
+    let decision_engine = Arc::new(TlsDecisionEngine::new(
+        &config.ssl_bypass_domains,
+        Arc::clone(&server_key_store),
+        EchTlsPolicy::default(),
+        PinningConfig::default(),
+    ));
 
     let tcp_session_tracker = TcpSessionTracker::new();
     let policy_provider = Arc::new(
@@ -151,34 +182,17 @@ async fn main() {
         .await;
 
     tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
-
-    let nat_rules = match NatRules::from_disk(&config.data_dir).await {
-        Ok(rules) if !rules.is_empty() => {
-            tracing::info!(
-                event = "startup.nat.loaded",
-                rules = rules.rules().len(),
-                "loaded NAT rules from config"
-            );
-            Some(Arc::new(rules))
-        }
-        Ok(_) => {
-            tracing::info!(
-                event = "startup.nat.empty",
-                "NAT rules config is empty"
-            );
-            None
-        }
+    let interface_ips = resolve_interface_ips(&config.capture_interfaces);
+    let local_ips = collect_local_ips(&interface_ips);
+    let nat_store = Arc::new(NatConfigProvider::from_disk(config.data_dir.clone()).await);
+    let nat_rules = match nat_store.get_config().to_runtime_rules() {
+        Ok(rules) => rules,
         Err(err) => {
-            tracing::warn!(
-                event = "startup.nat.load_failed",
-                error = %err,
-                data_dir = %config.data_dir.display(),
-                "failed to load NAT rules config, starting without NAT rules"
-            );
+            tracing::error!(error = %err, "failed to build NAT rules from disk config");
             None
         }
     };
-    let nat_engine = Arc::new(Mutex::new(NatEngine::new(&nat_rules, HashMap::new())));
+    let nat_engine = Arc::new(Mutex::new(NatEngine::new(&nat_rules, interface_ips)));
 
     // Inicjalizacja providera konfiguracji DNS inspection.
     let dns_inspection_store =
@@ -217,6 +231,7 @@ async fn main() {
         QueryHandler {
             tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
+            nat_store: Arc::clone(&nat_store),
             policy_store: Arc::clone(&policy_provider),
             zone_store: zones,
             zone_pair_store: zone_pairs,
@@ -226,16 +241,148 @@ async fn main() {
             dns_inspection: Arc::clone(&dns_inspection),
             ips_store: Arc::clone(&ips_store),
             ips: Arc::clone(&ips),
+            decision_engine: Arc::clone(&decision_engine),
+            server_key_store: Arc::clone(&server_key_store),
+            pinning_detector: decision_engine.pinning_detector_arc(),
         },
         &config.query_socket_path,
         CancellationToken::new(),
     );
     tokio::spawn(query_server.serve());
+    let server_cert_server = server_certificate_server::ServerCertificateServer::new(
+        server_certificate_server::ServerCertificateHandler {
+            server_key_store: Arc::clone(&server_key_store),
+        },
+        &config.server_cert_socket_path,
+        CancellationToken::new(),
+    );
+    tokio::spawn(server_cert_server.serve());
 
-    let control_socket_path = std::env::var("CONTROL_PLANE_GRPC_SOCKET_PATH")
-        .unwrap_or_else(|_| "./sockets/control-plane.sock".into());
-    let control_server = ControlServer::new(control_socket_path, CancellationToken::new());
+    let control_server = ControlServer::new(
+        config.control_plane_socket_path.clone(),
+        CancellationToken::new(),
+    );
     tokio::spawn(control_server.serve());
+
+    // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
+    let dnssec_provider: Arc<dyn DnssecProvider> =
+        Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
+
+    let pipeline = DataPipeline {
+        head: ValidationStage,
+        tail: Chain {
+            head: LocalOwnershipStage {
+                config_provider: Arc::clone(&config_provider),
+                local_ips: Arc::new(local_ips),
+            },
+            tail: Chain {
+                head: DpiStage {
+                    classifier: Arc::clone(&dpi_classifier),
+                },
+                tail: Chain {
+                    head: TlsPortEnforcementStage {
+                        config_provider: Arc::clone(&config_provider),
+                    },
+                    tail: Chain {
+                        head: DnsBlockListStage {
+                            inspection: Arc::clone(&dns_inspection),
+                        },
+                        tail: Chain {
+                            head: DnsTunnelingStage {
+                                inspection: Arc::clone(&dns_inspection),
+                            },
+                            tail: Chain {
+                                head: DnsEchMitigationStage {
+                                    inspection: Arc::clone(&dns_inspection),
+                                },
+                                tail: Chain {
+                                    head: IpsStage {
+                                        inspection: Arc::clone(&ips),
+                                    },
+                                    tail: Chain {
+                                        head: NatPreroutingStage {
+                                            engine: Arc::clone(&nat_engine),
+                                        },
+                                        tail: Chain {
+                                            head: TcpClassificationStage {
+                                                tracker: Arc::clone(&tcp_session_tracker),
+                                            },
+                                            tail: Chain {
+                                                head: PolicyEvalStage {
+                                                    provider: Arc::clone(&policy_provider),
+                                                    dnssec: Some(dnssec_provider),
+                                                },
+                                                tail: Chain {
+                                                    head: NatPostroutingStage {
+                                                        engine: Arc::clone(&nat_engine),
+                                                    },
+                                                    tail: FtpAlgStage {
+                                                        engine: Arc::clone(&nat_engine),
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    if config.ssl_inspection_enabled {
+        let tls_runtime_cancel = CancellationToken::new();
+        decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
+
+        match (&tls_cert_forger, &tls_untrust_forger) {
+            (Some(forger), Some(untrust)) => {
+                let listen_addr = config
+                    .mitm_listen_addr
+                    .parse()
+                    .expect("MITM_LISTEN_ADDR must be a valid socket address");
+
+                match TransparentRedirect::new(
+                    listen_addr,
+                    config.capture_interfaces.clone(),
+                    config.tls_inspection_ports.clone(),
+                )
+                .and_then(|redirect| redirect.install())
+                {
+                    Ok(()) => {}
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to install TLS transparent redirect");
+                    }
+                }
+
+                let proxy_config = MitmProxyConfig {
+                    listen_addr,
+                    cert_forger: Arc::clone(forger),
+                    untrust_forger: Arc::clone(untrust),
+                    decision_engine: Arc::clone(&decision_engine),
+                    decrypted_inspector: Arc::new(DecryptedChainInspector::new(
+                        pipeline.clone(),
+                        Arc::clone(&dpi_classifier),
+                    )),
+                    cancel: tls_runtime_cancel,
+                };
+
+                match MitmProxy::bind(proxy_config).await {
+                    Ok(proxy) => {
+                        tokio::spawn(proxy.serve());
+                        tracing::info!("SSL/TLS inspection enabled");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to start MITM proxy");
+                    }
+                }
+            }
+            _ => {
+                tracing::error!("SSL inspection enabled but CA/TLS config not available");
+            }
+        }
+    }
 
     let defrag = IpDefragEngine::new(DefragConfig::default());
 
@@ -257,58 +404,6 @@ async fn main() {
         );
     }
 
-    // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
-    let dnssec_provider: Arc<dyn DnssecProvider> =
-        Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
-
-    let pipeline = DataPipeline {
-        head: ValidationStage,
-        tail: Chain {
-            head: DpiStage {
-                classifier: Arc::clone(&dpi_classifier),
-            },
-            tail: Chain {
-                head: DnsBlockListStage {
-                    inspection: Arc::clone(&dns_inspection),
-                },
-                tail: Chain {
-                    head: DnsTunnelingStage {
-                        inspection: Arc::clone(&dns_inspection),
-                    },
-                    tail: Chain {
-                        head: IpsStage {
-                            inspection: Arc::clone(&ips),
-                        },
-                        tail: Chain {
-                            head: NatPreroutingStage {
-                                engine: Arc::clone(&nat_engine),
-                            },
-                            tail: Chain {
-                                head: TcpClassificationStage {
-                                    tracker: Arc::clone(&tcp_session_tracker),
-                                },
-                                tail: Chain {
-                                    head: PolicyEvalStage {
-                                        provider: Arc::clone(&policy_provider),
-                                        dnssec: Some(dnssec_provider),
-                                    },
-                                    tail: Chain {
-                                        head: NatPostroutingStage {
-                                            engine: Arc::clone(&nat_engine),
-                                        },
-                                        tail: FtpAlgStage {
-                                            engine: Arc::clone(&nat_engine),
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        },
-    };
-
     while let Some(raw_packet) = raw_rx.recv().await {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {
             let pipeline = pipeline.clone();
@@ -328,4 +423,36 @@ async fn main() {
             });
         }
     }
+}
+
+fn resolve_interface_ips(capture_interfaces: &[String]) -> HashMap<String, Vec<IpAddr>> {
+    let mut interface_ips = HashMap::new();
+
+    match Device::list() {
+        Ok(devices) => {
+            for iface in capture_interfaces {
+                let ips = devices
+                    .iter()
+                    .find(|device| device.name == *iface)
+                    .map(|device| device.addresses.iter().map(|addr| addr.addr).collect())
+                    .unwrap_or_default();
+                interface_ips.insert(iface.clone(), ips);
+            }
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to enumerate interface addresses");
+            for iface in capture_interfaces {
+                interface_ips.insert(iface.clone(), Vec::new());
+            }
+        }
+    }
+
+    interface_ips
+}
+
+fn collect_local_ips(interface_ips: &HashMap<String, Vec<IpAddr>>) -> HashSet<IpAddr> {
+    interface_ips
+        .values()
+        .flat_map(|ips| ips.iter().copied())
+        .collect()
 }

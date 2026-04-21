@@ -14,6 +14,7 @@ pub struct TlsParseResult {
     pub sni: Option<String>,
     pub version: u16,
     pub ech_detected: bool,
+    pub alpn_protocols: Vec<Vec<u8>>,
 }
 
 // Parsuje TLS ClientHello i wyodrębnia SNI, wersję i obecność ECH.
@@ -28,6 +29,7 @@ pub fn parse_tls_client_hello(buf: &[u8]) -> Option<TlsParseResult> {
     let mut sni = None;
     let mut ech_detected = false;
     let mut version = ch.version.0;
+    let mut alpn_protocols = Vec::new();
 
     if let Some(ext_data) = ch.ext {
         let (_, extensions) = parse_tls_client_hello_extensions(ext_data).ok()?;
@@ -55,6 +57,9 @@ pub fn parse_tls_client_hello(buf: &[u8]) -> Option<TlsParseResult> {
                 TlsExtension::Unknown(ext_type, _) if ext_type.0 == EXT_ECH => {
                     ech_detected = true;
                 }
+                TlsExtension::ALPN(protocols) => {
+                    alpn_protocols = protocols.iter().map(|protocol| protocol.to_vec()).collect();
+                }
                 _ => {}
             }
         }
@@ -64,6 +69,7 @@ pub fn parse_tls_client_hello(buf: &[u8]) -> Option<TlsParseResult> {
         sni,
         version,
         ech_detected,
+        alpn_protocols,
     })
 }
 
@@ -157,6 +163,21 @@ mod tests {
         ext
     }
 
+    fn build_alpn_extension(protocols: &[&[u8]]) -> Vec<u8> {
+        let list_len: usize = protocols.iter().map(|protocol| 1 + protocol.len()).sum();
+        let ext_data_len = 2 + list_len;
+
+        let mut ext = Vec::new();
+        ext.extend_from_slice(&0x0010u16.to_be_bytes());
+        ext.extend_from_slice(&(ext_data_len as u16).to_be_bytes());
+        ext.extend_from_slice(&(list_len as u16).to_be_bytes());
+        for protocol in protocols {
+            ext.push(protocol.len() as u8);
+            ext.extend_from_slice(protocol);
+        }
+        ext
+    }
+
     #[test]
     fn sni_extraction() {
         let exts = build_sni_extension("example.com");
@@ -165,6 +186,7 @@ mod tests {
         assert_eq!(result.sni.as_deref(), Some("example.com"));
         assert_eq!(result.version, 0x0303);
         assert!(!result.ech_detected);
+        assert!(result.alpn_protocols.is_empty());
     }
 
     #[test]
@@ -190,6 +212,7 @@ mod tests {
         assert_eq!(result.sni, None);
         assert_eq!(result.version, 0x0303);
         assert!(!result.ech_detected);
+        assert!(result.alpn_protocols.is_empty());
     }
 
     #[test]
@@ -199,6 +222,7 @@ mod tests {
         let result = parse_tls_client_hello(&pkt).unwrap();
         assert!(result.ech_detected);
         assert_eq!(result.sni, None);
+        assert!(result.alpn_protocols.is_empty());
     }
 
     #[test]
@@ -209,6 +233,7 @@ mod tests {
         let result = parse_tls_client_hello(&pkt).unwrap();
         assert_eq!(result.sni.as_deref(), Some("example.com"));
         assert!(result.ech_detected);
+        assert!(result.alpn_protocols.is_empty());
     }
 
     #[test]
@@ -219,6 +244,15 @@ mod tests {
         let result = parse_tls_client_hello(&pkt).unwrap();
         assert_eq!(result.version, 0x0304);
         assert_eq!(result.sni.as_deref(), Some("tls13.example.com"));
+    }
+
+    #[test]
+    fn alpn_protocols_extracted() {
+        let mut exts = build_sni_extension("example.com");
+        exts.extend_from_slice(&build_alpn_extension(&[b"h2", b"http/1.1"]));
+        let pkt = build_client_hello(&exts);
+        let result = parse_tls_client_hello(&pkt).unwrap();
+        assert_eq!(result.alpn_protocols, vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
     }
 
     #[test]
@@ -313,6 +347,7 @@ mod tests {
             sni: Some("secure.example.com".into()),
             version: 0x0304,
             ech_detected: true,
+            alpn_protocols: vec![b"h2".to_vec()],
         };
         let ctx = tls_to_dpi_context(&result);
         assert_eq!(ctx.app_proto, Some(AppProto::Tls));
@@ -327,6 +362,7 @@ mod tests {
             sni: None,
             version: 0x0303,
             ech_detected: false,
+            alpn_protocols: Vec::new(),
         };
         let ctx = tls_to_dpi_context(&result);
         assert_eq!(ctx.app_proto, Some(AppProto::Tls));

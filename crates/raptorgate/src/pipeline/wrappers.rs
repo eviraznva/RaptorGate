@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -5,8 +6,9 @@ use etherparse::{NetSlice, TransportSlice};
 use tokio::sync::Mutex;
 
 use crate::{
+    config::{provider::AppConfigProvider, AppConfig},
     data_plane::{
-        dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection},
+        dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection, EchMitigationVerdict},
         ips::ips::{Ips, IpsSignatureMatch, IpsVerdict},
         nat::NatEngine,
         packet_context::PacketContext,
@@ -54,11 +56,84 @@ impl Stage for ValidationStage {
 }
 
 #[derive(Clone)]
+pub struct LocalOwnershipStage {
+    pub config_provider: Arc<AppConfigProvider>,
+    pub local_ips: Arc<HashSet<IpAddr>>,
+}
+
+impl Stage for LocalOwnershipStage {
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        if packet_is_decrypted(ctx) {
+            return StageOutcome::Continue;
+        }
+
+        let Some(dst_ip) = packet_destination_ip(ctx) else {
+            return StageOutcome::Continue;
+        };
+
+        if self.local_ips.contains(&dst_ip) {
+            tracing::trace!(dst_ip = %dst_ip, iface = %ctx.borrow_src_interface(), "packet owned by local stack");
+            return StageOutcome::Halt;
+        }
+
+        let config = self.config_provider.get_config();
+        if should_halt_for_tls_redirect(ctx, &config) {
+            tracing::trace!(
+                dst_ip = %dst_ip,
+                iface = %ctx.borrow_src_interface(),
+                "packet owned by tls redirect"
+            );
+            return StageOutcome::Halt;
+        }
+
+        StageOutcome::Continue
+    }
+}
+
+fn packet_destination_ip(ctx: &PacketContext) -> Option<IpAddr> {
+    match &ctx.borrow_sliced_packet().net {
+        Some(NetSlice::Ipv4(ipv4)) => Some(IpAddr::V4(ipv4.header().destination_addr())),
+        Some(NetSlice::Ipv6(ipv6)) => Some(IpAddr::V6(ipv6.header().destination_addr())),
+        _ => None,
+    }
+}
+
+fn should_halt_for_tls_redirect(ctx: &PacketContext, config: &AppConfig) -> bool {
+    if !config.ssl_inspection_enabled {
+        return false;
+    }
+
+    if !config
+        .capture_interfaces
+        .iter()
+        .any(|iface| iface.as_str() == ctx.borrow_src_interface().as_ref())
+    {
+        return false;
+    }
+
+    matches!(
+        &ctx.borrow_sliced_packet().transport,
+        Some(TransportSlice::Tcp(tcp))
+            if config.tls_inspection_ports.contains(&tcp.destination_port())
+    )
+}
+
+fn packet_is_decrypted(ctx: &PacketContext) -> bool {
+    ctx.borrow_dpi_ctx()
+        .as_ref()
+        .is_some_and(|dpi_ctx| dpi_ctx.decrypted)
+}
+
+#[derive(Clone)]
 pub struct NatPreroutingStage {
     pub engine: Arc<Mutex<NatEngine>>,
 }
 
 impl Stage for NatPreroutingStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        !packet_is_decrypted(ctx)
+    }
+
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let iface = ctx.borrow_src_interface().to_string();
         let mut engine = self.engine.lock().await;
@@ -82,6 +157,10 @@ pub struct NatPostroutingStage {
 }
 
 impl Stage for NatPostroutingStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        !packet_is_decrypted(ctx)
+    }
+
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let dst_ip = match &ctx.borrow_sliced_packet().net {
             Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
@@ -117,6 +196,7 @@ impl Stage for FtpAlgStage {
             ctx.borrow_dpi_ctx(),
             Some(dpi_ctx)
                 if dpi_ctx.app_proto == Some(AppProto::Ftp)
+                    && !dpi_ctx.decrypted
                     && dpi_ctx.ftp_data_endpoint.is_some()
         )
     }
@@ -286,6 +366,48 @@ impl Stage for DnsTunnelingStage {
     }
 }
 
+/// Stage mitygacji ECH w odpowiedziach DNS zawierających rekordy HTTPS/SVCB.
+///
+/// Aktywny wyłącznie dla odpowiedzi DNS z wykrytymi wskazówkami ECH. Przy
+/// `strip_ech_dns` blokuje odpowiedź przez Halt, w przeciwnym razie emituje
+/// jedynie zdarzenie audytowe.
+#[derive(Clone)]
+pub struct DnsEchMitigationStage {
+    pub inspection: Arc<DnsInspection>,
+}
+
+impl Stage for DnsEchMitigationStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        matches!(
+            ctx.borrow_dpi_ctx(),
+            Some(dpi_ctx)
+                if dpi_ctx.app_proto == Some(AppProto::Dns)
+                    && dpi_ctx.dns_is_response == Some(true)
+                    && dpi_ctx.dns_has_ech_hints,
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let domain = match ctx.borrow_dpi_ctx() {
+            Some(dpi_ctx) => dpi_ctx.dns_query_name.clone(),
+            None => return StageOutcome::Continue,
+        };
+
+        let Some(domain) = domain else {
+            return StageOutcome::Continue;
+        };
+
+        match self.inspection.inspect_ech(&domain, true) {
+            EchMitigationVerdict::Allow => StageOutcome::Continue,
+            EchMitigationVerdict::Block(msg) => {
+                tracing::debug!(reason = %msg, "DNS ECH mitigation block");
+                ctx.with_warnings_mut(|w| w.push(msg));
+                StageOutcome::Halt
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct IpsStage {
     pub inspection: Arc<Ips>,
@@ -302,6 +424,12 @@ impl Stage for IpsStage {
     }
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        ctx.with_dpi_ctx_mut(|dpi| {
+            if let Some(dpi) = dpi.as_mut() {
+                dpi.ips_match = None;
+            }
+        });
+
         match self.inspection.inspect_packet(ctx) {
             IpsVerdict::Allow => StageOutcome::Continue,
             IpsVerdict::Alert(matches) => {
@@ -310,6 +438,16 @@ impl Stage for IpsStage {
                     .map(IpsSignatureMatch::message)
                     .collect::<Vec<_>>()
                     .join("; ");
+                ctx.with_dpi_ctx_mut(|dpi| {
+                    if let Some(dpi) = dpi.as_mut() {
+                        let first = matches.first().expect("alert matches should not be empty");
+                        dpi.ips_match = Some(crate::dpi::IpsMatch {
+                            signature_name: first.name.clone(),
+                            severity: first.severity.as_str().to_string(),
+                            blocked: false,
+                        });
+                    }
+                });
                 for matched in matches {
                     emit_ips_signature_matched(ctx, &matched);
                 }
@@ -319,6 +457,15 @@ impl Stage for IpsStage {
             }
             IpsVerdict::Block(matched) => {
                 let msg = matched.message();
+                ctx.with_dpi_ctx_mut(|dpi| {
+                    if let Some(dpi) = dpi.as_mut() {
+                        dpi.ips_match = Some(crate::dpi::IpsMatch {
+                            signature_name: matched.name.clone(),
+                            severity: matched.severity.as_str().to_string(),
+                            blocked: true,
+                        });
+                    }
+                });
                 emit_ips_signature_matched(ctx, &matched);
                 log_packet_decision(ctx, "ips.signature.blocked", "ips", "drop", &msg);
                 ctx.with_warnings_mut(|warnings| warnings.push(msg));
@@ -485,6 +632,10 @@ pub struct TcpClassificationStage {
 }
 
 impl Stage for TcpClassificationStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        !packet_is_decrypted(ctx)
+    }
+
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         match self.tracker.process_packet(ctx.borrow_sliced_packet()) {
             Ok(_) => StageOutcome::Continue,
@@ -519,7 +670,8 @@ impl Stage for DpiStage {
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         match self.classifier.inspect_packet(ctx.borrow_sliced_packet()) {
-            InspectResult::Done(dpi_ctx) => {
+            InspectResult::Done(mut dpi_ctx) => {
+                merge_preserved_dpi_fields(ctx.borrow_dpi_ctx().as_ref(), &mut dpi_ctx);
                 tracing::debug!(
                     event = "dpi.classification.completed",
                     stage = "dpi",
@@ -533,6 +685,53 @@ impl Stage for DpiStage {
         }
         StageOutcome::Continue
     }
+}
+
+#[derive(Clone)]
+pub struct TlsPortEnforcementStage {
+    pub config_provider: Arc<AppConfigProvider>,
+}
+
+impl Stage for TlsPortEnforcementStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        matches!(
+            ctx.borrow_dpi_ctx(),
+            Some(dpi_ctx)
+                if dpi_ctx.app_proto == Some(AppProto::Tls) && !dpi_ctx.decrypted
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let config = self.config_provider.get_config();
+
+        let dst_port = match &ctx.borrow_sliced_packet().transport {
+            Some(TransportSlice::Tcp(tcp)) => tcp.destination_port(),
+            _ => return StageOutcome::Continue,
+        };
+
+        if !tls_port_enforcement_blocks(&config, dst_port) {
+            return StageOutcome::Continue;
+        }
+
+        let msg = format!("TLS detected on undeclared port {dst_port}");
+        tracing::debug!(dst_port, "TLS enforcement block");
+        ctx.with_warnings_mut(|w| w.push(msg));
+        StageOutcome::Halt
+    }
+}
+
+fn tls_port_enforcement_blocks(config: &AppConfig, dst_port: u16) -> bool {
+    config.block_tls_on_undeclared_ports && !config.tls_inspection_ports.contains(&dst_port)
+}
+
+fn merge_preserved_dpi_fields(existing: Option<&crate::dpi::DpiContext>, next: &mut crate::dpi::DpiContext) {
+    let Some(existing) = existing else {
+        return;
+    };
+
+    next.decrypted |= existing.decrypted;
+    next.src_port = next.src_port.or(existing.src_port);
+    next.dst_port = next.dst_port.or(existing.dst_port);
 }
 
 fn log_packet_decision(
@@ -615,5 +814,148 @@ fn packet_log_fields(ctx: &PacketContext) -> PacketLogFields {
         dst_port,
         protocol,
         app_proto,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use etherparse::PacketBuilder;
+    use std::path::PathBuf;
+
+    fn sample_config() -> AppConfig {
+        AppConfig {
+            capture_interfaces: vec!["eth1".into(), "eth2".into()],
+            pcap_timeout_ms: 5000,
+            tun_device_name: "tun0".into(),
+            tun_address: "10.254.254.1".parse().unwrap(),
+            tun_netmask: "255.255.255.0".parse().unwrap(),
+            data_dir: PathBuf::from("/tmp"),
+            event_socket_path: "/tmp/event.sock".into(),
+            query_socket_path: "/tmp/query.sock".into(),
+            dev_config: None,
+            pki_dir: "/tmp/pki".into(),
+            ssl_inspection_enabled: true,
+            mitm_listen_addr: "127.0.0.1:8443".into(),
+            control_plane_socket_path: "/tmp/control.sock".into(),
+            server_cert_socket_path: "/tmp/server-cert.sock".into(),
+            ssl_bypass_domains: Vec::new(),
+            tls_inspection_ports: vec![443],
+            block_tls_on_undeclared_ports: false,
+        }
+    }
+
+    fn tcp_context(src: [u8; 4], dst: [u8; 4], dst_port: u16, iface: &str) -> PacketContext {
+        let mut raw = Vec::new();
+        PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4(src, dst, 64)
+            .tcp(12345, dst_port, 1, 65535)
+            .write(&mut raw, b"hello")
+            .unwrap();
+
+        PacketContext::from_raw(raw, Arc::from(iface)).unwrap()
+    }
+
+    #[test]
+    fn packet_destination_ip_extracts_ipv4_destination() {
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth1");
+        assert_eq!(
+            packet_destination_ip(&ctx),
+            Some("192.168.20.10".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn tls_redirect_halts_tcp_443_on_capture_interface() {
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth1");
+        assert!(should_halt_for_tls_redirect(&ctx, &sample_config()));
+    }
+
+    #[test]
+    fn tls_redirect_ignores_non_tls_ports() {
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 80, "eth1");
+        assert!(!should_halt_for_tls_redirect(&ctx, &sample_config()));
+    }
+
+    #[test]
+    fn tls_redirect_ignores_unknown_interfaces() {
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth9");
+        assert!(!should_halt_for_tls_redirect(&ctx, &sample_config()));
+    }
+
+    #[test]
+    fn tls_redirect_halts_on_custom_inspection_port() {
+        let mut config = sample_config();
+        config.tls_inspection_ports = vec![443, 8443];
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 8443, "eth1");
+        assert!(should_halt_for_tls_redirect(&ctx, &config));
+    }
+
+    #[test]
+    fn tls_redirect_ignores_port_outside_inspection_list() {
+        let mut config = sample_config();
+        config.tls_inspection_ports = vec![443];
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 8443, "eth1");
+        assert!(!should_halt_for_tls_redirect(&ctx, &config));
+    }
+
+    #[test]
+    fn tls_port_enforcement_passes_when_flag_off() {
+        let mut config = sample_config();
+        config.block_tls_on_undeclared_ports = false;
+        config.tls_inspection_ports = vec![443];
+        assert!(!tls_port_enforcement_blocks(&config, 8443));
+    }
+
+    #[test]
+    fn tls_port_enforcement_blocks_undeclared_port_when_flag_on() {
+        let mut config = sample_config();
+        config.block_tls_on_undeclared_ports = true;
+        config.tls_inspection_ports = vec![443];
+        assert!(tls_port_enforcement_blocks(&config, 8443));
+    }
+
+    #[test]
+    fn tls_port_enforcement_allows_declared_port_when_flag_on() {
+        let mut config = sample_config();
+        config.block_tls_on_undeclared_ports = true;
+        config.tls_inspection_ports = vec![443, 8443];
+        assert!(!tls_port_enforcement_blocks(&config, 8443));
+    }
+
+    #[test]
+    fn packet_is_decrypted_detects_seeded_tls_plaintext_context() {
+        let mut ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth1");
+        ctx.with_dpi_ctx_mut(|dpi| {
+            *dpi = Some(crate::dpi::DpiContext {
+                decrypted: true,
+                src_port: Some(12345),
+                dst_port: Some(443),
+                ..Default::default()
+            });
+        });
+
+        assert!(packet_is_decrypted(&ctx));
+    }
+
+    #[test]
+    fn merge_preserved_dpi_fields_keeps_decrypted_metadata() {
+        let existing = crate::dpi::DpiContext {
+            decrypted: true,
+            src_port: Some(12345),
+            dst_port: Some(443),
+            ..Default::default()
+        };
+        let mut classified = crate::dpi::DpiContext {
+            app_proto: Some(crate::dpi::AppProto::Http),
+            ..Default::default()
+        };
+
+        merge_preserved_dpi_fields(Some(&existing), &mut classified);
+
+        assert!(classified.decrypted);
+        assert_eq!(classified.src_port, Some(12345));
+        assert_eq!(classified.dst_port, Some(443));
+        assert_eq!(classified.app_proto, Some(crate::dpi::AppProto::Http));
     }
 }

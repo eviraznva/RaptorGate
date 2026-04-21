@@ -1,8 +1,8 @@
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty } from '@nestjs/swagger';
 
 export class ExportConfigResponseDto {
   @ApiProperty({
-    example: "123e4567-e89b-12d3-a456-426614174000",
+    example: '123e4567-e89b-12d3-a456-426614174000',
   })
   id: string;
 
@@ -10,13 +10,13 @@ export class ExportConfigResponseDto {
   versionNumber: number;
 
   @ApiProperty({
-    example: "manual_import",
-    enum: ["manual_import", "rollback_point", "auto_save"],
+    example: 'manual_import',
+    enum: ['manual_import', 'rollback_point', 'auto_save'],
   })
   snapshotType: string;
 
   @ApiProperty({
-    example: "0374c1e803e24d736cf3794e75a78aa994c10e269f54b07e405f4d52600f12fc",
+    example: '0374c1e803e24d736cf3794e75a78aa994c10e269f54b07e405f4d52600f12fc',
   })
   checksum: string;
 
@@ -29,19 +29,19 @@ export class ExportConfigResponseDto {
   payloadJson: unknown;
 
   @ApiProperty({
-    example: "Imported configuration from admin panel",
+    example: 'Imported configuration from admin panel',
     required: false,
     nullable: true,
   })
   changeSummary: string | null;
 
   @ApiProperty({
-    example: "2024-06-01T12:00:00Z",
+    example: '2024-06-01T12:00:00Z',
   })
   createdAt: string;
 
   @ApiProperty({
-    example: "345e4567-e89b-12d3-a456-426614174000",
+    example: '345e4567-e89b-12d3-a456-426614174000',
   })
   createdBy: string;
 }

@@ -1,35 +1,36 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from 'node:crypto';
 import {
   Inject,
   Injectable,
   Logger,
   OnModuleInit,
   ServiceUnavailableException,
-} from "@nestjs/common";
-import type { ClientGrpc } from "@nestjs/microservices";
-import { firstValueFrom } from "rxjs";
+} from '@nestjs/common';
+import type { ClientGrpc } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import type {
   ConfigSnapshotPushReason,
   IConfigSnapshotPushService,
-} from "../../application/ports/config-snapshot-push-service.interface.js";
-import type { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
-import type { ConfigSnapshotPayload } from "../../domain/value-objects/config-snapshot-payload.interface.js";
+} from '../../application/ports/config-snapshot-push-service.interface.js';
+import type { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
+import type { ConfigSnapshotPayload } from '../../domain/value-objects/config-snapshot-payload.interface.js';
 import {
   CertificateType,
   DefaultPolicy,
   NatRuleType,
   Severity,
-} from "../grpc/generated/common/common.js";
-import type { Timestamp } from "../grpc/generated/google/protobuf/timestamp.js";
+} from '../grpc/generated/common/common.js';
+import type { Timestamp } from '../grpc/generated/google/protobuf/timestamp.js';
 import {
   type ConfigBundle,
   FIREWALL_CONFIG_SNAPSHOT_SERVICE_NAME,
   type FirewallConfigSnapshotServiceClient,
   type PushActiveConfigSnapshotRequest,
-} from "../grpc/generated/services/config_snapshot_service.js";
+} from '../grpc/generated/services/config_snapshot_service.js';
+import type { TlsInspectionPolicy } from '../grpc/generated/config/config_models.js';
 
 export const CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN =
-  "CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN";
+  'CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN';
 
 @Injectable()
 export class GrpcConfigSnapshotPushService
@@ -66,7 +67,7 @@ export class GrpcConfigSnapshotPushService
         snapshotType: snapshot.getSnapshotType().getValue(),
         checksum: snapshot.getChecksum().getValue(),
         isActive: snapshot.getIsActive(),
-        changesSummary: snapshot.getChangesSummary() ?? "",
+        changesSummary: snapshot.getChangesSummary() ?? '',
         createdAt: this.toTimestamp(snapshot.getCreatedAt()),
         createdBy: snapshot.getCreatedBy(),
         bundle: this.toBundle(payload),
@@ -97,7 +98,7 @@ export class GrpcConfigSnapshotPushService
           snapshotId: snapshot.getId(),
         });
         throw new Error(
-          `Firewall rejected active snapshot push: ${response.message || "unknown reason"}`,
+          `Firewall rejected active snapshot push: ${response.message || 'unknown reason'}`,
         );
       }
 
@@ -111,7 +112,7 @@ export class GrpcConfigSnapshotPushService
       });
     } catch (error) {
       const reasonText =
-        error instanceof Error ? error.message : "Unknown gRPC error";
+        error instanceof Error ? error.message : 'Unknown gRPC error';
 
       this.logger.error(
         {
@@ -149,7 +150,7 @@ export class GrpcConfigSnapshotPushService
       })),
       zoneInterfaces: b.zone_interfaces.items.map((zi) => ({
         id: zi.getId(),
-        zoneId: "",
+        zoneId: '',
         interfaceName: zi.getInterfaceName(),
         vlanId: zi.getVlanId(),
       })),
@@ -162,11 +163,11 @@ export class GrpcConfigSnapshotPushService
       natRules: b.nat_rules.items.map((n) => ({
         id: n.getId(),
         type: this.toNatRuleType(n.getType().getValue()),
-        srcIp: n.getSourceIp()?.getValue ?? "",
-        dstIp: n.getDestinationIp()?.getValue ?? "",
+        srcIp: n.getSourceIp()?.getValue ?? '',
+        dstIp: n.getDestinationIp()?.getValue ?? '',
         srcPort: n.getSourcePort()?.getValue,
         dstPort: n.getDestinationPort()?.getValue,
-        translatedIp: n.getTranslatedIp()?.getValue ?? "",
+        translatedIp: n.getTranslatedIp()?.getValue ?? '',
         translatedPort: n.getTranslatedPort()?.getValue,
         priority: n.getPriority().getValue(),
       })),
@@ -201,8 +202,27 @@ export class GrpcConfigSnapshotPushService
         certificatePem: c.getCertificatePem(),
         privateKeyRef: c.getPrivateKeyRef(),
         expiresAt: this.toTimestamp(c.getExpiresAt()),
+        bindAddress: c.getBindAddress(),
+        bindPort: c.getBindPort(),
+        inspectionBypass: c.getInspectionBypass(),
+        isActive: c.getIsActive(),
       })),
+      tlsInspectionPolicy: this.toTlsInspectionPolicy(
+        b.tls_inspection_policy,
+      ),
       identity: undefined,
+    };
+  }
+
+  private toTlsInspectionPolicy(
+    policy: ConfigSnapshotPayload['bundle']['tls_inspection_policy'],
+  ): TlsInspectionPolicy {
+    return {
+      blockEchNoSni: policy?.block_ech_no_sni ?? true,
+      blockAllEch: policy?.block_all_ech ?? false,
+      stripEchDns: policy?.strip_ech_dns ?? true,
+      logEchAttempts: policy?.log_ech_attempts ?? true,
+      knownPinnedDomains: [...(policy?.known_pinned_domains ?? [])],
     };
   }
 
@@ -216,10 +236,10 @@ export class GrpcConfigSnapshotPushService
 
   private toDefaultPolicy(value: string): DefaultPolicy {
     switch (value.toUpperCase()) {
-      case "ALLOW":
+      case 'ALLOW':
         return DefaultPolicy.DEFAULT_POLICY_ALLOW;
-      case "DROP":
-      case "DENY":
+      case 'DROP':
+      case 'DENY':
         return DefaultPolicy.DEFAULT_POLICY_DROP;
       default:
         return DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED;
@@ -228,11 +248,11 @@ export class GrpcConfigSnapshotPushService
 
   private toNatRuleType(value: string): NatRuleType {
     switch (value.toUpperCase()) {
-      case "SNAT":
+      case 'SNAT':
         return NatRuleType.NAT_RULE_TYPE_SNAT;
-      case "DNAT":
+      case 'DNAT':
         return NatRuleType.NAT_RULE_TYPE_DNAT;
-      case "PAT":
+      case 'PAT':
         return NatRuleType.NAT_RULE_TYPE_PAT;
       default:
         return NatRuleType.NAT_RULE_TYPE_UNSPECIFIED;
@@ -241,15 +261,15 @@ export class GrpcConfigSnapshotPushService
 
   private toSeverity(value: string): Severity {
     switch (value.toUpperCase()) {
-      case "LOW":
+      case 'LOW':
         return Severity.SEVERITY_LOW;
-      case "MEDIUM":
+      case 'MEDIUM':
         return Severity.SEVERITY_MEDIUM;
-      case "HIGH":
+      case 'HIGH':
         return Severity.SEVERITY_HIGH;
-      case "CRITICAL":
+      case 'CRITICAL':
         return Severity.SEVERITY_CRITICAL;
-      case "INFO":
+      case 'INFO':
         return Severity.SEVERITY_INFO;
       default:
         return Severity.SEVERITY_UNSPECIFIED;
@@ -258,10 +278,10 @@ export class GrpcConfigSnapshotPushService
 
   private toCertificateType(value: string): CertificateType {
     switch (value.toUpperCase()) {
-      case "CA":
+      case 'CA':
         return CertificateType.CERTIFICATE_TYPE_CA;
-      case "TLS_SERVER":
-      case "TLS_SWERVER":
+      case 'TLS_SERVER':
+      case 'TLS_SWERVER':
         return CertificateType.CERTIFICATE_TYPE_TLS_SERVER;
       default:
         return CertificateType.CERTIFICATE_TYPE_UNSPECIFIED;

@@ -1,9 +1,9 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
-import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
-import type { INatRulesRepository } from "../../domain/repositories/nat-rules.repository.js";
-import { NAT_RULES_REPOSITORY_TOKEN } from "../../domain/repositories/nat-rules.repository.js";
-import type { GetAllNatRulesResponseDto } from "../dtos/get-all-nat-rules-response.dto.js";
-import { GetNatRulesDto } from "../dtos/get-nat-rules.dto.js";
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
+import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
+import type { GetAllNatRulesResponseDto } from '../dtos/get-all-nat-rules-response.dto.js';
+import { GetNatRulesDto } from '../dtos/get-nat-rules.dto.js';
 
 @Injectable()
 export class GetAllNatRulesUseCase {
@@ -14,7 +14,7 @@ export class GetAllNatRulesUseCase {
 
   async execute(dto: GetNatRulesDto): Promise<GetAllNatRulesResponseDto> {
     const natRules = await this.natRulesRepository.findAll();
-    if (!natRules) throw new EntityNotFoundException("nat rules", "all");
+    if (!natRules) throw new EntityNotFoundException('nat rules', 'all');
     let result = natRules;
 
     if (dto.type !== undefined)

@@ -1,5 +1,5 @@
-import { User } from "src/domain/entities/user.entity";
+import { User } from '../../domain/entities/user.entity.js';
 
 export class GetAllUsersResponseDto {
-	users: User[];
+  users: User[];
 }

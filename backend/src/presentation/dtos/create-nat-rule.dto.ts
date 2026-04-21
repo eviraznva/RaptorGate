@@ -1,4 +1,4 @@
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty } from '@nestjs/swagger';
 import {
   IsBoolean,
   IsIn,
@@ -8,15 +8,15 @@ import {
   IsOptional,
   Max,
   Min,
-} from "class-validator";
+} from 'class-validator';
 
 export class CreateNatRuleDto {
   @ApiProperty({
-    example: "SNAT",
-    enum: ["SNAT", "DNAT", "PAT"],
+    example: 'SNAT',
+    enum: ['SNAT', 'DNAT', 'PAT'],
   })
   @IsNotEmpty()
-  @IsIn(["SNAT", "DNAT", "PAT"])
+  @IsIn(['SNAT', 'DNAT', 'PAT'])
   type: string;
 
   @ApiProperty({
@@ -26,7 +26,7 @@ export class CreateNatRuleDto {
   isActive: boolean;
 
   @ApiProperty({
-    example: "192.168.1.10",
+    example: '192.168.1.10',
     required: false,
     nullable: true,
   })
@@ -35,7 +35,7 @@ export class CreateNatRuleDto {
   sourceIp: string | null;
 
   @ApiProperty({
-    example: "10.0.0.5",
+    example: '10.0.0.5',
     required: false,
     nullable: true,
   })
@@ -70,7 +70,7 @@ export class CreateNatRuleDto {
   destinationPort: number | null;
 
   @ApiProperty({
-    example: "172.16.0.20",
+    example: '172.16.0.20',
     required: false,
     nullable: true,
   })

@@ -1,12 +1,12 @@
 import {
   type IRoleRepository,
   ROLE_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/role.repository';
+} from '../../domain/repositories/role.repository.js';
 import {
   type IUserRepository,
   USER_REPOSITORY_TOKEN,
-} from 'src/domain/repositories/user.repository';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
+} from '../../domain/repositories/user.repository.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import { DleteUserDto } from '../dtos/delete-user.dto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 

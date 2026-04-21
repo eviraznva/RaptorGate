@@ -1,23 +1,23 @@
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty } from '@nestjs/swagger';
 
 export class SuccessEnvelopeDto<T = unknown> {
-	@ApiProperty({ example: 201 })
-	statusCode: number;
+  @ApiProperty({ example: 201 })
+  statusCode: number;
 
-	@ApiProperty({ example: "User created..." })
-	message: string;
+  @ApiProperty({ example: 'User created...' })
+  message: string;
 
-	@ApiProperty({ nullable: false })
-	data: T;
+  @ApiProperty({ nullable: false })
+  data: T;
 }
 
 export class ErrorEnvelopeDto {
-	@ApiProperty({ example: 400 })
-	statusCode: number;
+  @ApiProperty({ example: 400 })
+  statusCode: number;
 
-	@ApiProperty({ example: "Username must be at least 3 characters" })
-	message: string;
+  @ApiProperty({ example: 'Username must be at least 3 characters' })
+  message: string;
 
-	@ApiProperty({ example: "Bad Request" })
-	error: string;
+  @ApiProperty({ example: 'Bad Request' })
+  error: string;
 }

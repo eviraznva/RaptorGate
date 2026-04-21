@@ -56,6 +56,8 @@ cp -rf ../bin/frontend/dist .router_sync/frontend/
 cd "$SCRIPT_DIR"
 rm -rf .router_sync/backend/devCerts && mkdir -p .router_sync/backend/devCerts
 cp -rf ../backend/devCerts/* .router_sync/backend/devCerts/
+rm -rf .router_sync/backend/data && mkdir -p .router_sync/backend/data
+cp -rf ../backend/data/* .router_sync/backend/data/
 cp -rf ../proto/* .router_sync/proto/
 cp -rf ./configs/* .router_sync/ngfw
 cp -rf services .router_sync
@@ -63,5 +65,11 @@ cp -rf nginx/* .router_sync/nginx/
 cp -rf logrotate/* .router_sync/logrotate/
 cp -rf vector/* .router_sync/vector/
 
-vagrant rsync r1 || true
+R1_STATE="$(vagrant status r1 --machine-readable | awk -F, '$3=="state"{print $4}' | tail -n1)"
+
+if [ "$R1_STATE" = "running" ]; then
+  vagrant rsync r1
+else
+  echo "r1 is not running yet; skipping rsync and relying on vagrant up for initial sync"
+fi
 vagrant up --provision

@@ -95,6 +95,26 @@ message SslBypassSet {
   repeated SslBypassEntry  items   = 2;
 }
 
+// ── Pinning detection ───────────────────────────────────────────────────────
+
+message PinningDetectionConfig {
+  uint64 version            = 1;
+  bool   enabled            = 2;
+  uint32 failure_threshold  = 3;
+  uint32 failure_window_sec = 4;
+  uint32 bypass_ttl_sec     = 5;
+}
+
+// ── Polityka inspekcji TLS (ECH + pinning) ──────────────────────────────────
+
+message TlsInspectionPolicy {
+  bool            block_ech_no_sni    = 1; // blokuj ECH bez widocznego SNI
+  bool            block_all_ech       = 2; // blokuj wszystkie polaczenia z ECH
+  bool            strip_ech_dns       = 3; // usuwaj rekordy HTTPS z ECH config
+  bool            log_ech_attempts    = 4; // loguj proba uzycia ECH
+  repeated string known_pinned_domains = 5; // domeny z pinningiem certyfikatu
+}
+
 // ── Sygnatury IPS ────────────────────────────────────────────────────────────
 
 message IpsSignature {
@@ -120,6 +140,7 @@ message MlModel {
 
 // ── Certyfikaty TLS ──────────────────────────────────────────────────────────
 
+// Snapshot niesie tylko metadane; klucz prywatny wgrywany jest przez UploadServerCertificate.
 message FirewallCertificate {
   string                   id              = 1;
   common.CertificateType   cert_type       = 2;
@@ -128,6 +149,10 @@ message FirewallCertificate {
   string                   certificate_pem = 5;
   string                   private_key_ref = 6;
   google.protobuf.Timestamp expires_at     = 7;
+  string                   bind_address    = 8;  // IP serwera wewnetrznego (inbound TLS)
+  uint32                   bind_port       = 9;  // port serwera (domyslnie 443)
+  bool                     inspection_bypass = 11; // bypass inspekcji dla tego serwera
+  optional bool            is_active       = 12; // brak pola = true (runtime enabled)
 }
 
 message FirewallCertificateSet {
@@ -247,11 +272,17 @@ message DnsInspectionDnssecConfig {
   DnsInspectionDnssecCacheConfig    cache                       = 5;
 }
 
+message DnsInspectionEchMitigationConfig {
+  bool strip_ech_dns    = 1;
+  bool log_ech_attempts = 2;
+}
+
 message DnsInspectionConfig {
-  DnsInspectionGeneralConfig      general       = 1;
-  DnsInspectionBlocklistConfig    blocklist     = 2;
-  DnsInspectionDnsTunnelingConfig dns_tunneling = 3;
-  DnsInspectionDnssecConfig       dnssec        = 4;
+  DnsInspectionGeneralConfig       general        = 1;
+  DnsInspectionBlocklistConfig     blocklist      = 2;
+  DnsInspectionDnsTunnelingConfig  dns_tunneling  = 3;
+  DnsInspectionDnssecConfig        dnssec         = 4;
+  DnsInspectionEchMitigationConfig ech_mitigation = 5;
 }
 
 // ── IPS ─────────────────────────────────────────────────────────────────────
@@ -320,6 +351,25 @@ message IpsConfig {
   repeated IpsSignatureConfig signatures = 3;
 }
 
+// ── ConfigSectionVersions — delta sync hint ──────────────────────────────────
+
+// Wersje sekcji znane firewallowi.
+// Backend wysyła daną sekcję tylko gdy jej aktualna wersja jest wyższa
+// niż wartość podana tutaj. 0 oznacza brak sekcji — backend ją wyśle.
+message ConfigSectionVersions {
+  uint64 rules           = 1;
+  uint64 zones           = 2;
+  uint64 zone_interfaces = 3;
+  uint64 zone_pairs      = 4;
+  uint64 nat_rules       = 5;
+  uint64 dns_blacklist   = 6;
+  uint64 ssl_bypass_list = 7;
+  uint64 ips_signatures  = 8;
+  uint64 ml_model        = 9;
+  uint64 certificates    = 10;
+  uint64 identity        = 11;
+}
+
 // ── AppConfig — runtime-swappable firewall configuration ─────────────────────
 
 message AppConfig {
@@ -329,7 +379,14 @@ message AppConfig {
   string          tun_address        = 4;
   string          tun_netmask        = 5;
   string          data_dir           = 6;
-  string          event_socket_path   = 7;
+  string          event_socket_path  = 7;
   string          query_socket_path  = 8;
   string          pki_dir            = 9;
+  bool            ssl_inspection_enabled = 10;
+  string          mitm_listen_addr       = 11;
+  string          control_plane_socket_path = 12;
+  repeated string ssl_bypass_domains        = 13;
+  repeated uint32 tls_inspection_ports      = 14;
+  bool            block_tls_on_undeclared_ports = 15;
+  string          server_cert_socket_path   = 16;
 }

@@ -4,7 +4,6 @@ use anyhow::{Context, Result, bail};
 use ipnet::IpNet;
 
 use crate::proto::{common, config};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NatProtocol {
     Tcp,

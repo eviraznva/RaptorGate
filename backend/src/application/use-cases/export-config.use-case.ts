@@ -1,10 +1,10 @@
-import { Inject, Injectable } from "@nestjs/common";
-import { EntityNotFoundException } from "src/domain/exceptions/entity-not-found-exception";
+import { Inject, Injectable } from '@nestjs/common';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import {
   CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
   type IConfigSnapshotRepository,
-} from "src/domain/repositories/config-snapshot.repository";
-import { ExportConfigResponseDto } from "../dtos/export-confg-response.dto";
+} from '../../domain/repositories/config-snapshot.repository.js';
+import { ExportConfigResponseDto } from '../dtos/export-confg-response.dto';
 
 @Injectable()
 export class ExportConfigUseCase {
@@ -18,7 +18,7 @@ export class ExportConfigUseCase {
       await this.configSnapshotRepository.findActiveSnapshot();
 
     if (!configSnapshot)
-      throw new EntityNotFoundException("Configuration snapshot", "active");
+      throw new EntityNotFoundException('Configuration snapshot', 'active');
 
     return {
       configSnapshot,

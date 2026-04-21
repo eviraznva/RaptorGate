@@ -12,10 +12,13 @@ import { AuthModule } from "./modules/auth.module.js";
 import { ConfigSnapshotModule } from "./modules/config-snapshot.module.js";
 import { DnsBlacklistModule } from "./modules/dns-blacklist.module.js";
 import { DnsInspectionModule } from "./modules/dns-inspection.module.js";
+import { FirewallEventsModule } from "./modules/firewall-events/firewall-events.module.js";
 import { IpsConfigModule } from "./modules/ips-config.module.js";
 import { NatModule } from "./modules/nat.module.js";
+import { PinningModule } from "./modules/pinning.module.js";
 import { RealtimeModule } from "./modules/realtime.module.js";
 import { RulesModule } from "./modules/rules.module.js";
+import { SslModule } from "./modules/ssl.module.js";
 import { UserModule } from "./modules/user.module.js";
 import { ZoneModule } from "./modules/zone.module.js";
 import { ZonePairsModule } from "./modules/zone-pairs.module.js";
@@ -45,9 +48,12 @@ import { validate } from "./shared/config/env.validation.js";
     RulesModule,
     UserModule,
     GrpcModule,
+    FirewallEventsModule,
     AuthModule,
     ZoneModule,
     NatModule,
+    PinningModule,
+    SslModule,
   ],
   controllers: [AppController],
   providers: [

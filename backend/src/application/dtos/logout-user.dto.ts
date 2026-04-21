@@ -1,3 +1,3 @@
 export class LogoutUserDto {
-	accessToken: string;
+  accessToken: string;
 }

@@ -1,6 +1,14 @@
 use super::AppProto;
 use super::parsers::dns::DnsRecordType;
 
+// Decyzja dotycząca sesji TLS wyliczona przez runtime inspekcji.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsAction {
+    Intercept,
+    Bypass,
+    Block,
+}
+
 // Metadane zebrane przez klasyfikator DPI dla pojedynczej sesji.
 // Uzupełniane inkrementalnie podczas inspekcji pierwszych pakietów.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -9,10 +17,12 @@ pub struct DpiContext {
     pub tls_sni: Option<String>,
     pub tls_ech_detected: bool,
     pub tls_version: Option<u16>,
+    pub http_version: Option<String>,
     pub http_host: Option<String>,
     pub http_method: Option<String>,
     pub http_user_agent: Option<String>,
     pub http_content_type: Option<String>,
+    pub http_normalized_payload: Option<Vec<u8>>,
     pub dns_query_name: Option<String>,
     pub dns_query_type: Option<DnsRecordType>,
     pub dns_is_response: Option<bool>,
@@ -29,10 +39,22 @@ pub struct DpiContext {
     pub dns_rcode: u16,
     pub dns_has_dnssec_records: bool,
     pub dns_response_size: u16,
+    pub dns_has_ech_hints: bool,
     pub ftp_data_endpoint: Option<FtpDataEndpoint>,
     pub smtp_starttls: bool,
     pub ssh_proto_version: Option<String>,
     pub ssh_software: Option<String>,
+    pub decrypted: bool,
+    pub src_port: Option<u16>,
+    pub dst_port: Option<u16>,
+    pub ips_match: Option<IpsMatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IpsMatch {
+    pub signature_name: String,
+    pub severity: String,
+    pub blocked: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

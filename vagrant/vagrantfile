@@ -62,6 +62,14 @@ def setup_nftables
     nft add rule inet filter input ct state established,related accept
     nft add rule inet filter input tcp dport 22 ct state new accept
     nft add rule inet filter input tcp dport 2201 ct state new accept
+
+    UPLINK_IF=$(ip route show default | awk '/default/ {print $5; exit}')
+    if [ -n "$UPLINK_IF" ]; then
+      nft add table ip nat
+      nft 'add chain ip nat postrouting { type nat hook postrouting priority srcnat; policy accept; }'
+      nft add rule inet filter forward iifname "$UPLINK_IF" oifname "eth2" ct state established,related accept
+      nft add rule ip nat postrouting oifname "$UPLINK_IF" ip saddr 192.168.20.0/24 masquerade
+    fi
     nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 443 ct state new accept
     nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 9428 ct state new accept
   SHELL
@@ -210,6 +218,9 @@ def setup_ngfw_service
     nft add rule inet filter forward iif "tun0" accept
     nft add rule inet filter forward oif "tun0" accept
 
+    # MITM proxy (SSL inspection) terminuje lokalnie TCP/8443 po REDIRECT z 443.
+    # INPUT ma policy drop, wiec trzeba wpuscic nowe polaczenia na 8443.
+    nft add rule inet filter input tcp dport 8443 ct state new accept
     chown -R vagrant:vagrant /resources/ngfw/sockets
   SHELL
 end
@@ -312,17 +323,17 @@ Vagrant.configure("2") do |config|
       setup_tun_device + setup_nftables + setup_ngfw_service + setup_observability
 
     unless ENV['NO_BACKEND'] == '1'
-      r1_provision += setup_backend_service + setup_frontend_service 
+      r1_provision += setup_backend_service + setup_frontend_service
     end
 
     if ENV['NO_BACKEND'] == '1'
-      r1_provision += 
+      r1_provision +=
         <<-SHELL
             systemctl stop backend || true
             systemctl stop frontend || true
         SHELL
     end
- 
+
     r1.vm.provision "shell", inline: r1_provision
 
     # r1 has routed test interfaces plus a host-only management interface.

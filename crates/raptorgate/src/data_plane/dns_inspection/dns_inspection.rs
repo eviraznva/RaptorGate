@@ -5,10 +5,11 @@ use anyhow::Result;
 use arc_swap::ArcSwap;
 
 use crate::dpi::parsers::dns::DnsRecordType;
-use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
+use crate::data_plane::dns_inspection::config::{DnsInspectionConfig, DnsInspectionEchMitigationConfig};
 use crate::data_plane::dns_inspection::domain_block::DomainBlockTree;
 use crate::data_plane::dns_inspection::dnssec::{DnssecEngine, DnssecProvider, DnssecResult};
 use crate::data_plane::dns_inspection::tunneling_detector::{DnsInspectionVerdict, TunnelingDetector};
+use crate::events::{self, EchAction, EchOrigin};
 
 /// Werdykt sprawdzenia blocklist DNS.
 ///
@@ -17,6 +18,14 @@ pub enum BlocklistVerdict {
     /// Domena nie jest na liście blokowanych — przepuść ruch.
     Allow,
     /// Domena jest zablokowana — zatrzymaj ruch i zgłoś powód.
+    Block(String),
+}
+
+/// Werdykt mitygacji ECH na poziomie DNS (odpowiedzi z rekordami HTTPS/SVCB).
+pub enum EchMitigationVerdict {
+    /// Brak wskazówek ECH lub konfiguracja nie nakazuje blokady — przepuść.
+    Allow,
+    /// Odpowiedź DNS zawiera wskazówki ECH i polityka wymaga ich zdjęcia.
     Block(String),
 }
 
@@ -37,6 +46,8 @@ pub struct DnsInspection {
     tunneling: Mutex<TunnelingDetector>,
     /// Silnik walidacji DNSSEC — podmieniane atomowo przy zmianie konfiguracji resolvera.
     dnssec: ArcSwap<Arc<DnssecEngine>>,
+    /// Polityka mitygacji ECH na poziomie DNS — hot-swap przez ArcSwap.
+    ech_mitigation: ArcSwap<DnsInspectionEchMitigationConfig>,
 }
 
 impl DnsInspection {
@@ -49,6 +60,7 @@ impl DnsInspection {
             blocklist: ArcSwap::new(Arc::new(DomainBlockTree::from_config(&config.blocklist))),
             tunneling: Mutex::new(TunnelingDetector::new(config.dns_tunneling)),
             dnssec: ArcSwap::new(Arc::new(dnssec_engine)),
+            ech_mitigation: ArcSwap::new(Arc::new(config.ech_mitigation)),
         }))
     }
 
@@ -81,6 +93,42 @@ impl DnsInspection {
         self.tunneling.lock().unwrap().inspect(fqdn, qtype)
     }
 
+    /// Sprawdza odpowiedź DNS pod kątem wskazówek ECH w rekordach HTTPS/SVCB.
+    ///
+    /// Wywoływana wyłącznie dla odpowiedzi DNS (`is_response == true`).
+    /// Emituje zdarzenie `EchAttemptDetected` gdy polityka to nakazuje i — gdy
+    /// `strip_ech_dns` — zwraca `Block`, co skutkuje odrzuceniem odpowiedzi.
+    pub fn inspect_ech(&self, domain: &str, has_ech_hints: bool) -> EchMitigationVerdict {
+        if !self.enabled.load(Ordering::Acquire) || !has_ech_hints {
+            return EchMitigationVerdict::Allow;
+        }
+
+        let cfg = self.ech_mitigation.load();
+        let action = if cfg.strip_ech_dns {
+            EchAction::Stripped
+        } else {
+            EchAction::Logged
+        };
+
+        if cfg.log_ech_attempts {
+            tracing::info!(domain = %domain, "ECH config detected in DNS response (HTTPS/SVCB record)");
+            events::emit(events::Event::new(events::EventKind::EchAttemptDetected {
+                source_ip: None,
+                domain: domain.to_string(),
+                origin: EchOrigin::DnsHttpsRecord,
+                action,
+            }));
+        }
+
+        if cfg.strip_ech_dns {
+            EchMitigationVerdict::Block(format!(
+                "ECH: DNS response for '{domain}' blocked (HTTPS/SVCB record)"
+            ))
+        } else {
+            EchMitigationVerdict::Allow
+        }
+    }
+
     /// Granularna aktualizacja konfiguracji bez resetowania statystyk i cache.
     ///
     /// Kolejność aktualizacji:
@@ -111,6 +159,8 @@ impl DnsInspection {
             current.update_non_resolver_config(config.dnssec.clone());
         }
 
+        self.ech_mitigation.store(Arc::new(config.ech_mitigation.clone()));
+
         Ok(())
     }
 }
@@ -140,7 +190,7 @@ mod tests {
     use crate::data_plane::dns_inspection::types::DnssecStatus;
     use crate::data_plane::dns_inspection::config::{
         DnsInspectionBlocklistConfig, DnsInspectionDnsTunnelingConfig,
-        DnsInspectionDnssecConfig, DnsInspectionGeneralConfig,
+        DnsInspectionDnssecConfig, DnsInspectionEchMitigationConfig, DnsInspectionGeneralConfig,
     };
 
     fn make_config() -> DnsInspectionConfig {
@@ -155,6 +205,7 @@ mod tests {
                 ..Default::default()
             },
             dnssec: DnsInspectionDnssecConfig::default(),
+            ech_mitigation: DnsInspectionEchMitigationConfig::default(),
         }
     }
 

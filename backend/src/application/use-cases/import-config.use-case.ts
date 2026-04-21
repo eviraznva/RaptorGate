@@ -1,51 +1,62 @@
-import { hash } from "node:crypto";
-import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
-import { ConfigurationSnapshot } from "src/domain/entities/configuration-snapshot.entity";
-import { FirewallRule } from "src/domain/entities/firewall-rule.entity";
-import { NatRule } from "src/domain/entities/nat-rule.entity";
-import { Zone } from "src/domain/entities/zone.entity";
-import { ZonePair } from "src/domain/entities/zone-pair.entity";
-import { AccessTokenIsInvalidException } from "src/domain/exceptions/acces-token-is-invalid.exception";
+import { hash } from 'node:crypto';
+import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
+import { FirewallCertificate } from '../../domain/entities/firewall-certificate.entity.js';
+import { FirewallRule } from '../../domain/entities/firewall-rule.entity.js';
+import { NatRule } from '../../domain/entities/nat-rule.entity.js';
+import { SslBypassEntry } from '../../domain/entities/ssl-bypass-entry.entity.js';
+import { Zone } from '../../domain/entities/zone.entity.js';
+import { ZonePair } from '../../domain/entities/zone-pair.entity.js';
+import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
 import {
   CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
   type IConfigSnapshotRepository,
-} from "src/domain/repositories/config-snapshot.repository";
+} from '../../domain/repositories/config-snapshot.repository.js';
+import {
+  type IFirewallCertificateRepository,
+  FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
+} from '../../domain/repositories/firewall-certificate.repository.js';
 import {
   type INatRulesRepository,
   NAT_RULES_REPOSITORY_TOKEN,
-} from "src/domain/repositories/nat-rules.repository";
+} from '../../domain/repositories/nat-rules.repository.js';
 import {
   type IRulesRepository,
   RULES_REPOSITORY_TOKEN,
-} from "src/domain/repositories/rules-repository";
+} from '../../domain/repositories/rules-repository.js';
+import {
+  type ISslBypassRepository,
+  SSL_BYPASS_REPOSITORY_TOKEN,
+} from '../../domain/repositories/ssl-bypass.repository.js';
 import {
   type IZoneRepository,
   ZONE_REPOSITORY_TOKEN,
-} from "src/domain/repositories/zone.repository";
+} from '../../domain/repositories/zone.repository.js';
 import {
   type IZonePairRepository,
   ZONE_PAIR_REPOSITORY_TOKEN,
-} from "src/domain/repositories/zone-pair.repository";
-import { Checksum } from "src/domain/value-objects/checksum.vo";
-import { IpAddress } from "src/domain/value-objects/ip-address.vo";
-import { NatType } from "src/domain/value-objects/nat-type.vo";
-import { Port } from "src/domain/value-objects/port.vo";
-import { Priority } from "src/domain/value-objects/priority.vo";
-import { SnapshotType } from "src/domain/value-objects/snapshot-type.vo";
-import { ImportConfigDto } from "../dtos/import-config.dto";
-import { ImportConfigResponseDto } from "../dtos/import-config-response.dto";
+} from '../../domain/repositories/zone-pair.repository.js';
+import { Checksum } from '../../domain/value-objects/checksum.vo.js';
+import { IpAddress } from '../../domain/value-objects/ip-address.vo.js';
+import { NatType } from '../../domain/value-objects/nat-type.vo.js';
+import { Port } from '../../domain/value-objects/port.vo.js';
+import { Priority } from '../../domain/value-objects/priority.vo.js';
+import { normalizeTlsInspectionPolicy } from '../../domain/value-objects/config-snapshot-payload.interface.js';
+import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
+import { ImportConfigDto } from '../dtos/import-config.dto';
+import { ImportConfigResponseDto } from '../dtos/import-config-response.dto';
 import {
   CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN,
   type IConfigSnapshotPushService,
-} from "../ports/config-snapshot-push-service.interface";
+} from '../ports/config-snapshot-push-service.interface';
 import {
   type IRaptorLangValidationService,
   RAPTOR_LANG_VALIDATION_SERVICE_TOKEN,
-} from "../ports/raptor-lang-validation-service.interface";
+} from '../ports/raptor-lang-validation-service.interface';
 import {
   type ITokenService,
   TOKEN_SERVICE_TOKEN,
-} from "../ports/token-service.interface";
+} from '../ports/token-service.interface';
 
 @Injectable()
 export class ImportConfigUseCase {
@@ -68,6 +79,10 @@ export class ImportConfigUseCase {
     private readonly rulesRepository: IRulesRepository,
     @Inject(NAT_RULES_REPOSITORY_TOKEN)
     private readonly natRulesRepository: INatRulesRepository,
+    @Inject(FIREWALL_CERTIFICATE_REPOSITORY_TOKEN)
+    private readonly firewallCertificateRepository: IFirewallCertificateRepository,
+    @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
+    private readonly sslBypassRepository: ISslBypassRepository,
   ) {}
 
   async execute(dto: ImportConfigDto): Promise<ImportConfigResponseDto> {
@@ -75,14 +90,14 @@ export class ImportConfigUseCase {
     if (!claims) throw new AccessTokenIsInvalidException();
 
     const payloadJsonStr =
-      typeof dto.snapshotData.payloadJson === "string"
+      typeof dto.snapshotData.payloadJson === 'string'
         ? dto.snapshotData.payloadJson
         : JSON.stringify(dto.snapshotData.payloadJson);
 
-    const calculatedChecksum = hash("sha256", payloadJsonStr);
+    const calculatedChecksum = hash('sha256', payloadJsonStr);
     if (calculatedChecksum !== dto.snapshotData.checksum) {
       throw new BadRequestException(
-        "Invalid checksum: imported payload does not match the provided checksum.",
+        'Invalid checksum: imported payload does not match the provided checksum.',
       );
     }
 
@@ -104,11 +119,15 @@ export class ImportConfigUseCase {
       Checksum.create(calculatedChecksum),
       dto.snapshotData.isActive,
       dto.snapshotData.payloadJson,
-      dto.snapshotData.changeSummary || "Imported config via API",
+      dto.snapshotData.changeSummary || 'Imported config via API',
       new Date(),
       claims.sub,
     );
     const payload = importedSnapshot.deserializePayload();
+    payload.bundle.tls_inspection_policy = normalizeTlsInspectionPolicy(
+      payload.bundle.tls_inspection_policy,
+    );
+    importedSnapshot.setPayloadJson(payload);
 
     await Promise.all(
       payload.bundle.rules.items.map((rule: any) =>
@@ -117,6 +136,33 @@ export class ImportConfigUseCase {
     );
 
     if (dto.snapshotData.isActive) {
+      const activeCerts = payload.bundle.firewall_certificates.items.map((c: any) =>
+        FirewallCertificate.create(
+          c.id,
+          c.certType,
+          c.commonName,
+          c.fingerprint,
+          c.certificatePem,
+          c.privateKeyRef,
+          c.isActive,
+          new Date(c.expiresAt),
+          new Date(c.createdAt),
+          c.bindAddress ?? '',
+          c.bindPort ?? 443,
+          c.inspectionBypass ?? false,
+        ),
+      );
+
+      const activeBypass = payload.bundle.ssl_bypass_list.items.map((entry: any) =>
+        SslBypassEntry.create(
+          entry.id,
+          entry.domain,
+          entry.reason,
+          entry.isActive,
+          new Date(entry.createdAt),
+        ),
+      );
+
       const activeZones = payload.bundle.zones.items.map((z: any) =>
         Zone.create(
           z.id,
@@ -175,6 +221,8 @@ export class ImportConfigUseCase {
       await this.zonePairRepository.overwriteAll(activeZonePairs);
       await this.rulesRepository.overwriteAll(activeRules);
       await this.natRulesRepository.overwriteAll(activeNatRules);
+      await this.firewallCertificateRepository.overwriteAll(activeCerts);
+      await this.sslBypassRepository.overwriteAll(activeBypass);
 
       const currentActiveSnapshot = allConfigSnapshots.find((s) =>
         s.getIsActive(),
@@ -191,7 +239,7 @@ export class ImportConfigUseCase {
     if (dto.snapshotData.isActive) {
       await this.configSnapshotPushService.pushActiveConfigSnapshot(
         importedSnapshot,
-        "import",
+        'import',
       );
     }
 
@@ -215,4 +263,5 @@ export class ImportConfigUseCase {
       configSnapshot: importedSnapshot,
     };
   }
+
 }

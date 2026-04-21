@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package raptorgate.services;
+
+// Jedyny kanal, ktorym plaintext klucz serwera plynie do firewalla.
+service FirewallServerCertificateService {
+  rpc UploadServerCertificate(UploadServerCertificateRequest)
+      returns (UploadServerCertificateResponse);
+}
+
+message UploadServerCertificateRequest {
+  string id                = 1;  // logiczne ID certyfikatu (id rekordu w backendzie)
+  string common_name       = 2;
+  string certificate_pem   = 3;
+  string private_key_pem   = 4;  // plaintext PEM, firewall zaszyfruje AES-GCM
+  string private_key_ref   = 5;  // stabilny ref do zapisu na dysku firewalla
+  string bind_address      = 6;  // IP serwera inbound (np. 192.168.20.10)
+  uint32 bind_port         = 7;  // port serwera (0 -> 443)
+  bool   inspection_bypass = 8;
+  optional bool is_active  = 9;  // brak pola = true (runtime enabled)
+}
+
+message UploadServerCertificateResponse {
+  bool   accepted    = 1;
+  string fingerprint = 2;  // SHA-256 certyfikatu, wyliczane przez firewall
+  string error       = 3;  // opis bledu, pusty gdy accepted=true
+}

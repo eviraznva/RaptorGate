@@ -1,16 +1,16 @@
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from "./_common.js";
-import { z } from "zod";
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
+import { z } from 'zod';
 
 export const ZoneRecordSchema = z
-	.object({
-		id: uuidSchema,
-		name: z.string().min(1).max(64),
-		description: z.string().nullable().optional(),
-		isActive: z.boolean(),
-		createdAt: isoDateTimeSchema,
-		createdBy: uuidSchema,
-	})
-	.strict();
+  .object({
+    id: uuidSchema,
+    name: z.string().min(1).max(64),
+    description: z.string().nullable().optional(),
+    isActive: z.boolean(),
+    createdAt: isoDateTimeSchema,
+    createdBy: uuidSchema,
+  })
+  .strict();
 
 export const ZonesFileSchema = tableFileSchema(ZoneRecordSchema);
 

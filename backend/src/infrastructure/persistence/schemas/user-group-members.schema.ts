@@ -1,17 +1,17 @@
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from "./_common.js";
-import { z } from "zod";
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
+import { z } from 'zod';
 
 export const UserGroupMemberRecordSchema = z
-	.object({
-		id: uuidSchema,
-		groupId: uuidSchema,
-		identityUserId: uuidSchema,
-		joinedAt: isoDateTimeSchema,
-	})
-	.strict();
+  .object({
+    id: uuidSchema,
+    groupId: uuidSchema,
+    identityUserId: uuidSchema,
+    joinedAt: isoDateTimeSchema,
+  })
+  .strict();
 
 export const UserGroupMembersFileSchema = tableFileSchema(
-	UserGroupMemberRecordSchema,
+  UserGroupMemberRecordSchema,
 );
 
 export type UserGroupMemberRecord = z.infer<typeof UserGroupMemberRecordSchema>;

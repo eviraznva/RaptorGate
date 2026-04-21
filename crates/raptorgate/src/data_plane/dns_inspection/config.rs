@@ -12,6 +12,7 @@ pub struct DnsInspectionConfig {
     pub blocklist: DnsInspectionBlocklistConfig,
     pub dns_tunneling: DnsInspectionDnsTunnelingConfig,
     pub dnssec: DnsInspectionDnssecConfig,
+    pub ech_mitigation: DnsInspectionEchMitigationConfig,
 }
 
 impl Default for DnsInspectionConfig {
@@ -21,6 +22,7 @@ impl Default for DnsInspectionConfig {
             blocklist: DnsInspectionBlocklistConfig::default(),
             dns_tunneling: DnsInspectionDnsTunnelingConfig::default(),
             dnssec: DnsInspectionDnssecConfig::default(),
+            ech_mitigation: DnsInspectionEchMitigationConfig::default(),
         }
     }
 }
@@ -32,6 +34,7 @@ impl DnsInspectionConfig {
             blocklist: Some(self.blocklist.to_proto()),
             dns_tunneling: Some(self.dns_tunneling.to_proto()),
             dnssec: Some(self.dnssec.to_proto()),
+            ech_mitigation: Some(self.ech_mitigation.to_proto()),
         }
     }
 
@@ -43,7 +46,42 @@ impl DnsInspectionConfig {
                 proto_config.dns_tunneling.unwrap_or_default(),
             )?,
             dnssec: DnsInspectionDnssecConfig::from_proto(proto_config.dnssec.unwrap_or_default())?,
+            ech_mitigation: DnsInspectionEchMitigationConfig::from_proto(
+                proto_config.ech_mitigation.unwrap_or_default(),
+            ),
         })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct DnsInspectionEchMitigationConfig {
+    pub strip_ech_dns: bool,
+    pub log_ech_attempts: bool,
+}
+
+impl Default for DnsInspectionEchMitigationConfig {
+    fn default() -> Self {
+        Self {
+            strip_ech_dns: true,
+            log_ech_attempts: true,
+        }
+    }
+}
+
+impl DnsInspectionEchMitigationConfig {
+    fn to_proto(&self) -> proto::DnsInspectionEchMitigationConfig {
+        proto::DnsInspectionEchMitigationConfig {
+            strip_ech_dns: self.strip_ech_dns,
+            log_ech_attempts: self.log_ech_attempts,
+        }
+    }
+
+    fn from_proto(proto_config: proto::DnsInspectionEchMitigationConfig) -> Self {
+        Self {
+            strip_ech_dns: proto_config.strip_ech_dns,
+            log_ech_attempts: proto_config.log_ech_attempts,
+        }
     }
 }
 

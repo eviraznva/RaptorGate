@@ -1,15 +1,15 @@
-import { FirewallRule } from "src/domain/entities/firewall-rule.entity";
+import { FirewallRule } from '../../domain/entities/firewall-rule.entity.js';
 
 export class CreateRuleResponseDto {
-	// id: string;
-	// name: string;
-	// description: string | null;
-	// zonePairId: string;
-	// isActive: boolean;
-	// content: string;
-	// priority: number;
-	// createdAt: Date;
-	// updatedAt: Date;
-	// createdBy: string;
-	rule: FirewallRule;
+  // id: string;
+  // name: string;
+  // description: string | null;
+  // zonePairId: string;
+  // isActive: boolean;
+  // content: string;
+  // priority: number;
+  // createdAt: Date;
+  // updatedAt: Date;
+  // createdBy: string;
+  rule: FirewallRule;
 }

@@ -1,56 +1,56 @@
-import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { jest } from "@jest/globals";
+import { type ChildProcess, spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { jest } from '@jest/globals';
 import {
   type ClientProviderOptions,
   ClientsModule,
   Transport,
-} from "@nestjs/microservices";
-import { Test, type TestingModule } from "@nestjs/testing";
-import { RaptorLangValidationException } from "../../domain/exceptions/raptor-lang-validation.exception.js";
+} from '@nestjs/microservices';
+import { Test, type TestingModule } from '@nestjs/testing';
+import { RaptorLangValidationException } from '../../domain/exceptions/raptor-lang-validation.exception.js';
 import {
   type IRulesRepository,
   RULES_REPOSITORY_TOKEN,
-} from "../../domain/repositories/rules-repository.js";
+} from '../../domain/repositories/rules-repository.js';
 import {
   GrpcRaptorLangValidationService,
   RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
-} from "../../infrastructure/adapters/grpc-raptor-lang-validation.service.js";
+} from '../../infrastructure/adapters/grpc-raptor-lang-validation.service.js';
 import {
   type IRaptorLangValidationService,
   RAPTOR_LANG_VALIDATION_SERVICE_TOKEN,
-} from "../ports/raptor-lang-validation-service.interface.js";
+} from '../ports/raptor-lang-validation-service.interface.js';
 import {
   type ITokenService,
   TOKEN_SERVICE_TOKEN,
   type TokenPayload,
-} from "../ports/token-service.interface.js";
-import { CreateRuleUseCase } from "./create-rule.use-case.js";
+} from '../ports/token-service.interface.js';
+import { CreateRuleUseCase } from './create-rule.use-case.js';
 
-const runIntegration = process.env.RUN_FIREWALL_INTEGRATION === "1";
+const runIntegration = process.env.RUN_FIREWALL_INTEGRATION === '1';
 const describeIntegration = runIntegration ? describe : describe.skip;
-const repoRoot = resolve(__dirname, "../../../../");
-const firewallBinaryPath = join(repoRoot, "target", "debug", "ngfw");
+const repoRoot = resolve(__dirname, '../../../../');
+const firewallBinaryPath = join(repoRoot, 'target', 'debug', 'ngfw');
 const validationProtoPath = join(
   repoRoot,
-  "proto",
-  "control",
-  "validation_service.proto",
+  'proto',
+  'control',
+  'validation_service.proto',
 );
-const protoRoot = join(repoRoot, "proto");
+const protoRoot = join(repoRoot, 'proto');
 
 jest.setTimeout(30_000);
 
 describeIntegration(
-  "CreateRuleUseCase integration with firewall validation",
+  'CreateRuleUseCase integration with firewall validation',
   () => {
     let moduleRef: TestingModule;
     let useCase: CreateRuleUseCase;
     let firewallProcess: ChildProcess | null = null;
     let runtimeDir: string;
-    let firewallLogs = "";
+    let firewallLogs = '';
 
     const repository: jest.Mocked<IRulesRepository> = {
       save: jest.fn(),
@@ -69,16 +69,16 @@ describeIntegration(
     };
 
     const validClaims: TokenPayload = {
-      sub: "user-1",
-      username: "marek",
+      sub: 'user-1',
+      username: 'marek',
     };
 
     beforeEach(async () => {
       jest.clearAllMocks();
-      firewallLogs = "";
+      firewallLogs = '';
 
-      runtimeDir = mkdtempSync(join(tmpdir(), "raptorgate-fw-it-"));
-      const firewallSocketPath = join(runtimeDir, "control-plane.sock");
+      runtimeDir = mkdtempSync(join(tmpdir(), 'raptorgate-fw-it-'));
+      const firewallSocketPath = join(runtimeDir, 'control-plane.sock');
 
       firewallProcess = spawnFirewall(runtimeDir, firewallSocketPath);
       await waitForSocket(firewallSocketPath);
@@ -116,16 +116,16 @@ describeIntegration(
       rmSync(runtimeDir, { recursive: true, force: true });
     });
 
-    it("saves a rule when the connected firewall accepts valid RaptorLang", async () => {
+    it('saves a rule when the connected firewall accepts valid RaptorLang', async () => {
       const dto = {
-        name: "Allow HTTPS",
-        description: "valid nested firewall rule",
-        zonePairId: "zone-pair-1",
+        name: 'Allow HTTPS',
+        description: 'valid nested firewall rule',
+        zonePairId: 'zone-pair-1',
         isActive: true,
         content:
-          "match ip_ver { = v4 : match protocol { = tcp : match dst_port { = 443 : verdict allow _ : verdict drop } } }",
+          'match ip_ver { = v4 : match protocol { = tcp : match dst_port { = 443 : verdict allow _ : verdict drop } } }',
         priority: 100,
-        accessToken: "valid-token",
+        accessToken: 'valid-token',
       };
 
       tokenService.decodeAccessToken.mockReturnValue(validClaims);
@@ -137,15 +137,15 @@ describeIntegration(
       expect(repository.save.mock.calls[0][0].getContent()).toBe(dto.content);
     });
 
-    it("rejects a rule when the connected firewall reports invalid RaptorLang", async () => {
+    it('rejects a rule when the connected firewall reports invalid RaptorLang', async () => {
       const dto = {
-        name: "Broken Rule",
-        description: "invalid syntax",
-        zonePairId: "zone-pair-1",
+        name: 'Broken Rule',
+        description: 'invalid syntax',
+        zonePairId: 'zone-pair-1',
         isActive: true,
-        content: "match protocol { = tcp verdict allow }",
+        content: 'match protocol { = tcp verdict allow }',
         priority: 50,
-        accessToken: "valid-token",
+        accessToken: 'valid-token',
       };
 
       tokenService.decodeAccessToken.mockReturnValue(validClaims);
@@ -165,7 +165,7 @@ describeIntegration(
           name: RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
           transport: Transport.GRPC,
           options: {
-            package: "raptorgate.control",
+            package: 'raptorgate.control',
             protoPath: validationProtoPath,
             loader: {
               includeDirs: [protoRoot],
@@ -184,19 +184,19 @@ describeIntegration(
         cwd: repoRoot,
         env: {
           ...process.env,
-          DISABLE_DATA_PLANE: "true",
-          GRPC_SOCKET_PATH: join(tmpRuntimeDir, "backend.sock"),
+          DISABLE_DATA_PLANE: 'true',
+          GRPC_SOCKET_PATH: join(tmpRuntimeDir, 'backend.sock'),
           CONTROL_PLANE_GRPC_SOCKET_PATH: firewallSocketPath,
-          REDB_SNAPSHOT_PATH: join(tmpRuntimeDir, "snapshot.redb"),
-          RAPTORGATE_PKI_DIR: join(tmpRuntimeDir, "pki"),
+          REDB_SNAPSHOT_PATH: join(tmpRuntimeDir, 'snapshot.redb'),
+          RAPTORGATE_PKI_DIR: join(tmpRuntimeDir, 'pki'),
         },
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
 
-      child.stdout?.on("data", (chunk: Buffer | string) => {
+      child.stdout?.on('data', (chunk: Buffer | string) => {
         firewallLogs += chunk.toString();
       });
-      child.stderr?.on("data", (chunk: Buffer | string) => {
+      child.stderr?.on('data', (chunk: Buffer | string) => {
         firewallLogs += chunk.toString();
       });
 
@@ -242,16 +242,16 @@ describeIntegration(
         return;
       }
 
-      child.kill("SIGTERM");
+      child.kill('SIGTERM');
 
       await Promise.race([
         new Promise<void>((resolveExit) => {
-          child.once("exit", () => resolveExit());
+          child.once('exit', () => resolveExit());
         }),
         new Promise<void>((resolveTimeout) =>
           setTimeout(() => {
             if (child.exitCode === null) {
-              child.kill("SIGKILL");
+              child.kill('SIGKILL');
             }
             resolveTimeout();
           }, 3_000),

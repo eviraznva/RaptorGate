@@ -1,6 +1,6 @@
-import { IsOptional, IsString } from "class-validator";
-import type { ZonePairPolicy } from "src/domain/entities/zone-pair.entity";
-import { PaginationQueryDto } from "./pagination-query.dto";
+import { IsOptional, IsString } from 'class-validator';
+import type { ZonePairPolicy } from '../../domain/entities/zone-pair.entity.js';
+import { PaginationQueryDto } from './pagination-query.dto';
 
 export class GetZonePairsQueryDto extends PaginationQueryDto {
   @IsString()

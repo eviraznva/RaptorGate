@@ -65,7 +65,7 @@ async function main() {
 		process.env.BCRYPT_SALT_ROUNDS ?? "12",
 		10,
 	);
-	const passwordHash = await bcrypt.hash("admin123", saltRounds);
+	const passwordHash = await bcrypt.hash("Test1234", saltRounds);
 
 	const rolesOrder: Role[] = [
 		Role.SuperAdmin,

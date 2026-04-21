@@ -15,14 +15,17 @@ StandardError=journal
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=GRPC_PORT=3001
-Environment=GRPC_SOCKET_PATH=../ngfw/sockets/firewall.sock
+Environment=GRPC_SOCKET_PATH=../ngfw/sockets/event.sock
 Environment=FIREWALL_GRPC_SOCKET_PATH=../ngfw/sockets/control-plane.sock
+Environment=FIREWALL_QUERY_SOCKET_PATH=../ngfw/sockets/query.sock
 Environment=FIREWALL_QUERY_GRPC_SOCKET_PATH=../ngfw/sockets/query.sock
+Environment=SERVER_CERT_GRPC_SOCKET_PATH=../ngfw/sockets/server-cert.sock
 Environment=JWT_SECRET=development-jwt-secret-change-me-1234567890
 Environment=REFRESH_TOKEN_SECRET=development-refresh-secret-change-me-1234567890
 Environment=COOKIE_SECRET=development-cookie-secret-change-me-1234567890
 Environment=AUTH_COOKIE_PATH=/api/auth/refresh
 Environment=BACKEND_LOG_LEVELS=log,error,warn
+Environment=RAPTORGATE_PKI_DIR=/var/lib/raptorgate/pki
 User=root
 
 [Install]

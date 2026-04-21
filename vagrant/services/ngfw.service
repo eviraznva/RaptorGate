@@ -13,12 +13,13 @@ StandardOutput=journal
 Type=simple
 StandardError=journal
 User=root
-AmbientCapabilities=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 Environment="CAPTURE_INTERFACES=eth1,eth2"
 EnvironmentFile=/etc/systemd/system/ngfw.env
 Environment="EVENT_SOCKET_PATH=/resources/ngfw/sockets/event.sock"
 Environment="QUERY_SOCKET_PATH=/resources/ngfw/sockets/query.sock"
 Environment="CONTROL_PLANE_GRPC_SOCKET_PATH=/resources/ngfw/sockets/control-plane.sock"
+Environment="SERVER_CERT_GRPC_SOCKET_PATH=/resources/ngfw/sockets/server-cert.sock"
 Environment="DUMMY_NAT_ENABLED=true"
 Environment="DUMMY_NAT_ALLOW_ALL=true"
 Environment="RAPTORGATE_LOG_LEVEL=info"

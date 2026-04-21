@@ -1,18 +1,18 @@
 import {
   ROLE_REPOSITORY_TOKEN,
   type IRoleRepository,
-} from 'src/domain/repositories/role.repository';
+} from '../../domain/repositories/role.repository.js';
 import {
   USER_REPOSITORY_TOKEN,
   type IUserRepository,
-} from 'src/domain/repositories/user.repository';
+} from '../../domain/repositories/user.repository.js';
 import {
   PASSWORD_HASHER_TOKEN,
   type IPasswordHasher,
 } from '../ports/passowrd-hasher.interface';
-import { AtLeastOneFieldRequiredException } from 'src/domain/exceptions/at-least-one-field-required.exception';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
-import { RoleIsInvalidException } from 'src/domain/exceptions/role-is-invalid.exception';
+import { AtLeastOneFieldRequiredException } from '../../domain/exceptions/at-least-one-field-required.exception.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { RoleIsInvalidException } from '../../domain/exceptions/role-is-invalid.exception.js';
 import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
 import { EditUserDto } from '../dtos/edit-user.dto';
 import { Inject, Injectable, Logger } from '@nestjs/common';

@@ -1,15 +1,15 @@
-import { Inject, Injectable } from "@nestjs/common";
-import { EntityNotFoundException } from "src/domain/exceptions/entity-not-found-exception";
+import { Inject, Injectable } from '@nestjs/common';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import {
   type IRoleRepository,
   ROLE_REPOSITORY_TOKEN,
-} from "src/domain/repositories/role.repository";
+} from '../../domain/repositories/role.repository.js';
 import {
   type IUserRepository,
   USER_REPOSITORY_TOKEN,
-} from "src/domain/repositories/user.repository";
-import { GetAllUsersResponseDto } from "../dtos/get-all-users-response.dto";
-import { GetUsersDto } from "../dtos/get-users.dto";
+} from '../../domain/repositories/user.repository.js';
+import { GetAllUsersResponseDto } from '../dtos/get-all-users-response.dto';
+import { GetUsersDto } from '../dtos/get-users.dto';
 
 @Injectable()
 export class GetAllUsersUseCase {
@@ -22,7 +22,7 @@ export class GetAllUsersUseCase {
 
   async execute(dto: GetUsersDto): Promise<GetAllUsersResponseDto> {
     const users = await this.userRepository.findAll();
-    if (!users) throw new EntityNotFoundException("User", "all");
+    if (!users) throw new EntityNotFoundException('User', 'all');
 
     const userWithRoles = await Promise.all(
       users.map(async (user) => {
