@@ -166,7 +166,7 @@ async fn main() {
             .expect("Failed to initialize policy provider"),
     );
     let interface_monitor = Arc::new(
-        NetworkInterfaceMonitor::new()
+        NetworkInterfaceMonitor::new(CancellationToken::new())
             .await
             .expect("Failed to initialize network interface monitor"),
     );

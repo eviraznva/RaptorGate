@@ -317,6 +317,14 @@ pub enum EventKind {
     PinningAutoBypassActivated { source_ip: IpAddr, domain: String, reason: String },
     TlsHandshakeFailed { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, tls_version: Option<String>, stage: HandshakeStage, reason: String, mode: InspectionMode },
     EchAttemptDetected { source_ip: Option<IpAddr>, domain: String, origin: EchOrigin, action: EchAction },
+    InterfaceStateChanged { interface_name: String, old_status: String, new_status: String, addresses: Vec<String> },
+    InterfaceRenamed {
+        interface_index: u32,
+        old_interface_name: String,
+        new_interface_name: String,
+        status: String,
+        addresses: Vec<String>,
+    },
     IpsSignatureMatched {
         signature_id: String,
         signature_name: String,
@@ -361,6 +369,8 @@ impl EventKind {
             | E::PinningAutoBypassActivated { .. }
             | E::TlsHandshakeFailed { .. }
             | E::EchAttemptDetected { .. }
+            | E::InterfaceStateChanged { .. }
+            | E::InterfaceRenamed { .. }
             | E::IpsSignatureMatched { .. }
             | E::EventBusConnectedEvent { .. } => true,
         }
@@ -579,6 +589,26 @@ impl From<EventKind> for proto::EventKind {
                         origin: origin.as_str().to_string(),
                         action: action.as_str().to_string(),
                     }),
+                EventKind::InterfaceStateChanged { interface_name, old_status, new_status, addresses } =>
+                    Item::InterfaceStateChanged(proto::InterfaceStateChangedEvent {
+                        interface_name,
+                        old_status,
+                        new_status,
+                        addresses,
+                    }),
+                EventKind::InterfaceRenamed {
+                    interface_index,
+                    old_interface_name,
+                    new_interface_name,
+                    status,
+                    addresses,
+                } => Item::InterfaceRenamed(proto::InterfaceRenamedEvent {
+                    interface_index,
+                    old_interface_name,
+                    new_interface_name,
+                    status,
+                    addresses,
+                }),
                 EventKind::IpsSignatureMatched {
                     signature_id,
                     signature_name,
