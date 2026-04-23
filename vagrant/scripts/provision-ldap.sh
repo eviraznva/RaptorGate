@@ -3,12 +3,8 @@ set -e
 
 export DEBIAN_FRONTEND=noninteractive
 
-# ip route add default dev eth0 || true 
-apt-get update
-apt-get install -y slapd ldap-utils
-# ip route del default dev eth0 || true
-
-# Preseed slapd config
+# Preseed MUSI byc przed instalacja slapd — pierwsza instalacja inicjalizuje baze
+# z aktualnymi wartosciami debconf, pozniejszy restart niczego nie zmienia.
 debconf-set-selections <<EOF
 slapd slapd/internal/generated_adminpw password admin
 slapd slapd/internal/adminpw password admin
@@ -21,7 +17,16 @@ slapd slapd/move_old_database boolean true
 slapd slapd/no_configuration boolean false
 EOF
 
-# Wait for slapd to be ready
+apt-get update
+apt-get install -y slapd ldap-utils
+
+# Jesli slapd zostal wczesniej zainstalowany z inna domena (np. nodomain z
+# poprzednich runow gdzie preseed byl za pozno), wymus rekonfiguracje na
+# podstawie aktualnego debconf. purge_database=true w preseedzie czysci baze.
+if ! slapcat 2>/dev/null | grep -q "^dn: dc=raptorgate,dc=local"; then
+  dpkg-reconfigure -f noninteractive slapd
+fi
+
 systemctl restart slapd
 sleep 2
 
