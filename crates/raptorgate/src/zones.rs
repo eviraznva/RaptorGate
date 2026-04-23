@@ -5,7 +5,7 @@ use derive_more::{Display, From, Into};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::proto::{self, common, config};
+use crate::proto::{common, config};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Zone {
@@ -35,10 +35,56 @@ impl Zone {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InterfaceStatus {
+    Unspecified,
+    Active,
+    Inactive,
+    Missing,
+    Unknown,
+}
+
+impl Default for InterfaceStatus {
+    fn default() -> Self {
+        Self::Unspecified
+    }
+}
+
+impl TryFrom<i32> for InterfaceStatus {
+    type Error = anyhow::Error;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        let status = config::InterfaceStatus::try_from(value)?;
+        Ok(match status {
+            config::InterfaceStatus::Unspecified => Self::Unspecified,
+            config::InterfaceStatus::Active => Self::Active,
+            config::InterfaceStatus::Inactive => Self::Inactive,
+            config::InterfaceStatus::Missing => Self::Missing,
+            config::InterfaceStatus::Unknown => Self::Unknown,
+        })
+    }
+}
+
+impl From<InterfaceStatus> for i32 {
+    fn from(value: InterfaceStatus) -> Self {
+        match value {
+            InterfaceStatus::Unspecified => config::InterfaceStatus::Unspecified as i32,
+            InterfaceStatus::Active => config::InterfaceStatus::Active as i32,
+            InterfaceStatus::Inactive => config::InterfaceStatus::Inactive as i32,
+            InterfaceStatus::Missing => config::InterfaceStatus::Missing as i32,
+            InterfaceStatus::Unknown => config::InterfaceStatus::Unknown as i32,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoneInterface {
     pub zone_id: ZoneId,
     pub interface_name: String,
     pub vlan_id: Option<u32>,
+    #[serde(default)]
+    pub status: InterfaceStatus,
+    #[serde(default)]
+    pub addresses: Vec<String>,
 }
 
 impl ZoneInterface {
@@ -51,6 +97,8 @@ impl ZoneInterface {
                 zone_id,
                 interface_name: value.interface_name,
                 vlan_id: value.vlan_id,
+                status: InterfaceStatus::try_from(value.status)?,
+                addresses: value.addresses,
             },
         ))
     }
@@ -61,6 +109,8 @@ impl ZoneInterface {
             zone_id: self.zone_id.0.to_string(),
             interface_name: self.interface_name.clone(),
             vlan_id: self.vlan_id,
+            status: self.status.clone().into(),
+            addresses: self.addresses.clone(),
         }
     }
 }

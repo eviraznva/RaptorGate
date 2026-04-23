@@ -183,6 +183,8 @@ mod tests {
             zone_id: zone_id.to_string(),
             interface_name: "eth0".to_string(),
             vlan_id: None,
+            status: config::InterfaceStatus::Unspecified as i32,
+            addresses: vec![],
         };
         ZoneInterface::try_from_proto(proto).unwrap()
     }

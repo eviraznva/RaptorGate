@@ -77,13 +77,11 @@ impl NetworkInterfaceMonitor {
             .await
             .map_err(NetworkInterfaceMonitorError::AddressDump)?
         {
-            if let Some(parsed) = parse_address(&address) {
-                if let Some(interface) = interfaces_by_index.get_mut(&address.header.index) {
-                    if !interface.addresses.contains(&parsed) {
+            if let Some(parsed) = parse_address(&address)
+                && let Some(interface) = interfaces_by_index.get_mut(&address.header.index)
+                    && !interface.addresses.contains(&parsed) {
                         interface.addresses.push(parsed);
                     }
-                }
-            }
         }
 
         let interfaces = DashMap::new();

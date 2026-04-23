@@ -50,24 +50,27 @@ use crate::proto::services::{
 use crate::tls::pinning_detector::PinningDetector;
 use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
 use crate::zones::Zone;
+use crate::zones::netlink::InterfaceMonitor;
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
-use crate::zones::{ZonePair, ZoneInterface};
+use crate::zones::{ZoneInterfaceId, ZonePair, ZoneInterface};
 
-pub struct QueryServer<PolicySwap>
+pub struct QueryServer<PolicySwap, Monitor>
 where
     PolicySwap: PolicyManager + Send + Sync,
+    Monitor: InterfaceMonitor + Send + Sync,
 {
-    handler: QueryHandler<PolicySwap>,
+    handler: QueryHandler<PolicySwap, Monitor>,
     socket_path: String,
     shutdown: CancellationToken,
 }
 
-impl<PolicySwap> QueryServer<PolicySwap>
+impl<PolicySwap, Monitor> QueryServer<PolicySwap, Monitor>
 where
     PolicySwap: PolicyManager + Send + Sync + 'static,
+    Monitor: InterfaceMonitor + Send + Sync + 'static,
 {
     pub fn new(
-        handler: QueryHandler<PolicySwap>,
+        handler: QueryHandler<PolicySwap, Monitor>,
         socket_path: impl Into<String>,
         shutdown: CancellationToken,
     ) -> Self {
@@ -113,9 +116,10 @@ where
     }
 }
 
-pub struct QueryHandler<PolicySwap>
+pub struct QueryHandler<PolicySwap, Monitor>
 where
     PolicySwap: PolicyManager,
+    Monitor: InterfaceMonitor,
 {
     pub tcp_tracker: Arc<TcpSessionTracker>,
     pub nat_engine: Arc<Mutex<NatEngine>>,
@@ -135,11 +139,13 @@ where
     pub server_key_store: Arc<ServerKeyStore>,
     /// Detektor pinningu — wspoldzielony z TlsDecisionEngine do obserwacji stanu.
     pub pinning_detector: Arc<PinningDetector>,
+    pub interface_monitor: Arc<Monitor>,
 }
 
-impl<PolicySwap> Clone for QueryHandler<PolicySwap>
+impl<PolicySwap, Monitor> Clone for QueryHandler<PolicySwap, Monitor>
 where
     PolicySwap: PolicyManager,
+    Monitor: InterfaceMonitor,
 {
     fn clone(&self) -> Self {
         Self {
@@ -158,6 +164,7 @@ where
             decision_engine: Arc::clone(&self.decision_engine),
             server_key_store: Arc::clone(&self.server_key_store),
             pinning_detector: Arc::clone(&self.pinning_detector),
+            interface_monitor: Arc::clone(&self.interface_monitor),
         }
     }
 }
@@ -179,9 +186,10 @@ where
 }
 
 #[tonic::async_trait]
-impl<Swapper> FirewallQueryService for QueryHandler<Swapper>
+impl<Swapper, Monitor> FirewallQueryService for QueryHandler<Swapper, Monitor>
 where
     Swapper: PolicyManager + Send + Sync + 'static,
+    Monitor: InterfaceMonitor + Send + Sync + 'static,
 {
     async fn get_tcp_sessions(
         &self,
@@ -299,6 +307,56 @@ where
             })),
             None => Err(Status::not_found(format!("policy with id {id} not found"))),
         }
+    }
+
+    async fn get_zone_interfaces(
+        &self,
+        _request: Request<crate::proto::services::GetZoneInterfacesRequest>,
+    ) -> Result<Response<crate::proto::services::GetZoneInterfacesResponse>, Status> {
+        let zone_interfaces = self
+            .zone_interface_store
+            .get_zone_interfaces()
+            .iter()
+            .map(|(id, zone_interface)| zone_interface.clone().into_proto(id.clone()))
+            .collect();
+
+        Ok(Response::new(
+            crate::proto::services::GetZoneInterfacesResponse { zone_interfaces },
+        ))
+    }
+
+    async fn get_zone_interface(
+        &self,
+        request: Request<crate::proto::services::GetZoneInterfaceRequest>,
+    ) -> Result<Response<crate::proto::services::GetZoneInterfaceResponse>, Status> {
+        let id: ZoneInterfaceId = Uuid::try_parse(&request.into_inner().id)
+            .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?
+            .into();
+
+        match self.zone_interface_store.get_zone_interface(&id) {
+            Some(zone_interface) => Ok(Response::new(
+                crate::proto::services::GetZoneInterfaceResponse {
+                    zone_interface: Some(zone_interface.into_proto(id)),
+                },
+            )),
+            None => Err(Status::not_found(format!("zone interface with id {id} not found"))),
+        }
+    }
+
+    async fn get_live_zone_interfaces(
+        &self,
+        _request: Request<crate::proto::services::GetLiveZoneInterfacesRequest>,
+    ) -> Result<Response<crate::proto::services::GetLiveZoneInterfacesResponse>, Status> {
+        let zone_interfaces = self
+            .zone_interface_store
+            .get_live_zone_interfaces(&*self.interface_monitor)
+            .into_iter()
+            .map(|(id, zone_interface)| zone_interface.into_proto(id))
+            .collect();
+
+        Ok(Response::new(
+            crate::proto::services::GetLiveZoneInterfacesResponse { zone_interfaces },
+        ))
     }
 
     async fn get_zone_pairs(
@@ -520,9 +578,10 @@ where
 }
 
 #[tonic::async_trait]
-impl<Swapper> FirewallConfigSnapshotService for QueryHandler<Swapper>
+impl<Swapper, Monitor> FirewallConfigSnapshotService for QueryHandler<Swapper, Monitor>
 where
     Swapper: PolicyManager + Send + Sync + 'static,
+    Monitor: InterfaceMonitor + Send + Sync + 'static,
 {
     async fn push_active_config_snapshot(
         &self,
@@ -670,9 +729,10 @@ where
     }
 }
 
-impl<PolicySwap> QueryHandler<PolicySwap>
+impl<PolicySwap, Monitor> QueryHandler<PolicySwap, Monitor>
 where
     PolicySwap: PolicyManager,
+    Monitor: InterfaceMonitor,
 {
     async fn apply_nat_rules(
         &self,
