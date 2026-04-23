@@ -583,6 +583,7 @@ where
     Swapper: PolicyManager + Send + Sync + 'static,
     Monitor: InterfaceMonitor + Send + Sync + 'static,
 {
+    #[allow(clippy::too_many_lines)]
     async fn push_active_config_snapshot(
         &self,
         request: Request<PushActiveConfigSnapshotRequest>,
