@@ -36,10 +36,16 @@ export class JsonConfigSnapshotRepository implements IConfigSnapshotRepository {
   async save(configSnapshot: ConfigurationSnapshot): Promise<void> {
     const snapshots = await this.readPayload();
 
+    const originalPayload = configSnapshot.getPayloadJson();
     const payload = mapConfigSnapshotToPayloadRecord(configSnapshot);
-    configSnapshot.setPayloadJson(JSON.stringify(payload));
+    let next;
 
-    const next = ConfigurationSnapshotJsonMapper.toRecord(configSnapshot);
+    try {
+      configSnapshot.setPayloadJson(JSON.stringify(payload));
+      next = ConfigurationSnapshotJsonMapper.toRecord(configSnapshot);
+    } finally {
+      configSnapshot.setPayloadJson(originalPayload);
+    }
 
     const existingRow = await this.findById(configSnapshot.getId());
     if (existingRow) {

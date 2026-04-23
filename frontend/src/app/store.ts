@@ -17,7 +17,9 @@ import ZonePairsReducer from "../features/zonePairsSlice";
 import { natRulesApi } from "../services/natRules";
 import NatRulesReducer from "../features/natRulesSlice";
 import { usersApi } from "../services/users";
+import ConfigReducer from "../features/configSlice";
 import UsersManagementSlice from "../features/usersManagementSlice";
+import { configApi } from "../services/config";
 
 export const store = configureStore({
   reducer: {
@@ -28,6 +30,7 @@ export const store = configureStore({
     ipsConfig: IpsConfigReducer,
     zonePairs: ZonePairsReducer,
     natRules: NatRulesReducer,
+    config: ConfigReducer,
     zones: ZonesReducer,
     rules: RulesReducer,
     user: UserReducer,
@@ -35,6 +38,7 @@ export const store = configureStore({
     [ipsConfigApi.reducerPath]: ipsConfigApi.reducer,
     [zonePairsApi.reducerPath]: zonePairsApi.reducer,
     [natRulesApi.reducerPath]: natRulesApi.reducer,
+    [configApi.reducerPath]: configApi.reducer,
     [usersApi.reducerPath]: usersApi.reducer,
     [rulesApi.reducerPath]: rulesApi.reducer,
     [zonesApi.reducerPath]: zonesApi.reducer,
@@ -47,6 +51,7 @@ export const store = configureStore({
       zonePairsApi.middleware,
       ipsConfigApi.middleware,
       natRulesApi.middleware,
+      configApi.middleware,
       usersApi.middleware,
       zonesApi.middleware,
       rulesApi.middleware,
