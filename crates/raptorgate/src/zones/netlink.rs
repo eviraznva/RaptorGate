@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use dashmap::DashMap;
+use derive_more::Display;
 use futures::stream::StreamExt;
 use futures::TryStreamExt;
 use ipnet::IpNet;
@@ -36,10 +37,13 @@ pub enum NetworkInterfaceMonitorError {
     MulticastConnection(#[source] std::io::Error),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
 pub enum OperState {
+    #[display("active")]
     Up,
+    #[display("inactive")]
     Down,
+    #[display("unknown")]
     Unknown,
 }
 
@@ -76,7 +80,7 @@ impl NetworkInterfaceMonitor {
             .await
             .map_err(NetworkInterfaceMonitorError::LinkDump)?
         {
-            if let Some(parsed) = parse_link(link) {
+            if let Some(parsed) = parse_link(&link) {
                 interfaces_by_index.insert(parsed.index, parsed);
             }
         }
@@ -152,7 +156,7 @@ impl InterfaceMonitor for NetworkInterfaceMonitor {
     }
 }
 
-fn parse_link(message: LinkMessage) -> Option<SystemInterface> {
+fn parse_link(message: &LinkMessage) -> Option<SystemInterface> {
     let name = message.attributes.iter().find_map(link_name)?;
     let oper_state = message
         .attributes
@@ -173,12 +177,12 @@ fn parse_link(message: LinkMessage) -> Option<SystemInterface> {
 fn handle_route_message(interfaces: &DashMap<String, SystemInterface>, message: RouteNetlinkMessage) {
     match message {
         RouteNetlinkMessage::NewLink(link) => {
-            if let Some(new_interface) = parse_link(link) {
+            if let Some(new_interface) = parse_link(&link) {
                 upsert_link(interfaces, new_interface);
             }
         }
         RouteNetlinkMessage::DelLink(link) => {
-            remove_link(interfaces, link);
+            remove_link(interfaces, &link);
         }
         RouteNetlinkMessage::NewAddress(address) => {
             apply_address_change(interfaces, address, true);
@@ -197,14 +201,13 @@ fn upsert_link(interfaces: &DashMap<String, SystemInterface>, mut new_interface:
         && old_name != new_interface.name
     {
         interfaces.remove(&old_name);
-        new_interface.addresses = old_interface.addresses.clone();
+        new_interface.addresses.clone_from(&old_interface.addresses);
         emit_rename_event(new_interface.index, &old_name, &new_interface.name, &new_interface);
         old_for_state = Some(old_interface);
     }
 
     if old_for_state.is_none()
-        && let Some(existing) = interfaces.get(&new_interface.name)
-    {
+        && let Some(existing) = interfaces.get(&new_interface.name) {
         new_interface.addresses = existing.addresses.clone();
     }
 
@@ -216,7 +219,7 @@ fn upsert_link(interfaces: &DashMap<String, SystemInterface>, mut new_interface:
     maybe_emit_state_event(old_for_state.as_ref(), Some(&new_interface));
 }
 
-fn remove_link(interfaces: &DashMap<String, SystemInterface>, link: LinkMessage) {
+fn remove_link(interfaces: &DashMap<String, SystemInterface>, link: &LinkMessage) {
     let old = interfaces
         .iter()
         .find(|entry| entry.value().index == link.header.index)
@@ -261,14 +264,10 @@ fn normalize_addresses(addresses: &[IpNet]) -> Vec<String> {
     values
 }
 
-fn status_from_interface(interface: Option<&SystemInterface>) -> &'static str {
+fn status_from_interface(interface: Option<&SystemInterface>) -> String {
     match interface {
-        None => "missing",
-        Some(item) => match item.oper_state {
-            OperState::Up => "active",
-            OperState::Down => "inactive",
-            OperState::Unknown => "unknown",
-        },
+        None => "missing".to_string(),
+        Some(item) => item.oper_state.to_string(),
     }
 }
 
@@ -289,8 +288,8 @@ fn maybe_emit_state_event(old: Option<&SystemInterface>, new: Option<&SystemInte
     if let Some(interface_name) = interface_name {
         events::emit(Event::new(EventKind::InterfaceStateChanged {
             interface_name,
-            old_status: old_status.to_string(),
-            new_status: new_status.to_string(),
+            old_status,
+            new_status,
             addresses: new_addresses,
         }));
     }
@@ -301,7 +300,7 @@ fn emit_rename_event(interface_index: u32, old_name: &str, new_name: &str, curre
         interface_index,
         old_interface_name: old_name.to_string(),
         new_interface_name: new_name.to_string(),
-        status: status_from_interface(Some(current)).to_string(),
+        status: status_from_interface(Some(current)),
         addresses: normalize_addresses(&current.addresses),
     }));
 }
@@ -339,15 +338,14 @@ fn link_vlan_id(attribute: &LinkAttribute) -> Option<u16> {
     };
 
     for item in info_items {
-        if let LinkInfo::Data(data) = item {
-            if let LinkInfoData::Vlan(vlan_data) = data {
+        if let LinkInfo::Data(data) = item
+            && let LinkInfoData::Vlan(vlan_data) = data {
                 for vlan_item in vlan_data {
                     if let InfoVlan::Id(vlan_id) = vlan_item {
                         return Some(*vlan_id);
                     }
                 }
             }
-        }
     }
 
     None
