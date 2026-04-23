@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "id": "88263938-f3db-4d2c-8b4a-4db7bd379057",
+      "name": "Allow HTTP",
+      "zone_pair_id": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
+      "priority": 10,
+      "rule_tree": {
+        "head": "match ip_ver {\n\t= v4: \n\t\tmatch protocol {\n\t\t\t= tcp: \n\t\t\t\tmatch dst_port {\n\t\t\t\t\t= 443: verdict allow\n\t\t\t\t\t_: verdict drop\n\t\t\t\t}\n\t\t\t= udp: verdict drop\n\t\t}\n\t= v6: verdict drop\n}\n"
+      }
+    },
+    {
+      "id": "a1c6151b-e916-456d-b4f9-2d57d2075aff",
+      "name": "Allow HTTPS",
+      "zone_pair_id": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
+      "priority": 69,
+      "rule_tree": {
+        "head": "match dst_port {\n\t= 53: verdict drop\n}\n"
+      }
+    }
+  ]
+}

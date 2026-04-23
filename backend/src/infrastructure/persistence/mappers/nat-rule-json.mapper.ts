@@ -45,7 +45,7 @@ export class NatRuleJsonMapper {
       priority: natRule.getPriority().getValue(),
       createdAt: natRule.getCreatedAt().toISOString(),
       updatedAt: natRule.getUpdatedAt().toISOString(),
-      createdBy,
+      createdBy: createdBy,
     };
   }
 }

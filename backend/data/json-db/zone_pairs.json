@@ -20,16 +20,8 @@
       "id": "5704ce12-9b25-47c7-a1e4-1dd03ba56aec",
       "srcZoneId": "050eca33-2b53-4470-9f11-d369e0e7abbc",
       "dstZoneID": "7276db7e-eb41-4dc6-9b88-12f854e104f2",
-      "defaultPolicy": "DENY",
-      "createdAt": "2026-03-23T11:36:15.675Z",
-      "createdBy": "00000000-0000-4000-8000-000000000001"
-    },
-    {
-      "id": "cd8c2b9e-bbd5-44f0-a0ae-ed2b468d69c6",
-      "srcZoneId": "b5fc6256-d502-41a7-9370-d69663bf26b6",
-      "dstZoneID": "0a71df53-c55d-4aa0-a733-3e949453f773",
       "defaultPolicy": "ALLOW",
-      "createdAt": "2026-04-19T17:05:31.450Z",
+      "createdAt": "2026-03-23T11:36:15.675Z",
       "createdBy": "00000000-0000-4000-8000-000000000001"
     }
   ]

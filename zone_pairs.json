@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "id": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
+      "src_zone_id": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4",
+      "dst_zone_id": "a0db06f9-5063-4035-aadd-845248db19e4",
+      "default_policy": "Allow"
+    },
+    {
+      "id": "5704ce12-9b25-47c7-a1e4-1dd03ba56aec",
+      "src_zone_id": "050eca33-2b53-4470-9f11-d369e0e7abbc",
+      "dst_zone_id": "7276db7e-eb41-4dc6-9b88-12f854e104f2",
+      "default_policy": "Allow"
+    },
+    {
+      "id": "024ddcb1-79ee-43be-a782-5682d1d850d5",
+      "src_zone_id": "a0db06f9-5063-4035-aadd-845248db19e4",
+      "dst_zone_id": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4",
+      "default_policy": "Allow"
+    }
+  ]
+}

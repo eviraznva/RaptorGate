@@ -15,6 +15,7 @@ import Settings from "./pages/Settings.tsx";
 import Zones from "./pages/Zones.tsx";
 import NatRules from "./pages/NatRules.tsx";
 import Users from "./pages/Users.tsx";
+import ConfigControl from "./pages/ConfigControl.tsx";
 import { Layout } from "./components/layout/layout.tsx";
 import { Metrics } from "./components/metrics/Metrics.tsx";
 import { ProtectedRoute } from "./components/protectedRoute/protectedRoute.tsx";
@@ -73,6 +74,10 @@ const router = createBrowserRouter([
           {
             path: "users",
             element: <Users />,
+          },
+          {
+            path: "config-control",
+            element: <ConfigControl />,
           },
           {
             path: "settings",
