@@ -4,6 +4,7 @@ import {
   getClient,
   getSnapshotClient,
   resetFirewallState,
+  performCommand,
 } from '../harness';
 import {
   InterfaceStatus,
@@ -119,5 +120,64 @@ describe('Interface Monitor', () => {
         throw new Error(`Interface ${interfaceName} unexpectedly reported as missing`);
       }
     }
+  });
+
+  test('detects interface status change', async () => {
+    await performCommand({ host: 'r1', command: 'sudo ip link set eth1 down' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'eth1', newStatus: 'inactive' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip link set eth1 up' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'eth1', newStatus: 'active' } }])
+      .run();
+  });
+
+  test('detects interface rename', async () => {
+    // Renaming requires the interface to be down
+    await performCommand({ host: 'r1', command: 'sudo ip link set eth2 down' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'eth2', newStatus: 'inactive' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip link set eth2 name eth-test' })
+      .expectEvents([{ kind: 'interfaceRenamed', match: { oldInterfaceName: 'eth2', newInterfaceName: 'eth-test' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip link set eth-test name eth2' })
+      .expectEvents([{ kind: 'interfaceRenamed', match: { oldInterfaceName: 'eth-test', newInterfaceName: 'eth2' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip link set eth2 up' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'eth2', newStatus: 'active' } }])
+      .run();
+  });
+
+  test('detects dummy interface lifecycle', async () => {
+    await performCommand({ host: 'r1', command: 'sudo ip link add dummy0 type dummy' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy0', newStatus: 'inactive' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip link del dummy0' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy0', newStatus: 'missing' } }])
+      .run();
+  });
+
+  test('detects address changes on dummy interface', async () => {
+    await performCommand({ host: 'r1', command: 'sudo ip link add dummy1 type dummy' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy1' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip addr add 10.99.99.1/24 dev dummy1' })
+      .expectEvents([{
+        kind: 'interfaceStateChanged',
+        match: {
+          interfaceName: 'dummy1',
+          addresses: ['10.99.99.1/24'],
+        },
+      }])
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip link del dummy1' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy1', newStatus: 'missing' } }])
+      .run();
   });
 });
