@@ -16,6 +16,7 @@ import {
   type IPasswordHasher,
   PASSWORD_HASHER_TOKEN,
 } from "../ports/passowrd-hasher.interface";
+import { ensureActorCanManageRoles } from "./user-management-authorization.js";
 
 @Injectable()
 export class CreateUserUseCase {
@@ -42,6 +43,9 @@ export class CreateUserUseCase {
     if (!isValidRole) throw new RoleIsInvalidException();
 
     const rolesToAssign = roles.filter((r) => dto.roles.includes(r.getName()));
+    const actorRoles = await this.roleRepository.findByUserId(dto.actorUserId);
+
+    ensureActorCanManageRoles(actorRoles, rolesToAssign);
 
     const passwordHash = await this.passwordHasher.hash(dto.password);
 

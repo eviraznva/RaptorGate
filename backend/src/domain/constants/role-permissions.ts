@@ -70,6 +70,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     Permission.USERS_CREATE,
     Permission.USERS_UPDATE,
     Permission.USERS_DELETE,
+    Permission.USERS_ASSIGN_ROLE,
     Permission.AUDIT_READ,
     Permission.ZONES_INTERFACES_MANAGE,
     Permission.ZONE_PAIRINGS_READ,

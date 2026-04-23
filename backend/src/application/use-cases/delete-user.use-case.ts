@@ -8,6 +8,7 @@ import {
 } from '../../domain/repositories/user.repository.js';
 import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import { DleteUserDto } from '../dtos/delete-user.dto';
+import { ensureActorCanManageRoles } from './user-management-authorization.js';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
@@ -24,8 +25,10 @@ export class DeleteUserUseCase {
   async execute(dto: DleteUserDto): Promise<void> {
     const user = await this.userRepository.findById(dto.userId);
     if (!user) throw new EntityNotFoundException('user', dto.userId);
+    const actorRoles = await this.roleRepository.findByUserId(dto.actorUserId);
 
     const userRoles = await this.roleRepository.findByUserId(dto.userId);
+    ensureActorCanManageRoles(actorRoles, userRoles);
 
     await Promise.all(
       userRoles.map(

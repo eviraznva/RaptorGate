@@ -15,6 +15,7 @@ import { EntityNotFoundException } from '../../domain/exceptions/entity-not-foun
 import { RoleIsInvalidException } from '../../domain/exceptions/role-is-invalid.exception.js';
 import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
 import { EditUserDto } from '../dtos/edit-user.dto';
+import { ensureActorCanManageRoles } from './user-management-authorization.js';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
@@ -33,6 +34,10 @@ export class EditUserUseCase {
   async execute(dto: EditUserDto): Promise<EditUserResponseDto> {
     const user = await this.userRepository.findById(dto.id);
     if (!user) throw new EntityNotFoundException('User', dto.id);
+    const actorRoles = await this.roleRepository.findByUserId(dto.actorUserId);
+    const currentUserRoles = await this.roleRepository.findByUserId(user.getId());
+
+    ensureActorCanManageRoles(actorRoles, currentUserRoles);
 
     const isAllUndefined = Object.values(dto).every(
       (value) => value == undefined,
@@ -57,6 +62,7 @@ export class EditUserUseCase {
         dto.roles!.includes(r.getName()),
       );
 
+      ensureActorCanManageRoles(actorRoles, rolesToAssign);
       user.setRoles(rolesToAssign);
     }
 
@@ -64,14 +70,12 @@ export class EditUserUseCase {
 
     await this.userRepository.save(user);
 
-    await Promise.all(
-      user
-        .getRoles()
-        .map(
-          async (role) =>
-            await this.roleRepository.assignToUser(user.getId(), role.getId()),
-        ),
-    );
+    if (dto.roles !== undefined) {
+      await this.roleRepository.setUserRoles(
+        user.getId(),
+        user.getRoles().map((role) => role.getId()),
+      );
+    }
 
     const userRoles = await this.roleRepository.findByUserId(user.getId());
     user.setRoles(userRoles);
@@ -83,7 +87,10 @@ export class EditUserUseCase {
       username: user.getUsername(),
       roles: userRoles.map((role) => role.getName()),
       changedFields: Object.entries(dto)
-        .filter(([key, value]) => key !== 'id' && value !== undefined)
+        .filter(
+          ([key, value]) =>
+            key !== 'id' && key !== 'actorUserId' && value !== undefined,
+        )
         .map(([key]) => key),
     });
 

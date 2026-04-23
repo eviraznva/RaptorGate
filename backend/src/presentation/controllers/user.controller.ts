@@ -10,8 +10,10 @@ import {
   Post,
   Put,
   Query,
+  Req,
 } from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { CreateUserUseCase } from '../../application/use-cases/create-user.use-case.js';
 import { DeleteUserUseCase } from '../../application/use-cases/delete-user.use-case.js';
 import { EditUserUseCase } from '../../application/use-cases/edit-user.use-case.js';
@@ -42,6 +44,8 @@ import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
 import { GetAllUsersResponseDto } from '../dtos/get-all-users-response.dto';
 import { GetUsersQueryDto } from '../dtos/get-users-query.dto';
 import { UserResponseMapper } from '../mappers/user-response.mapper';
+
+type AuthenticatedRequest = Request & { user: { id: string } };
 
 @ApiTags('User Management')
 @Controller('user')
@@ -74,8 +78,11 @@ export class UserController {
   @ApiError409('User with the same username already exists')
   @ApiError429('Too many requests')
   @ApiError500('Server error while creating user')
-  async createUser(@Body() dto: CreateUserDto): Promise<CreateUserResponseDto> {
-    const result = await this.createUserUseCase.execute(dto);
+  async createUser(
+    @Body() dto: CreateUserDto,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<CreateUserResponseDto> {
+    const result = await this.createUserUseCase.execute({ ...dto, actorUserId: request.user.id });
 
     const user = UserResponseMapper.toDto(result.user);
 
@@ -88,7 +95,7 @@ export class UserController {
       'Gets a list of all users. Requires SuperAdmin or Admin role and USERS_READ permission.',
   })
   @Get()
-  @Roles(Role.Viewer)
+  @Roles(Role.SuperAdmin, Role.Admin)
   @RequirePermissions(Permission.USERS_READ)
   @HttpCode(HttpStatus.OK)
   @ResponseMessage('List of all users retrieved successfully')
@@ -117,7 +124,7 @@ export class UserController {
       'Edits an existing user by their ID. Requires SuperAdmin or Admin role and USERS_EDIT permission.',
   })
   @Put(':id')
-  @Roles(Role.Admin)
+  @Roles(Role.SuperAdmin, Role.Admin)
   @RequirePermissions(Permission.USERS_UPDATE, Permission.USERS_ASSIGN_ROLE)
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: EditUserDto })
@@ -133,8 +140,9 @@ export class UserController {
   async editUser(
     @Body() dto: EditUserDto,
     @Param('id') id: string,
+    @Req() request: AuthenticatedRequest,
   ): Promise<EditUserResponseDto> {
-    const result = await this.editUserUseCase.execute({ ...dto, id });
+    const result = await this.editUserUseCase.execute({ ...dto, id, actorUserId: request.user.id });
 
     const editedUser = UserResponseMapper.toDto(result.user);
 
@@ -147,7 +155,7 @@ export class UserController {
       'Deletes a user by their ID. Requires SuperAdmin or Admin role and USERS_DELETE permission.',
   })
   @Delete(':id')
-  @Roles(Role.Operator)
+  @Roles(Role.SuperAdmin, Role.Admin)
   @RequirePermissions(Permission.USERS_DELETE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiNoContentEnvelope()
@@ -157,7 +165,10 @@ export class UserController {
   @ApiError409('Conflict occurred while deleting user')
   @ApiError429('Too many requests')
   @ApiError500('Server error while deleting user')
-  async deleteUser(@Param('id') id: string): Promise<void> {
-    await this.deleteUserUseCase.execute({ userId: id });
+  async deleteUser(
+    @Param('id') id: string,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<void> {
+    await this.deleteUserUseCase.execute({ userId: id, actorUserId: request.user.id });
   }
 }
