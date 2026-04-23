@@ -629,6 +629,7 @@ impl Stage for PolicyEvalStage {
 #[derive(Clone)]
 pub struct TcpClassificationStage {
     pub tracker: Arc<TcpSessionTracker>,
+    pub flow_stats: Arc<crate::ml::FlowStatsAggregator>,
 }
 
 impl Stage for TcpClassificationStage {
@@ -637,6 +638,9 @@ impl Stage for TcpClassificationStage {
     }
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        // ML features z TCP header + rolling flow stats per src_ip.
+        populate_ml_tcp_and_flow_stats(ctx, &self.flow_stats);
+
         match self.tracker.process_packet(ctx.borrow_sliced_packet()) {
             Ok(_) => StageOutcome::Continue,
             Err(e) => {
@@ -653,9 +657,84 @@ impl Stage for TcpClassificationStage {
     }
 }
 
+fn populate_ml_tcp_and_flow_stats(
+    ctx: &mut PacketContext,
+    flow_stats: &crate::ml::FlowStatsAggregator,
+) {
+    use std::time::Instant;
+
+    // Jedna sesja borrow'u: wyciągnij wszystkie potrzebne dane z `sliced`
+    // zanim zaczniesz mutować `ml_feature_vector` (ouroboros accessors są
+    // rozłączne, ale żeby trzymać to czytelne — kopia do lokalnych).
+    struct TcpSnap {
+        syn: bool,
+        ack: bool,
+        fin: bool,
+        rst: bool,
+        psh: bool,
+        window: u16,
+    }
+    let (tcp_snap, src_ip, dst_ip) = {
+        let sliced = ctx.borrow_sliced_packet();
+        let tcp_snap = if let Some(TransportSlice::Tcp(tcp)) = &sliced.transport {
+            Some(TcpSnap {
+                syn: tcp.syn(),
+                ack: tcp.ack(),
+                fin: tcp.fin(),
+                rst: tcp.rst(),
+                psh: tcp.psh(),
+                window: tcp.window_size(),
+            })
+        } else {
+            None
+        };
+        let (src_ip, dst_ip) = match &sliced.net {
+            Some(NetSlice::Ipv4(ipv4)) => (
+                Some(IpAddr::V4(ipv4.header().source_addr())),
+                Some(IpAddr::V4(ipv4.header().destination_addr())),
+            ),
+            Some(NetSlice::Ipv6(ipv6)) => (
+                Some(IpAddr::V6(ipv6.header().source_addr())),
+                Some(IpAddr::V6(ipv6.header().destination_addr())),
+            ),
+            _ => (None, None),
+        };
+        (tcp_snap, src_ip, dst_ip)
+    };
+
+    let is_syn = tcp_snap.as_ref().map(|t| t.syn && !t.ack).unwrap_or(false);
+    let is_new_flow = is_syn;
+    let now = Instant::now();
+
+    if let (Some(src), Some(dst)) = (src_ip, dst_ip) {
+        flow_stats.observe_packet(src, dst, is_syn, is_new_flow, now);
+    }
+
+    let iat = src_ip
+        .map(|src| flow_stats.iat_since_last(src, now))
+        .unwrap_or_default();
+    let snapshot = src_ip
+        .map(|src| flow_stats.snapshot(src, now))
+        .unwrap_or_default();
+
+    ctx.with_ml_feature_vector_mut(|mlv| {
+        if let Some(snap) = &tcp_snap {
+            mlv.tcp_syn = snap.syn;
+            mlv.tcp_ack = snap.ack;
+            mlv.tcp_fin = snap.fin;
+            mlv.tcp_rst = snap.rst;
+            mlv.tcp_psh = snap.psh;
+            mlv.tcp_window_log = (1.0 + snap.window as f32).ln();
+        }
+        mlv.set_flow_snapshot(&snapshot, iat);
+    });
+}
+
 #[derive(Clone)]
 pub struct DpiStage {
     pub classifier: Arc<DpiClassifier>,
+    pub flow_stats: Arc<crate::ml::FlowStatsAggregator>,
+    pub pinning_detector: Option<Arc<crate::tls::pinning_detector::PinningDetector>>,
 }
 
 impl Stage for DpiStage {
@@ -678,6 +757,50 @@ impl Stage for DpiStage {
                     app_proto = ?dpi_ctx.app_proto,
                     "DPI classification completed"
                 );
+                // Rejestruj DNS response w aggregatorze (dla nxdomain_ratio).
+                if dpi_ctx.app_proto == Some(AppProto::Dns)
+                    && dpi_ctx.dns_is_response == Some(true)
+                {
+                    let src_ip = match &ctx.borrow_sliced_packet().net {
+                        Some(NetSlice::Ipv4(ipv4)) => {
+                            Some(IpAddr::V4(ipv4.header().source_addr()))
+                        }
+                        Some(NetSlice::Ipv6(ipv6)) => {
+                            Some(IpAddr::V6(ipv6.header().source_addr()))
+                        }
+                        _ => None,
+                    };
+                    if let Some(src) = src_ip {
+                        self.flow_stats.observe_dns_response(
+                            src,
+                            dpi_ctx.dns_rcode,
+                            std::time::Instant::now(),
+                        );
+                    }
+                }
+                // Pinning failures: potrzebne src_ip + SNI.
+                let pinning_failures = match (
+                    self.pinning_detector.as_ref(),
+                    dpi_ctx.tls_sni.as_deref(),
+                ) {
+                    (Some(det), Some(sni)) => {
+                        let src_ip = match &ctx.borrow_sliced_packet().net {
+                            Some(NetSlice::Ipv4(ipv4)) => {
+                                Some(IpAddr::V4(ipv4.header().source_addr()))
+                            }
+                            Some(NetSlice::Ipv6(ipv6)) => {
+                                Some(IpAddr::V6(ipv6.header().source_addr()))
+                            }
+                            _ => None,
+                        };
+                        src_ip.map(|ip| det.failure_count_for(ip, sni)).unwrap_or(0)
+                    }
+                    _ => 0,
+                };
+                ctx.with_ml_feature_vector_mut(|mlv| {
+                    mlv.set_from_dpi(&dpi_ctx);
+                    mlv.set_pinning_failures(pinning_failures);
+                });
                 ctx.with_dpi_ctx_mut(|c| *c = Some(dpi_ctx));
             }
             InspectResult::NeedMore => {}

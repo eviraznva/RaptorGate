@@ -6,6 +6,7 @@ mod dpi;
 mod events;
 mod ip_defrag;
 mod logging;
+mod ml;
 mod packet_validator;
 mod pipeline;
 mod policy;
@@ -267,6 +268,10 @@ async fn main() {
     // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
     let dnssec_provider: Arc<dyn DnssecProvider> =
         Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
+    
+    let ml_flow_stats = Arc::new(crate::ml::FlowStatsAggregator::new(
+        std::time::Duration::from_secs(60),
+    ));
 
     let pipeline = DataPipeline {
         head: ValidationStage,
@@ -278,6 +283,8 @@ async fn main() {
             tail: Chain {
                 head: DpiStage {
                     classifier: Arc::clone(&dpi_classifier),
+                    flow_stats: Arc::clone(&ml_flow_stats),
+                    pinning_detector: Some(decision_engine.pinning_detector_arc()),
                 },
                 tail: Chain {
                     head: TlsPortEnforcementStage {
@@ -306,6 +313,7 @@ async fn main() {
                                         tail: Chain {
                                             head: TcpClassificationStage {
                                                 tracker: Arc::clone(&tcp_session_tracker),
+                                                flow_stats: Arc::clone(&ml_flow_stats),
                                             },
                                             tail: Chain {
                                                 head: PolicyEvalStage {
