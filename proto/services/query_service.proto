@@ -16,6 +16,9 @@ service FirewallQueryService {
 
   rpc GetZones      (GetZonesRequest)          returns (GetZonesResponse);
   rpc GetZone       (GetZoneRequest)           returns (GetZoneResponse);
+  rpc GetZoneInterfaces (GetZoneInterfacesRequest) returns (GetZoneInterfacesResponse);
+  rpc GetZoneInterface (GetZoneInterfaceRequest) returns (GetZoneInterfaceResponse);
+  rpc GetLiveZoneInterfaces (GetLiveZoneInterfacesRequest) returns (GetLiveZoneInterfacesResponse);
   rpc GetZonePairs  (GetZonePairsRequest)      returns (GetZonePairsResponse);
   rpc GetZonePair   (GetZonePairRequest)       returns (GetZonePairResponse);
 
@@ -77,6 +80,26 @@ message GetZoneRequest {
 
 message GetZoneResponse {
   config.Zone zone = 1;
+}
+
+message GetZoneInterfacesRequest {}
+
+message GetZoneInterfacesResponse {
+  repeated config.ZoneInterface zone_interfaces = 1;
+}
+
+message GetZoneInterfaceRequest {
+  string id = 1;
+}
+
+message GetZoneInterfaceResponse {
+  config.ZoneInterface zone_interface = 1;
+}
+
+message GetLiveZoneInterfacesRequest {}
+
+message GetLiveZoneInterfacesResponse {
+  repeated config.ZoneInterface zone_interfaces = 1;
 }
 
 // Zone Pairs

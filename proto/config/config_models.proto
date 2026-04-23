@@ -32,11 +32,21 @@ message ZoneSet {
   repeated Zone items   = 2;
 }
 
+enum InterfaceStatus {
+  INTERFACE_STATUS_UNSPECIFIED = 0;
+  INTERFACE_STATUS_ACTIVE = 1;
+  INTERFACE_STATUS_INACTIVE = 2;
+  INTERFACE_STATUS_MISSING = 3;
+  INTERFACE_STATUS_UNKNOWN = 4;
+}
+
 message ZoneInterface {
   string          id             = 1;
   string          zone_id        = 2;
   string          interface_name = 3;
   optional uint32 vlan_id        = 4;
+  InterfaceStatus status         = 5;
+  repeated string addresses      = 6;
 }
 
 message ZoneInterfaceSet {
