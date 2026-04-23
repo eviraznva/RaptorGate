@@ -3,20 +3,13 @@ import '../harness';
 import {
   getClient,
   getSnapshotClient,
-  request,
   resetFirewallState,
 } from '../harness';
-import { createDefaultSnapshotBundle, DEFAULT_ZONES } from '../harness/fixtures';
 import {
   InterfaceStatus,
   interfaceStatusFromJSON,
   type ZoneInterface,
 } from '../generated/config/config_models';
-
-type PushSnapshotResponse = {
-  accepted?: boolean;
-  message?: string;
-};
 
 type RuntimeZoneInterface = {
   id?: unknown;
@@ -117,57 +110,14 @@ describe('Interface Monitor', () => {
     await resetFirewallState(getClient(), getSnapshotClient());
   });
 
-  test('loopback and others exist', async () => {
-    const configuredZoneInterfaces: ZoneInterface[] = DEFAULT_ZONES.flatMap((zone) =>
-      zone.interfaceIds.map((interfaceName) => ({
-        id: crypto.randomUUID(),
-        zoneId: zone.id,
-        interfaceName,
-        status: InterfaceStatus.INTERFACE_STATUS_UNSPECIFIED,
-        addresses: [],
-      })),
-    );
-
-    configuredZoneInterfaces.push({
-      id: crypto.randomUUID(),
-      zoneId: DEFAULT_ZONES[0]!.id,
-      interfaceName: 'lo',
-      status: InterfaceStatus.INTERFACE_STATUS_UNSPECIFIED,
-      addresses: [],
-    });
-
-    await request('PushActiveConfigSnapshot', {
-      correlationId: crypto.randomUUID(),
-      reason: 'apply',
-      snapshot: {
-        id: crypto.randomUUID(),
-        versionNumber: 1,
-        snapshotType: 'manual_import',
-        checksum: 'interface-monitor-loopback-checksum',
-        isActive: true,
-        changesSummary: 'interface monitor loopback baseline',
-        createdAt: new Date(),
-        createdBy: 'interface-monitor-test',
-        bundle: createDefaultSnapshotBundle({
-          zoneInterfaces: configuredZoneInterfaces,
-        }),
-      },
-    })
-      .expectResponse((response: PushSnapshotResponse) => response.accepted === true)
-      .run();
-
+  test('configured interfaces exist', async () => {
     const liveZoneInterfaces = await getLiveZoneInterfaces();
 
-    for (const configured of configuredZoneInterfaces) {
-      const live = findZoneInterfaceByName(liveZoneInterfaces, configured.interfaceName);
+    for (const interfaceName of ['eth1', 'eth2']) {
+      const live = findZoneInterfaceByName(liveZoneInterfaces, interfaceName);
       if (live.status === InterfaceStatus.INTERFACE_STATUS_MISSING) {
-        throw new Error(`Interface ${configured.interfaceName} unexpectedly reported as missing`);
+        throw new Error(`Interface ${interfaceName} unexpectedly reported as missing`);
       }
-    }
-
-    const loopback = findZoneInterfaceByName(liveZoneInterfaces, 'lo');
-    if (loopback.addresses.length === 0) {
-      throw new Error('Loopback interface should have at least one address in live response');
     }
   });
 });

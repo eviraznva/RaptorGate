@@ -1,4 +1,4 @@
-import type { Rule, Zone, ZonePair, AppConfig } from '../generated/config/config_models';
+import type { Rule, Zone, ZonePair, ZoneInterface, AppConfig } from '../generated/config/config_models';
 import { DefaultPolicy } from '../generated/common/common';
 import type {
   FirewallConfigSnapshotServiceClient,
@@ -18,16 +18,36 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   pkiDir: '/resources/ngfw/pki',
 };
 
-export const DEFAULT_ZONES: Zone[] = [
+const OUTSIDE_ZONE_ID = crypto.randomUUID();
+const INSIDE_ZONE_ID = crypto.randomUUID();
+
+export const DEFAULT_ZONE_INTERFACES: ZoneInterface[] = [
   {
     id: crypto.randomUUID(),
-    name: 'outside',
-    interfaceIds: ['eth1'],
+    zoneId: OUTSIDE_ZONE_ID,
+    interfaceName: 'eth1',
+    status: 0,
+    addresses: [],
   },
   {
     id: crypto.randomUUID(),
+    zoneId: INSIDE_ZONE_ID,
+    interfaceName: 'eth2',
+    status: 0,
+    addresses: [],
+  },
+];
+
+export const DEFAULT_ZONES: Zone[] = [
+  {
+    id: OUTSIDE_ZONE_ID,
+    name: 'outside',
+    interfaceIds: [DEFAULT_ZONE_INTERFACES[0]!.id],
+  },
+  {
+    id: INSIDE_ZONE_ID,
     name: 'inside',
-    interfaceIds: ['eth2'],
+    interfaceIds: [DEFAULT_ZONE_INTERFACES[1]!.id],
   },
 ];
 
@@ -73,7 +93,7 @@ export function createDefaultSnapshotBundle(overrides?: Partial<ConfigBundle>): 
     rules,
     zones,
     zonePairs,
-    zoneInterfaces: overrides?.zoneInterfaces ?? [],
+    zoneInterfaces: overrides?.zoneInterfaces ?? DEFAULT_ZONE_INTERFACES.map((zi) => ({ ...zi })),
     natRules: overrides?.natRules ?? [],
     dnsBlacklist: overrides?.dnsBlacklist ?? [],
     sslBypassList: overrides?.sslBypassList ?? [],

@@ -267,6 +267,26 @@ fn create_valid_bundle_with_zone_interfaces(
     zone_interfaces: Vec<ZoneInterface>,
 ) -> ValidBundle {
     let mut valid = create_valid_bundle(rule_name, content);
+    let mut interface_ids_by_zone: HashMap<String, Vec<String>> = zone_interfaces.iter().fold(
+        HashMap::new(),
+        |mut acc, zone_interface| {
+            acc.entry(zone_interface.zone_id.clone())
+                .or_default()
+                .push(zone_interface.id.clone());
+            acc
+        },
+    );
+    valid.bundle.zones = valid
+        .bundle
+        .zones
+        .into_iter()
+        .map(|mut zone| {
+            zone.interface_ids = interface_ids_by_zone
+                .remove(&zone.id)
+                .unwrap_or_default();
+            zone
+        })
+        .collect();
     valid.bundle.zone_interfaces = zone_interfaces;
     valid
 }

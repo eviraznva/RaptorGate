@@ -32,6 +32,10 @@ impl Zone {
             interface_ids: self.interface_ids.clone(),
         }
     }
+
+    pub fn interface_ids(&self) -> &[String] {
+        &self.interface_ids
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,5 +179,18 @@ pub struct ZoneId(Uuid);
 pub struct ZoneInterfaceId(Uuid);
 
 use crate::integrity::foreign_keys;
+impl crate::integrity::ForeignKeys for Zone {
+    fn foreign_keys(&self) -> Vec<crate::integrity::ForeignKey> {
+        self.interface_ids
+            .iter()
+            .filter_map(|interface_id| {
+                Uuid::parse_str(interface_id)
+                    .ok()
+                    .map(crate::zones::ZoneInterfaceId::from)
+            })
+            .map(|interface_id| crate::integrity::fk::<ZoneInterfaceId>("interface_ids", &interface_id))
+            .collect()
+    }
+}
 foreign_keys!(ZonePair { src_zone_id: ZoneId, dst_zone_id: ZoneId });
 foreign_keys!(ZoneInterface { zone_id: ZoneId });
