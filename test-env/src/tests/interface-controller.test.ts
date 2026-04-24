@@ -12,6 +12,7 @@ import {
   InterfaceStatus,
   interfaceStatusFromJSON,
   type ZoneInterface,
+  type Zone,
 } from '../generated/config/config_models';
 import { createDefaultSnapshotBundle } from '../harness/fixtures';
 
@@ -100,6 +101,13 @@ async function getLiveZoneInterfaces(): Promise<ZoneInterface[]> {
 
 async function pushZoneInterfaceConfig(zoneInterface: ZoneInterface): Promise<void> {
   const snapshotClient = getSnapshotClient();
+  const zoneId = zoneInterface.zoneId;
+  const zone: Zone = {
+    id: zoneId,
+    name: `test-zone-${zoneId.slice(0, 8)}`,
+    interfaceIds: [zoneInterface.id],
+  };
+
   await new Promise<void>((resolve, reject) => {
     snapshotClient.pushActiveConfigSnapshot(
       {
@@ -114,7 +122,7 @@ async function pushZoneInterfaceConfig(zoneInterface: ZoneInterface): Promise<vo
           changesSummary: 'push zone interface config for test',
           createdAt: new Date(),
           createdBy: 'test-env-interface-controller',
-          bundle: createDefaultSnapshotBundle({ zoneInterfaces: [zoneInterface] }),
+          bundle: createDefaultSnapshotBundle({ zones: [zone], zoneInterfaces: [zoneInterface], zonePairs: [], rules: [] }),
         },
       },
       (err: Error | null, resp: any) => {
@@ -142,6 +150,9 @@ describe('Interface Controller RPC', () => {
     const newName = 'dummy-renamed';
     const zoneInterfaceId = crypto.randomUUID();
     const zoneId = crypto.randomUUID();
+
+    await performCommand({ host: 'r1', command: `sudo ip link del ${interfaceName}` }).discardError().run();
+    await performCommand({ host: 'r1', command: `sudo ip link del ${newName}` }).discardError().run();
 
     await performCommand({ host: 'r1', command: `sudo ip link add ${interfaceName} type dummy` })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'inactive' } }])
@@ -173,6 +184,8 @@ describe('Interface Controller RPC', () => {
     const interfaceName = 'dummy-state';
     const zoneInterfaceId = crypto.randomUUID();
     const zoneId = crypto.randomUUID();
+
+    await performCommand({ host: 'r1', command: `sudo ip link del ${interfaceName}` }).discardError().run();
 
     await performCommand({ host: 'r1', command: `sudo ip link add ${interfaceName} type dummy` })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'inactive' } }])
@@ -214,6 +227,8 @@ describe('Interface Controller RPC', () => {
     const zoneInterfaceId = crypto.randomUUID();
     const zoneId = crypto.randomUUID();
 
+    await performCommand({ host: 'r1', command: `sudo ip link del ${interfaceName}` }).discardError().run();
+
     await performCommand({ host: 'r1', command: `sudo ip link add ${interfaceName} type dummy` })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'inactive' } }])
       .run();
@@ -243,6 +258,8 @@ describe('Interface Controller RPC', () => {
     const interfaceName = 'dummy-ip';
     const zoneInterfaceId = crypto.randomUUID();
     const zoneId = crypto.randomUUID();
+
+    await performCommand({ host: 'r1', command: `sudo ip link del ${interfaceName}` }).discardError().run();
 
     await performCommand({ host: 'r1', command: `sudo ip link add ${interfaceName} type dummy` })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'inactive' } }])
