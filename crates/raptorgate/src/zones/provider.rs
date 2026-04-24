@@ -7,9 +7,9 @@ use uuid::Uuid;
 use crate::{
     config::{AppConfig, ConfigObserver},
     disk_store::ListDiskStore,
+    interfaces::{InterfaceMonitor, OperState},
     swapper::Swapper,
     zones::{
-        netlink::{InterfaceMonitor, OperState},
         DefaultPolicy, InterfaceStatus, Zone, ZoneId, ZoneInterface, ZoneInterfaceId, ZonePair,
         ZonePairId,
     },

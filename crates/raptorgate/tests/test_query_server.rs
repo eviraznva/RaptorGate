@@ -26,7 +26,7 @@ use ngfw::proto::services::{
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::tls::pinning_detector::PinningConfig;
 use ngfw::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
-use ngfw::zones::netlink::{InterfaceMonitor, OperState, SystemInterface};
+use ngfw::interfaces::{InterfaceMonitor, OperState, SystemInterface};
 use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;

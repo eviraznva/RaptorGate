@@ -1,4 +1,3 @@
-pub mod netlink;
 pub mod provider;
 
 use derive_more::{Display, From, Into};

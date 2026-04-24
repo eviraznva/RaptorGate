@@ -40,6 +40,12 @@ enum InterfaceStatus {
   INTERFACE_STATUS_UNKNOWN = 4;
 }
 
+enum InterfaceAdministrativeState {
+  INTERFACE_ADMINISTRATIVE_STATE_UNSPECIFIED = 0;
+  INTERFACE_ADMINISTRATIVE_STATE_UP = 1;
+  INTERFACE_ADMINISTRATIVE_STATE_DOWN = 2;
+}
+
 message ZoneInterface {
   string          id             = 1;
   string          zone_id        = 2;

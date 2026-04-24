@@ -45,12 +45,13 @@ use crate::proto::services::{
     SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
     SwapIpsConfigRequest, SwapIpsConfigResponse, SwapNatConfigRequest, SwapNatConfigResponse,
     GetSystemTimeRequest, GetSystemTimeResponse, PushActiveConfigSnapshotRequest,
-    PushActiveConfigSnapshotResponse,
+    PushActiveConfigSnapshotResponse, SetInterfaceStateRequest, SetInterfaceStateResponse,
+    UpdateZoneInterfacePropertiesRequest, UpdateZoneInterfacePropertiesResponse,
 };
 use crate::tls::pinning_detector::PinningDetector;
 use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
 use crate::zones::Zone;
-use crate::zones::netlink::InterfaceMonitor;
+use crate::interfaces::{InterfaceController, InterfaceMonitor};
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use crate::zones::{ZoneInterfaceId, ZonePair, ZoneInterface};
 
@@ -140,6 +141,7 @@ where
     /// Detektor pinningu — wspoldzielony z TlsDecisionEngine do obserwacji stanu.
     pub pinning_detector: Arc<PinningDetector>,
     pub interface_monitor: Arc<Monitor>,
+    pub interface_controller: Arc<InterfaceController>,
 }
 
 impl<PolicySwap, Monitor> Clone for QueryHandler<PolicySwap, Monitor>
@@ -165,6 +167,7 @@ where
             server_key_store: Arc::clone(&self.server_key_store),
             pinning_detector: Arc::clone(&self.pinning_detector),
             interface_monitor: Arc::clone(&self.interface_monitor),
+            interface_controller: Arc::clone(&self.interface_controller),
         }
     }
 }
@@ -574,6 +577,76 @@ where
         };
 
         Ok(Response::new(response))
+    }
+
+    async fn set_interface_state(
+        &self,
+        request: Request<crate::proto::services::SetInterfaceStateRequest>,
+    ) -> Result<Response<crate::proto::services::SetInterfaceStateResponse>, Status> {
+        let req = request.into_inner();
+        let id: ZoneInterfaceId = Uuid::try_parse(&req.id)
+            .map_err(|e| Status::invalid_argument(format!("invalid id: {e}")))?
+            .into();
+
+        let zone_interface = self.zone_interface_store.get_zone_interface(&id)
+            .ok_or_else(|| Status::not_found(format!("zone interface with id {id} not found")))?;
+
+        let system_interface = self.interface_monitor.get(&zone_interface.interface_name)
+            .ok_or_else(|| Status::not_found(format!(
+                "system interface '{}' not found", zone_interface.interface_name
+            )))?;
+
+        let state = crate::proto::config::InterfaceAdministrativeState::try_from(req.state)
+            .map_err(|e| Status::invalid_argument(format!("invalid state: {e}")))?;
+
+        let up = matches!(state, crate::proto::config::InterfaceAdministrativeState::Up);
+
+        self.interface_controller
+            .set_interface_state(&zone_interface.interface_name, up)
+            .await
+            .map_err(|e| Status::internal(format!("failed to set interface state: {e}")))?;
+
+        Ok(Response::new(crate::proto::services::SetInterfaceStateResponse {}))
+    }
+
+    async fn update_zone_interface_properties(
+        &self,
+        request: Request<crate::proto::services::UpdateZoneInterfacePropertiesRequest>,
+    ) -> Result<Response<crate::proto::services::UpdateZoneInterfacePropertiesResponse>, Status> {
+        let req = request.into_inner();
+        let id: ZoneInterfaceId = Uuid::try_parse(&req.id)
+            .map_err(|e| Status::invalid_argument(format!("invalid id: {e}")))?
+            .into();
+
+        let mut zone_interface = self.zone_interface_store.get_zone_interface(&id)
+            .ok_or_else(|| Status::not_found(format!("zone interface with id {id} not found")))?;
+
+        if let Some(name) = req.interface_name {
+            zone_interface.interface_name = name;
+        }
+        if let Some(vlan_id) = req.vlan_id {
+            zone_interface.vlan_id = Some(vlan_id);
+        }
+        if let Some(address) = req.address {
+            zone_interface.addresses = vec![address];
+        }
+
+        let mut interfaces: Vec<(ZoneInterfaceId, ZoneInterface)> = self
+            .zone_interface_store
+            .get_zone_interfaces()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        
+        interfaces.retain(|(k, _)| *k != id);
+        interfaces.push((id, zone_interface));
+
+        self.zone_interface_store
+            .swap_zone_interfaces(interfaces)
+            .await
+            .map_err(|e| Status::internal(format!("failed to update zone interface: {e}")))?;
+
+        Ok(Response::new(crate::proto::services::UpdateZoneInterfacePropertiesResponse {}))
     }
 }
 
