@@ -256,9 +256,6 @@ async fn attempt_reconnect(
     buffer: &mut Vec<Event>,
 ) {
     let mut attempted_paths = vec![socket_path.to_string()];
-    if socket_path.ends_with("/event.sock") {
-        attempted_paths.push(socket_path.replacen("/event.sock", "/firewall.sock", 1));
-    }
 
     let mut last_error = None;
 
