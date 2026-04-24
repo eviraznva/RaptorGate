@@ -102,6 +102,7 @@ class RequestBuilder<M extends RpcMethodName> {
   private body: RequestPayload<M>;
   private responsePattern: any = null;
   private eventPatterns: EventMatcher[] | null = null;
+  private _printEvents = false;
 
   constructor(opts: RequestOptions<M>) {
     this.rpc = opts.rpc;
@@ -118,21 +119,35 @@ class RequestBuilder<M extends RpcMethodName> {
     return this;
   }
 
+  printEvents(): this {
+    this._printEvents = true;
+    return this;
+  }
+
   async run(): Promise<void> {
-    if (this.eventPatterns) {
-      const vmTime = await fetchVmSystemTimeMs();
-      eventCollector.setFence(vmTime);
+    if (this._printEvents) {
+      eventCollector.enablePrinting(true);
     }
 
-    const result = await this.invokeRpc();
+    try {
+      if (this.eventPatterns) {
+        const vmTime = await fetchVmSystemTimeMs();
+        eventCollector.setFence(vmTime);
+      }
 
-    if (this.responsePattern) {
-      this.assertResponse(result);
-    }
+      const result = await this.invokeRpc();
 
-    if (this.eventPatterns) {
-		process.stderr.write("running event check")
-      await this.assertEvents(this.eventPatterns);
+      if (this.responsePattern) {
+        this.assertResponse(result);
+      }
+
+      if (this.eventPatterns) {
+        await this.assertEvents(this.eventPatterns);
+      }
+    } finally {
+      if (this._printEvents) {
+        eventCollector.enablePrinting(false);
+      }
     }
   }
 
@@ -179,6 +194,7 @@ class CommandBuilder {
   private eventPatterns: EventMatcher[] | null = null;
   private expectError = false;
   private discardErrorCode = false;
+  private _printEvents = false;
 
   constructor(opts: PerformCommandOptions) {
     this.host = opts.host;
@@ -200,6 +216,11 @@ class CommandBuilder {
     return this;
   }
 
+  printEvents(): this {
+    this._printEvents = true;
+    return this;
+  }
+
   isOk(): this {
     this.expectError = false;
     return this;
@@ -211,35 +232,45 @@ class CommandBuilder {
   }
 
   async run(): Promise<void> {
-    if (this.eventPatterns) {
-      const vmTime = await fetchVmSystemTimeMs();
-      eventCollector.setFence(vmTime);
+    if (this._printEvents) {
+      eventCollector.enablePrinting(true);
     }
 
-    const { stdout, stderr, exitCode } = await this.invokeCommand();
+    try {
+      if (this.eventPatterns) {
+        const vmTime = await fetchVmSystemTimeMs();
+        eventCollector.setFence(vmTime);
+      }
 
-    if (this.expectError && exitCode === 0) {
-      throw new Error(
-        `Command expected to fail but exited 0 on ${this.host}: ${this.command}`,
-      );
-    }
+      const { stdout, stderr, exitCode } = await this.invokeCommand();
 
-    if (!this.expectError && !this.discardErrorCode && exitCode !== 0) {
-      throw new Error(
-        `Command failed on ${this.host} (exit ${exitCode}): ${stderr || stdout}`,
-      );
-    }
-
-    if (this.outputRegexes) {
-      this.assertOutput(stdout, stderr);
-    }
-
-    if (this.eventPatterns) {
-      const result = await eventCollector.waitForSubsequence(this.eventPatterns);
-      if (!result.matched) {
+      if (this.expectError && exitCode === 0) {
         throw new Error(
-          `Event assertion failed at pattern index ${result.failedAt}. Received ${result.received.length} events.`,
+          `Command expected to fail but exited 0 on ${this.host}: ${this.command}`,
         );
+      }
+
+      if (!this.expectError && !this.discardErrorCode && exitCode !== 0) {
+        throw new Error(
+          `Command failed on ${this.host} (exit ${exitCode}): ${stderr || stdout}`,
+        );
+      }
+
+      if (this.outputRegexes) {
+        this.assertOutput(stdout, stderr);
+      }
+
+      if (this.eventPatterns) {
+        const result = await eventCollector.waitForSubsequence(this.eventPatterns);
+        if (!result.matched) {
+          throw new Error(
+            `Event assertion failed at pattern index ${result.failedAt}. Received ${result.received.length} events.`,
+          );
+        }
+      }
+    } finally {
+      if (this._printEvents) {
+        eventCollector.enablePrinting(false);
       }
     }
   }

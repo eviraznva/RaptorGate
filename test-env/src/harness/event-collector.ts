@@ -26,6 +26,7 @@ export interface WaitForResult {
 export class EventCollector {
   private buffer: BufferedEvent[] = [];
   private fenceMs = 0;
+  private printingEnabled = false;
 
   // Notification promise — wakes up waitForSubsequence on each push()
   private notify: (() => void) | null = null;
@@ -40,8 +41,18 @@ export class EventCollector {
     this.fenceMs = vmTimestampMs;
   }
 
+  enablePrinting(enabled: boolean): void {
+    this.printingEnabled = enabled;
+  }
+
   push(event: any): void {
     this.buffer.push(event);
+
+    if (this.printingEnabled) {
+      const kind = event.kind?.item || 'unknown';
+      console.log(`[DEBUG EVENT] ${kind}:`, JSON.stringify(event.kind?.[kind] ?? event, null, 2));
+    }
+
     // Wake up exactly one waiting waitForSubsequence (if any)
     if (this.notify) {
       this.notify();

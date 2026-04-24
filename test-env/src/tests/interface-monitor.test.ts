@@ -154,12 +154,14 @@ describe('Interface Monitor', () => {
   test('detects dummy interface lifecycle', async () => {
     await performCommand({ host: 'r1', command: 'sudo ip link add dummy0 type dummy' })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy0', newStatus: 'inactive' } }])
+	  .printEvents()
       .run();
 
     await performCommand({ host: 'r1', command: 'sudo ip link del dummy0' })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy0', newStatus: 'missing' } }])
+	  .printEvents()
       .run();
-  });
+},);
 
   test('detects address changes on dummy interface', async () => {
     await performCommand({ host: 'r1', command: 'sudo ip link add dummy1 type dummy' })
@@ -179,5 +181,5 @@ describe('Interface Monitor', () => {
     await performCommand({ host: 'r1', command: 'sudo ip link del dummy1' })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy1', newStatus: 'missing' } }])
       .run();
-  });
+  },);
 });
