@@ -10,6 +10,7 @@ use ngfw::data_plane::ips::ips::Ips;
 use ngfw::data_plane::ips::provider::IpsConfigProvider;
 use ngfw::data_plane::nat::{NatConfigProvider, NatEngine};
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
+use ngfw::identity::IdentitySessionStore;
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::proto::config::{Rule, Zone, ZonePair};
 use ngfw::proto::services::firewall_config_snapshot_service_client::FirewallConfigSnapshotServiceClient;
@@ -101,7 +102,9 @@ fn shared_server() -> &'static SharedServer {
 
                 let socket = "/tmp/test-query-shared.sock".to_string();
                 let shutdown = CancellationToken::new();
-                let server = QueryServer::new(handler, &socket, shutdown.clone());
+                let identity_sessions = IdentitySessionStore::new_shared();
+                let server =
+                    QueryServer::new(handler, identity_sessions, &socket, shutdown.clone());
 
                 // Signal the socket path before we start blocking on serve()
                 tx.send(socket).expect("receiver dropped");

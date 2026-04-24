@@ -23,6 +23,7 @@ use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::data_plane::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
+use crate::identity::{IdentitySessionHandler, IdentitySessionStore};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::PolicyManager;
 use crate::policy::{Policy, PolicyId};
@@ -33,6 +34,7 @@ use crate::proto::services::firewall_query_service_server::{
 use crate::proto::services::firewall_config_snapshot_service_server::{
     FirewallConfigSnapshotService, FirewallConfigSnapshotServiceServer,
 };
+use crate::proto::services::identity_session_service_server::IdentitySessionServiceServer;
 use crate::proto::services::{
     GetConfigRequest, GetConfigResponse, GetDnsInspectionConfigRequest,
     GetDnsInspectionConfigResponse, GetIpsConfigRequest, GetIpsConfigResponse,
@@ -58,6 +60,7 @@ where
     PolicySwap: PolicyManager + Send + Sync,
 {
     handler: QueryHandler<PolicySwap>,
+    identity_handler: IdentitySessionHandler,
     socket_path: String,
     shutdown: CancellationToken,
 }
@@ -68,11 +71,13 @@ where
 {
     pub fn new(
         handler: QueryHandler<PolicySwap>,
+        identity_sessions: Arc<IdentitySessionStore>,
         socket_path: impl Into<String>,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
             handler,
+            identity_handler: IdentitySessionHandler::new(identity_sessions),
             socket_path: socket_path.into(),
             shutdown,
         }
@@ -103,6 +108,7 @@ where
         if let Err(e) = tonic::transport::Server::builder()
             .add_service(FirewallQueryServiceServer::new(self.handler.clone()))
             .add_service(FirewallConfigSnapshotServiceServer::new(self.handler))
+            .add_service(IdentitySessionServiceServer::new(self.identity_handler))
             .serve_with_incoming_shutdown(incoming, self.shutdown.cancelled())
             .await
         {
@@ -551,6 +557,21 @@ where
             zone_interfaces = bundle.zone_interfaces.len(),
             "received active config snapshot push"
         );
+
+        // ADR 0002: aktywne sesje identity sa runtime state i nie chodza snapshotami.
+        // Backend nie powinien ich wysylac (grpc-config-snapshot-push ustawia identity=undefined),
+        // ale gdyby cos sie prezesilo, tu je ignorujemy i logujemy dla diagnostyki.
+        if let Some(identity) = bundle.identity.as_ref()
+            && !identity.user_sessions.is_empty()
+        {
+            tracing::warn!(
+                event = "config_snapshot.identity_sessions_ignored",
+                correlation_id,
+                snapshot_id,
+                count = identity.user_sessions.len(),
+                "ignoring user_sessions in config snapshot; use IdentitySessionService instead"
+            );
+        }
 
         // 1. Parse all proto types into domain-type HashMaps
         let policies = parse_proto_collection(bundle.rules, Policy::try_from_rule, "rule")?;

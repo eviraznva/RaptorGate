@@ -13,6 +13,7 @@ import { ConfigSnapshotModule } from "./modules/config-snapshot.module.js";
 import { DnsBlacklistModule } from "./modules/dns-blacklist.module.js";
 import { DnsInspectionModule } from "./modules/dns-inspection.module.js";
 import { FirewallEventsModule } from "./modules/firewall-events/firewall-events.module.js";
+import { IdentitySessionModule } from "./modules/identity-session.module.js";
 import { IpsConfigModule } from "./modules/ips-config.module.js";
 import { NatModule } from "./modules/nat.module.js";
 import { PinningModule } from "./modules/pinning.module.js";
@@ -42,6 +43,7 @@ import { validate } from "./shared/config/env.validation.js";
     DnsInspectionModule,
     DnsBlacklistModule,
     ZonePairsModule,
+    IdentitySessionModule,
     IpsConfigModule,
     RealtimeModule,
     PassportModule,

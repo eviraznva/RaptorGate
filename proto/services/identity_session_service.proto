@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package raptorgate.services;
+
+import "config/config_models.proto";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Runtime sync aktywnych sesji identity.
+//
+// Serwis hostowany przez firewall. Backend jest klientem i wywołuje unary RPC
+// po każdym utworzeniu lub usunięciu sesji captive portalu.
+//
+// Runtime store w firewallu jest odrębny od konfiguracji. Sesje identity
+// nie są częścią ConfigResponse i nie wchodzą w mechanizm delta section
+// versions — są czysto efemeryczne.
+//
+// Transport: gRPC over Unix Domain Socket, ten sam socket co
+// FirewallQueryService (QUERY_SOCKET_PATH).
+//
+// Idempotencja:
+//   - UpsertIdentitySession: powtórzenie z tym samym ip_address nadpisuje wpis,
+//     backend może bezpiecznie ponawiać po timeoutcie.
+//   - RevokeIdentitySession: brak sesji pod danym ip_address nie jest błędem,
+//     zwracamy removed=false.
+//
+// Klucz sesji w runtime store: ip_address klienta. Dopuszczamy tylko jedną
+// aktywną sesję per IP — kolejny Upsert wypiera poprzednią.
+// ─────────────────────────────────────────────────────────────────────────────
+service IdentitySessionService {
+  rpc UpsertIdentitySession(UpsertIdentitySessionRequest)
+      returns (UpsertIdentitySessionResponse);
+
+  rpc RevokeIdentitySession(RevokeIdentitySessionRequest)
+      returns (RevokeIdentitySessionResponse);
+}
+
+message UpsertIdentitySessionRequest {
+  raptorgate.config.IdentityManagerUserSession session = 1;
+}
+
+message UpsertIdentitySessionResponse {}
+
+message RevokeIdentitySessionRequest {
+  // Klucz sesji: IP klienta (IPv4 albo IPv6 literal).
+  string ip_address = 1;
+}
+
+message RevokeIdentitySessionResponse {
+  // True gdy sesja pod tym ip_address istniała i została usunięta.
+  bool removed = 1;
+}

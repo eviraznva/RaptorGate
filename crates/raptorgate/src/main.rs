@@ -4,6 +4,7 @@ mod data_plane;
 mod disk_store;
 mod dpi;
 mod events;
+mod identity;
 mod ip_defrag;
 mod logging;
 mod packet_validator;
@@ -30,6 +31,7 @@ use crate::data_plane::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
+use crate::identity::IdentitySessionStore;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
     DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
@@ -227,6 +229,10 @@ async fn main() {
 
     let dpi_classifier = Arc::new(DpiClassifier::new());
 
+    // Runtime store aktywnych sesji identity (ADR 0002), dzielony z handlerem gRPC.
+    // TODO(Issue 5): store wstrzykiwany tez do IdentityLookupStage w pipeline.
+    let identity_sessions = IdentitySessionStore::new_shared();
+
     let query_server = QueryServer::<DiskPolicyProvider>::new(
         QueryHandler {
             tcp_tracker: Arc::clone(&tcp_session_tracker),
@@ -245,6 +251,7 @@ async fn main() {
             server_key_store: Arc::clone(&server_key_store),
             pinning_detector: decision_engine.pinning_detector_arc(),
         },
+        Arc::clone(&identity_sessions),
         &config.query_socket_path,
         CancellationToken::new(),
     );
