@@ -14,6 +14,7 @@ const navItems = [
   { name: "NAT Rules", path: "/dashboard/nat-rules" },
   { name: "Connections", path: "/dashboard/connections" },
   { name: "Users", path: "/dashboard/users" },
+  { name: "Config", path: "/dashboard/config-control" },
   { name: "Settings", path: "/dashboard/settings" },
 ];
 

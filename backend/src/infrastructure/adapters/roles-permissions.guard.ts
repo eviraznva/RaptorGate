@@ -5,17 +5,17 @@ import {
   Inject,
   Injectable,
   UnauthorizedException,
-} from '@nestjs/common';
-import { REQUIRE_PERMISSIONS_KEY } from '../../presentation/decorators/auth/require-permissions.decorator.js';
-import { TOKEN_SERVICE_TOKEN } from '../../application/ports/token-service.interface.js';
-import type { ITokenService } from '../../application/ports/token-service.interface.js';
-import { ROLE_REPOSITORY_TOKEN } from '../../domain/repositories/role.repository.js';
-import type { IRoleRepository } from '../../domain/repositories/role.repository.js';
-import { ROLES_KEY } from '../../presentation/decorators/auth/roles.decorator.js';
-import { Permission } from '../../domain/enums/permissions.enum.js';
-import { Role } from '../../domain/enums/role.enum.js';
-import { Reflector } from '@nestjs/core';
-import { Request } from 'express';
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { Request } from "express";
+import type { ITokenService } from "../../application/ports/token-service.interface.js";
+import { TOKEN_SERVICE_TOKEN } from "../../application/ports/token-service.interface.js";
+import { Permission } from "../../domain/enums/permissions.enum.js";
+import { Role } from "../../domain/enums/role.enum.js";
+import type { IRoleRepository } from "../../domain/repositories/role.repository.js";
+import { ROLE_REPOSITORY_TOKEN } from "../../domain/repositories/role.repository.js";
+import { REQUIRE_PERMISSIONS_KEY } from "../../presentation/decorators/auth/require-permissions.decorator.js";
+import { ROLES_KEY } from "../../presentation/decorators/auth/roles.decorator.js";
 
 @Injectable()
 export class RolesPermissionsGuard implements CanActivate {
@@ -45,10 +45,10 @@ export class RolesPermissionsGuard implements CanActivate {
     const request: Request = context.switchToHttp().getRequest();
     const token = this.extractTokenFromHeader(request);
 
-    if (!token) throw new UnauthorizedException('Missing or invalid token');
+    if (!token) throw new UnauthorizedException("Missing or invalid token");
     const payload = await this.tokenService.verifyAccessToken(token);
 
-    if (!payload) throw new UnauthorizedException('Invalid or expired token');
+    if (!payload) throw new UnauthorizedException("Invalid or expired token");
     const userRoles = await this.roleRepository.findByUserId(payload.sub);
 
     // Sprawdzenie roli
@@ -60,7 +60,7 @@ export class RolesPermissionsGuard implements CanActivate {
       );
 
       if (!hasRole) {
-        throw new ForbiddenException('Forbidden: insufficient role');
+        throw new ForbiddenException("Forbidden: insufficient role");
       }
     }
 
@@ -70,7 +70,7 @@ export class RolesPermissionsGuard implements CanActivate {
       );
 
       if (!hasAll) {
-        throw new ForbiddenException('Forbidden: insufficient permissions');
+        throw new ForbiddenException("Forbidden: insufficient permissions");
       }
     }
 
@@ -78,8 +78,8 @@ export class RolesPermissionsGuard implements CanActivate {
   }
 
   private extractTokenFromHeader(request: Request): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
+    const [type, token] = request.headers.authorization?.split(" ") ?? [];
 
-    return type === 'Bearer' ? token : undefined;
+    return type === "Bearer" ? token : undefined;
   }
 }
