@@ -41,15 +41,15 @@ LDAPCONF
 # Enable LDAP module
 ln -sf ../mods-available/ldap "$FR/mods-enabled/ldap"
 
-# --- Configure RADIUS client (allow entire 192.168.20.0/24 subnet) ---
+# Klient RADIUS tylko dla r1 (192.168.20.254). Autorytatywny test flow: test-identity na r1.
 # Idempotent: usun istniejacy blok ngfw_network (z dowolnego wczesniejszego runu) i dodaj raz.
 perl -i -0pe 's/\n*client ngfw_network\s*\{[^}]*\}\n*/\n/g' "$FR/clients.conf"
 cat >> "$FR/clients.conf" <<'CLIENTS'
 
 client ngfw_network {
-    ipaddr = 192.168.20.0/24
+    ipaddr = 192.168.20.254/32
     secret = radiussecret
-    shortname = ngfw-lan
+    shortname = ngfw-r1
 }
 CLIENTS
 
@@ -66,11 +66,4 @@ systemctl enable freeradius
 
 echo "=== FreeRADIUS setup complete ==="
 echo "Shared secret: radiussecret"
-
-# Smoke test prowizji: uderz w radiusa z jego wlasnego IP 192.168.20.30 —
-# source pasuje do subnetu 192.168.20.0/24 z client ngfw_network, wiec testujemy
-# nasz wpis klienta i subnet (line 48), nie default 'localhost/testing123'.
-# Bez maskowania wyniku — prowizja musi fail-fast gdy flow radius -> ldap jest zepsuty.
-echo "Testing ngfw_network client via 192.168.20.30 (admin/admin123)..."
-radtest admin admin123 192.168.20.30 0 radiussecret | tee /tmp/radtest.out
-grep -q "Access-Accept" /tmp/radtest.out
+echo "Autorytatywny test flow: 'sudo test-identity' na r1."

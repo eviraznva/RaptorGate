@@ -224,6 +224,25 @@ def setup_ngfw_service
     chown -R vagrant:vagrant /resources/ngfw/sockets
   SHELL
 end
+
+def setup_h2_http_service
+  <<-SHELL
+    getent passwd h2-http >/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin h2-http
+    install -d -m 0755 /opt/h2-http
+    install -m 0755 /tmp/h2-http-server.py /opt/h2-http/server.py
+    install -m 0644 /tmp/h2-http.service /etc/systemd/system/h2-http.service
+    systemctl daemon-reload
+    systemctl enable h2-http
+    systemctl restart h2-http
+  SHELL
+end
+
+def setup_identity_test_tools
+  <<-SHELL
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ldap-utils freeradius-utils
+    install -m 0755 /tmp/test-identity.sh /usr/local/bin/test-identity
+  SHELL
+end
 unless File.respond_to?(:exists?)
   class << File
     def exists?(path)
@@ -285,12 +304,16 @@ Vagrant.configure("2") do |config|
 
     h2.vm.provision "shell", inline: "apt-get update -qq && apt-get install -y --no-install-recommends hping3 python3 ncat ethtool python3-scapy"
 
+    h2.vm.provision "file", source: "scripts/h2-http-server.py", destination: "/tmp/h2-http-server.py"
+    h2.vm.provision "file", source: "services/h2-http.service", destination: "/tmp/h2-http.service"
+
     h2_provision = configure_interface("eth1", "192.168.20.10", "24", "192.168.20.254") + <<-SHELL
     # ip route del default 2>/dev/null || true
     # ip route add default via 192.168.20.254
     ethtool -K eth1 tx off
     SHELL
     h2_provision += configure_dns_path("eth1", "8.8.8.8")
+    h2_provision += setup_h2_http_service
     h2.vm.provision "shell", inline: h2_provision
   end
 
@@ -317,6 +340,8 @@ Vagrant.configure("2") do |config|
 
     r1.vm.synced_folder ".router_sync", "/resources", id: "ngfw", type: "rsync"
 
+    r1.vm.provision "file", source: "scripts/test-identity.sh", destination: "/tmp/test-identity.sh"
+
     r1_provision = configure_interface("eth1", "192.168.10.254", "24") +
       configure_interface("eth2", "192.168.20.254", "24") +
       configure_interface("eth3", "192.168.56.254", "24") +
@@ -334,9 +359,9 @@ Vagrant.configure("2") do |config|
         SHELL
     end
 
-    r1.vm.provision "shell", inline: r1_provision
+    r1_provision += setup_identity_test_tools
 
-    # r1 has routed test interfaces plus a host-only management interface.
+    r1.vm.provision "shell", inline: r1_provision
   end
 
   config.vm.define "ldap" do |ldap|
