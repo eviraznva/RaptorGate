@@ -12,10 +12,6 @@ import type { ApiSuccess } from "../../types/ApiResponse";
 import { setConfig } from "../../features/configSlice";
 import type { ConfigSnapshot } from "./types";
 
-const activeSnapshot =
-  CONFIG_CONTROL_SNAPSHOTS.find((snapshot) => snapshot.isActive) ??
-  CONFIG_CONTROL_SNAPSHOTS[0];
-
 const selectedSnapshot = CONFIG_CONTROL_SNAPSHOTS[0];
 
 export default function ConfigControlLayout() {
