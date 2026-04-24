@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use derive_more::Display;
@@ -62,8 +63,9 @@ pub trait InterfaceMonitor: Send + Sync {
     fn snapshot(&self) -> HashMap<String, SystemInterface>;
 }
 
+#[derive(Clone)]
 pub struct NetworkInterfaceMonitor {
-    interfaces: DashMap<String, SystemInterface>,
+    interfaces: Arc<DashMap<String, SystemInterface>>,
 }
 
 impl NetworkInterfaceMonitor {
@@ -103,7 +105,7 @@ impl NetworkInterfaceMonitor {
             interfaces.insert(interface.name.clone(), interface);
         }
 
-        let monitor = Self { interfaces };
+        let monitor = Self { interfaces: Arc::new(interfaces) };
         monitor.spawn_live_updates(cancel)?;
         Ok(monitor)
     }
@@ -116,7 +118,7 @@ impl NetworkInterfaceMonitor {
         ];
         let (connection, _handle, mut messages) = rtnetlink::new_multicast_connection(&groups)
             .map_err(NetworkInterfaceMonitorError::MulticastConnection)?;
-        let interfaces = self.interfaces.clone();
+        let monitor = self.clone();
 
         tokio::spawn(connection);
 
@@ -132,7 +134,7 @@ impl NetworkInterfaceMonitor {
                         };
 
                         if let NetlinkPayload::InnerMessage(inner) = message.payload {
-                            handle_route_message(&interfaces, inner);
+                            monitor.handle_route_message(inner);
                         }
                     }
                 }
@@ -156,6 +158,139 @@ impl InterfaceMonitor for NetworkInterfaceMonitor {
     }
 }
 
+impl NetworkInterfaceMonitor {
+    fn handle_route_message(&self, message: RouteNetlinkMessage) {
+        match message {
+            RouteNetlinkMessage::NewLink(link) => {
+                if let Some(new_interface) = parse_link(&link) {
+                    self.upsert_link(new_interface);
+                }
+            }
+            RouteNetlinkMessage::DelLink(link) => {
+                self.remove_link(&link);
+            }
+            RouteNetlinkMessage::NewAddress(address) => {
+                self.apply_address_change(address, true);
+            }
+            RouteNetlinkMessage::DelAddress(address) => {
+                self.apply_address_change(address, false);
+            }
+            _ => {}
+        }
+    }
+
+    fn upsert_link(&self, mut new_interface: SystemInterface) {
+        let mut old_for_state = None;
+
+        if let Some((old_name, old_interface)) = self.find_by_index(new_interface.index)
+            && old_name != new_interface.name
+        {
+            self.interfaces.remove(&old_name);
+            new_interface.addresses.clone_from(&old_interface.addresses);
+            self.emit_rename_event(new_interface.index, &old_name, &new_interface.name, &new_interface);
+            old_for_state = Some(old_interface);
+        }
+
+        if old_for_state.is_none()
+            && let Some(existing) = self.interfaces.get(&new_interface.name) {
+            new_interface.addresses = existing.addresses.clone();
+        }
+
+        let replaced = self.interfaces.insert(new_interface.name.clone(), new_interface.clone());
+        if old_for_state.is_none() {
+            old_for_state = replaced.filter(|old| old.index == new_interface.index);
+        }
+
+        self.maybe_emit_state_event(old_for_state.as_ref(), Some(&new_interface));
+    }
+
+    fn remove_link(&self, link: &LinkMessage) {
+        let old = self.interfaces
+            .iter()
+            .find(|entry| entry.value().index == link.header.index)
+            .map(|entry| entry.key().clone())
+            .and_then(|name| self.interfaces.remove(&name).map(|(_, value)| value));
+        self.maybe_emit_state_event(old.as_ref(), None);
+    }
+
+    fn apply_address_change(&self, address: AddressMessage, add: bool) {
+        let Some(parsed) = parse_address(&address) else {
+            return;
+        };
+
+        let Some((name, mut interface)) = self.find_by_index(address.header.index) else {
+            return;
+        };
+
+        let old = interface.clone();
+
+        if add {
+            if !interface.addresses.contains(&parsed) {
+                interface.addresses.push(parsed);
+            }
+        } else {
+            interface.addresses.retain(|ip| ip != &parsed);
+        }
+
+        self.interfaces.insert(name, interface.clone());
+        self.maybe_emit_state_event(Some(&old), Some(&interface));
+    }
+
+    fn find_by_index(&self, index: u32) -> Option<(String, SystemInterface)> {
+        self.interfaces
+            .iter()
+            .find(|entry| entry.value().index == index)
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+    }
+
+    fn normalize_addresses(addresses: &[IpNet]) -> Vec<String> {
+        let mut values: Vec<String> = addresses.iter().map(ToString::to_string).collect();
+        values.sort();
+        values
+    }
+
+    fn status_from_interface(interface: Option<&SystemInterface>) -> String {
+        match interface {
+            None => "missing".to_string(),
+            Some(item) => item.oper_state.to_string(),
+        }
+    }
+
+    fn maybe_emit_state_event(&self, old: Option<&SystemInterface>, new: Option<&SystemInterface>) {
+        let old_status = Self::status_from_interface(old);
+        let new_status = Self::status_from_interface(new);
+        let old_addresses = old.map_or_else(Vec::new, |item| Self::normalize_addresses(&item.addresses));
+        let new_addresses = new.map_or_else(Vec::new, |item| Self::normalize_addresses(&item.addresses));
+
+        if old_status == new_status && old_addresses == new_addresses {
+            return;
+        }
+
+        let interface_name = new
+            .map(|item| item.name.clone())
+            .or_else(|| old.map(|item| item.name.clone()));
+
+        if let Some(interface_name) = interface_name {
+            events::emit(Event::new(EventKind::InterfaceStateChanged {
+                interface_name,
+                old_status,
+                new_status,
+                addresses: new_addresses,
+            }));
+        }
+    }
+
+    fn emit_rename_event(&self, interface_index: u32, old_name: &str, new_name: &str, current: &SystemInterface) {
+        events::emit(Event::new(EventKind::InterfaceRenamed {
+            interface_index,
+            old_interface_name: old_name.to_string(),
+            new_interface_name: new_name.to_string(),
+            status: Self::status_from_interface(Some(current)),
+            addresses: Self::normalize_addresses(&current.addresses),
+        }));
+    }
+}
+
 fn parse_link(message: &LinkMessage) -> Option<SystemInterface> {
     let name = message.attributes.iter().find_map(link_name)?;
     let oper_state = message
@@ -172,137 +307,6 @@ fn parse_link(message: &LinkMessage) -> Option<SystemInterface> {
         addresses: Vec::new(),
         vlan_id,
     })
-}
-
-fn handle_route_message(interfaces: &DashMap<String, SystemInterface>, message: RouteNetlinkMessage) {
-    match message {
-        RouteNetlinkMessage::NewLink(link) => {
-            if let Some(new_interface) = parse_link(&link) {
-                upsert_link(interfaces, new_interface);
-            }
-        }
-        RouteNetlinkMessage::DelLink(link) => {
-            remove_link(interfaces, &link);
-        }
-        RouteNetlinkMessage::NewAddress(address) => {
-            apply_address_change(interfaces, address, true);
-        }
-        RouteNetlinkMessage::DelAddress(address) => {
-            apply_address_change(interfaces, address, false);
-        }
-        _ => {}
-    }
-}
-
-fn upsert_link(interfaces: &DashMap<String, SystemInterface>, mut new_interface: SystemInterface) {
-    let mut old_for_state = None;
-
-    if let Some((old_name, old_interface)) = find_by_index(interfaces, new_interface.index)
-        && old_name != new_interface.name
-    {
-        interfaces.remove(&old_name);
-        new_interface.addresses.clone_from(&old_interface.addresses);
-        emit_rename_event(new_interface.index, &old_name, &new_interface.name, &new_interface);
-        old_for_state = Some(old_interface);
-    }
-
-    if old_for_state.is_none()
-        && let Some(existing) = interfaces.get(&new_interface.name) {
-        new_interface.addresses = existing.addresses.clone();
-    }
-
-    let replaced = interfaces.insert(new_interface.name.clone(), new_interface.clone());
-    if old_for_state.is_none() {
-        old_for_state = replaced.filter(|old| old.index == new_interface.index);
-    }
-
-    maybe_emit_state_event(old_for_state.as_ref(), Some(&new_interface));
-}
-
-fn remove_link(interfaces: &DashMap<String, SystemInterface>, link: &LinkMessage) {
-    let old = interfaces
-        .iter()
-        .find(|entry| entry.value().index == link.header.index)
-        .map(|entry| entry.key().clone())
-        .and_then(|name| interfaces.remove(&name).map(|(_, value)| value));
-    maybe_emit_state_event(old.as_ref(), None);
-}
-
-fn apply_address_change(interfaces: &DashMap<String, SystemInterface>, address: AddressMessage, add: bool) {
-    let Some(parsed) = parse_address(&address) else {
-        return;
-    };
-
-    let Some((name, mut interface)) = find_by_index(interfaces, address.header.index) else {
-        return;
-    };
-
-    let old = interface.clone();
-
-    if add {
-        if !interface.addresses.contains(&parsed) {
-            interface.addresses.push(parsed);
-        }
-    } else {
-        interface.addresses.retain(|ip| ip != &parsed);
-    }
-
-    interfaces.insert(name, interface.clone());
-    maybe_emit_state_event(Some(&old), Some(&interface));
-}
-
-fn find_by_index(interfaces: &DashMap<String, SystemInterface>, index: u32) -> Option<(String, SystemInterface)> {
-    interfaces
-        .iter()
-        .find(|entry| entry.value().index == index)
-        .map(|entry| (entry.key().clone(), entry.value().clone()))
-}
-
-fn normalize_addresses(addresses: &[IpNet]) -> Vec<String> {
-    let mut values: Vec<String> = addresses.iter().map(ToString::to_string).collect();
-    values.sort();
-    values
-}
-
-fn status_from_interface(interface: Option<&SystemInterface>) -> String {
-    match interface {
-        None => "missing".to_string(),
-        Some(item) => item.oper_state.to_string(),
-    }
-}
-
-fn maybe_emit_state_event(old: Option<&SystemInterface>, new: Option<&SystemInterface>) {
-    let old_status = status_from_interface(old);
-    let new_status = status_from_interface(new);
-    let old_addresses = old.map_or_else(Vec::new, |item| normalize_addresses(&item.addresses));
-    let new_addresses = new.map_or_else(Vec::new, |item| normalize_addresses(&item.addresses));
-
-    if old_status == new_status && old_addresses == new_addresses {
-        return;
-    }
-
-    let interface_name = new
-        .map(|item| item.name.clone())
-        .or_else(|| old.map(|item| item.name.clone()));
-
-    if let Some(interface_name) = interface_name {
-        events::emit(Event::new(EventKind::InterfaceStateChanged {
-            interface_name,
-            old_status,
-            new_status,
-            addresses: new_addresses,
-        }));
-    }
-}
-
-fn emit_rename_event(interface_index: u32, old_name: &str, new_name: &str, current: &SystemInterface) {
-    events::emit(Event::new(EventKind::InterfaceRenamed {
-        interface_index,
-        old_interface_name: old_name.to_string(),
-        new_interface_name: new_name.to_string(),
-        status: status_from_interface(Some(current)),
-        addresses: normalize_addresses(&current.addresses),
-    }));
 }
 
 fn parse_address(message: &AddressMessage) -> Option<IpNet> {
@@ -365,7 +369,7 @@ mod tests {
     use ipnet::IpNet;
     use mockall::predicate::eq;
 
-    use super::{InterfaceMonitor, MockInterfaceMonitor, OperState, SystemInterface};
+    use super::{InterfaceMonitor, MockInterfaceMonitor, NetworkInterfaceMonitor, OperState, SystemInterface};
 
     #[test]
     fn mock_interface_monitor_get_contract() {
@@ -419,7 +423,7 @@ mod tests {
             "10.0.0.1/24".parse::<IpNet>().expect("valid ipv4"),
         ];
 
-        let normalized = super::normalize_addresses(&addresses);
+        let normalized = NetworkInterfaceMonitor::normalize_addresses(&addresses);
         assert_eq!(
             normalized,
             vec![
@@ -448,9 +452,9 @@ mod tests {
             ..up.clone()
         };
 
-        assert_eq!(super::status_from_interface(None), "missing");
-        assert_eq!(super::status_from_interface(Some(&up)), "active");
-        assert_eq!(super::status_from_interface(Some(&down)), "inactive");
-        assert_eq!(super::status_from_interface(Some(&unknown)), "unknown");
+        assert_eq!(NetworkInterfaceMonitor::status_from_interface(None), "missing");
+        assert_eq!(NetworkInterfaceMonitor::status_from_interface(Some(&up)), "active");
+        assert_eq!(NetworkInterfaceMonitor::status_from_interface(Some(&down)), "inactive");
+        assert_eq!(NetworkInterfaceMonitor::status_from_interface(Some(&unknown)), "unknown");
     }
 }
