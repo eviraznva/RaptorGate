@@ -183,8 +183,7 @@ impl NetworkInterfaceMonitor {
         let mut old_for_state = None;
 
         if let Some((old_name, old_interface)) = self.find_by_index(new_interface.index)
-            && old_name != new_interface.name
-        {
+            && old_name != new_interface.name {
             self.interfaces.remove(&old_name);
             new_interface.addresses.clone_from(&old_interface.addresses);
             self.emit_rename_event(new_interface.index, &old_name, &new_interface.name, &new_interface);
@@ -205,12 +204,11 @@ impl NetworkInterfaceMonitor {
     }
 
     fn remove_link(&self, link: &LinkMessage) {
-        let old = self.interfaces
-            .iter()
-            .find(|entry| entry.value().index == link.header.index)
-            .map(|entry| entry.key().clone())
-            .and_then(|name| self.interfaces.remove(&name).map(|(_, value)| value));
-        self.maybe_emit_state_event(old.as_ref(), None);
+        let index = link.header.index;
+        if let Some((name, interface)) = self.find_by_index(index) {
+            self.interfaces.remove(&name);
+            self.maybe_emit_state_event(Some(&interface), None);
+        }
     }
 
     fn apply_address_change(&self, address: AddressMessage, add: bool) {

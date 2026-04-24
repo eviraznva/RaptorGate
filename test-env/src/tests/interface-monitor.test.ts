@@ -164,6 +164,10 @@ describe('Interface Monitor', () => {
 },);
 
   test('detects address changes on dummy interface', async () => {
+	  await performCommand({ host: 'r1', command: 'sudo ip link del dummy1' })
+		  .discardError()
+		  .run();
+
     await performCommand({ host: 'r1', command: 'sudo ip link add dummy1 type dummy' })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy1' } }])
       .run();
