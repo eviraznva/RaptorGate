@@ -66,5 +66,11 @@ systemctl enable freeradius
 
 echo "=== FreeRADIUS setup complete ==="
 echo "Shared secret: radiussecret"
-echo "Testing LDAP user 'admin'..."
-radtest admin admin123 127.0.0.1 0 testing123 || echo "(test may fail if localhost client uses different secret)"
+
+# Smoke test prowizji: uderz w radiusa z jego wlasnego IP 192.168.20.30 —
+# source pasuje do subnetu 192.168.20.0/24 z client ngfw_network, wiec testujemy
+# nasz wpis klienta i subnet (line 48), nie default 'localhost/testing123'.
+# Bez maskowania wyniku — prowizja musi fail-fast gdy flow radius -> ldap jest zepsuty.
+echo "Testing ngfw_network client via 192.168.20.30 (admin/admin123)..."
+radtest admin admin123 192.168.20.30 0 radiussecret | tee /tmp/radtest.out
+grep -q "Access-Accept" /tmp/radtest.out

@@ -30,8 +30,15 @@ fi
 systemctl restart slapd
 sleep 2
 
-# Seed data — ldapadd -c kontynuuje przy błędzie "Already exists"
 ldapadd -c -x -D "cn=admin,dc=raptorgate,dc=local" -w admin -f /tmp/seed.ldif || true
+
+# Fail-fast gdy seed faktycznie nie wszedl
+for uid in admin user guest; do
+  if ! ldapsearch -x -b "dc=raptorgate,dc=local" "(uid=$uid)" uid 2>/dev/null | grep -q "^uid: $uid$"; then
+    echo "FATAL: Account 'uid=$uid' doesn't exist in LDAP after seeding" >&2
+    exit 1
+  fi
+done
 
 echo "=== LDAP setup complete ==="
 echo "Base DN: dc=raptorgate,dc=local"
