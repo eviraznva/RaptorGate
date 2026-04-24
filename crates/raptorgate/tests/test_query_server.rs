@@ -26,7 +26,7 @@ use ngfw::proto::services::{
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::tls::pinning_detector::PinningConfig;
 use ngfw::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
-use ngfw::interfaces::{InterfaceMonitor, OperState, SystemInterface};
+use ngfw::interfaces::{InterfaceController, InterfaceMonitor, OperState, SystemInterface};
 use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
@@ -142,6 +142,9 @@ fn shared_server() -> &'static SharedServer {
                     PinningConfig::default(),
                 ));
                 let interface_monitor = Arc::new(StaticInterfaceMonitor::new());
+                let interface_controller = Arc::new(
+                    InterfaceController::new().expect("failed to init interface controller"),
+                );
 
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
@@ -160,6 +163,7 @@ fn shared_server() -> &'static SharedServer {
                     server_key_store,
                     pinning_detector: decision_engine.pinning_detector_arc(),
                     interface_monitor,
+                    interface_controller,
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();
