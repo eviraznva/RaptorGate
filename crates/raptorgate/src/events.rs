@@ -81,6 +81,17 @@ const RECONNECT_INTERVAL_SECS: u64 = 2;
 static EVENT_TX: OnceLock<mpsc::Sender<Event>> = OnceLock::new();
 static DROPPED_EVENTS: AtomicU64 = AtomicU64::new(0);
 
+fn record_dropped_event(kind: EventKind, reason: &'static str) {
+    let dropped = DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
+    tracing::warn!(
+        event = "event_bus.event_dropped",
+        ?kind,
+        reason,
+        dropped_events = dropped,
+        "event dropped"
+    );
+}
+
 struct BackendConnection {
     tx: mpsc::Sender<proto::Event>,
 }
@@ -88,7 +99,7 @@ struct BackendConnection {
 impl BackendConnection {
     /// Returns false if the gRPC task has died (receiver dropped).
     async fn send(&self, event: proto::Event) -> bool {
-        tracing::trace!(
+        tracing::debug!(
             event = "event_bus.dispatch.started",
             kind = ?event.kind,
             "sending event to backend stream"
@@ -130,10 +141,13 @@ async fn try_connect(socket_path: &str) -> Result<BackendConnection, tonic::tran
 }
 
 pub fn emit(event: Event) {
-    if let Some(tx) = EVENT_TX.get()
-        && tx.try_send(event).is_err() {
-            DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
+    if let Some(tx) = EVENT_TX.get() {
+        if let Err(e) = tx.try_send(event) {
+            record_dropped_event(e.into_inner().kind, "internal_channel_full");
         }
+    } else {
+        record_dropped_event(event.kind, "system_not_initialized");
+    }
 }
 
 pub async fn init_event_system(socket_path: String) {
@@ -163,6 +177,7 @@ pub async fn init_event_system(socket_path: String) {
                         dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
                         "backend connection lost, will reconnect"
                     );
+
                     backend = None;
                 }
 
@@ -201,14 +216,21 @@ async fn flush_batch(buffer: &mut Vec<Event>, backend: &mut Option<BackendConnec
 async fn dispatch(event: Event, backend: &mut Option<BackendConnection>, buffer: &mut Vec<Event>) {
     match backend {
         Some(conn) => {
-            if !conn.send(event.into()).await {
+            let kind = event.kind.clone();
+            if conn.send(event.into()).await {
+                tracing::trace!(
+                    event = "event_bus.event_emitted",
+                    kind = ?kind,
+                    "event emitted successfully"
+                );
+            } else {
                 tracing::warn!(
                     event = "event_bus.backend_connection.lost",
                     dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
                     "backend connection lost, will reconnect"
                 );
                 *backend = None;
-                DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
+                record_dropped_event(kind, "backend_send_failed");
             }
         }
 
@@ -222,14 +244,7 @@ async fn dispatch(event: Event, backend: &mut Option<BackendConnection>, buffer:
                 );
                 buffer.push(event);
             } else {
-                let dropped_events = DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
-                tracing::warn!(
-                    event = "event_bus.event_dropped",
-                    kind = ?event.kind,
-                    buffered_events = buffer.len(),
-                    dropped_events,
-                    "overflow buffer full, event dropped"
-                );
+                record_dropped_event(event.kind, "overflow_buffer_full");
             }
         }
     }
@@ -293,7 +308,7 @@ impl Event {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum EventKind {
     TcpSessionEstabilished { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
