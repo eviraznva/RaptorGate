@@ -58,6 +58,7 @@ tokio-rustls = "0.26"
 rustls-pemfile = "2"
 webpki-roots = "0.26"
 x509-parser = "0.16"
+tract-onnx = "0.21"
 
 [dev-dependencies]
 serial_test = "3.2.0"

@@ -45,6 +45,7 @@ message EventKind {
     EchAttemptDetectedEvent           ech_attempt_detected            = 24;
     InterfaceStateChangedEvent        interface_state_changed         = 25;
     InterfaceRenamedEvent             interface_renamed               = 26;
+    MlThreatDetectedEvent             ml_threat_detected              = 27;
   }
 }
 
@@ -69,6 +70,20 @@ message IpsSignatureMatchedEvent {
   string app_protocol = 11;
   string interface = 12;
   uint32 payload_length = 13;
+}
+
+message MlThreatDetectedEvent {
+  float score = 1;
+  float threshold = 2;
+  string model_checksum = 3;
+  string src_ip = 4;
+  uint32 src_port = 5;
+  string dst_ip = 6;
+  uint32 dst_port = 7;
+  string transport_protocol = 8;
+  string app_protocol = 9;
+  string interface = 10;
+  uint32 payload_length = 11;
 }
 
 message SnifferConfigChangedEvent {

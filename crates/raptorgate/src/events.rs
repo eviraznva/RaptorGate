@@ -352,6 +352,19 @@ pub enum EventKind {
         interface: String,
         payload_length: u32,
     },
+    MlThreatDetected {
+        score: f32,
+        threshold: f32,
+        model_checksum: String,
+        src_ip: String,
+        src_port: u16,
+        dst_ip: String,
+        dst_port: u16,
+        transport_protocol: String,
+        app_protocol: String,
+        interface: String,
+        payload_length: u32,
+    },
     EventBusConnectedEvent {}
 }
 
@@ -384,6 +397,7 @@ impl EventKind {
             | E::InterfaceStateChanged { .. }
             | E::InterfaceRenamed { .. }
             | E::IpsSignatureMatched { .. }
+            | E::MlThreatDetected { .. }
             | E::EventBusConnectedEvent { .. } => true,
         }
     }
@@ -641,6 +655,31 @@ impl From<EventKind> for proto::EventKind {
                     category,
                     severity,
                     action,
+                    src_ip,
+                    src_port: u32::from(src_port),
+                    dst_ip,
+                    dst_port: u32::from(dst_port),
+                    transport_protocol,
+                    app_protocol,
+                    interface,
+                    payload_length,
+                }),
+                EventKind::MlThreatDetected {
+                    score,
+                    threshold,
+                    model_checksum,
+                    src_ip,
+                    src_port,
+                    dst_ip,
+                    dst_port,
+                    transport_protocol,
+                    app_protocol,
+                    interface,
+                    payload_length,
+                } => Item::MlThreatDetected(proto::MlThreatDetectedEvent {
+                    score,
+                    threshold,
+                    model_checksum,
                     src_ip,
                     src_port: u32::from(src_port),
                     dst_ip,

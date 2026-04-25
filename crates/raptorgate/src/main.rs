@@ -7,6 +7,7 @@ mod events;
 mod interfaces;
 mod ip_defrag;
 mod logging;
+mod ml;
 mod packet_validator;
 mod pipeline;
 mod policy;
@@ -34,8 +35,8 @@ use crate::dpi::DpiClassifier;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
     DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
-    IpsStage, LocalOwnershipStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
-    TcpClassificationStage, TlsPortEnforcementStage, ValidationStage,
+    IpsStage, LocalOwnershipStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage,
+    PolicyEvalStage, TcpClassificationStage, TlsPortEnforcementStage, ValidationStage,
 };
 use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::policy::provider::DiskPolicyProvider;
@@ -76,7 +77,10 @@ async fn main() {
                                         NatPreroutingStage,
                                         Chain<
                                             TcpClassificationStage,
-                                            Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                            Chain<
+                                                MlAlertStage,
+                                                Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                            >,
                                         >,
                                     >,
                                 >,
@@ -279,6 +283,12 @@ async fn main() {
     // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
     let dnssec_provider: Arc<dyn DnssecProvider> =
         Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
+    
+    let ml_flow_stats = Arc::new(crate::ml::FlowStatsAggregator::new(
+        std::time::Duration::from_secs(60),
+    ));
+    let ml_detector: Arc<dyn crate::ml::MlPacketInspector> =
+        Arc::new(crate::ml::MlDetector::from_env());
 
     let pipeline = DataPipeline {
         head: ValidationStage,
@@ -290,6 +300,8 @@ async fn main() {
             tail: Chain {
                 head: DpiStage {
                     classifier: Arc::clone(&dpi_classifier),
+                    flow_stats: Arc::clone(&ml_flow_stats),
+                    pinning_detector: Some(decision_engine.pinning_detector_arc()),
                 },
                 tail: Chain {
                     head: TlsPortEnforcementStage {
@@ -318,18 +330,22 @@ async fn main() {
                                         tail: Chain {
                                             head: TcpClassificationStage {
                                                 tracker: Arc::clone(&tcp_session_tracker),
+                                                flow_stats: Arc::clone(&ml_flow_stats),
                                             },
                                             tail: Chain {
-                                                head: PolicyEvalStage {
-                                                    provider: Arc::clone(&policy_provider),
-                                                    dnssec: Some(dnssec_provider),
-                                                },
+                                                head: MlAlertStage::new(Arc::clone(&ml_detector)),
                                                 tail: Chain {
-                                                    head: NatPostroutingStage {
-                                                        engine: Arc::clone(&nat_engine),
+                                                    head: PolicyEvalStage {
+                                                        provider: Arc::clone(&policy_provider),
+                                                        dnssec: Some(dnssec_provider),
                                                     },
-                                                    tail: FtpAlgStage {
-                                                        engine: Arc::clone(&nat_engine),
+                                                    tail: Chain {
+                                                        head: NatPostroutingStage {
+                                                            engine: Arc::clone(&nat_engine),
+                                                        },
+                                                        tail: FtpAlgStage {
+                                                            engine: Arc::clone(&nat_engine),
+                                                        },
                                                     },
                                                 },
                                             },

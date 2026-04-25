@@ -160,6 +160,38 @@ describe('mapEventToDocument', () => {
     expect(doc!.src_ip).toBeUndefined();
   });
 
+  it('maps ML threat detected to alert decision', () => {
+    const doc = mapEventToDocument(
+      makeEvent({
+        item: {
+          $case: 'mlThreatDetected',
+          mlThreatDetected: {
+            score: 0.91,
+            threshold: 0.2,
+            modelChecksum: 'abc123',
+            srcIp: '192.168.20.10',
+            srcPort: 45000,
+            dstIp: '192.168.10.10',
+            dstPort: 80,
+            transportProtocol: 'tcp',
+            appProtocol: 'http',
+            interface: 'eth2',
+            payloadLength: 128,
+          },
+        },
+      }),
+    );
+
+    expect(doc!.source).toBe('ML');
+    expect(doc!.decision).toBe('alert');
+    expect(doc!.event_type).toBe('ml_threat_detected');
+    expect(doc!.src_ip).toBe('192.168.20.10');
+    expect(doc!.dst_port).toBe(80);
+    expect(doc!.ml_score).toBe(0.91);
+    expect(doc!.ml_threshold).toBe(0.2);
+    expect(doc!.model_checksum).toBe('abc123');
+  });
+
   it('returns null for empty kind', () => {
     const doc = mapEventToDocument({ emittedAt: undefined, kind: undefined });
     expect(doc).toBeNull();
