@@ -3,6 +3,7 @@ pub mod data_plane;
 pub mod dpi;
 pub mod events;
 pub mod integrity;
+pub mod interfaces;
 pub mod ip_defrag;
 pub mod ml;
 pub mod packet_validator;

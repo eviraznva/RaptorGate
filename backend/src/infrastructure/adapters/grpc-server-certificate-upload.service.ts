@@ -4,21 +4,21 @@ import {
   Injectable,
   OnModuleInit,
   ServiceUnavailableException,
-} from '@nestjs/common';
-import type { ClientGrpc } from '@nestjs/microservices';
-import { firstValueFrom } from 'rxjs';
+} from "@nestjs/common";
+import type { ClientGrpc } from "@nestjs/microservices";
+import { firstValueFrom } from "rxjs";
 import type {
   IServerCertificateUploadService,
   UploadServerCertificateInput,
   UploadServerCertificateOutput,
-} from '../../application/ports/server-certificate-upload-service.interface.js';
+} from "../../application/ports/server-certificate-upload-service.interface.js";
 import {
   FIREWALL_SERVER_CERTIFICATE_SERVICE_NAME,
   type FirewallServerCertificateServiceClient,
-} from '../grpc/generated/services/server_certificate_service.js';
+} from "../grpc/generated/services/server_certificate_service.js";
 
 export const SERVER_CERTIFICATE_UPLOAD_GRPC_CLIENT_TOKEN =
-  'SERVER_CERTIFICATE_UPLOAD_GRPC_CLIENT_TOKEN';
+  "SERVER_CERTIFICATE_UPLOAD_GRPC_CLIENT_TOKEN";
 
 @Injectable()
 export class GrpcServerCertificateUploadService
@@ -58,7 +58,7 @@ export class GrpcServerCertificateUploadService
       );
     } catch (error) {
       const reason =
-        error instanceof Error ? error.message : 'Unknown gRPC error';
+        error instanceof Error ? error.message : "Unknown gRPC error";
       throw new ServiceUnavailableException(
         `Firewall server certificate service is unavailable. ${reason}`,
       );
@@ -66,7 +66,7 @@ export class GrpcServerCertificateUploadService
 
     if (!response.accepted) {
       throw new BadRequestException(
-        response.error || 'Firewall rejected server certificate',
+        response.error || "Firewall rejected server certificate",
       );
     }
 

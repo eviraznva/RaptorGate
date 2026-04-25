@@ -4,7 +4,16 @@ use anyhow::Error;
 use anyhow::Result;
 use uuid::Uuid;
 
-use crate::{config::{AppConfig, ConfigObserver}, disk_store::ListDiskStore, swapper::Swapper, zones::{DefaultPolicy, Zone, ZoneId, ZonePair, ZonePairId, ZoneInterface, ZoneInterfaceId}};
+use crate::{
+    config::{AppConfig, ConfigObserver},
+    disk_store::ListDiskStore,
+    interfaces::{InterfaceMonitor, OperState},
+    swapper::Swapper,
+    zones::{
+        DefaultPolicy, InterfaceStatus, Zone, ZoneId, ZoneInterface, ZoneInterfaceId, ZonePair,
+        ZonePairId,
+    },
+};
 
 pub struct ZonePairProvider {
     swapper: Swapper<ZonePairId, ZonePair>,
@@ -137,6 +146,40 @@ impl ZoneInterfaceProvider {
 
     pub fn get_zone_interface(&self, id: &ZoneInterfaceId) -> Option<ZoneInterface> {
         self.swapper.get(id)
+    }
+
+    pub fn get_live_zone_interfaces<M>(&self, monitor: &M) -> HashMap<ZoneInterfaceId, ZoneInterface>
+    where
+        M: InterfaceMonitor,
+    {
+        self.swapper
+            .get_all()
+            .iter()
+            .map(|(id, zone_interface)| {
+                let mut enriched = zone_interface.clone();
+
+                match monitor.get(&zone_interface.interface_name) {
+                    Some(system_interface) => {
+                        enriched.status = match system_interface.oper_state {
+                            OperState::Up => InterfaceStatus::Active,
+                            OperState::Down => InterfaceStatus::Inactive,
+                            OperState::Unknown => InterfaceStatus::Unknown,
+                        };
+                        enriched.addresses = system_interface
+                            .addresses
+                            .into_iter()
+                            .map(|address| address.to_string())
+                            .collect();
+                    }
+                    None => {
+                        enriched.status = InterfaceStatus::Missing;
+                        enriched.addresses = Vec::new();
+                    }
+                }
+
+                (id.clone(), enriched)
+            })
+            .collect()
     }
 }
 

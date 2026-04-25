@@ -4,6 +4,7 @@ mod data_plane;
 mod disk_store;
 mod dpi;
 mod events;
+mod interfaces;
 mod ip_defrag;
 mod logging;
 mod ml;
@@ -44,6 +45,7 @@ use crate::tls::{
     CaManager, DecryptedChainInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig,
     PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
+use crate::interfaces::{InterfaceController, NetworkInterfaceMonitor};
 use etherparse::NetSlice;
 use pcap::Device;
 use std::collections::{HashMap, HashSet};
@@ -168,6 +170,14 @@ async fn main() {
             .await
             .expect("Failed to initialize policy provider"),
     );
+    let interface_monitor = Arc::new(
+        NetworkInterfaceMonitor::new(CancellationToken::new())
+            .await
+            .expect("Failed to initialize network interface monitor"),
+    );
+    let interface_controller = Arc::new(
+        InterfaceController::new().expect("Failed to initialize interface controller"),
+    );
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
     let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
@@ -231,7 +241,7 @@ async fn main() {
 
     let dpi_classifier = Arc::new(DpiClassifier::new());
 
-    let query_server = QueryServer::<DiskPolicyProvider>::new(
+    let query_server = QueryServer::<DiskPolicyProvider, NetworkInterfaceMonitor>::new(
         QueryHandler {
             tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
@@ -248,6 +258,8 @@ async fn main() {
             decision_engine: Arc::clone(&decision_engine),
             server_key_store: Arc::clone(&server_key_store),
             pinning_detector: decision_engine.pinning_detector_arc(),
+            interface_monitor,
+            interface_controller,
         },
         &config.query_socket_path,
         CancellationToken::new(),

@@ -1,6 +1,21 @@
 {
   "items": [
     {
+      "id": "07c5b5fb-4304-4997-90e4-115af50098bb",
+      "type": "SNAT",
+      "isActive": true,
+      "srcIp": "192.168.1.10",
+      "dstIp": null,
+      "srcPort": null,
+      "dstPort": null,
+      "translatedIp": "172.16.0.20",
+      "translatedPort": null,
+      "priority": 10,
+      "createdAt": "2026-03-23T06:43:47.449Z",
+      "updatedAt": "2026-03-23T06:51:19.805Z",
+      "createdBy": "ac592566-ca77-4ace-a56d-deb857ed2087"
+    },
+    {
       "id": "b29c1dda-9515-4f83-86cf-48aed6f661ae",
       "type": "SNAT",
       "isActive": true,
@@ -13,7 +28,7 @@
       "priority": 10,
       "createdAt": "2026-03-23T11:34:19.429Z",
       "updatedAt": "2026-03-23T11:34:19.429Z",
-      "createdBy": "e79d8463-5650-4e0d-b76d-a4de3ca9c804"
+      "createdBy": "12b56f3a-f508-45ba-b0fb-28572053f9f1"
     },
     {
       "id": "f877657b-687e-43a4-bb77-079e42167540",
@@ -28,7 +43,7 @@
       "priority": 20,
       "createdAt": "2026-03-23T11:34:29.174Z",
       "updatedAt": "2026-03-23T11:34:29.174Z",
-      "createdBy": "06856b09-0107-40eb-9575-b4a58605c7c0"
+      "createdBy": "7328f552-4db5-4c2c-b15d-cac597a924e1"
     },
     {
       "id": "3349d1c9-c725-474a-b4ce-77a2558f6298",
@@ -43,7 +58,7 @@
       "priority": 30,
       "createdAt": "2026-03-23T11:34:38.607Z",
       "updatedAt": "2026-03-23T11:34:38.607Z",
-      "createdBy": "df1455c6-916a-47f8-91c5-3cc7675b123a"
+      "createdBy": "45dcbbc3-7d2a-4cc6-8dc9-69213320652a"
     },
     {
       "id": "6c7faecd-56c8-4f85-b39f-10a63470b04a",
@@ -58,142 +73,7 @@
       "priority": 99,
       "createdAt": "2026-03-26T15:39:15.504Z",
       "updatedAt": "2026-03-26T15:39:15.504Z",
-      "createdBy": "368562e3-4039-43db-bc01-50793beee4de"
-    },
-    {
-      "id": "9f3a6e52-2b2d-4c5f-9de3-4f3d9a1a7b10",
-      "type": "SNAT",
-      "isActive": true,
-      "srcIp": "192.168.1.11",
-      "dstIp": null,
-      "srcPort": null,
-      "dstPort": null,
-      "translatedIp": "172.16.0.21",
-      "translatedPort": null,
-      "priority": 40,
-      "createdAt": "2026-04-06T09:10:00.000Z",
-      "updatedAt": "2026-04-06T09:10:00.000Z",
-      "createdBy": "f1f02845-7cb9-4e6e-84b7-1d5bc3c1f100"
-    },
-    {
-      "id": "1de3f5a9-c68a-4630-bf4d-979f1a77d2e3",
-      "type": "SNAT",
-      "isActive": true,
-      "srcIp": "192.168.1.12",
-      "dstIp": null,
-      "srcPort": null,
-      "dstPort": null,
-      "translatedIp": "172.16.0.22",
-      "translatedPort": null,
-      "priority": 41,
-      "createdAt": "2026-04-06T09:11:00.000Z",
-      "updatedAt": "2026-04-06T09:11:00.000Z",
-      "createdBy": "8e8a1fbe-0280-4d4f-a2cb-1d2d2d9c4f11"
-    },
-    {
-      "id": "5a8b08e5-3a8e-4d64-a41e-9f8bb2f8f2b2",
-      "type": "DNAT",
-      "isActive": true,
-      "srcIp": null,
-      "dstIp": "10.0.0.6",
-      "srcPort": null,
-      "dstPort": null,
-      "translatedIp": "192.168.1.60",
-      "translatedPort": null,
-      "priority": 50,
-      "createdAt": "2026-04-06T09:12:00.000Z",
-      "updatedAt": "2026-04-20T16:57:56.495Z",
-      "createdBy": "9f88d31f-49f2-4ed8-96d8-4f6a44aa1f12"
-    },
-    {
-      "id": "2dd3d7dd-cc26-4d86-a56b-ec6cd2f8a6b7",
-      "type": "DNAT",
-      "isActive": true,
-      "srcIp": null,
-      "dstIp": "10.0.0.7",
-      "srcPort": null,
-      "dstPort": null,
-      "translatedIp": "192.168.1.61",
-      "translatedPort": null,
-      "priority": 51,
-      "createdAt": "2026-04-06T09:13:00.000Z",
-      "updatedAt": "2026-04-06T09:13:00.000Z",
-      "createdBy": "0cb91f1a-88ff-4d77-9ef9-6c9af4b56f13"
-    },
-    {
-      "id": "7f86a8f0-6f3b-4d0d-aadf-0a8e40f7e0c2",
-      "type": "PAT",
-      "isActive": true,
-      "srcIp": null,
-      "dstIp": "10.0.0.8",
-      "srcPort": null,
-      "dstPort": 80,
-      "translatedIp": "192.168.1.70",
-      "translatedPort": 8080,
-      "priority": 60,
-      "createdAt": "2026-04-06T09:14:00.000Z",
-      "updatedAt": "2026-04-06T09:14:00.000Z",
-      "createdBy": "2f7f4d5e-0f8c-4d8a-9ff6-5b9a1d2e3f14"
-    },
-    {
-      "id": "ef8c9d27-25c9-4d8e-b57f-b0a8948d9e88",
-      "type": "PAT",
-      "isActive": false,
-      "srcIp": null,
-      "dstIp": "10.0.0.8",
-      "srcPort": null,
-      "dstPort": 443,
-      "translatedIp": "192.168.1.70",
-      "translatedPort": 8443,
-      "priority": 61,
-      "createdAt": "2026-04-06T09:15:00.000Z",
-      "updatedAt": "2026-04-06T09:15:00.000Z",
-      "createdBy": "1d9c2a71-2f2a-4f6d-8f54-8d4b2a3c4d15"
-    },
-    {
-      "id": "c8e4f17b-4b4a-4e63-a67e-bf02d8fa5d52",
-      "type": "PAT",
-      "isActive": true,
-      "srcIp": null,
-      "dstIp": "10.0.0.9",
-      "srcPort": null,
-      "dstPort": 22,
-      "translatedIp": "192.168.1.71",
-      "translatedPort": 2222,
-      "priority": 62,
-      "createdAt": "2026-04-06T09:16:00.000Z",
-      "updatedAt": "2026-04-06T09:16:00.000Z",
-      "createdBy": "6b2f7c55-8a41-4260-9284-8db2d2e3f116"
-    },
-    {
-      "id": "9d57fa6f-a4a3-492b-b965-92c604c48d0f",
-      "type": "DNAT",
-      "isActive": true,
-      "srcIp": null,
-      "dstIp": "192.168.19.10",
-      "srcPort": null,
-      "dstPort": null,
-      "translatedIp": "10.0.0.5",
-      "translatedPort": null,
-      "priority": 99,
-      "createdAt": "2026-04-19T17:08:34.773Z",
-      "updatedAt": "2026-04-19T17:08:34.773Z",
-      "createdBy": "00000000-0000-4000-8000-000000000001"
-    },
-    {
-      "id": "9bac6a4c-0252-4a19-b7be-0df634c11dbc",
-      "type": "DNAT",
-      "isActive": true,
-      "srcIp": null,
-      "dstIp": "203.0.10.2",
-      "srcPort": null,
-      "dstPort": null,
-      "translatedIp": "10.2.3.4",
-      "translatedPort": null,
-      "priority": 67,
-      "createdAt": "2026-04-20T16:56:42.315Z",
-      "updatedAt": "2026-04-20T16:56:42.315Z",
-      "createdBy": "00000000-0000-4000-8000-000000000001"
+      "createdBy": "52bd9c30-6c24-4afe-9ef7-5c4c5fa7f9bf"
     }
   ]
 }

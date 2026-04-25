@@ -1,0 +1,29 @@
+{
+  "items": [
+    {
+      "id": "050eca33-2b53-4470-9f11-d369e0e7abbc",
+      "name": "WAN",
+      "interface_ids": []
+    },
+    {
+      "id": "b5fc6256-d502-41a7-9370-d69663bf26b6",
+      "name": "Dupa",
+      "interface_ids": []
+    },
+    {
+      "id": "a0db06f9-5063-4035-aadd-845248db19e4",
+      "name": "Office",
+      "interface_ids": []
+    },
+    {
+      "id": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4",
+      "name": "Bedroom",
+      "interface_ids": []
+    },
+    {
+      "id": "7276db7e-eb41-4dc6-9b88-12f854e104f2",
+      "name": "LAN",
+      "interface_ids": []
+    }
+  ]
+}
