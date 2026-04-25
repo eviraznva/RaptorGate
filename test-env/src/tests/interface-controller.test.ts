@@ -14,7 +14,7 @@ import {
   type ZoneInterface,
   type Zone,
 } from '../generated/config/config_models';
-import { createDefaultSnapshotBundle } from '../harness/fixtures';
+import { createDefaultSnapshotBundle, DEFAULT_ZONE_INTERFACES } from '../harness/fixtures';
 
 type RuntimeZoneInterface = {
   id?: unknown;
@@ -145,7 +145,7 @@ describe('Interface Controller RPC', () => {
     await resetFirewallState(getClient(), getSnapshotClient());
   });
 
-  test('renames interface via RPC', async () => {
+  test('renames dummy interface via RPC', async () => {
     const interfaceName = 'dummy-rename';
     const newName = 'dummy-renamed';
     const zoneInterfaceId = crypto.randomUUID();
@@ -181,7 +181,7 @@ describe('Interface Controller RPC', () => {
       .run();
   });
 
-  test('brings interface up/down via RPC', async () => {
+  test('brings dummy interface up/down via RPC', async () => {
     const interfaceName = 'dummy-state';
     const zoneInterfaceId = crypto.randomUUID();
     const zoneId = crypto.randomUUID();
@@ -224,7 +224,7 @@ describe('Interface Controller RPC', () => {
       .run();
   });
 
-  test('changes IP address via RPC', async () => {
+  test('changes dummy IP address via RPC', async () => {
     const interfaceName = 'dummy-ip';
     const zoneInterfaceId = crypto.randomUUID();
     const zoneId = crypto.randomUUID();
@@ -259,6 +259,30 @@ describe('Interface Controller RPC', () => {
     await performCommand({ host: 'r1', command: `sudo ip link del ${interfaceName}` })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'missing' } }])
       .run();
+  });
+
+  test('brings real interface up/down via RPC', async () => {
+    await resetFirewallState(getClient(), getSnapshotClient());
+    const interfaceName = 'eth1';
+    const zoneInterfaceId = DEFAULT_ZONE_INTERFACES.find((zi) => zi.interfaceName === interfaceName)!.id;
+
+    await request('SetInterfaceState', {
+      id: zoneInterfaceId,
+      state: InterfaceAdministrativeState.INTERFACE_ADMINISTRATIVE_STATE_DOWN,
+    })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'inactive' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: `sudo ip link show ${interfaceName} | grep -q 'state DOWN'` }).run();
+
+    await request('SetInterfaceState', {
+      id: zoneInterfaceId,
+      state: InterfaceAdministrativeState.INTERFACE_ADMINISTRATIVE_STATE_UP,
+    })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'active' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: `sudo ip link show ${interfaceName} | grep -q 'state UP'` }).run();
   });
 
   test('modifying non-existent interface returns error', async () => {
