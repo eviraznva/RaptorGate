@@ -39,6 +39,14 @@
       "isActive": true,
       "createdAt": "2026-03-26T17:22:17.835Z",
       "createdBy": "a1de215e-2c26-4808-a3fe-caa38c97a4b6"
+    },
+    {
+      "id": "59a1672e-8fe4-41a5-a399-be821534dd63",
+      "name": "Test",
+      "description": "Tymek jest gejem",
+      "isActive": true,
+      "createdAt": "2026-04-25T17:42:51.845Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
     }
   ]
 }

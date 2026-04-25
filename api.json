@@ -264,6 +264,229 @@
         ]
       }
     },
+    "/config/diff": {
+      "get": {
+        "description": "Compares two configuration snapshots and returns a domain-aware configuration diff.",
+        "operationId": "ConfigController_getConfigDiff",
+        "parameters": [
+          {
+            "name": "baseId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "example": "cb5e59f3-0e31-44ce-963b-adeccf99dd45",
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "example": "be4de244-4c43-4924-ac8c-16df53be90f1",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 200
+                        },
+                        "message": {
+                          "example": "Configuration snapshot diff retrieved"
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/GetConfigDiffResponseDto"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 400
+                        },
+                        "message": {
+                          "example": "Validation failed or invalid snapshot ID"
+                        },
+                        "error": {
+                          "example": "Bad Request"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 401
+                        },
+                        "message": {
+                          "example": "Access token is missing, invalid, or expired"
+                        },
+                        "error": {
+                          "example": "Unauthorized"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 403
+                        },
+                        "message": {
+                          "example": "Insufficient permissions to view configuration snapshot diff"
+                        },
+                        "error": {
+                          "example": "Forbidden"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 404
+                        },
+                        "message": {
+                          "example": "Configuration snapshot not found"
+                        },
+                        "error": {
+                          "example": "Not Found"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 429
+                        },
+                        "message": {
+                          "example": "Too many requests to retrieve configuration snapshot diff"
+                        },
+                        "error": {
+                          "example": "Too Many Requests"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 500
+                        },
+                        "message": {
+                          "example": "Internal server error while retrieving configuration snapshot diff"
+                        },
+                        "error": {
+                          "example": "Internal Server Error"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Diff configuration snapshots",
+        "tags": [
+          "Config"
+        ]
+      }
+    },
     "/config/history": {
       "get": {
         "description": "Gets the history of all configuration snapshots, including active and inactive ones.",
@@ -7145,6 +7368,127 @@
         "required": [
           "snapshotType",
           "isActive"
+        ]
+      },
+      "ConfigDiffSnapshotDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "versionNumber": {
+            "type": "number"
+          },
+          "checksum": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "versionNumber",
+          "checksum",
+          "createdAt"
+        ]
+      },
+      "ConfigDiffSummaryDto": {
+        "type": "object",
+        "properties": {
+          "added": {
+            "type": "number"
+          },
+          "removed": {
+            "type": "number"
+          },
+          "modified": {
+            "type": "number"
+          },
+          "bySection": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "added": {
+                  "type": "number"
+                },
+                "removed": {
+                  "type": "number"
+                },
+                "modified": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "added",
+          "removed",
+          "modified",
+          "bySection"
+        ]
+      },
+      "ConfigDiffChangeDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "added",
+              "removed",
+              "modified"
+            ]
+          },
+          "section": {
+            "type": "string",
+            "example": "rules"
+          },
+          "path": {
+            "type": "string",
+            "example": "bundle.rules.items.a1c6151b-e916-456d-b4f9-2d57d2075aff.priority"
+          },
+          "entityId": {
+            "type": "string"
+          },
+          "before": {
+            "type": "object"
+          },
+          "after": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "type",
+          "section",
+          "path"
+        ]
+      },
+      "GetConfigDiffResponseDto": {
+        "type": "object",
+        "properties": {
+          "baseSnapshot": {
+            "$ref": "#/components/schemas/ConfigDiffSnapshotDto"
+          },
+          "targetSnapshot": {
+            "$ref": "#/components/schemas/ConfigDiffSnapshotDto"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ConfigDiffSummaryDto"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigDiffChangeDto"
+            }
+          }
+        },
+        "required": [
+          "baseSnapshot",
+          "targetSnapshot",
+          "summary",
+          "changes"
         ]
       },
       "GetConfigHistoryResponseDto": {
