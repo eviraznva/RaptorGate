@@ -16,6 +16,9 @@ service FirewallQueryService {
 
   rpc GetZones      (GetZonesRequest)          returns (GetZonesResponse);
   rpc GetZone       (GetZoneRequest)           returns (GetZoneResponse);
+  rpc GetZoneInterfaces (GetZoneInterfacesRequest) returns (GetZoneInterfacesResponse);
+  rpc GetZoneInterface (GetZoneInterfaceRequest) returns (GetZoneInterfaceResponse);
+  rpc GetLiveZoneInterfaces (GetLiveZoneInterfacesRequest) returns (GetLiveZoneInterfacesResponse);
   rpc GetZonePairs  (GetZonePairsRequest)      returns (GetZonePairsResponse);
   rpc GetZonePair   (GetZonePairRequest)       returns (GetZonePairResponse);
 
@@ -30,6 +33,9 @@ service FirewallQueryService {
 
   rpc GetPinningStats  (GetPinningStatsRequest)  returns (GetPinningStatsResponse);
   rpc GetPinningBypass (GetPinningBypassRequest) returns (GetPinningBypassResponse);
+
+  rpc SetInterfaceState (SetInterfaceStateRequest) returns (SetInterfaceStateResponse);
+  rpc UpdateZoneInterfaceProperties (UpdateZoneInterfacePropertiesRequest) returns (UpdateZoneInterfacePropertiesResponse);
 }
 
 message GetTcpSessionsRequest {}
@@ -77,6 +83,26 @@ message GetZoneRequest {
 
 message GetZoneResponse {
   config.Zone zone = 1;
+}
+
+message GetZoneInterfacesRequest {}
+
+message GetZoneInterfacesResponse {
+  repeated config.ZoneInterface zone_interfaces = 1;
+}
+
+message GetZoneInterfaceRequest {
+  string id = 1;
+}
+
+message GetZoneInterfaceResponse {
+  config.ZoneInterface zone_interface = 1;
+}
+
+message GetLiveZoneInterfacesRequest {}
+
+message GetLiveZoneInterfacesResponse {
+  repeated config.ZoneInterface zone_interfaces = 1;
 }
 
 // Zone Pairs
@@ -161,3 +187,21 @@ message GetPinningBypassResponse {
   string reason = 2;
   uint32 failure_count = 3;
 }
+
+// ── Interface Management ─────────────────────────────────────────────────────
+
+message SetInterfaceStateRequest {
+  string id = 1;
+  config.InterfaceAdministrativeState state = 2;
+}
+
+message SetInterfaceStateResponse {}
+
+message UpdateZoneInterfacePropertiesRequest {
+  string id = 1;
+  optional string interface_name = 2;
+  optional uint32 vlan_id = 3;
+  optional string address = 4;
+}
+
+message UpdateZoneInterfacePropertiesResponse {}
