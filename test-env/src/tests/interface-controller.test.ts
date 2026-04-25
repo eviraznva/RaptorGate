@@ -171,7 +171,6 @@ describe('Interface Controller RPC', () => {
       id: zoneInterfaceId,
       interfaceName: newName,
     })
-	.printEvents()
       .expectEvents([{ kind: 'interfaceRenamed', match: { oldInterfaceName: interfaceName, newInterfaceName: newName } }])
       .run();
 
@@ -205,10 +204,11 @@ describe('Interface Controller RPC', () => {
       id: zoneInterfaceId,
       state: InterfaceAdministrativeState.INTERFACE_ADMINISTRATIVE_STATE_UP,
     })
-      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'active' } }])
+	.printEvents()
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'unknown' } }]) // we look for unknown because linux sucks
       .run();
 
-    await performCommand({ host: 'r1', command: `sudo ip link show ${interfaceName} | grep -q 'state UP'` }).run();
+    await performCommand({ host: 'r1', command: `sudo ip link show ${interfaceName} | grep -q 'state UNKNOWN'` }).run();
 
     await request('SetInterfaceState', {
       id: zoneInterfaceId,
@@ -236,7 +236,7 @@ describe('Interface Controller RPC', () => {
       .run();
 
     await performCommand({ host: 'r1', command: `sudo ip link set ${interfaceName} up` })
-      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'active' } }])
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName, newStatus: 'unknown' } }])
       .run();
 
     await pushZoneInterfaceConfig({

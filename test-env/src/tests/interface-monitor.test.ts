@@ -154,14 +154,34 @@ describe('Interface Monitor', () => {
   test('detects dummy interface lifecycle', async () => {
     await performCommand({ host: 'r1', command: 'sudo ip link add dummy0 type dummy' })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy0', newStatus: 'inactive' } }])
-	  .printEvents()
       .run();
 
     await performCommand({ host: 'r1', command: 'sudo ip link del dummy0' })
       .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy0', newStatus: 'missing' } }])
-	  .printEvents()
       .run();
-},);
+  });
+
+  test('brings dummy interface up/down via commands', async () => {
+    await performCommand({ host: 'r1', command: 'sudo ip link del dummy-cmd' })
+      .discardError()
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip link add dummy-cmd type dummy' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy-cmd', newStatus: 'inactive' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip link set dummy-cmd up' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy-cmd', newStatus: 'unknown' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip link set dummy-cmd down' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy-cmd', newStatus: 'inactive' } }])
+      .run();
+
+    await performCommand({ host: 'r1', command: 'sudo ip link del dummy-cmd' })
+      .expectEvents([{ kind: 'interfaceStateChanged', match: { interfaceName: 'dummy-cmd', newStatus: 'missing' } }])
+      .run();
+  });
 
   test('detects address changes on dummy interface', async () => {
 	  await performCommand({ host: 'r1', command: 'sudo ip link del dummy1' })

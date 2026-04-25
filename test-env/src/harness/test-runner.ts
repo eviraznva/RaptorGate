@@ -41,7 +41,18 @@ async function fetchVmSystemTimeMs(): Promise<number> {
   return new Promise((resolve, reject) => {
     client.getSystemTime({}, (err: Error | null, resp: any) => {
       if (err) reject(err);
-      else resolve(resp.time instanceof Date ? resp.time.getTime() : 0);
+      else {
+        const t = resp?.time;
+        if (t && (t.seconds !== undefined || t.nanos !== undefined)) {
+          const seconds = typeof t.seconds === 'string' ? parseInt(t.seconds, 10) : (t.seconds ?? 0);
+          const nanos = t.nanos ?? 0;
+          resolve(seconds * 1000 + nanos / 1_000_000);
+        } else if (t instanceof Date) {
+          resolve(t.getTime());
+        } else {
+          resolve(0);
+        }
+      }
     });
   });
 }
@@ -252,7 +263,7 @@ class CommandBuilder {
 
       if (!this.expectError && !this.discardErrorCode && exitCode !== 0) {
         throw new Error(
-          `Command failed on ${this.host} (exit ${exitCode}): ${stderr || stdout}`,
+          `Command failed on ${this.host}, command: ${this.command} (exit ${exitCode}): ${stderr || stdout}`,
         );
       }
 
