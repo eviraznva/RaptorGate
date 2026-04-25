@@ -16,6 +16,10 @@ use crate::{
     },
     dpi::{DpiClassifier, InspectResult},
     events::{self, Event, EventKind},
+    identity::{
+        enforce, resolve_identity, EnforcementOutcome, IdentityEnforcementConfig,
+        IdentitySessionStore,
+    },
     packet_validator::validate,
     pipeline::{Stage, StageOutcome},
     policy::provider::DiskPolicyProvider,
@@ -95,6 +99,66 @@ fn packet_destination_ip(ctx: &PacketContext) -> Option<IpAddr> {
         Some(NetSlice::Ipv4(ipv4)) => Some(IpAddr::V4(ipv4.header().destination_addr())),
         Some(NetSlice::Ipv6(ipv6)) => Some(IpAddr::V6(ipv6.header().destination_addr())),
         _ => None,
+    }
+}
+
+fn packet_source_ip(ctx: &PacketContext) -> Option<IpAddr> {
+    match &ctx.borrow_sliced_packet().net {
+        Some(NetSlice::Ipv4(ipv4)) => Some(IpAddr::V4(ipv4.header().source_addr())),
+        Some(NetSlice::Ipv6(ipv6)) => Some(IpAddr::V6(ipv6.header().source_addr())),
+        _ => None,
+    }
+}
+
+// Stage doklejajacy identity do PacketContext i egzekwujacy pre-auth gate.
+// Lookup robi sie po `original_src_ip` przed NAT postroutingiem, dzieki czemu
+// translacje SNAT/MASQUERADE nie psuja mapowania IP -> sesja (ADR 0001).
+#[derive(Clone)]
+pub struct IdentityLookupStage {
+    pub store: Arc<IdentitySessionStore>,
+    pub enforcement: Arc<IdentityEnforcementConfig>,
+}
+
+impl Stage for IdentityLookupStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        !packet_is_decrypted(ctx) && packet_source_ip(ctx).is_some()
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let Some(src_ip) = packet_source_ip(ctx) else {
+            return StageOutcome::Continue;
+        };
+
+        let now = *ctx.borrow_arrival_time();
+        let identity = resolve_identity(&self.store, src_ip, now);
+        let outcome = enforce(&self.enforcement, &identity);
+
+        let auth_state = identity.auth_state;
+        let session_user = identity
+            .session
+            .as_ref()
+            .map(|session| session.username.clone());
+
+        ctx.with_identity_ctx_mut(|slot| *slot = Some(identity));
+
+        match outcome {
+            EnforcementOutcome::Allow => {
+                tracing::trace!(
+                    event = "identity.lookup.resolved",
+                    src_ip = %src_ip,
+                    auth_state = ?auth_state,
+                    username = session_user.as_deref().unwrap_or(""),
+                    "identity lookup completed"
+                );
+                StageOutcome::Continue
+            }
+            EnforcementOutcome::Drop => {
+                let reason = "no active identity session for required source CIDR";
+                log_packet_decision(ctx, "identity.preauth.blocked", "identity_lookup", "drop", reason);
+                ctx.with_warnings_mut(|w| w.push(reason.to_string()));
+                StageOutcome::Halt
+            }
+        }
     }
 }
 
@@ -220,6 +284,7 @@ impl Stage for FtpAlgStage {
             let arrival_time = *ctx.borrow_arrival_time();
             let warnings = ctx.with_warnings_mut(std::mem::take);
             let dpi_ctx = ctx.with_dpi_ctx_mut(|dpi| dpi.take());
+            let identity_ctx = ctx.with_identity_ctx_mut(|identity| identity.take());
 
             match PacketContext::from_raw_full(
                 raw_copy,
@@ -227,6 +292,7 @@ impl Stage for FtpAlgStage {
                 warnings,
                 arrival_time,
                 dpi_ctx,
+                identity_ctx,
             ) {
                 Ok(new_ctx) => *ctx = new_ctx,
                 Err(err) => {
@@ -957,5 +1023,128 @@ mod tests {
         assert_eq!(classified.src_port, Some(12345));
         assert_eq!(classified.dst_port, Some(443));
         assert_eq!(classified.app_proto, Some(crate::dpi::AppProto::Http));
+    }
+
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use crate::identity::{
+        AuthState, IdentityEnforcementConfig, IdentitySession, IdentitySessionStore,
+    };
+
+    fn identity_packet(src: [u8; 4], dst: [u8; 4]) -> PacketContext {
+        let mut raw = Vec::new();
+        PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4(src, dst, 64)
+            .tcp(40000, 80, 1, 65535)
+            .write(&mut raw, b"hello")
+            .unwrap();
+        let arrival = UNIX_EPOCH + Duration::from_secs(1_700_000_500);
+        PacketContext::from_raw_full(raw, Arc::from("eth1"), Vec::new(), arrival, None, None)
+            .unwrap()
+    }
+
+    fn user_session(ip: &str, expires_secs: u64) -> IdentitySession {
+        IdentitySession {
+            session_id: "sess-1".into(),
+            identity_user_id: "user-1".into(),
+            username: "alice".into(),
+            client_ip: ip.parse().unwrap(),
+            authenticated_at: UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+            expires_at: UNIX_EPOCH + Duration::from_secs(expires_secs),
+        }
+    }
+
+    fn user_zone_enforcement() -> Arc<IdentityEnforcementConfig> {
+        Arc::new(IdentityEnforcementConfig::new(vec![
+            "192.168.10.0/24".parse().unwrap(),
+        ]))
+    }
+
+    #[tokio::test]
+    async fn identity_lookup_attaches_active_session() {
+        let store = IdentitySessionStore::new_shared();
+        store.upsert(user_session("192.168.10.10", 1_700_003_600));
+        let stage = IdentityLookupStage {
+            store: Arc::clone(&store),
+            enforcement: user_zone_enforcement(),
+        };
+        let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
+
+        let outcome = stage.process(&mut ctx).await;
+        assert!(matches!(outcome, StageOutcome::Continue));
+
+        let identity = ctx.borrow_identity_ctx().as_ref().expect("identity attached");
+        assert_eq!(identity.auth_state, AuthState::Authenticated);
+        assert_eq!(identity.session.as_ref().unwrap().username, "alice");
+    }
+
+    #[tokio::test]
+    async fn identity_lookup_blocks_missing_session_in_user_zone() {
+        let store = IdentitySessionStore::new_shared();
+        let stage = IdentityLookupStage {
+            store,
+            enforcement: user_zone_enforcement(),
+        };
+        let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
+
+        let outcome = stage.process(&mut ctx).await;
+        assert!(matches!(outcome, StageOutcome::Halt));
+
+        let identity = ctx.borrow_identity_ctx().as_ref().expect("identity attached");
+        assert_eq!(identity.auth_state, AuthState::Unknown);
+    }
+
+    #[tokio::test]
+    async fn identity_lookup_blocks_expired_session() {
+        let store = IdentitySessionStore::new_shared();
+        store.upsert(user_session("192.168.10.10", 1_700_000_400));
+        let stage = IdentityLookupStage {
+            store: Arc::clone(&store),
+            enforcement: user_zone_enforcement(),
+        };
+        let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
+
+        let outcome = stage.process(&mut ctx).await;
+        assert!(matches!(outcome, StageOutcome::Halt));
+
+        let identity = ctx.borrow_identity_ctx().as_ref().expect("identity attached");
+        assert_eq!(identity.auth_state, AuthState::Unknown);
+        assert!(identity.session.is_none());
+    }
+
+    #[tokio::test]
+    async fn identity_lookup_allows_traffic_outside_required_cidr() {
+        let store = IdentitySessionStore::new_shared();
+        let stage = IdentityLookupStage {
+            store,
+            enforcement: user_zone_enforcement(),
+        };
+        let mut ctx = identity_packet([10, 0, 0, 5], [192, 168, 20, 10]);
+
+        let outcome = stage.process(&mut ctx).await;
+        assert!(matches!(outcome, StageOutcome::Continue));
+
+        let identity = ctx.borrow_identity_ctx().as_ref().expect("identity attached");
+        assert_eq!(identity.auth_state, AuthState::Unknown);
+    }
+
+    #[tokio::test]
+    async fn identity_context_pins_original_src_ip_before_nat() {
+        let store = IdentitySessionStore::new_shared();
+        store.upsert(user_session("192.168.10.10", 1_700_003_600));
+        let stage = IdentityLookupStage {
+            store: Arc::clone(&store),
+            enforcement: user_zone_enforcement(),
+        };
+        let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
+
+        let _ = stage.process(&mut ctx).await;
+
+        let identity = ctx.borrow_identity_ctx().as_ref().expect("identity attached");
+        assert_eq!(
+            identity.original_src_ip,
+            "192.168.10.10".parse::<IpAddr>().unwrap()
+        );
+        assert!(identity.is_authenticated());
     }
 }

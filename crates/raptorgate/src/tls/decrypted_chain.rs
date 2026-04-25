@@ -150,6 +150,7 @@ fn build_packet_context(
         Vec::new(),
         SystemTime::now(),
         Some(seed_ctx.clone()),
+        None,
     )
     .context("failed to parse synthetic decrypted packet")
 }

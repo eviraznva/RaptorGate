@@ -5,6 +5,7 @@ use ouroboros::self_referencing;
 use etherparse::{err::packet, SlicedPacket};
 
 use crate::dpi::DpiContext;
+use crate::identity::IdentityContext;
 
 #[self_referencing]
 #[derive(Debug)]
@@ -16,8 +17,9 @@ pub struct PacketContext {
     #[borrows(raw)]
     #[covariant]
     pub sliced_packet: SlicedPacket<'this>,
-    
+
     pub dpi_ctx: Option<DpiContext>,
+    pub identity_ctx: Option<IdentityContext>,
 }
 
 impl PacketContext {
@@ -28,6 +30,7 @@ impl PacketContext {
             Vec::new(),
             SystemTime::now(),
             None,
+            None,
         )
     }
 
@@ -37,6 +40,7 @@ impl PacketContext {
         warnings: Vec<String>,
         arrival_time: SystemTime,
         dpi_ctx: Option<DpiContext>,
+        identity_ctx: Option<IdentityContext>,
     ) -> Result<Self, packet::SliceError> {
         PacketContextTryBuilder {
             src_interface,
@@ -45,6 +49,7 @@ impl PacketContext {
             raw,
             sliced_packet_builder: |raw| SlicedPacket::from_ethernet(raw),
             dpi_ctx,
+            identity_ctx,
         }
         .try_build()
     }

@@ -51,7 +51,7 @@ impl IdentitySessionStore {
         }
     }
 
-    // TODO(Issue 5): lookup per pakiet z PacketContext.
+    // Lookup hot-path per pakiet wolany z IdentityLookupStage.
     pub fn get(&self, client_ip: &IpAddr) -> Option<IdentitySession> {
         self.sessions.get(client_ip).map(|entry| entry.clone())
     }

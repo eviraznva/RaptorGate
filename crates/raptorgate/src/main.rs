@@ -31,12 +31,12 @@ use crate::data_plane::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
-use crate::identity::IdentitySessionStore;
+use crate::identity::{IdentityEnforcementConfig, IdentitySessionStore};
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
     DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
-    IpsStage, LocalOwnershipStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
-    TcpClassificationStage, TlsPortEnforcementStage, ValidationStage,
+    IdentityLookupStage, IpsStage, LocalOwnershipStage, NatPostroutingStage, NatPreroutingStage,
+    PolicyEvalStage, TcpClassificationStage, TlsPortEnforcementStage, ValidationStage,
 };
 use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::policy::provider::DiskPolicyProvider;
@@ -61,22 +61,25 @@ async fn main() {
         Chain<
             LocalOwnershipStage,
             Chain<
-                DpiStage,
+                IdentityLookupStage,
                 Chain<
-                    TlsPortEnforcementStage,
+                    DpiStage,
                     Chain<
-                        DnsBlockListStage,
+                        TlsPortEnforcementStage,
                         Chain<
-                            DnsTunnelingStage,
+                            DnsBlockListStage,
                             Chain<
-                                DnsEchMitigationStage,
+                                DnsTunnelingStage,
                                 Chain<
-                                    IpsStage,
+                                    DnsEchMitigationStage,
                                     Chain<
-                                        NatPreroutingStage,
+                                        IpsStage,
                                         Chain<
-                                            TcpClassificationStage,
-                                            Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                            NatPreroutingStage,
+                                            Chain<
+                                                TcpClassificationStage,
+                                                Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                            >,
                                         >,
                                     >,
                                 >,
@@ -229,8 +232,7 @@ async fn main() {
 
     let dpi_classifier = Arc::new(DpiClassifier::new());
 
-    // Runtime store aktywnych sesji identity (ADR 0002), dzielony z handlerem gRPC.
-    // TODO(Issue 5): store wstrzykiwany tez do IdentityLookupStage w pipeline.
+    // Runtime store aktywnych sesji identity (ADR 0002), dzielony z handlerem gRPC i pipeline.
     let identity_sessions = IdentitySessionStore::new_shared();
 
     let query_server = QueryServer::<DiskPolicyProvider>::new(
@@ -275,6 +277,9 @@ async fn main() {
     let dnssec_provider: Arc<dyn DnssecProvider> =
         Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
 
+    // TODO(Issue 6): identity_enforcement zastapi sie match kindem auth_state w policy engine.
+    let identity_enforcement = Arc::new(IdentityEnforcementConfig::default());
+
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
@@ -283,48 +288,54 @@ async fn main() {
                 local_ips: Arc::new(local_ips),
             },
             tail: Chain {
-                head: DpiStage {
-                    classifier: Arc::clone(&dpi_classifier),
+                head: IdentityLookupStage {
+                    store: Arc::clone(&identity_sessions),
+                    enforcement: Arc::clone(&identity_enforcement),
                 },
                 tail: Chain {
-                    head: TlsPortEnforcementStage {
-                        config_provider: Arc::clone(&config_provider),
+                    head: DpiStage {
+                        classifier: Arc::clone(&dpi_classifier),
                     },
                     tail: Chain {
-                        head: DnsBlockListStage {
-                            inspection: Arc::clone(&dns_inspection),
+                        head: TlsPortEnforcementStage {
+                            config_provider: Arc::clone(&config_provider),
                         },
                         tail: Chain {
-                            head: DnsTunnelingStage {
+                            head: DnsBlockListStage {
                                 inspection: Arc::clone(&dns_inspection),
                             },
                             tail: Chain {
-                                head: DnsEchMitigationStage {
+                                head: DnsTunnelingStage {
                                     inspection: Arc::clone(&dns_inspection),
                                 },
                                 tail: Chain {
-                                    head: IpsStage {
-                                        inspection: Arc::clone(&ips),
+                                    head: DnsEchMitigationStage {
+                                        inspection: Arc::clone(&dns_inspection),
                                     },
                                     tail: Chain {
-                                        head: NatPreroutingStage {
-                                            engine: Arc::clone(&nat_engine),
+                                        head: IpsStage {
+                                            inspection: Arc::clone(&ips),
                                         },
                                         tail: Chain {
-                                            head: TcpClassificationStage {
-                                                tracker: Arc::clone(&tcp_session_tracker),
+                                            head: NatPreroutingStage {
+                                                engine: Arc::clone(&nat_engine),
                                             },
                                             tail: Chain {
-                                                head: PolicyEvalStage {
-                                                    provider: Arc::clone(&policy_provider),
-                                                    dnssec: Some(dnssec_provider),
+                                                head: TcpClassificationStage {
+                                                    tracker: Arc::clone(&tcp_session_tracker),
                                                 },
                                                 tail: Chain {
-                                                    head: NatPostroutingStage {
-                                                        engine: Arc::clone(&nat_engine),
+                                                    head: PolicyEvalStage {
+                                                        provider: Arc::clone(&policy_provider),
+                                                        dnssec: Some(dnssec_provider),
                                                     },
-                                                    tail: FtpAlgStage {
-                                                        engine: Arc::clone(&nat_engine),
+                                                    tail: Chain {
+                                                        head: NatPostroutingStage {
+                                                            engine: Arc::clone(&nat_engine),
+                                                        },
+                                                        tail: FtpAlgStage {
+                                                            engine: Arc::clone(&nat_engine),
+                                                        },
                                                     },
                                                 },
                                             },
