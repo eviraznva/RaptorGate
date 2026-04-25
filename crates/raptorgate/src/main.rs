@@ -278,7 +278,17 @@ async fn main() {
         Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
 
     // TODO(Issue 6): identity_enforcement zastapi sie match kindem auth_state w policy engine.
-    let identity_enforcement = Arc::new(IdentityEnforcementConfig::default());
+    let identity_enforcement = match identity_enforcement_from_env() {
+        Ok(enforcement) => Arc::new(enforcement),
+        Err(err) => {
+            tracing::error!(
+                event = "startup.identity_enforcement.failed",
+                error = %err,
+                "failed to initialize identity enforcement"
+            );
+            return;
+        }
+    };
 
     let pipeline = DataPipeline {
         head: ValidationStage,
@@ -379,9 +389,11 @@ async fn main() {
                     cert_forger: Arc::clone(forger),
                     untrust_forger: Arc::clone(untrust),
                     decision_engine: Arc::clone(&decision_engine),
-                    decrypted_inspector: Arc::new(DecryptedChainInspector::new(
+                    decrypted_inspector: Arc::new(DecryptedChainInspector::with_identity(
                         pipeline.clone(),
                         Arc::clone(&dpi_classifier),
+                        Arc::clone(&identity_sessions),
+                        Arc::clone(&identity_enforcement),
                     )),
                     cancel: tls_runtime_cancel,
                 };
@@ -441,6 +453,22 @@ async fn main() {
             });
         }
     }
+}
+
+fn identity_enforcement_from_env() -> anyhow::Result<IdentityEnforcementConfig> {
+    let raw = std::env::var("IDENTITY_REQUIRED_SRC_CIDRS")
+        .unwrap_or_else(|_| "192.168.10.0/24".into());
+    let cidrs = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|cidr| !cidr.is_empty())
+        .map(|cidr| {
+            cidr.parse().map_err(|err| {
+                anyhow::anyhow!("invalid IDENTITY_REQUIRED_SRC_CIDRS entry '{cidr}': {err}")
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(IdentityEnforcementConfig::new(cidrs))
 }
 
 fn resolve_interface_ips(capture_interfaces: &[String]) -> HashMap<String, Vec<IpAddr>> {

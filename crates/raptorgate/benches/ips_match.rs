@@ -222,6 +222,7 @@ fn build_tcp_packet(payload: &[u8], dst_port: u16) -> PacketContext {
             app_proto: Some(AppProto::Http),
             ..Default::default()
         }),
+        None,
     )
     .expect("packet context should parse")
 }
