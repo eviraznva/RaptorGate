@@ -12,7 +12,7 @@ import { Env } from '../shared/config/env.validation.js';
 // Modul klienta gRPC dla IdentitySessionService hostowanego przez firewall.
 // Osobny kanal od PushActiveConfigSnapshot (ADR 0002), ale fizycznie ten sam
 // UDS co FirewallQueryService (FIREWALL_QUERY_GRPC_SOCKET_PATH).
-// TODO(Issue 3): AuthModule/session lifecycle bedzie uzywal IDENTITY_SESSION_SYNC_SERVICE_TOKEN.
+// Konsument: IdentityModule (Issue 3) — AuthenticateIdentityUseCase i sweeper.
 @Module({
   imports: [
     ClientsModule.registerAsync([

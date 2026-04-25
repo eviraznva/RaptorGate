@@ -8,6 +8,7 @@ import {
   HttpStatus,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import type { Request, Response } from "express";
@@ -29,6 +30,8 @@ import { NatConfigIsInvalidException } from "../../domain/exceptions/nat-config-
 import { NatTypeIsInvalidException } from "../../domain/exceptions/nat-type-is-invalid.exception.js";
 import { PortIsInvalidException } from "../../domain/exceptions/port-is-invalid.exception.js";
 import { PriorityIsInvalidException } from "../../domain/exceptions/priority-is-invalid.exception.js";
+import { RadiusAccessRejectedException } from "../../domain/exceptions/radius-access-rejected.exception.js";
+import { RadiusUnavailableException } from "../../domain/exceptions/radius-unavailable.exception.js";
 import { RaptorLangValidationException } from "../../domain/exceptions/raptor-lang-validation.exception.js";
 import { RefreshTokenIsInvalidException } from "../../domain/exceptions/refresh-token-is-invalid.exception.js";
 import { RegexPatternIsInvalidException } from "../../domain/exceptions/regex-pattern-is-invalid.exception.js";
@@ -79,9 +82,14 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
 
     if (
       exception instanceof RefreshTokenIsInvalidException ||
-      exception instanceof AccessTokenIsInvalidException
+      exception instanceof AccessTokenIsInvalidException ||
+      exception instanceof RadiusAccessRejectedException
     ) {
       return new UnauthorizedException(exception.message);
+    }
+
+    if (exception instanceof RadiusUnavailableException) {
+      return new ServiceUnavailableException(exception.message);
     }
 
     if (

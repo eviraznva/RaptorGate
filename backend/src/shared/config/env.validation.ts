@@ -38,6 +38,23 @@ const envSchema = z.object({
       return val;
     })
     .default([]),
+  // RADIUS provider (Issue 3). Backend laczy sie do FreeRADIUS w labie (192.168.20.30).
+  RADIUS_HOST: z.string().min(1).default('192.168.20.30'),
+  RADIUS_PORT: z.coerce.number().int().positive().max(65535).default(1812),
+  RADIUS_SECRET: z.string().min(1).default('radiussecret'),
+  RADIUS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
+  RADIUS_RETRIES: z.coerce.number().int().min(0).max(5).default(1),
+  // NAS-IP-Address (RFC 2865 attr 4). Domyslnie adres r1 w sieci 192.168.20.0/24.
+  RADIUS_NAS_IP: z.string().min(1).default('192.168.20.254'),
+  // NAS-Identifier (attr 32) i Called-Station-Id (attr 30) — wartosc informacyjna.
+  RADIUS_NAS_IDENTIFIER: z.string().min(1).default('raptorgate-backend'),
+  // Lifecycle aktywnej sesji identity (Issue 3, ADR 0003).
+  IDENTITY_SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(1800),
+  IDENTITY_SESSION_SWEEP_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30_000),
 });
 
 export type Env = z.infer<typeof envSchema>;
