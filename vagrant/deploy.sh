@@ -19,6 +19,8 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 cd "$SCRIPT_DIR/.."
 
 # project name (can be overridden from environment)
+MODEL_NAME="${MODEL_NAME:-raptorgate-cicids2017-v4-focal}"
+MODEL_SRC="${MODEL_SRC:-ml_pipeline/data/models}"
 
 # cd "$SCRIPT_DIR/../backend" && bun run proto:generate || exit 1
 cd "$SCRIPT_DIR/.."
@@ -41,13 +43,31 @@ test -f bin/frontend/dist/index.html || {
 
 cd "$SCRIPT_DIR"
 mkdir -p .router_sync/"$PROJECT_NAME"
+test -f ../"$MODEL_SRC"/"$MODEL_NAME".onnx || {
+  echo "ML model is missing: $MODEL_SRC/$MODEL_NAME.onnx" >&2
+  exit 1
+}
+test -f ../"$MODEL_SRC"/"$MODEL_NAME".onnx.data || {
+  echo "ML model external data is missing: $MODEL_SRC/$MODEL_NAME.onnx.data" >&2
+  exit 1
+}
+test -f ../"$MODEL_SRC"/"$MODEL_NAME".onnx.json || {
+  echo "ML model metadata is missing: $MODEL_SRC/$MODEL_NAME.onnx.json" >&2
+  exit 1
+}
 rm -rf .router_sync/backend && mkdir -p .router_sync/backend
 rm -rf .router_sync/frontend && mkdir -p .router_sync/frontend
 rm -rf .router_sync/proto && mkdir -p .router_sync/proto
 rm -rf .router_sync/logrotate && mkdir -p .router_sync/logrotate
 rm -rf .router_sync/nginx && mkdir -p .router_sync/nginx
 rm -rf .router_sync/vector && mkdir -p .router_sync/vector
+rm -rf .router_sync/"$PROJECT_NAME"/ml && mkdir -p .router_sync/"$PROJECT_NAME"/ml
 cp -f ../bin/"$PROJECT_NAME" .router_sync/"$PROJECT_NAME"/"$PROJECT_NAME"
+cp -f \
+  ../"$MODEL_SRC"/"$MODEL_NAME".onnx \
+  ../"$MODEL_SRC"/"$MODEL_NAME".onnx.data \
+  ../"$MODEL_SRC"/"$MODEL_NAME".onnx.json \
+  .router_sync/"$PROJECT_NAME"/ml/
 cp -rf ../bin/backend/* .router_sync/backend/
 rm -rf .router_sync/backend/data/json-db
 mkdir -p .router_sync/backend/data

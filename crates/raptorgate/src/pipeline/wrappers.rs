@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use dashmap::DashMap;
 use etherparse::{NetSlice, TransportSlice};
 use tokio::sync::Mutex;
 
@@ -14,8 +16,9 @@ use crate::{
         packet_context::PacketContext,
         tcp_session_tracker::TcpSessionTracker,
     },
-    dpi::{DpiClassifier, InspectResult},
+    dpi::{DpiClassifier, FlowKey, InspectResult},
     events::{self, Event, EventKind},
+    ml::{MlPacketInspector, MlPrediction},
     packet_validator::validate,
     pipeline::{Stage, StageOutcome},
     policy::provider::DiskPolicyProvider,
@@ -530,6 +533,32 @@ fn emit_ips_signature_matched(ctx: &PacketContext, matched: &IpsSignatureMatch) 
     }));
 }
 
+fn emit_ml_threat_detected(ctx: &PacketContext, prediction: &MlPrediction) {
+    let fields = packet_log_fields(ctx);
+    let (Some(src_ip), Some(dst_ip), Some(src_port), Some(dst_port)) = (
+        fields.src_ip,
+        fields.dst_ip,
+        fields.src_port,
+        fields.dst_port,
+    ) else {
+        return;
+    };
+
+    events::emit(Event::new(EventKind::MlThreatDetected {
+        score: prediction.malicious_score,
+        threshold: prediction.threshold,
+        model_checksum: prediction.model_checksum.clone(),
+        src_ip,
+        src_port,
+        dst_ip,
+        dst_port,
+        transport_protocol: fields.protocol.unwrap_or("").to_string(),
+        app_protocol: fields.app_proto.unwrap_or_default(),
+        interface: ctx.borrow_src_interface().to_string(),
+        payload_length: u32::try_from(fields.payload_length).unwrap_or(u32::MAX),
+    }));
+}
+
 /// Stage ewaluacji polityk.
 ///
 /// Opcjonalnie przyjmuje dostawcę DNSSEC (`dnssec`) — jeśli jest obecny,
@@ -731,6 +760,81 @@ fn populate_ml_tcp_and_flow_stats(
 }
 
 #[derive(Clone)]
+pub struct MlAlertStage {
+    pub detector: Arc<dyn MlPacketInspector>,
+    cooldown: Duration,
+    last_alert: Arc<DashMap<FlowKey, Instant>>,
+}
+
+impl MlAlertStage {
+    pub fn new(detector: Arc<dyn MlPacketInspector>) -> Self {
+        Self {
+            detector,
+            cooldown: Duration::from_secs(10),
+            last_alert: Arc::new(DashMap::new()),
+        }
+    }
+
+    fn should_emit(&self, ctx: &PacketContext) -> bool {
+        let Some(key) = packet_flow_key(ctx) else {
+            return true;
+        };
+        let now = Instant::now();
+
+        if let Some(mut last_seen) = self.last_alert.get_mut(&key) {
+            if now.duration_since(*last_seen) < self.cooldown {
+                return false;
+            }
+            *last_seen = now;
+            return true;
+        }
+
+        self.last_alert.insert(key, now);
+        true
+    }
+}
+
+impl Stage for MlAlertStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        self.detector.is_enabled()
+            && matches!(
+                &ctx.borrow_sliced_packet().transport,
+                Some(TransportSlice::Tcp(_) | TransportSlice::Udp(_))
+            )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let features = ctx.borrow_ml_feature_vector().to_f32_array();
+
+        match self.detector.inspect_features(features) {
+            Ok(Some(prediction)) if self.should_emit(ctx) => {
+                let msg = ml_alert_message(&prediction);
+                emit_ml_threat_detected(ctx, &prediction);
+                log_packet_decision(ctx, "ml.threat.alert", "ml", "allow_warn", &msg);
+                ctx.with_warnings_mut(|warnings| warnings.push(msg));
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(
+                    event = "ml.inference.failed",
+                    error = %err,
+                    "ML inference failed"
+                );
+            }
+        }
+
+        StageOutcome::Continue
+    }
+}
+
+fn ml_alert_message(prediction: &MlPrediction) -> String {
+    format!(
+        "ML threat score {:.4} exceeded threshold {:.4}",
+        prediction.malicious_score, prediction.threshold
+    )
+}
+
+#[derive(Clone)]
 pub struct DpiStage {
     pub classifier: Arc<DpiClassifier>,
     pub flow_stats: Arc<crate::ml::FlowStatsAggregator>,
@@ -885,6 +989,7 @@ fn log_packet_decision(
 
 struct PacketLogFields {
     packet_len: usize,
+    payload_length: usize,
     src_ip: Option<String>,
     dst_ip: Option<String>,
     src_port: Option<u16>,
@@ -907,20 +1012,22 @@ fn packet_log_fields(ctx: &PacketContext) -> PacketLogFields {
         _ => (None, None),
     };
 
-    let (src_port, dst_port, protocol) = match &sliced.transport {
+    let (src_port, dst_port, protocol, payload_length) = match &sliced.transport {
         Some(TransportSlice::Tcp(tcp)) => (
             Some(tcp.source_port()),
             Some(tcp.destination_port()),
             Some("tcp"),
+            tcp.payload().len(),
         ),
         Some(TransportSlice::Udp(udp)) => (
             Some(udp.source_port()),
             Some(udp.destination_port()),
             Some("udp"),
+            udp.payload().len(),
         ),
-        Some(TransportSlice::Icmpv4(_)) => (None, None, Some("icmpv4")),
-        Some(TransportSlice::Icmpv6(_)) => (None, None, Some("icmpv6")),
-        _ => (None, None, None),
+        Some(TransportSlice::Icmpv4(_)) => (None, None, Some("icmpv4"), 0),
+        Some(TransportSlice::Icmpv6(_)) => (None, None, Some("icmpv6"), 0),
+        _ => (None, None, None, 0),
     };
 
     let app_proto = ctx
@@ -931,6 +1038,7 @@ fn packet_log_fields(ctx: &PacketContext) -> PacketLogFields {
 
     PacketLogFields {
         packet_len: ctx.borrow_raw().len(),
+        payload_length,
         src_ip,
         dst_ip,
         src_port,
@@ -938,6 +1046,28 @@ fn packet_log_fields(ctx: &PacketContext) -> PacketLogFields {
         protocol,
         app_proto,
     }
+}
+
+fn packet_flow_key(ctx: &PacketContext) -> Option<FlowKey> {
+    let sliced = ctx.borrow_sliced_packet();
+    let (src_ip, dst_ip) = match &sliced.net {
+        Some(NetSlice::Ipv4(ipv4)) => (
+            IpAddr::V4(ipv4.header().source_addr()),
+            IpAddr::V4(ipv4.header().destination_addr()),
+        ),
+        Some(NetSlice::Ipv6(ipv6)) => (
+            IpAddr::V6(ipv6.header().source_addr()),
+            IpAddr::V6(ipv6.header().destination_addr()),
+        ),
+        _ => return None,
+    };
+    let (src_port, dst_port) = match &sliced.transport {
+        Some(TransportSlice::Tcp(tcp)) => (tcp.source_port(), tcp.destination_port()),
+        Some(TransportSlice::Udp(udp)) => (udp.source_port(), udp.destination_port()),
+        _ => return None,
+    };
+
+    Some(FlowKey::new(src_ip, src_port, dst_ip, dst_port))
 }
 
 #[cfg(test)]
@@ -1080,5 +1210,46 @@ mod tests {
         assert_eq!(classified.src_port, Some(12345));
         assert_eq!(classified.dst_port, Some(443));
         assert_eq!(classified.app_proto, Some(crate::dpi::AppProto::Http));
+    }
+
+    struct StaticMlInspector;
+
+    impl MlPacketInspector for StaticMlInspector {
+        fn inspect_features(&self, _features: [f32; 38]) -> anyhow::Result<Option<MlPrediction>> {
+            Ok(Some(MlPrediction {
+                malicious_score: 0.91,
+                threshold: 0.2,
+                model_checksum: "test".to_string(),
+            }))
+        }
+
+        fn is_enabled(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn ml_alert_stage_warns_and_continues() {
+        let detector: Arc<dyn MlPacketInspector> = Arc::new(StaticMlInspector);
+        let stage = MlAlertStage::new(detector);
+        let mut ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 80, "eth1");
+
+        let outcome = stage.process(&mut ctx).await;
+
+        assert!(matches!(outcome, StageOutcome::Continue));
+        assert_eq!(ctx.borrow_warnings().len(), 1);
+        assert!(ctx.borrow_warnings()[0].contains("ML threat score"));
+    }
+
+    #[tokio::test]
+    async fn ml_alert_stage_cooldown_suppresses_repeated_flow_warning() {
+        let detector: Arc<dyn MlPacketInspector> = Arc::new(StaticMlInspector);
+        let stage = MlAlertStage::new(detector);
+        let mut ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 80, "eth1");
+
+        assert!(matches!(stage.process(&mut ctx).await, StageOutcome::Continue));
+        assert!(matches!(stage.process(&mut ctx).await, StageOutcome::Continue));
+
+        assert_eq!(ctx.borrow_warnings().len(), 1);
     }
 }

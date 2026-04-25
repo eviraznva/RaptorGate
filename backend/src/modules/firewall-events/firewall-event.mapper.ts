@@ -275,6 +275,20 @@ export function mapEventToDocument(event: Event): FirewallEventDocument | null {
         ech_action: undefinedIfEmpty(e.action),
       };
     }
+    case 'mlThreatDetected': {
+      const e = item.mlThreatDetected;
+      return {
+        ...base('ML', 'alert', 'ml_threat_detected'),
+        src_ip: e.srcIp,
+        src_port: e.srcPort,
+        dst_ip: e.dstIp,
+        dst_port: e.dstPort,
+        app_proto: undefinedIfEmpty(e.appProtocol),
+        ml_score: e.score,
+        ml_threshold: e.threshold,
+        model_checksum: undefinedIfEmpty(e.modelChecksum),
+      };
+    }
     default:
       return null;
   }
