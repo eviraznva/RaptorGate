@@ -1,7 +1,8 @@
 import { useRef, useState, type ChangeEvent } from "react";
 import type { ConfigSnapshot } from "./types";
-import { useImportConfigMutation } from "../../services/config";
+import { useImportConfigMutation, useApplyConfigMutation } from "../../services/config";
 import type { ApiFailure, ApiSuccess } from "../../types/ApiResponse";
+import type { SnapshotType } from "../../types/config/Config";
 import { generateSHA256 } from "../../utils/generateSHA256";
 
 const APPLY_PREVIEW = `{
@@ -44,10 +45,29 @@ export default function ConfigControlOperationsPanel(
   const [importedConfig, setImportedConfig] = useState<string>(IMPORT_PREVIEW);
   const [responseError, setResponseError] = useState<ApiFailure>();
 
+  const [applySnapshotType, setApplySnapshotType] = useState<SnapshotType>("manual_import");
+  const [applyIsActive, setApplyIsActive] = useState(true);
+  const [applyChangeSummary, setApplyChangeSummary] = useState("Applied current running config");
+
   const [importConfig, { isError: isImportError, isSuccess: isImportSuccess }] =
     useImportConfigMutation();
 
+  const [applyConfig, { isError: isApplyError, isSuccess: isApplySuccess, isLoading: isApplyLoading, error: applyError }] =
+    useApplyConfigMutation();
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleApply = async function () {
+    try {
+      await applyConfig({
+        snapshotType: applySnapshotType,
+        isActive: applyIsActive,
+        changeSummary: applyChangeSummary || null,
+      }).unwrap();
+    } catch (error) {
+      setResponseError(error as ApiFailure);
+    }
+  };
 
   const handleButtonClick = async function () {
     fileInputRef.current?.click();
@@ -141,14 +161,22 @@ export default function ConfigControlOperationsPanel(
                 <label className="text-[10px] tracking-[0.16em] uppercase text-[#4a4a4a]">
                   snapshotType
                 </label>
-                <select className="w-full bg-[#0c0c0c] border border-[#262626] px-3 py-2 text-base text-[#f5f5f5]">
-                  <option>manual_import</option>
-                  <option>rollback_point</option>
-                  <option>auto_save</option>
+                <select
+                  value={applySnapshotType}
+                  onChange={(e) => setApplySnapshotType(e.target.value as SnapshotType)}
+                  className="w-full bg-[#0c0c0c] border border-[#262626] px-3 py-2 text-base text-[#f5f5f5]"
+                >
+                  <option value="manual_import">manual_import</option>
+                  <option value="rollback_point">rollback_point</option>
+                  <option value="auto_save">auto_save</option>
                 </select>
               </div>
 
-              <div className="flex items-center justify-between gap-3 bg-[#0f0f0f] border border-[#262626] px-3 py-2.5">
+              <button
+                type="button"
+                onClick={() => setApplyIsActive((v) => !v)}
+                className="w-full flex items-center justify-between gap-3 bg-[#0f0f0f] border border-[#262626] px-3 py-2.5 text-left"
+              >
                 <div>
                   <p className="text-[11px] tracking-[0.14em] uppercase text-[#8a8a8a]">
                     isActive
@@ -157,10 +185,10 @@ export default function ConfigControlOperationsPanel(
                     Publish as active snapshot
                   </p>
                 </div>
-                <div className="relative w-9 h-5 rounded-full bg-[#06b6d4]">
-                  <span className="absolute top-[3px] right-[3px] h-3.5 w-3.5 rounded-full bg-white" />
+                <div className={`relative w-9 h-5 rounded-full transition-colors ${applyIsActive ? "bg-[#06b6d4]" : "bg-[#262626]"}`}>
+                  <span className={`absolute top-[3px] h-3.5 w-3.5 rounded-full bg-white transition-all ${applyIsActive ? "right-[3px]" : "left-[3px]"}`} />
                 </div>
-              </div>
+              </button>
 
               <div className="space-y-1.5">
                 <label className="text-[10px] tracking-[0.16em] uppercase text-[#4a4a4a]">
@@ -168,21 +196,36 @@ export default function ConfigControlOperationsPanel(
                 </label>
                 <textarea
                   rows={2}
+                  value={applyChangeSummary}
+                  onChange={(e) => setApplyChangeSummary(e.target.value)}
                   className="w-full bg-[#0c0c0c] border border-[#262626] px-3 py-2 text-base text-[#f5f5f5]"
-                  defaultValue="Applied current running config"
                 />
               </div>
             </div>
 
             <pre className="text-[11px] text-[#b2c0c5] bg-[#0e0e0e] border border-[#262626] p-3 overflow-auto whitespace-pre-wrap leading-5">
-              {APPLY_PREVIEW}
+              {JSON.stringify({ snapshotType: applySnapshotType, isActive: applyIsActive, changeSummary: applyChangeSummary || null }, null, 2)}
             </pre>
+
+            {isApplyError && (
+              <p className="text-[#ef4444] text-xs">
+                {(applyError as ApiFailure)?.message ?? "Apply failed"}
+              </p>
+            )}
+
+            {isApplySuccess && (
+              <p className="text-[#10b981] text-xs">
+                Snapshot applied successfully.
+              </p>
+            )}
 
             <button
               type="button"
-              className="w-full border border-[#06b6d4] text-[#06b6d4] text-[11px] tracking-[0.16em] uppercase py-2.5 hover:bg-[#06b6d4] hover:text-black transition"
+              disabled={isApplyLoading}
+              onClick={handleApply}
+              className="w-full border border-[#06b6d4] text-[#06b6d4] text-[11px] tracking-[0.16em] uppercase py-2.5 hover:bg-[#06b6d4] hover:text-black transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Apply Snapshot
+              {isApplyLoading ? "Applying…" : "Apply Snapshot"}
             </button>
           </section>
         )}

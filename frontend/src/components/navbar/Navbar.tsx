@@ -15,6 +15,7 @@ const navItems = [
   { name: "Connections", path: "/dashboard/connections" },
   { name: "Users", path: "/dashboard/users" },
   { name: "Config", path: "/dashboard/config-control" },
+  { name: "Config Diff", path: "/dashboard/config-diff" },
   { name: "Settings", path: "/dashboard/settings" },
 ];
 

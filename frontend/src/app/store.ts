@@ -18,6 +18,7 @@ import { natRulesApi } from "../services/natRules";
 import NatRulesReducer from "../features/natRulesSlice";
 import { usersApi } from "../services/users";
 import ConfigReducer from "../features/configSlice";
+import ConfigDiffReducer from "../features/configDiffSlice";
 import UsersManagementSlice from "../features/usersManagementSlice";
 import { configApi } from "../services/config";
 
@@ -31,6 +32,7 @@ export const store = configureStore({
     zonePairs: ZonePairsReducer,
     natRules: NatRulesReducer,
     config: ConfigReducer,
+    configDiff: ConfigDiffReducer,
     zones: ZonesReducer,
     rules: RulesReducer,
     user: UserReducer,

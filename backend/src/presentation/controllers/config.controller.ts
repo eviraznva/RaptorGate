@@ -7,10 +7,13 @@ import {
   Inject,
   Param,
   Post,
+  Query,
 } from '@nestjs/common';
-import { ApiBody, ApiOperation } from '@nestjs/swagger';
+import { ApiBody, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import type { GetConfigDiffDto } from '../../application/dtos/get-config-diff.dto.js';
 import { ApplyConfigSnapshotUseCase } from '../../application/use-cases/apply-config-snapshot.use-case.js';
 import { ExportConfigUseCase } from '../../application/use-cases/export-config.use-case.js';
+import { GetConfigDiffUseCase } from '../../application/use-cases/get-config-diff.use-case.js';
 import { GetConfigHistoryUseCase } from '../../application/use-cases/get-config-history.use-case.js';
 import { ImportConfigUseCase } from '../../application/use-cases/import-config.use-case.js';
 import { RollbackConfigUseCase } from '../../application/use-cases/rollback-config.use-case.js';
@@ -26,6 +29,7 @@ import {
   ApiError400,
   ApiError401,
   ApiError403,
+  ApiError404,
   ApiError429,
   ApiError500,
 } from '../decorators/api-error-response.decorator.js';
@@ -36,6 +40,8 @@ import { ResponseMessage } from '../decorators/response-message.decorator.js';
 import { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.js';
 import { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 import { ExportConfigResponseDto } from '../dtos/export-config-response.dto.js';
+import { GetConfigDiffQueryDto } from '../dtos/get-config-diff-query.dto.js';
+import { GetConfigDiffResponseDto } from '../dtos/get-config-diff-response.dto.js';
 import { GetConfigHistoryResponseDto } from '../dtos/get-config-history-response.dto.js';
 import { ImportConfigSnapshotDto } from '../dtos/import-config-snapshot.dto.js';
 import { RollbackConfigSnapshotResponseDto } from '../dtos/rollback-config-snapshot.dto.js';
@@ -47,6 +53,8 @@ export class ConfigController {
     private readonly applyConfigSnapshotUseCase: ApplyConfigSnapshotUseCase,
     @Inject(GetConfigHistoryUseCase)
     private readonly getConfigHistoryUseCase: GetConfigHistoryUseCase,
+    @Inject(GetConfigDiffUseCase)
+    private readonly getConfigDiffUseCase: GetConfigDiffUseCase,
     @Inject(RollbackConfigUseCase)
     private readonly rollbackConfigUseCase: RollbackConfigUseCase,
     @Inject(ExportConfigUseCase)
@@ -85,6 +93,36 @@ export class ConfigController {
     });
 
     return configSnapshot;
+  }
+
+  @ApiOperation({
+    summary: 'Diff configuration snapshots',
+    description:
+      'Compares two configuration snapshots and returns a domain-aware configuration diff.',
+  })
+  @ApiQuery({ name: 'baseId', required: true, type: String })
+  @ApiQuery({ name: 'targetId', required: true, type: String })
+  @Roles(Role.Admin, Role.SuperAdmin)
+  @RequirePermissions(Permission.SNAPSHOTS_READ)
+  @Get('diff')
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage('Configuration snapshot diff retrieved')
+  @ApiOkEnvelope(
+    GetConfigDiffResponseDto,
+    'Configuration snapshot diff retrieved',
+  )
+  @ApiError400('Validation failed or invalid snapshot ID')
+  @ApiError401('Access token is missing, invalid, or expired')
+  @ApiError403('Insufficient permissions to view configuration snapshot diff')
+  @ApiError404('Configuration snapshot not found')
+  @ApiError429('Too many requests to retrieve configuration snapshot diff')
+  @ApiError500(
+    'Internal server error while retrieving configuration snapshot diff',
+  )
+  async getConfigDiff(
+    @Query() query: GetConfigDiffQueryDto,
+  ): Promise<GetConfigDiffDto> {
+    return this.getConfigDiffUseCase.execute(query);
   }
 
   @ApiOperation({
