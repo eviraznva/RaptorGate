@@ -1,10 +1,11 @@
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use futures::TryStreamExt;
+use ipnet::IpNet;
 use rtnetlink::Handle;
 use thiserror::Error;
 
-use super::monitor::SystemInterface;
 
 #[derive(Debug, Error)]
 pub enum InterfaceControllerError {
@@ -14,6 +15,8 @@ pub enum InterfaceControllerError {
     NotFound(String),
     #[error("netlink operation failed")]
     Netlink(#[source] rtnetlink::Error),
+    #[error("invalid address '{0}'")]
+    InvalidAddress(String),
 }
 
 pub struct InterfaceController {
@@ -44,19 +47,57 @@ impl InterfaceController {
         Ok(())
     }
 
-    pub async fn rename_interface(&self, old_name: &str, new_name: &str) -> Result<(), InterfaceControllerError> {
-        let index = self.get_interface_index(old_name).await?;
-        let message = rtnetlink::LinkUnspec::new_with_index(index)
-            .name(new_name.to_string())
-            .build();
-        self.handle
-            .link()
-            .set(message)
-            .execute()
-            .await
-            .map_err(InterfaceControllerError::Netlink)?;
-        Ok(())
+pub async fn set_interface_properties(
+  &self,
+  name: &str,
+  new_name: Option<&str>,
+  address: Option<&str>,
+) -> Result<String, InterfaceControllerError> {
+  let index = self.get_interface_index(name).await?;
+  let mut current_name = name.to_string();
+
+  if let Some(new) = new_name {
+    let message = rtnetlink::LinkUnspec::new_with_index(index)
+      .name(new.to_string())
+      .build();
+    self.handle
+      .link()
+      .set(message)
+      .execute()
+      .await
+      .map_err(InterfaceControllerError::Netlink)?;
+    current_name = new.to_string();
+  }
+
+  if let Some(addr) = address {
+    let ip_net: IpNet = addr
+      .parse()
+      .map_err(|_| InterfaceControllerError::InvalidAddress(addr.to_string()))?;
+    let (ip, prefix_len) = match ip_net {
+      IpNet::V4(v4) => (IpAddr::V4(v4.addr()), v4.prefix_len()),
+      IpNet::V6(v6) => (IpAddr::V6(v6.addr()), v6.prefix_len()),
+    };
+
+    let existing = self.get_interface_addresses(index).await?;
+    for existing_addr in existing {
+      self.handle
+        .address()
+        .del(existing_addr)
+        .execute()
+        .await
+        .map_err(InterfaceControllerError::Netlink)?;
     }
+
+    self.handle
+      .address()
+      .add(index, ip, prefix_len)
+      .execute()
+      .await
+      .map_err(InterfaceControllerError::Netlink)?;
+  }
+
+  Ok(current_name)
+}
 
     async fn get_interface_index(&self, name: &str) -> Result<u32, InterfaceControllerError> {
         let mut links = self.handle.link().get().match_name(name.to_string()).execute();
@@ -65,5 +106,23 @@ impl InterfaceController {
             Ok(None) => Err(InterfaceControllerError::NotFound(name.to_string())),
             Err(e) => Err(InterfaceControllerError::Netlink(e)),
         }
+    }
+
+async fn get_interface_addresses(
+        &self,
+        index: u32,
+    ) -> Result<Vec<netlink_packet_route::address::AddressMessage>, InterfaceControllerError> {
+        let mut addresses = self.handle.address().get().execute();
+        let mut result = Vec::new();
+        while let Some(addr) = addresses
+            .try_next()
+            .await
+            .map_err(InterfaceControllerError::Netlink)?
+        {
+            if addr.header.index == index {
+                result.push(addr);
+            }
+        }
+        Ok(result)
     }
 }

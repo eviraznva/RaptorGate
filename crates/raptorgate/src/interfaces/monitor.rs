@@ -238,6 +238,7 @@ impl NetworkInterfaceMonitor {
         self.interfaces
             .iter()
             .find(|entry| entry.value().index == index)
+            .inspect(|entry| if entry.name == "dummy-rename" { tracing::info!("DUMMY-RENAME found") })
             .map(|entry| (entry.key().clone(), entry.value().clone()))
     }
 

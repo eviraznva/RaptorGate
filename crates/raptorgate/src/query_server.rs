@@ -581,8 +581,8 @@ where
 
     async fn set_interface_state(
         &self,
-        request: Request<crate::proto::services::SetInterfaceStateRequest>,
-    ) -> Result<Response<crate::proto::services::SetInterfaceStateResponse>, Status> {
+        request: Request<SetInterfaceStateRequest>,
+    ) -> Result<Response<SetInterfaceStateResponse>, Status> {
         let req = request.into_inner();
         let id: ZoneInterfaceId = Uuid::try_parse(&req.id)
             .map_err(|e| Status::invalid_argument(format!("invalid id: {e}")))?
@@ -591,7 +591,7 @@ where
         let zone_interface = self.zone_interface_store.get_zone_interface(&id)
             .ok_or_else(|| Status::not_found(format!("zone interface with id {id} not found")))?;
 
-        let system_interface = self.interface_monitor.get(&zone_interface.interface_name)
+        let _system_interface = self.interface_monitor.get(&zone_interface.interface_name)
             .ok_or_else(|| Status::not_found(format!(
                 "system interface '{}' not found", zone_interface.interface_name
             )))?;
@@ -611,8 +611,8 @@ where
 
     async fn update_zone_interface_properties(
         &self,
-        request: Request<crate::proto::services::UpdateZoneInterfacePropertiesRequest>,
-    ) -> Result<Response<crate::proto::services::UpdateZoneInterfacePropertiesResponse>, Status> {
+        request: Request<UpdateZoneInterfacePropertiesRequest>,
+    ) -> Result<Response<UpdateZoneInterfacePropertiesResponse>, Status> {
         let req = request.into_inner();
         let id: ZoneInterfaceId = Uuid::try_parse(&req.id)
             .map_err(|e| Status::invalid_argument(format!("invalid id: {e}")))?
@@ -621,9 +621,18 @@ where
         let mut zone_interface = self.zone_interface_store.get_zone_interface(&id)
             .ok_or_else(|| Status::not_found(format!("zone interface with id {id} not found")))?;
 
-        if let Some(name) = req.interface_name {
-            zone_interface.interface_name = name;
-        }
+        let effective_name = self
+            .interface_controller
+            .set_interface_properties(
+                &zone_interface.interface_name,
+                req.interface_name.as_deref(),
+                req.address.as_deref(),
+            )
+            .await
+            .map_err(|e| Status::internal(format!("failed to set interface properties: {e}")))?;
+
+        zone_interface.interface_name = effective_name;
+
         if let Some(vlan_id) = req.vlan_id {
             zone_interface.vlan_id = Some(vlan_id);
         }
@@ -637,7 +646,7 @@ where
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        
+
         interfaces.retain(|(k, _)| *k != id);
         interfaces.push((id, zone_interface));
 
@@ -646,9 +655,8 @@ where
             .await
             .map_err(|e| Status::internal(format!("failed to update zone interface: {e}")))?;
 
-        Ok(Response::new(crate::proto::services::UpdateZoneInterfacePropertiesResponse {}))
-    }
-}
+        Ok(Response::new(UpdateZoneInterfacePropertiesResponse {}))
+    }}
 
 #[tonic::async_trait]
 impl<Swapper, Monitor> FirewallConfigSnapshotService for QueryHandler<Swapper, Monitor>
