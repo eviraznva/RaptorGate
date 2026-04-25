@@ -2,6 +2,23 @@ import { RegexPattern } from "src/domain/value-objects/regex-pattern.vo.js";
 import { z } from "zod";
 import { isoDateTimeSchema, tableFileSchema, uuidSchema } from "./_common.js";
 
+export const SignatureSeveritySchema = z.enum([
+  "SEVERITY_UNSPECIFIED",
+  "SEVERITY_INFO",
+  "SEVERITY_LOW",
+  "SEVERITY_MEDIUM",
+  "SEVERITY_HIGH",
+  "SEVERITY_CRITICAL",
+  "UNRECOGNIZED",
+]);
+
+export const IpsActionSchema = z.enum([
+  "IPS_ACTION_UNSPECIFIED",
+  "IPS_ACTION_ALERT",
+  "IPS_ACTION_BLOCK",
+  "UNRECOGNIZED",
+]);
+
 export const IpsSignatureRecordSchema = z
   .object({
     id: uuidSchema,
@@ -15,8 +32,8 @@ export const IpsSignatureRecordSchema = z
       },
       { message: "Invalid regex pattern according to VO" },
     ),
-    severity: z.string().min(1).max(16),
-    action: z.string().min(1).max(16),
+    severity: SignatureSeveritySchema,
+    action: IpsActionSchema,
     appProtocols: z.array(z.string().min(1).max(32)).max(16),
     srcPorts: z.array(z.number().int().min(1).max(65535)).max(16),
     dstPorts: z.array(z.number().int().min(1).max(65535)).max(16),

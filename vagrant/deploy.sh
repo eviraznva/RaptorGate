@@ -4,6 +4,26 @@ LIBVIRT_DEFAULT_URI=qemu:///system
 
 set -e
 
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+  echo "Do not run this script with sudo; it invokes sudo only for host-level setup." >&2
+  exit 1
+fi
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+
+for work_dir in "$SCRIPT_DIR/.vagrant" "$SCRIPT_DIR/.router_sync"; do
+  if [ -e "$work_dir" ]; then
+    sudo chown -R "$(id -u):$(id -g)" "$work_dir"
+  fi
+done
+
+ensure_iptables_rule() {
+  local chain="$1"
+  shift
+
+  sudo iptables -C "$chain" "$@" 2>/dev/null || sudo iptables -I "$chain" 1 "$@"
+}
+
 # Parse flags
 if [[ "$1" == "--no-backend" || "$1" == "-n" ]]; then
   export NO_BACKEND=1
@@ -12,10 +32,15 @@ fi
 sudo sysctl -w net.ipv4.ip_forward=1
 
 # 2. Allow virbr1 traffic through Docker's FORWARD chain
-sudo iptables -I FORWARD 1 -i virbr1 -j ACCEPT
-sudo iptables -I FORWARD 1 -o virbr1 -m state --state RELATED,ESTABLISHED -j ACCEPT
+ensure_iptables_rule FORWARD -i virbr1 -j ACCEPT
+ensure_iptables_rule FORWARD -o virbr1 -m state --state RELATED,ESTABLISHED -j ACCEPT
+ensure_iptables_rule INPUT -i virbr0 -p udp --dport 67 -j ACCEPT
+ensure_iptables_rule INPUT -i virbr0 -p udp --dport 53 -j ACCEPT
+ensure_iptables_rule INPUT -i virbr0 -p tcp --dport 53 -j ACCEPT
+ensure_iptables_rule INPUT -i virbr1 -p udp --dport 67 -j ACCEPT
+ensure_iptables_rule INPUT -i virbr1 -p udp --dport 53 -j ACCEPT
+ensure_iptables_rule INPUT -i virbr1 -p tcp --dport 53 -j ACCEPT
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 cd "$SCRIPT_DIR/.."
 
 # project name (can be overridden from environment)
