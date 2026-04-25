@@ -2,7 +2,22 @@ syntax = "proto3";
 
 package raptorgate.services;
 
-import "config/config_models.proto";
+import "google/protobuf/timestamp.proto";
+
+// Aktywna sesja uzytkownika uwierzytelnionego przez RADIUS.
+// Runtime state (ADR 0002), dystrybuowane wylacznie przez IdentitySessionService.
+// TODO(Issue 4): groups moga trafic tu jako snapshot grup zresolvowanych z LDAP.
+message IdentityManagerUserSession {
+  string                    id                = 1;
+  string                    identity_user_id  = 2;
+  string                    radius_username   = 3;
+  string                    mac_address       = 4;
+  string                    ip_address        = 5;
+  string                    nas_ip            = 6;
+  string                    called_station_id = 7;
+  google.protobuf.Timestamp authenticated_at  = 8;
+  google.protobuf.Timestamp expires_at        = 9;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Runtime sync aktywnych sesji identity.
@@ -35,7 +50,7 @@ service IdentitySessionService {
 }
 
 message UpsertIdentitySessionRequest {
-  raptorgate.config.IdentityManagerUserSession session = 1;
+  IdentityManagerUserSession session = 1;
 }
 
 message UpsertIdentitySessionResponse {}

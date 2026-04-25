@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use thiserror::Error;
 
-use crate::proto::config::IdentityManagerUserSession as ProtoSession;
+use crate::proto::services::IdentityManagerUserSession as ProtoSession;
 
 // Runtime reprezentacja aktywnej sesji identity w firewallu.
 // Lookup w hot-path robi sie przez `client_ip`, reszta pol jest kontekstowa

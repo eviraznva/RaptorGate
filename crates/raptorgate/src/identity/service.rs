@@ -85,7 +85,7 @@ impl IdentitySessionService for IdentitySessionHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::config::IdentityManagerUserSession as ProtoSession;
+    use crate::proto::services::IdentityManagerUserSession as ProtoSession;
 
     fn ts(seconds: i64) -> prost_types::Timestamp {
         prost_types::Timestamp { seconds, nanos: 0 }

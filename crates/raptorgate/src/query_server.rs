@@ -558,21 +558,6 @@ where
             "received active config snapshot push"
         );
 
-        // ADR 0002: aktywne sesje identity sa runtime state i nie chodza snapshotami.
-        // Backend nie powinien ich wysylac (grpc-config-snapshot-push ustawia identity=undefined),
-        // ale gdyby cos sie prezesilo, tu je ignorujemy i logujemy dla diagnostyki.
-        if let Some(identity) = bundle.identity.as_ref()
-            && !identity.user_sessions.is_empty()
-        {
-            tracing::warn!(
-                event = "config_snapshot.identity_sessions_ignored",
-                correlation_id,
-                snapshot_id,
-                count = identity.user_sessions.len(),
-                "ignoring user_sessions in config snapshot; use IdentitySessionService instead"
-            );
-        }
-
         // 1. Parse all proto types into domain-type HashMaps
         let policies = parse_proto_collection(bundle.rules, Policy::try_from_rule, "rule")?;
         let zones = parse_proto_collection(bundle.zones, Zone::try_from_proto, "zone")?;

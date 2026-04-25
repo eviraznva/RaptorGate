@@ -181,24 +181,14 @@ message UserGroupMember {
   string identity_user_id = 3;
 }
 
-// Aktywna sesja użytkownika uwierzytelnionego przez RADIUS.
-message IdentityManagerUserSession {
-  string                    id                = 1;
-  string                    identity_user_id  = 2;
-  string                    radius_username   = 3;
-  string                    mac_address       = 4;
-  string                    ip_address        = 5;
-  string                    nas_ip            = 6;
-  string                    called_station_id = 7;
-  google.protobuf.Timestamp authenticated_at  = 8;
-  google.protobuf.Timestamp expires_at        = 9;
-}
-
+// Aktywne sesje identity to runtime state (ADR 0002), nie chodza snapshotami.
+// Ich definicja i transport zyja w services/identity_session_service.proto.
 message IdentityBundle {
   repeated UserGroup                  user_groups   = 2;
   repeated IdentityUser               identity_users = 3;
   repeated UserGroupMember            user_group_members = 4;
-  repeated IdentityManagerUserSession user_sessions = 5;
+  reserved 5;
+  reserved "user_sessions";
 }
 
 // ── DNS Inspection ───────────────────────────────────────────────────────────
