@@ -15,9 +15,9 @@ services:
   #     - ./bin/backend:/host/bin
   #   command: "sh -lc 'rm -rf /host/bin/* && cp -R /app/backend/. /host/bin/'"
 
-  frontend_build:
-    build:
-      context: .
-      dockerfile: ./docker/frontend/dockerfile
-    volumes:
-      - ./bin/frontend:/host/bin
+  # frontend_build:
+  #   build:
+  #     context: .
+  #     dockerfile: ./docker/frontend/dockerfile
+  #   volumes:
+  #     - ./bin/frontend:/host/bin
