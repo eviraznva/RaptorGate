@@ -652,6 +652,7 @@ impl Stage for PolicyEvalStage {
             arrival: &arrival,
             dns: dns_ctx.as_ref(),
             dpi: ctx.borrow_dpi_ctx().as_ref(),
+            identity: ctx.borrow_identity_ctx().as_ref(),
         });
 
         match verdict {
@@ -1051,6 +1052,7 @@ mod tests {
             client_ip: ip.parse().unwrap(),
             authenticated_at: UNIX_EPOCH + Duration::from_secs(1_700_000_000),
             expires_at: UNIX_EPOCH + Duration::from_secs(expires_secs),
+            groups: Vec::new(),
         }
     }
 

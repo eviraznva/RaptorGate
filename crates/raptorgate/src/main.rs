@@ -277,7 +277,6 @@ async fn main() {
     let dnssec_provider: Arc<dyn DnssecProvider> =
         Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
 
-    // TODO(Issue 6): identity_enforcement zastapi sie match kindem auth_state w policy engine.
     let identity_enforcement = match identity_enforcement_from_env() {
         Ok(enforcement) => Arc::new(enforcement),
         Err(err) => {

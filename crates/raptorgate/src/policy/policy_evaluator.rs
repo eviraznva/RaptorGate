@@ -5,6 +5,7 @@ use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use crate::data_plane::dns_inspection::types::DnssecStatus;
 use crate::dpi::DpiContext;
+use crate::identity::IdentityContext;
 use crate::rule_tree::{
     ArrivalInfo, FieldValue, IpVer, MatchKind, Operation, Pattern, Port, Protocol, RuleTree, Step,
     TreeWalker, Verdict,
@@ -22,6 +23,9 @@ pub(crate) struct PolicyEvalContext<'a, 'p> {
     pub arrival: &'a ArrivalInfo,
     pub dns: Option<&'a DnsEvalContext>,
     pub dpi: Option<&'a DpiContext>,
+    /// Wynik IdentityLookupStage: doklejony do PacketContext przed NAT postrouting.
+    /// `None` tylko gdy stage byl pominiety (brak src IP), w normalnym ruchu zawsze Some.
+    pub identity: Option<&'a IdentityContext>,
 }
 
 pub struct PolicyEvaluator {
@@ -43,10 +47,7 @@ impl PolicyEvaluator {
         loop {
             match walker.current_step() {
                 Step::NeedsMatch { kind, pattern } => {
-                    let matched = match Self::extract(*kind, &ctx) {
-                        Some(value) => Self::pattern_matches(pattern, value),
-                        None => Self::missing_value_matches(*kind, pattern),
-                    };
+                    let matched = Self::matches_kind(*kind, pattern, &ctx);
                     if let Step::Verdict(v) = walker.advance(matched) {
                         return v.clone();
                     }
@@ -54,6 +55,22 @@ impl PolicyEvaluator {
                 Step::Verdict(v) => return v.clone(),
                 Step::NoMatch => return self.orphaned_verdict.clone(),
             }
+        }
+    }
+
+    fn matches_kind(kind: MatchKind, pattern: &Pattern, ctx: &PolicyEvalContext<'_, '_>) -> bool {
+        // identity_group ma asymetryczna semantyke: regula trzyma jedna nazwe,
+        // sesja ma liste, dopasowanie sprawdza przynaleznosc.
+        if matches!(kind, MatchKind::IdentityGroup) {
+            let groups = ctx
+                .identity
+                .and_then(|identity| identity.session.as_ref().map(|s| s.groups.as_slice()));
+            return Self::pattern_matches_group(pattern, groups);
+        }
+
+        match Self::extract(kind, ctx) {
+            Some(value) => Self::pattern_matches(pattern, &value),
+            None => Self::missing_value_matches(kind, pattern),
         }
     }
 
@@ -116,12 +133,26 @@ impl PolicyEvaluator {
                 let status = ctx.dns?.dnssec_status?;
                 Some(FieldValue::DnssecStatus(status))
             }
+            MatchKind::AuthState => {
+                // Brak identity_ctx oznacza, ze stage byl pominiety, traktujemy jak Unknown.
+                let state = ctx
+                    .identity
+                    .map(|identity| identity.auth_state)
+                    .unwrap_or(crate::identity::AuthState::Unknown);
+                Some(FieldValue::AuthState(state))
+            }
+            MatchKind::IdentityUser => ctx
+                .identity
+                .and_then(|identity| identity.session.as_ref())
+                .map(|session| FieldValue::IdentityUser(session.username.clone())),
+            // identity_group obsluzony w matches_kind, tu nie powinno trafic.
+            MatchKind::IdentityGroup => None,
         }
     }
 
     fn missing_value_matches(kind: MatchKind, pattern: &Pattern) -> bool {
         match kind {
-            MatchKind::AppProto => Self::pattern_accepts_missing(pattern),
+            MatchKind::AppProto | MatchKind::IdentityUser => Self::pattern_accepts_missing(pattern),
             _ => false,
         }
     }
@@ -135,36 +166,55 @@ impl PolicyEvaluator {
         }
     }
 
-    fn pattern_matches(pattern: &Pattern, value: FieldValue) -> bool {
+    fn pattern_matches(pattern: &Pattern, value: &FieldValue) -> bool {
         match (pattern, value) {
             (Pattern::Wildcard, _) => true,
 
-            (Pattern::Equal(field_value), value) => *field_value == value,
+            (Pattern::Equal(field_value), value) => field_value == value,
 
             (Pattern::Comparison(op, FieldValue::Port(rhs)), FieldValue::Port(v)) => match op {
-                Operation::Greater => v > *rhs,
-                Operation::Lesser => v < *rhs,
-                Operation::GreaterOrEqual => v >= *rhs,
-                Operation::LesserOrEqual => v <= *rhs,
+                Operation::Greater => v > rhs,
+                Operation::Lesser => v < rhs,
+                Operation::GreaterOrEqual => v >= rhs,
+                Operation::LesserOrEqual => v <= rhs,
             },
             (Pattern::Comparison(op, FieldValue::Hour(rhs)), FieldValue::Hour(v)) => match op {
-                Operation::Greater => v > *rhs,
-                Operation::Lesser => v < *rhs,
-                Operation::GreaterOrEqual => v >= *rhs,
-                Operation::LesserOrEqual => v <= *rhs,
+                Operation::Greater => v > rhs,
+                Operation::Lesser => v < rhs,
+                Operation::GreaterOrEqual => v >= rhs,
+                Operation::LesserOrEqual => v <= rhs,
             },
             (Pattern::Comparison(op, FieldValue::DayOfWeek(rhs)), FieldValue::DayOfWeek(v)) => {
                 match op {
-                    Operation::Greater => v > *rhs,
-                    Operation::Lesser => v < *rhs,
-                    Operation::GreaterOrEqual => v >= *rhs,
-                    Operation::LesserOrEqual => v <= *rhs,
+                    Operation::Greater => v > rhs,
+                    Operation::Lesser => v < rhs,
+                    Operation::GreaterOrEqual => v >= rhs,
+                    Operation::LesserOrEqual => v <= rhs,
                 }
             }
             (Pattern::Comparison(_, _), _) => false,
 
             (Pattern::Or(patterns), _) => patterns.iter().any(|p| Self::pattern_matches(p, value)),
             (Pattern::And(patterns), _) => patterns.iter().all(|p| Self::pattern_matches(p, value)),
+        }
+    }
+
+    // identity_group: regula trzyma jedna nazwe, sesja liste, dopasowanie po przynaleznosci.
+    // Brak sesji => tylko Wildcard pasuje (analogicznie do AppProto bez DPI).
+    fn pattern_matches_group(pattern: &Pattern, groups: Option<&[String]>) -> bool {
+        match pattern {
+            Pattern::Wildcard => true,
+            Pattern::Equal(FieldValue::IdentityGroup(name)) => {
+                groups.is_some_and(|gs| gs.iter().any(|g| g == name))
+            }
+            Pattern::Or(patterns) => patterns
+                .iter()
+                .any(|p| Self::pattern_matches_group(p, groups)),
+            Pattern::And(patterns) => patterns
+                .iter()
+                .all(|p| Self::pattern_matches_group(p, groups)),
+            // Comparison i Equal innego typu sa odrzucone w validate_for, defensywnie zwracamy false.
+            _ => false,
         }
     }
 }
@@ -252,6 +302,16 @@ mod tests {
         arrival: &ArrivalInfo,
         dpi: Option<&DpiContext>,
     ) -> Verdict {
+        eval_with_identity(tree, raw, arrival, dpi, None)
+    }
+
+    fn eval_with_identity(
+        tree: RuleTree,
+        raw: &[u8],
+        arrival: &ArrivalInfo,
+        dpi: Option<&DpiContext>,
+        identity: Option<&IdentityContext>,
+    ) -> Verdict {
         let sliced = SlicedPacket::from_ethernet(raw).unwrap();
         let evaluator = PolicyEvaluator::new(tree, Verdict::Drop);
         evaluator.evaluate(PolicyEvalContext {
@@ -259,6 +319,7 @@ mod tests {
             arrival,
             dns: None,
             dpi,
+            identity,
         })
     }
 
@@ -1599,6 +1660,294 @@ mod tests {
         assert_eq!(
             eval(tree, &default_packet(), &default_arrival()),
             Verdict::DropWarn("hour outside range".into())
+        );
+    }
+
+    // Identity matchery: auth_state / identity_user / identity_group (Issue 6).
+
+    use crate::identity::{AuthState, IdentitySession};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    fn authenticated_session(username: &str, groups: Vec<&str>) -> IdentitySession {
+        IdentitySession {
+            session_id: "sess-1".into(),
+            identity_user_id: format!("user-{username}"),
+            username: username.into(),
+            client_ip: "192.168.10.10".parse().unwrap(),
+            authenticated_at: UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+            expires_at: UNIX_EPOCH + Duration::from_secs(1_700_003_600),
+            groups: groups.into_iter().map(String::from).collect(),
+        }
+    }
+
+    fn authenticated_ctx(session: IdentitySession) -> IdentityContext {
+        IdentityContext::authenticated("192.168.10.10".parse().unwrap(), session)
+    }
+
+    fn unknown_ctx() -> IdentityContext {
+        IdentityContext::unknown("192.168.10.10".parse().unwrap())
+    }
+
+    #[test]
+    fn equal_auth_state_authenticated_match() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::AuthState,
+                Pattern::Equal(FieldValue::AuthState(AuthState::Authenticated)),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = authenticated_ctx(authenticated_session("alice", vec![]));
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn equal_auth_state_unknown_when_no_session() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::AuthState,
+                Pattern::Equal(FieldValue::AuthState(AuthState::Unknown)),
+                ArmEnd::Verdict(Verdict::Drop),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = unknown_ctx();
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn equal_auth_state_no_identity_ctx_treated_as_unknown() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::AuthState,
+                Pattern::Equal(FieldValue::AuthState(AuthState::Unknown)),
+                ArmEnd::Verdict(Verdict::Drop),
+            )
+            .build()
+            .unwrap(),
+        );
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, None),
+            Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn equal_identity_user_match() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityUser,
+                Pattern::Equal(FieldValue::IdentityUser("alice".into())),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = authenticated_ctx(authenticated_session("alice", vec![]));
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn equal_identity_user_no_match_for_different_user() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityUser,
+                Pattern::Equal(FieldValue::IdentityUser("alice".into())),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = authenticated_ctx(authenticated_session("bob", vec![]));
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn equal_identity_user_no_session_drops() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityUser,
+                Pattern::Equal(FieldValue::IdentityUser("alice".into())),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = unknown_ctx();
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn wildcard_identity_user_no_session_matches() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityUser,
+                Pattern::Wildcard,
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = unknown_ctx();
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn or_identity_user_matches_one_of() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityUser,
+                Pattern::Or(vec![
+                    Pattern::Equal(FieldValue::IdentityUser("alice".into())),
+                    Pattern::Equal(FieldValue::IdentityUser("bob".into())),
+                ]),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = authenticated_ctx(authenticated_session("bob", vec![]));
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn equal_identity_group_match_when_in_list() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityGroup,
+                Pattern::Equal(FieldValue::IdentityGroup("admins".into())),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = authenticated_ctx(authenticated_session("alice", vec!["admins", "users"]));
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn equal_identity_group_no_match_when_not_in_list() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityGroup,
+                Pattern::Equal(FieldValue::IdentityGroup("admins".into())),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = authenticated_ctx(authenticated_session("alice", vec!["users"]));
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn equal_identity_group_no_session_no_match() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityGroup,
+                Pattern::Equal(FieldValue::IdentityGroup("admins".into())),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = unknown_ctx();
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn or_identity_group_matches_one_of() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityGroup,
+                Pattern::Or(vec![
+                    Pattern::Equal(FieldValue::IdentityGroup("admins".into())),
+                    Pattern::Equal(FieldValue::IdentityGroup("auditors".into())),
+                ]),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = authenticated_ctx(authenticated_session("alice", vec!["users", "auditors"]));
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn nested_auth_state_and_identity_user() {
+        // Tylko zalogowani uzytkownicy: alice => Allow, kazdy inny uwierzytelniony => Drop.
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::AuthState,
+                Pattern::Equal(FieldValue::AuthState(AuthState::Authenticated)),
+                ArmEnd::Match(
+                    MatchBuilder::with_arm(
+                        MatchKind::IdentityUser,
+                        Pattern::Equal(FieldValue::IdentityUser("alice".into())),
+                        ArmEnd::Verdict(Verdict::Allow),
+                    )
+                    .arm(Pattern::Wildcard, ArmEnd::Verdict(Verdict::Drop))
+                    .build()
+                    .unwrap(),
+                ),
+            )
+            .arm(Pattern::Wildcard, ArmEnd::Verdict(Verdict::Drop))
+            .build()
+            .unwrap(),
+        );
+
+        let alice = authenticated_ctx(authenticated_session("alice", vec![]));
+        assert_eq!(
+            eval_with_identity(
+                tree.clone(),
+                &default_packet(),
+                &default_arrival(),
+                None,
+                Some(&alice),
+            ),
+            Verdict::Allow
+        );
+
+        let bob = authenticated_ctx(authenticated_session("bob", vec![]));
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&bob)),
+            Verdict::Drop
         );
     }
 }

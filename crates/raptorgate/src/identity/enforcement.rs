@@ -6,11 +6,20 @@ use ipnet::IpNet;
 use super::session::IdentitySession;
 
 // Stan auth doklejany do PacketContext przez IdentityLookupStage.
-// TODO(Issue 6): match kindy identity_user / identity_group / auth_state w policy engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthState {
     Unknown,
     Authenticated,
+}
+
+impl std::fmt::Display for AuthState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            AuthState::Unknown => "unknown",
+            AuthState::Authenticated => "authenticated",
+        };
+        write!(f, "{s}")
+    }
 }
 
 // Identity context per pakiet. `original_src_ip` jest zatrzaskiwany przy lookupie,
@@ -46,7 +55,9 @@ impl IdentityContext {
 
 // Konfiguracja pre-auth gate dla IdentityLookupStage.
 // Pusta lista CIDR-ow = gate wylaczony (np. dev / brak identity zone).
-// TODO(Issue 6): zastapic match kindem auth_state w policy engine, gate stanie sie redundantny.
+// Gate dziala niezaleznie od polityk: domyslnie blokuje pakiety bez sesji w
+// chronionym CIDR. Polityki Issue 6 (auth_state / identity_user / identity_group)
+// dopelniaja go i moga dawac drobniejsza kontrola na poziomie regul.
 #[derive(Debug, Clone, Default)]
 pub struct IdentityEnforcementConfig {
     pub require_identity_src_cidrs: Vec<IpNet>,
@@ -116,6 +127,7 @@ mod tests {
             client_ip: ip.parse().unwrap(),
             authenticated_at: UNIX_EPOCH + Duration::from_secs(1_700_000_000),
             expires_at: UNIX_EPOCH + Duration::from_secs(expires_secs),
+            groups: Vec::new(),
         }
     }
 

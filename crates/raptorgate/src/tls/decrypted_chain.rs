@@ -281,6 +281,7 @@ mod tests {
             client_ip: "10.0.0.1".parse().unwrap(),
             authenticated_at: now,
             expires_at: now + Duration::from_secs(60),
+            groups: Vec::new(),
         }
     }
 

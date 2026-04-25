@@ -2,6 +2,7 @@
 // Mirrors: equal_ip_ver_match / equal_ip_ver_no_match
 
 use ngfw::dpi::AppProto;
+use ngfw::identity::AuthState;
 use ngfw::rule_tree::{
     matcher::{Match, MatchBuilder},
     parsing::parse_rule_tree,
@@ -682,6 +683,87 @@ test_parse_and_stringify!(
             .unwrap(),
         ),
     )
+);
+
+// Identity matchery (Issue 6): auth_state, identity_user, identity_group.
+
+test_parse_and_stringify!(
+    lower_equal_auth_state_authenticated,
+    "match auth_state { = authenticated : verdict allow }",
+    MatchBuilder::with_arm(
+        MatchKind::AuthState,
+        Pattern::Equal(FieldValue::AuthState(AuthState::Authenticated)),
+        ArmEnd::Verdict(Verdict::Allow),
+    )
+);
+
+test_parse_and_stringify!(
+    lower_equal_auth_state_unknown,
+    "match auth_state { = unknown : verdict drop }",
+    MatchBuilder::with_arm(
+        MatchKind::AuthState,
+        Pattern::Equal(FieldValue::AuthState(AuthState::Unknown)),
+        ArmEnd::Verdict(Verdict::Drop),
+    )
+);
+
+test_parse_and_stringify!(
+    lower_equal_identity_user,
+    "match identity_user { = \"alice\" : verdict allow }",
+    MatchBuilder::with_arm(
+        MatchKind::IdentityUser,
+        Pattern::Equal(FieldValue::IdentityUser("alice".into())),
+        ArmEnd::Verdict(Verdict::Allow),
+    )
+);
+
+test_parse_and_stringify!(
+    lower_or_identity_users,
+    "match identity_user { |( = \"alice\" = \"bob\" ) : verdict allow }",
+    MatchBuilder::with_arm(
+        MatchKind::IdentityUser,
+        Pattern::Or(vec![
+            Pattern::Equal(FieldValue::IdentityUser("alice".into())),
+            Pattern::Equal(FieldValue::IdentityUser("bob".into())),
+        ]),
+        ArmEnd::Verdict(Verdict::Allow),
+    )
+);
+
+test_parse_and_stringify!(
+    lower_equal_identity_group,
+    "match identity_group { = \"admins\" : verdict allow }",
+    MatchBuilder::with_arm(
+        MatchKind::IdentityGroup,
+        Pattern::Equal(FieldValue::IdentityGroup("admins".into())),
+        ArmEnd::Verdict(Verdict::Allow),
+    )
+);
+
+test_parse_and_stringify!(
+    lower_nested_auth_state_then_identity_group,
+    "match auth_state { \
+        = authenticated : match identity_group { \
+            = \"admins\" : verdict allow \
+                _ : verdict drop \
+        } \
+        _ : verdict drop \
+    }",
+    MatchBuilder::with_arm(
+        MatchKind::AuthState,
+        Pattern::Equal(FieldValue::AuthState(AuthState::Authenticated)),
+        ArmEnd::Match(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityGroup,
+                Pattern::Equal(FieldValue::IdentityGroup("admins".into())),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .arm(Pattern::Wildcard, ArmEnd::Verdict(Verdict::Drop))
+            .build()
+            .unwrap(),
+        ),
+    )
+    .arm(Pattern::Wildcard, ArmEnd::Verdict(Verdict::Drop))
 );
 
 test_parse_and_stringify!(

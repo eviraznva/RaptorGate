@@ -12,7 +12,9 @@ use serde::ser::SerializeStruct;
 
 use derive_more::{Debug, Display, Error, PartialEq};
 
-use crate::{dpi::AppProto, policy::parse_rule_tree, rule_tree::matcher::Match};
+use crate::{
+    dpi::AppProto, identity::AuthState, policy::parse_rule_tree, rule_tree::matcher::Match,
+};
 pub use matcher::MatchBuilder;
 
 #[derive(Clone, Debug, Display)]
@@ -130,7 +132,7 @@ impl Display for Pattern {
     }
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq)]
+#[derive(Debug, Display, Clone, PartialEq)]
 pub enum FieldValue {
     Ip(IpGlobbable),
     IpVer(IpVer),
@@ -142,6 +144,14 @@ pub enum FieldValue {
     /// Status walidacji DNSSEC — dopasowywany przez `match dns_dnssec_status { = secure : ... }`.
     #[display("{_0}")]
     DnssecStatus(DnssecStatus),
+    // Stan auth dopasowywany przez `match auth_state { = authenticated : ... }`.
+    AuthState(AuthState),
+    // Username z aktywnej sesji RADIUS, np. `match identity_user { = "alice" : ... }`.
+    #[display("\"{_0}\"")]
+    IdentityUser(String),
+    // Pojedyncza grupa z sesji, dopasowanie sprawdza przynaleznosc do listy.
+    #[display("\"{_0}\"")]
+    IdentityGroup(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -157,6 +167,12 @@ pub enum MatchKind {
     DstPort,
     /// Status walidacji DNSSEC — pasuje do wartości `FieldValue::DnssecStatus`.
     DnssecStatus,
+    // Stan auth z IdentityContext, dopasowywany do `FieldValue::AuthState`.
+    AuthState,
+    // Username z aktywnej sesji RADIUS, dopasowywany do `FieldValue::IdentityUser`.
+    IdentityUser,
+    // Pojedyncza grupa z sesji, dopasowanie sprawdza czy nazwa jest w `session.groups`.
+    IdentityGroup,
 }
 
 impl std::fmt::Display for MatchKind {
@@ -172,6 +188,9 @@ impl std::fmt::Display for MatchKind {
             MatchKind::SrcPort     => "src_port",
             MatchKind::DstPort     => "dst_port",
             MatchKind::DnssecStatus => "dns_dnssec_status",
+            MatchKind::AuthState   => "auth_state",
+            MatchKind::IdentityUser => "identity_user",
+            MatchKind::IdentityGroup => "identity_group",
         };
         write!(f, "{s}")
     }
@@ -204,6 +223,11 @@ impl Pattern {
             (Pattern::Comparison(..), MatchKind::DnssecStatus) => {
                 Err(RuleError::InvalidPattern(self.clone()))
             }
+            // Identity matchery wspieraja tylko Equal/Or/And/Wildcard.
+            (
+                Pattern::Comparison(..),
+                MatchKind::AuthState | MatchKind::IdentityUser | MatchKind::IdentityGroup,
+            ) => Err(RuleError::InvalidPattern(self.clone())),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 
             (Pattern::Or(patterns) | Pattern::And(patterns), _) => {

@@ -86,6 +86,7 @@ mod tests {
             client_ip: ip.parse().unwrap(),
             authenticated_at: UNIX_EPOCH + Duration::from_secs(1_700_000_000),
             expires_at: UNIX_EPOCH + Duration::from_secs(expires_secs),
+            groups: Vec::new(),
         }
     }
 

@@ -17,8 +17,8 @@ pub struct IdentitySession {
     pub client_ip: IpAddr,
     pub authenticated_at: SystemTime,
     pub expires_at: SystemTime,
-    // TODO(Issue 4): tu trafia lista grup z LDAP / VSA po rozwiazaniu mapowania.
-    // TODO(Issue 3): sourceIp backend bierze z requestu/polaczenia, nie z body.
+    // TODO(Issue 4): backend wypelnia po rozwiazaniu mapowania user -> grupy w LDAP / VSA.
+    pub groups: Vec<String>,
 }
 
 #[derive(Debug, Error)]
@@ -79,6 +79,8 @@ impl IdentitySession {
             client_ip,
             authenticated_at,
             expires_at,
+            // TODO(Issue 4): proto dostanie pole groups, na razie empty.
+            groups: Vec::new(),
         })
     }
 

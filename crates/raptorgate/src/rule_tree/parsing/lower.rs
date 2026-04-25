@@ -7,6 +7,7 @@ use crate::rule_tree::parsing::ast::{
 };
 
 use crate::dpi::AppProto;
+use crate::identity::AuthState;
 use crate::rule_tree::parsing::lexer::Position;
 use crate::data_plane::dns_inspection::types::DnssecStatus;
 use crate::rule_tree::types::{Hour, IpGlobbable, IpVer, Port, Protocol, Weekday};
@@ -58,6 +59,9 @@ fn lower_kind(s: &Spanned<String>) -> Result<MatchKind, LowerError> {
         "src_port" => Ok(MatchKind::SrcPort),
         "dst_port" => Ok(MatchKind::DstPort),
         "dns_dnssec_status" => Ok(MatchKind::DnssecStatus),
+        "auth_state" => Ok(MatchKind::AuthState),
+        "identity_user" => Ok(MatchKind::IdentityUser),
+        "identity_group" => Ok(MatchKind::IdentityGroup),
         other => Err(LowerError::UnknownKind {
             kind: other.to_string(),
             pos: s.pos,
@@ -142,6 +146,15 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
                     pos,
                 }),
             },
+            MatchKind::AuthState => match s.val.as_str() {
+                "authenticated" => Ok(FieldValue::AuthState(AuthState::Authenticated)),
+                "unknown"       => Ok(FieldValue::AuthState(AuthState::Unknown)),
+                other => Err(LowerError::UnknownValue {
+                    kind,
+                    value: other.to_string(),
+                    pos,
+                }),
+            },
             _ => Err(LowerError::TypeMismatch {
                 kind,
                 value: AstValue::Ident(s),
@@ -158,6 +171,8 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
                     })?;
                 Ok(FieldValue::Ip(ip))
             }
+            MatchKind::IdentityUser => Ok(FieldValue::IdentityUser(s.val)),
+            MatchKind::IdentityGroup => Ok(FieldValue::IdentityGroup(s.val)),
             _ => Err(LowerError::TypeMismatch {
                 kind,
                 value: AstValue::StrLit(s),
@@ -1394,6 +1409,104 @@ mod tests {
         let ast = ast_match(
             "app_proto",
             vec![arm(greater_ident("http"), verdict_body(AstVerdict::Allow))],
+        );
+        let err = lower(ast).unwrap_err();
+        assert!(matches!(err, LowerError::Rule(RuleError::InvalidPattern(_))));
+    }
+
+    // Identity matchery (Issue 6).
+
+    #[test]
+    fn lower_kind_auth_state() {
+        assert_eq!(
+            lower_kind(&sp("auth_state".into())).unwrap(),
+            MatchKind::AuthState
+        );
+    }
+
+    #[test]
+    fn lower_kind_identity_user() {
+        assert_eq!(
+            lower_kind(&sp("identity_user".into())).unwrap(),
+            MatchKind::IdentityUser
+        );
+    }
+
+    #[test]
+    fn lower_kind_identity_group() {
+        assert_eq!(
+            lower_kind(&sp("identity_group".into())).unwrap(),
+            MatchKind::IdentityGroup
+        );
+    }
+
+    #[test]
+    fn lower_value_auth_state_authenticated() {
+        let fv =
+            lower_value(MatchKind::AuthState, sp(AstValue::Ident(sp("authenticated".into()))))
+                .unwrap();
+        assert_eq!(fv, FieldValue::AuthState(AuthState::Authenticated));
+    }
+
+    #[test]
+    fn lower_value_auth_state_unknown() {
+        let fv =
+            lower_value(MatchKind::AuthState, sp(AstValue::Ident(sp("unknown".into())))).unwrap();
+        assert_eq!(fv, FieldValue::AuthState(AuthState::Unknown));
+    }
+
+    #[test]
+    fn lower_value_auth_state_unknown_ident_returns_error() {
+        let err =
+            lower_value(MatchKind::AuthState, sp(AstValue::Ident(sp("expired".into()))))
+                .unwrap_err();
+        assert!(matches!(
+            err,
+            LowerError::UnknownValue {
+                kind: MatchKind::AuthState,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn lower_value_identity_user_strlit() {
+        let fv =
+            lower_value(MatchKind::IdentityUser, sp(AstValue::StrLit(sp("alice".into()))))
+                .unwrap();
+        assert_eq!(fv, FieldValue::IdentityUser("alice".into()));
+    }
+
+    #[test]
+    fn lower_value_identity_user_ident_type_mismatch() {
+        let err =
+            lower_value(MatchKind::IdentityUser, sp(AstValue::Ident(sp("alice".into()))))
+                .unwrap_err();
+        assert!(matches!(
+            err,
+            LowerError::TypeMismatch {
+                kind: MatchKind::IdentityUser,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn lower_value_identity_group_strlit() {
+        let fv =
+            lower_value(MatchKind::IdentityGroup, sp(AstValue::StrLit(sp("admins".into()))))
+                .unwrap();
+        assert_eq!(fv, FieldValue::IdentityGroup("admins".into()));
+    }
+
+    #[test]
+    fn lower_identity_user_comparison_returns_error() {
+        let ast = ast_match(
+            "identity_user",
+            vec![arm(
+                AstPattern::Greater(sp(AstValue::StrLit(sp("alice".into())))),
+                verdict_body(AstVerdict::Allow),
+            )],
         );
         let err = lower(ast).unwrap_err();
         assert!(matches!(err, LowerError::Rule(RuleError::InvalidPattern(_))));
