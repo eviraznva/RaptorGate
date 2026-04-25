@@ -29,9 +29,8 @@ import { IdentityLoginDto } from '../dtos/identity-login.dto.js';
 import { IdentityLoginResponseDto } from '../dtos/identity-login-response.dto.js';
 import { IdentityLogoutResponseDto } from '../dtos/identity-logout-response.dto.js';
 
-// Endpointy identity dla portalu/captive (Issue 3). Login i logout sa publiczne
-// — uzytkownik koncowy nie ma jeszcze JWT-a backendowego (to admin panel).
-// sourceIp bierzemy z req.ip (express trust proxy = 1, ustawione w main.ts).
+// Endpointy identity dla portalu/captive sa publiczne, bo uzytkownik nie ma JWT admina.
+// sourceIp pochodzi z TCP peer albo z XFF od lokalnego proxy.
 @ApiTags('Identity')
 @Controller('identity')
 export class IdentityController {
@@ -98,13 +97,37 @@ export class IdentityController {
   }
 
   private resolveSourceIp(req: Request): string {
-    // express.trust proxy=1 daje czysty req.ip; gdy brak — fallback na remoteAddress.
-    const raw = req.ip ?? req.socket?.remoteAddress ?? '';
-    if (!raw) {
+    const peerIp = this.normalizeIp(req.socket?.remoteAddress ?? '');
+    if (!peerIp) {
       throw new BadRequestException('Cannot resolve client source IP');
     }
-    // IPv4-mapped IPv6 (::ffff:1.2.3.4) — ucinamy prefix do IPv4 literal,
-    // bo firewall trzyma sesje per IPv4 zgodnie z labem (192.168.20.0/24).
-    return raw.startsWith('::ffff:') ? raw.slice('::ffff:'.length) : raw;
+
+    if (this.isTrustedProxyPeer(peerIp)) {
+      const forwardedIp = this.resolveForwardedFor(req.headers['x-forwarded-for']);
+      if (forwardedIp) return forwardedIp;
+    }
+
+    return peerIp;
+  }
+
+  private resolveForwardedFor(header: string | string[] | undefined): string | null {
+    const raw = Array.isArray(header) ? header[header.length - 1] : header;
+    if (!raw) return null;
+
+    const values = raw
+      .split(',')
+      .map((value) => this.normalizeIp(value))
+      .filter((value) => value.length > 0);
+
+    return values[values.length - 1] ?? null;
+  }
+
+  private normalizeIp(raw: string): string {
+    const value = raw.trim();
+    return value.startsWith('::ffff:') ? value.slice('::ffff:'.length) : value;
+  }
+
+  private isTrustedProxyPeer(ip: string): boolean {
+    return ip === '127.0.0.1' || ip === '::1';
   }
 }

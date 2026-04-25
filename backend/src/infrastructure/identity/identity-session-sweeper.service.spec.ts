@@ -36,7 +36,7 @@ describe('IdentitySessionSweeperService', () => {
     sweeper.onModuleDestroy();
   });
 
-  it('wygasle sesje sa usuwane i revoke jest wolany na firewallu', async () => {
+  it('removes expired sessions and calls firewall revoke', async () => {
     const t0 = new Date('2026-04-25T10:00:00Z');
     const tLater = new Date(t0.getTime() + 5_000);
 
@@ -68,7 +68,7 @@ describe('IdentitySessionSweeperService', () => {
     expect(await store.findBySourceIp('10.0.0.2')).not.toBeNull();
   });
 
-  it('blad revoke nie przerywa sweepa kolejnych sesji ani nie wraca sesji do store', async () => {
+  it('does not stop sweeping after revoke failure and keeps the session for retry', async () => {
     const t0 = new Date('2026-04-25T10:00:00Z');
     const tLater = new Date(t0.getTime() + 5_000);
 
@@ -98,6 +98,14 @@ describe('IdentitySessionSweeperService', () => {
     await sweeper.sweepOnce(tLater);
 
     expect(sync.revokeIdentitySession).toHaveBeenCalledTimes(2);
+    const remaining = await store.listAll();
+    expect(remaining.length).toBe(1);
+    expect(remaining[0].getId()).toBe('sess-a');
+
+    sync.revokeIdentitySession.mockResolvedValueOnce(true);
+    await sweeper.sweepOnce(tLater);
+
+    expect(sync.revokeIdentitySession).toHaveBeenCalledTimes(3);
     expect(await store.listAll()).toEqual([]);
   });
 });

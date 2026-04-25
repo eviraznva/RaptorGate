@@ -27,25 +27,22 @@ export class LogoutIdentityUseCase {
 
   async execute(dto: LogoutIdentityDto): Promise<LogoutIdentityResult> {
     const sourceIp = IpAddress.create(dto.sourceIp);
-    const removed = await this.store.removeBySourceIp(sourceIp.getValue);
 
-    // Brak sesji nie jest bledem (RPC i HTTP tolerancyjne, ADR 0003).
-    // I tak wolamy revoke do firewalla — jesli firewall trzyma sesje
-    // od poprzedniego uruchomienia backendu, oczyscimy ja.
-    const firewallRemoved = await this.sync.revokeIdentitySession(
-      sourceIp.getValue,
-    );
+    return this.store.runExclusiveBySourceIp(sourceIp.getValue, async () => {
+      const firewallRemoved = await this.sync.revokeIdentitySession(sourceIp.getValue);
+      const removed = await this.store.removeBySourceIp(sourceIp.getValue);
 
-    this.logger.log({
-      event: 'identity.session.revoked',
-      message: 'identity session revoke processed',
-      sourceIp: sourceIp.getValue,
-      backendHadSession: removed !== null,
-      firewallHadSession: firewallRemoved,
-      sessionId: removed?.getId() ?? null,
-      username: removed?.getUsername() ?? null,
+      this.logger.log({
+        event: 'identity.session.revoked',
+        message: 'identity session revoke processed',
+        sourceIp: sourceIp.getValue,
+        backendHadSession: removed !== null,
+        firewallHadSession: firewallRemoved,
+        sessionId: removed?.getId() ?? null,
+        username: removed?.getUsername() ?? null,
+      });
+
+      return { removed: removed !== null || firewallRemoved };
     });
-
-    return { removed: removed !== null || firewallRemoved };
   }
 }

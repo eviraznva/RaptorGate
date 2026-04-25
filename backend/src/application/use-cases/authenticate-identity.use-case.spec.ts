@@ -43,7 +43,7 @@ describe('AuthenticateIdentityUseCase', () => {
     );
   });
 
-  it('po Access-Accept tworzy sesje i wysyla upsert do firewalla', async () => {
+  it('creates a session and sends firewall upsert after Access-Accept', async () => {
     radius.authenticate.mockResolvedValue({ kind: 'accept' } as RadiusAuthResult);
     sync.upsertIdentitySession.mockResolvedValue(undefined);
 
@@ -69,7 +69,7 @@ describe('AuthenticateIdentityUseCase', () => {
     expect(payload.radiusUsername).toBe('user');
   });
 
-  it('Access-Reject nie tworzy sesji ani nie woli upsertu', async () => {
+  it('does not create a session or call upsert after Access-Reject', async () => {
     radius.authenticate.mockResolvedValue({
       kind: 'reject',
       reason: 'bad-creds',
@@ -87,7 +87,7 @@ describe('AuthenticateIdentityUseCase', () => {
     expect(sync.upsertIdentitySession).not.toHaveBeenCalled();
   });
 
-  it('Timeout RADIUS daje czytelny blad i nie tworzy sesji', async () => {
+  it('returns a clear error and does not create a session on RADIUS timeout', async () => {
     radius.authenticate.mockResolvedValue({ kind: 'timeout' } as RadiusAuthResult);
 
     await expect(
@@ -105,7 +105,7 @@ describe('AuthenticateIdentityUseCase', () => {
     expect(sync.upsertIdentitySession).not.toHaveBeenCalled();
   });
 
-  it('Blad polaczenia RADIUS daje 503-mappable wyjatek', async () => {
+  it('returns a 503-mappable exception on RADIUS connection error', async () => {
     radius.authenticate.mockResolvedValue({
       kind: 'error',
       message: 'ECONNREFUSED',
@@ -120,7 +120,7 @@ describe('AuthenticateIdentityUseCase', () => {
     ).rejects.toBeInstanceOf(RadiusUnavailableException);
   });
 
-  it('niepoprawny sourceIp nie dotyka RADIUS-a', async () => {
+  it('does not call RADIUS when sourceIp is invalid', async () => {
     await expect(
       useCase.execute({
         username: 'user',
@@ -132,7 +132,7 @@ describe('AuthenticateIdentityUseCase', () => {
     expect(radius.authenticate).not.toHaveBeenCalled();
   });
 
-  it('gdy sync z firewallem padnie, sesja jest wycofywana ze store', async () => {
+  it('does not store the session when firewall sync fails', async () => {
     radius.authenticate.mockResolvedValue({ kind: 'accept' } as RadiusAuthResult);
     sync.upsertIdentitySession.mockRejectedValue(
       new Error('firewall unreachable'),
@@ -149,7 +149,34 @@ describe('AuthenticateIdentityUseCase', () => {
     expect(await store.findBySourceIp('192.168.10.10')).toBeNull();
   });
 
-  it('drugi login z tego samego IP wypiera poprzednia sesje (idempotencja per IP)', async () => {
+  it('keeps the previous session for the IP when new session sync fails', async () => {
+    radius.authenticate.mockResolvedValue({ kind: 'accept' } as RadiusAuthResult);
+    sync.upsertIdentitySession.mockResolvedValueOnce(undefined);
+
+    const first = await useCase.execute({
+      username: 'old-user',
+      password: 'pw',
+      sourceIp: '10.0.0.5',
+    });
+
+    sync.upsertIdentitySession.mockRejectedValueOnce(
+      new Error('firewall unreachable'),
+    );
+
+    await expect(
+      useCase.execute({
+        username: 'new-user',
+        password: 'pw',
+        sourceIp: '10.0.0.5',
+      }),
+    ).rejects.toThrow('firewall unreachable');
+
+    const stored = await store.findBySourceIp('10.0.0.5');
+    expect(stored?.getUsername()).toBe('old-user');
+    expect(stored?.getId()).toBe(first.sessionId);
+  });
+
+  it('replaces the previous session on second login from the same IP', async () => {
     radius.authenticate.mockResolvedValue({ kind: 'accept' } as RadiusAuthResult);
     sync.upsertIdentitySession.mockResolvedValue(undefined);
 
@@ -170,7 +197,7 @@ describe('AuthenticateIdentityUseCase', () => {
     expect(sync.upsertIdentitySession).toHaveBeenCalledTimes(2);
   });
 
-  it('callingStationId trafia do RADIUS-a z sourceIp, nie z body', async () => {
+  it('passes sourceIp to RADIUS as callingStationId instead of body data', async () => {
     radius.authenticate.mockResolvedValue({ kind: 'accept' } as RadiusAuthResult);
     sync.upsertIdentitySession.mockResolvedValue(undefined);
 

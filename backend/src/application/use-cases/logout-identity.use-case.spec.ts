@@ -20,7 +20,7 @@ describe('LogoutIdentityUseCase', () => {
     useCase = new LogoutIdentityUseCase(store, sync);
   });
 
-  it('usuwa sesje ze store i wola revoke na firewallu', async () => {
+  it('removes the session from store and calls firewall revoke', async () => {
     const now = new Date();
     await store.upsert(
       IdentitySession.create(
@@ -40,7 +40,7 @@ describe('LogoutIdentityUseCase', () => {
     expect(sync.revokeIdentitySession).toHaveBeenCalledWith('10.0.0.5');
   });
 
-  it('toleruje brak sesji (RPC tolerancyjne wg ADR 0003)', async () => {
+  it('tolerates a missing session', async () => {
     sync.revokeIdentitySession.mockResolvedValue(false);
 
     const result = await useCase.execute({ sourceIp: '10.0.0.99' });
@@ -49,7 +49,7 @@ describe('LogoutIdentityUseCase', () => {
     expect(sync.revokeIdentitySession).toHaveBeenCalledWith('10.0.0.99');
   });
 
-  it('zwraca removed=true gdy backend nie mial sesji ale firewall ja mial', async () => {
+  it('returns removed=true when only firewall had the session', async () => {
     sync.revokeIdentitySession.mockResolvedValue(true);
 
     const result = await useCase.execute({ sourceIp: '10.0.0.42' });
@@ -57,11 +57,34 @@ describe('LogoutIdentityUseCase', () => {
     expect(result.removed).toBe(true);
   });
 
-  it('odrzuca niepoprawny sourceIp przed wolaniem firewalla', async () => {
+  it('rejects invalid sourceIp before calling firewall', async () => {
     await expect(
       useCase.execute({ sourceIp: 'not-an-ip' }),
     ).rejects.toBeInstanceOf(IpAddressIsInvalidException);
 
     expect(sync.revokeIdentitySession).not.toHaveBeenCalled();
+  });
+
+  it('keeps the session in store when revoke fails', async () => {
+    const now = new Date();
+    await store.upsert(
+      IdentitySession.create(
+        'sess-1',
+        'user',
+        IpAddress.create('10.0.0.5'),
+        now,
+        new Date(now.getTime() + 60_000),
+      ),
+    );
+    sync.revokeIdentitySession.mockRejectedValue(
+      new Error('firewall unreachable'),
+    );
+
+    await expect(useCase.execute({ sourceIp: '10.0.0.5' })).rejects.toThrow(
+      'firewall unreachable',
+    );
+
+    const stored = await store.findBySourceIp('10.0.0.5');
+    expect(stored?.getUsername()).toBe('user');
   });
 });

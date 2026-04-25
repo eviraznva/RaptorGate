@@ -61,31 +61,36 @@ export class IdentitySessionSweeperService
     if (this.running) return;
     this.running = true;
     try {
-      const expired = await this.store.removeExpired(now);
+      const expired = await this.store.peekExpired(now);
       for (const session of expired) {
         const ip = session.getSourceIp().getValue;
-        try {
-          await this.sync.revokeIdentitySession(ip);
-          this.logger.log({
-            event: 'identity.session.expired',
-            message: 'expired identity session swept and revoked on firewall',
-            sessionId: session.getId(),
-            username: session.getUsername(),
-            sourceIp: ip,
-          });
-        } catch (error) {
-          // Nie wkladamy z powrotem do store — sesja juz wygasla, brak sensu.
-          // Firewall i tak ignoruje wygasle sesje per pakiet (Issue 5).
-          const message =
-            error instanceof Error ? error.message : 'unknown error';
-          this.logger.error({
-            event: 'identity.session.expire_sync_failed',
-            message: 'failed to revoke expired session on firewall',
-            sessionId: session.getId(),
-            sourceIp: ip,
-            error: message,
-          });
-        }
+        await this.store.runExclusiveBySourceIp(ip, async () => {
+          const current = await this.store.findBySourceIp(ip);
+          if (!current || current.getId() !== session.getId()) return;
+          if (!current.isExpiredAt(now)) return;
+
+          try {
+            await this.sync.revokeIdentitySession(ip);
+            await this.store.removeBySourceIp(ip);
+            this.logger.log({
+              event: 'identity.session.expired',
+              message: 'expired identity session swept and revoked on firewall',
+              sessionId: current.getId(),
+              username: current.getUsername(),
+              sourceIp: ip,
+            });
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : 'unknown error';
+            this.logger.error({
+              event: 'identity.session.expire_sync_failed',
+              message: 'failed to revoke expired session on firewall',
+              sessionId: current.getId(),
+              sourceIp: ip,
+              error: message,
+            });
+          }
+        });
       }
     } finally {
       this.running = false;

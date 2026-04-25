@@ -22,7 +22,7 @@ import { AuthenticateIdentityDto } from '../dtos/authenticate-identity.dto.js';
 import { AuthenticateIdentityResponseDto } from '../dtos/authenticate-identity-response.dto.js';
 
 // Stale technicze dla pol IdentitySessionSyncPayload, ktore Issue 3 nie wypelnia.
-// MAC: na MVP brak — Issue 7 (portal) lub Issue 4 (DHCP/LDAP) moga go dolozyc.
+// MAC: na MVP brak; Issue 7 lub Issue 4 moga go dolozyc.
 // nas-ip / called-station-id: bierzemy z konfigu RADIUS, zeby firewall mial ten sam
 // kontekst NAS co RADIUS provider.
 const PLACEHOLDER_MAC = '00:00:00:00:00:00';
@@ -45,7 +45,7 @@ export class AuthenticateIdentityUseCase {
   async execute(
     dto: AuthenticateIdentityDto,
   ): Promise<AuthenticateIdentityResponseDto> {
-    // Walidacja sourceIp odbywa sie przez VO — zly IP od razu rzuca, zanim
+    // Walidacja sourceIp odbywa sie przez VO; zly IP od razu rzuca, zanim
     // dotkniemy RADIUS-a. Wymaganie Issue 3: sourceIp z requestu, nie z body.
     const sourceIp = IpAddress.create(dto.sourceIp);
 
@@ -91,9 +91,7 @@ export class AuthenticateIdentityUseCase {
       expiresAt,
     );
 
-    await this.store.upsert(session);
-
-    try {
+    await this.store.runExclusiveBySourceIp(sourceIp.getValue, async () => {
       await this.sync.upsertIdentitySession({
         id: sessionId,
         // TODO(Issue 4): identityUserId zostanie zresolvowane z LDAP do realnego rekordu IdentityUser.
@@ -106,12 +104,8 @@ export class AuthenticateIdentityUseCase {
         authenticatedAt: now,
         expiresAt,
       });
-    } catch (error) {
-      // Sync z firewallem padl — sesja nie ma sensu po stronie backendu, bo
-      // enforcement i tak nie zadziala. Wycofujemy ja i propagujemy blad.
-      await this.store.removeBySourceIp(sourceIp.getValue);
-      throw error;
-    }
+      await this.store.upsert(session);
+    });
 
     this.logger.log({
       event: 'identity.session.created',
