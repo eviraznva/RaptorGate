@@ -138,34 +138,33 @@ impl ZoneInterfaceProvider {
         let system_interfaces = monitor.snapshot();
         let mut changes_made = false;
 
-        for (name, sys_iface) in system_interfaces {
-            let exists = loaded_items.values().any(|z| z.interface_name == name);
-            if !exists {
-                let id = ZoneInterfaceId(Uuid::now_v7());
-                let new_zone_interface = ZoneInterface {
-                    zone_id: Uuid::nil().into(),
-                    interface_name: name.clone(),
-                    vlan_id: sys_iface.vlan_id.map(Into::into),
-                    status: match sys_iface.oper_state {
-                        OperState::Up => InterfaceStatus::Active,
-                        OperState::Down => InterfaceStatus::Inactive,
-                        OperState::Unknown => InterfaceStatus::Unknown,
-                    },
-                    addresses: sys_iface
-                        .addresses
-                        .into_iter()
-                        .map(|a| a.to_string())
-                        .collect(),
-                };
+        let tracked_names: Vec<String> = loaded_items.values().map(|zi| zi.interface_name.clone()).collect();
+        for sys_iface in system_interfaces.values().filter(|val| !tracked_names.contains(&val.name)) {
+            // let exists = loaded_items.values().any(|z| z.interface_name == name);
+            let id = ZoneInterfaceId(Uuid::now_v7());
+            let new_zone_interface = ZoneInterface {
+                zone_id: Uuid::nil().into(),
+                interface_name: sys_iface.name.clone(),
+                vlan_id: sys_iface.vlan_id.map(Into::into),
+                status: match sys_iface.oper_state {
+                    OperState::Up => InterfaceStatus::Active,
+                    OperState::Down => InterfaceStatus::Inactive,
+                    OperState::Unknown => InterfaceStatus::Unknown,
+                },
+                addresses: sys_iface.clone()
+                    .addresses
+                    .into_iter()
+                    .map(|a| a.to_string())
+                    .collect(),
+            };
 
-                tracing::info!(
-                    interface = %name,
-                    "Discovered new system interface, adding to zone interfaces"
-                );
-                loaded_items.insert(id, new_zone_interface);
-                changes_made = true;
+            tracing::info!(
+                interface = %sys_iface.name,
+                "Discovered new system interface, adding to zone interfaces"
+            );
+            loaded_items.insert(id, new_zone_interface);
+            changes_made = true;
             }
-        }
 
         if changes_made {
             let items_to_save: Vec<SavedProperty<ZoneInterface>> = loaded_items
