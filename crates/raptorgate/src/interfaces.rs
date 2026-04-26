@@ -4,7 +4,7 @@ mod monitor;
 pub use controller::{InterfaceController, InterfaceControllerError};
 pub use monitor::{
     InterfaceMonitor, NetworkInterfaceMonitor, NetworkInterfaceMonitorError, OperState,
-    SystemInterface,
+    SystemInterface, SystemInterfaceId,
 };
 
 #[cfg(test)]

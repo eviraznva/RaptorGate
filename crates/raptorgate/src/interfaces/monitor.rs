@@ -38,6 +38,21 @@ pub enum NetworkInterfaceMonitorError {
     MulticastConnection(#[source] std::io::Error),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, Hash)]
+pub struct SystemInterfaceId(u32);
+
+impl From<u32> for SystemInterfaceId {
+    fn from(id: u32) -> Self {
+        Self(id)
+    }
+}
+
+impl From<SystemInterfaceId> for u32 {
+    fn from(id: SystemInterfaceId) -> Self {
+        id.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
 pub enum OperState {
     #[display("active")]
@@ -50,7 +65,7 @@ pub enum OperState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemInterface {
-    pub index: u32,
+    pub index: SystemInterfaceId,
     pub name: String,
     pub oper_state: OperState,
     pub addresses: Vec<IpNet>,
@@ -60,7 +75,7 @@ pub struct SystemInterface {
 #[cfg_attr(test, mockall::automock)]
 pub trait InterfaceMonitor: Send + Sync {
     fn get(&self, name: &str) -> Option<SystemInterface>;
-    fn get_by_index(&self, index: u32) -> Option<SystemInterface>;
+    fn get_by_index(&self, index: SystemInterfaceId) -> Option<SystemInterface>;
     fn snapshot(&self) -> HashMap<String, SystemInterface>;
 }
 
@@ -95,7 +110,7 @@ impl NetworkInterfaceMonitor {
             .map_err(NetworkInterfaceMonitorError::AddressDump)?
         {
             if let Some(parsed) = parse_address(&address)
-                && let Some(interface) = interfaces_by_index.get_mut(&address.header.index)
+                && let Some(interface) = interfaces_by_index.get_mut(&SystemInterfaceId::from(address.header.index))
                     && !interface.addresses.contains(&parsed) {
                         interface.addresses.push(parsed);
                     }
@@ -151,7 +166,7 @@ impl InterfaceMonitor for NetworkInterfaceMonitor {
         self.interfaces.get(name).map(|entry| entry.value().clone())
     }
 
-    fn get_by_index(&self, index: u32) -> Option<SystemInterface> {
+    fn get_by_index(&self, index: SystemInterfaceId) -> Option<SystemInterface> {
         self.find_by_index(index).map(|(_, interface)| interface)
     }
 
@@ -209,7 +224,7 @@ impl NetworkInterfaceMonitor {
     }
 
     fn remove_link(&self, link: &LinkMessage) {
-        let index = link.header.index;
+        let index = SystemInterfaceId::from(link.header.index);
         if let Some((name, interface)) = self.find_by_index(index) {
             self.interfaces.remove(&name);
             self.maybe_emit_state_event(Some(&interface), None);
@@ -221,7 +236,7 @@ impl NetworkInterfaceMonitor {
             return;
         };
 
-        let Some((name, mut interface)) = self.find_by_index(address.header.index) else {
+        let Some((name, mut interface)) = self.find_by_index(SystemInterfaceId::from(address.header.index)) else {
             return;
         };
 
@@ -239,7 +254,7 @@ impl NetworkInterfaceMonitor {
         self.maybe_emit_state_event(Some(&old), Some(&interface));
     }
 
-    fn find_by_index(&self, index: u32) -> Option<(String, SystemInterface)> {
+    fn find_by_index(&self, index: SystemInterfaceId) -> Option<(String, SystemInterface)> {
         self.interfaces
             .iter()
             .find(|entry| entry.value().index == index)
@@ -283,9 +298,9 @@ impl NetworkInterfaceMonitor {
         }
     }
 
-    fn emit_rename_event(&self, interface_index: u32, old_name: &str, new_name: &str, current: &SystemInterface) {
+    fn emit_rename_event(&self, interface_index: SystemInterfaceId, old_name: &str, new_name: &str, current: &SystemInterface) {
         events::emit(Event::new(EventKind::InterfaceRenamed {
-            interface_index,
+            interface_index: interface_index.into(),
             old_interface_name: old_name.to_string(),
             new_interface_name: new_name.to_string(),
             status: Self::status_from_interface(Some(current)),
@@ -304,7 +319,7 @@ fn parse_link(message: &LinkMessage) -> Option<SystemInterface> {
     let vlan_id = message.attributes.iter().find_map(link_vlan_id);
 
     Some(SystemInterface {
-        index: message.header.index,
+        index: message.header.index.into(),
         name,
         oper_state,
         addresses: Vec::new(),
@@ -372,13 +387,13 @@ mod tests {
     use ipnet::IpNet;
     use mockall::predicate::eq;
 
-    use super::{InterfaceMonitor, MockInterfaceMonitor, NetworkInterfaceMonitor, OperState, SystemInterface};
+    use super::{InterfaceMonitor, MockInterfaceMonitor, NetworkInterfaceMonitor, OperState, SystemInterface, SystemInterfaceId};
 
     #[test]
     fn mock_interface_monitor_get_contract() {
         let mut monitor = MockInterfaceMonitor::new();
         let expected = SystemInterface {
-            index: 2,
+            index: SystemInterfaceId::from(2),
             name: "eth0".to_string(),
             oper_state: OperState::Up,
             addresses: vec!["192.168.10.10/24".parse::<IpNet>().expect("valid CIDR")],
@@ -400,7 +415,7 @@ mod tests {
     fn mock_interface_monitor_get_by_index_contract() {
         let mut monitor = MockInterfaceMonitor::new();
         let expected = SystemInterface {
-            index: 2,
+            index: SystemInterfaceId::from(2),
             name: "eth0".to_string(),
             oper_state: OperState::Up,
             addresses: vec![],
@@ -409,13 +424,13 @@ mod tests {
 
         monitor
             .expect_get_by_index()
-            .with(eq(2))
+            .with(eq(SystemInterfaceId::from(2)))
             .times(1)
             .return_once(move |_| Some(expected));
 
-        let result = monitor.get_by_index(2);
+        let result = monitor.get_by_index(SystemInterfaceId::from(2));
         assert!(result.is_some());
-        assert_eq!(result.expect("interface exists").index, 2);
+        assert_eq!(result.expect("interface exists").index, SystemInterfaceId::from(2));
     }
 
     #[test]
@@ -426,7 +441,7 @@ mod tests {
             HashMap::from([(
                 "eth1".to_string(),
                 SystemInterface {
-                    index: 3,
+                    index: SystemInterfaceId::from(3),
                     name: "eth1".to_string(),
                     oper_state: OperState::Down,
                     addresses: vec![],
@@ -462,7 +477,7 @@ mod tests {
     #[test]
     fn status_from_interface_maps_oper_states() {
         let up = SystemInterface {
-            index: 1,
+            index: SystemInterfaceId::from(1),
             name: "eth1".to_string(),
             oper_state: OperState::Up,
             addresses: vec![],

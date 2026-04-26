@@ -51,7 +51,7 @@ impl StaticInterfaceMonitor {
                 (
                     "eth-live-up".to_string(),
                     SystemInterface {
-                        index: 10,
+                        index: 10.into(),
                         name: "eth-live-up".to_string(),
                         oper_state: OperState::Up,
                         addresses: vec![
@@ -64,7 +64,7 @@ impl StaticInterfaceMonitor {
                 (
                     "eth-live-down".to_string(),
                     SystemInterface {
-                        index: 11,
+                        index: 11.into(),
                         name: "eth-live-down".to_string(),
                         oper_state: OperState::Down,
                         addresses: vec!["10.20.30.40/24".parse::<IpNet>().expect("valid CIDR")],
@@ -74,7 +74,7 @@ impl StaticInterfaceMonitor {
                 (
                     "eth-live-unknown".to_string(),
                     SystemInterface {
-                        index: 12,
+                        index: 12.into(),
                         name: "eth-live-unknown".to_string(),
                         oper_state: OperState::Unknown,
                         addresses: vec!["172.16.0.10/16".parse::<IpNet>().expect("valid CIDR")],
@@ -91,7 +91,7 @@ impl InterfaceMonitor for StaticInterfaceMonitor {
         self.interfaces.get(name).cloned()
     }
 
-    fn get_by_index(&self, index: u32) -> Option<SystemInterface> {
+    fn get_by_index(&self, index: ngfw::interfaces::SystemInterfaceId) -> Option<SystemInterface> {
         self.interfaces.values().find(|i| i.index == index).cloned()
     }
 

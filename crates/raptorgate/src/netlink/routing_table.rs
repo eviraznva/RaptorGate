@@ -7,11 +7,12 @@ use netlink_packet_route::{RouteNetlinkMessage, route::{RouteMessage, RouteAttri
 use tokio_util::sync::CancellationToken;
 use futures::StreamExt;
 use crate::netlink::listener::NetlinkListener;
+use crate::interfaces::monitor::SystemInterfaceId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteEntry {
     pub destination: IpNet,
-    pub out_interface_index: u32,
+    pub out_interface_index: SystemInterfaceId,
     pub priority: u32,
 }
 
@@ -93,7 +94,7 @@ impl RoutingTable {
                     destination = Some(IpNet::new(ip, route.header.destination_prefix_length).ok()?);
                 }
                 RouteAttribute::Oif(index) => {
-                    oif = Some(*index);
+                    oif = Some(SystemInterfaceId::from(*index));
                 }
                 RouteAttribute::Priority(p) => {
                     priority = *p;
@@ -142,7 +143,7 @@ impl RoutingTable {
         }
     }
 
-    pub fn route_lookup(&self, ip: IpAddr) -> Option<u32> {
+    pub fn route_lookup(&self, ip: IpAddr) -> Option<SystemInterfaceId> {
         let routes = self.routes.load();
         // Since routes is sorted by prefix_len (asc) and then priority (desc),
         // we should look for matches and take the one with highest prefix_len.
@@ -164,17 +165,17 @@ mod tests {
         let routes = vec![
             RouteEntry {
                 destination: "0.0.0.0/0".parse().unwrap(),
-                out_interface_index: 1,
+                out_interface_index: SystemInterfaceId::from(1),
                 priority: 100,
             },
             RouteEntry {
                 destination: "10.0.0.0/8".parse().unwrap(),
-                out_interface_index: 2,
+                out_interface_index: SystemInterfaceId::from(2),
                 priority: 100,
             },
             RouteEntry {
                 destination: "10.1.1.0/24".parse().unwrap(),
-                out_interface_index: 3,
+                out_interface_index: SystemInterfaceId::from(3),
                 priority: 50,
             },
         ];
@@ -184,11 +185,11 @@ mod tests {
         };
 
         // Exact match
-        assert_eq!(table.route_lookup(IpAddr::V4(Ipv4Addr::new(10, 1, 1, 5))), Some(3));
+        assert_eq!(table.route_lookup(IpAddr::V4(Ipv4Addr::new(10, 1, 1, 5))), Some(SystemInterfaceId::from(3)));
         // LPM match
-        assert_eq!(table.route_lookup(IpAddr::V4(Ipv4Addr::new(10, 2, 2, 2))), Some(2));
+        assert_eq!(table.route_lookup(IpAddr::V4(Ipv4Addr::new(10, 2, 2, 2))), Some(SystemInterfaceId::from(2)));
         // Default route
-        assert_eq!(table.route_lookup(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))), Some(1));
+        assert_eq!(table.route_lookup(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))), Some(SystemInterfaceId::from(1)));
         // No match (IPv6 while only IPv4 routes)
         assert_eq!(table.route_lookup(IpAddr::V6(Ipv6Addr::UNSPECIFIED)), None);
     }
@@ -198,12 +199,12 @@ mod tests {
         let mut routes = vec![
             RouteEntry {
                 destination: "0.0.0.0/0".parse().unwrap(),
-                out_interface_index: 1,
+                out_interface_index: SystemInterfaceId::from(1),
                 priority: 200,
             },
             RouteEntry {
                 destination: "0.0.0.0/0".parse().unwrap(),
-                out_interface_index: 2,
+                out_interface_index: SystemInterfaceId::from(2),
                 priority: 100,
             },
         ];
@@ -215,11 +216,6 @@ mod tests {
             routes: ArcSwap::from_pointee(routes),
         };
 
-        // Lower priority value is better in Linux (usually), but our code uses max priority if not specified.
-        // Wait, Linux metric: lower is better. 
-        // My sorting is (prefix_len, -priority).
-        // For 0.0.0.0/0: (0, -200) then (0, -100).
-        // .last() will pick (0, -100) which has priority 100. Correct.
-        assert_eq!(table.route_lookup(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))), Some(2));
+        assert_eq!(table.route_lookup(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))), Some(SystemInterfaceId::from(2)));
     }
 }
