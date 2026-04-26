@@ -13,6 +13,7 @@ export interface IdentitySessionSyncPayload {
   calledStationId: string;
   authenticatedAt: Date;
   expiresAt: Date;
+  groups: string[];
 }
 
 export interface IIdentitySessionSyncService {

@@ -2,10 +2,14 @@ import { createHash } from 'node:crypto';
 import {
   buildAccessRequest,
   encodeUserPassword,
+  extractGroupsFromAttributes,
   parseResponse,
+  RADIUS_ATTR_CLASS,
+  RADIUS_ATTR_FILTER_ID,
   RADIUS_ATTR_NAS_IP_ADDRESS,
   RADIUS_ATTR_USER_NAME,
   RADIUS_ATTR_USER_PASSWORD,
+  RADIUS_ATTR_VENDOR_SPECIFIC,
   RADIUS_CODE_ACCESS_ACCEPT,
   RADIUS_CODE_ACCESS_REJECT,
   RADIUS_CODE_ACCESS_REQUEST,
@@ -26,6 +30,11 @@ function decodeAttributes(buf: Buffer): Map<number, Buffer[]> {
     offset += length;
   }
   return out;
+}
+
+function attr(type: number, value: Buffer | string): Buffer {
+  const raw = Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8');
+  return Buffer.concat([Buffer.from([type, raw.length + 2]), raw]);
 }
 
 describe('radius-packet', () => {
@@ -186,6 +195,26 @@ describe('radius-packet', () => {
       buf.writeUInt8(1, 1);
       buf.writeUInt16BE(9999, 2);
       expect(() => parseResponse(buf)).toThrow(/length field invalid/);
+    });
+  });
+
+  describe('extractGroupsFromAttributes', () => {
+    it('wyciaga grupy z Filter-Id, Class i Cisco-AVPair', () => {
+      const cisco = Buffer.concat([
+        Buffer.from([0, 0, 0, 9]),
+        attr(1, 'shell:roles="admins guests"'),
+      ]);
+      const attrs = Buffer.concat([
+        attr(RADIUS_ATTR_FILTER_ID, 'users'),
+        attr(RADIUS_ATTR_CLASS, 'guests'),
+        attr(RADIUS_ATTR_VENDOR_SPECIFIC, cisco),
+      ]);
+
+      expect(extractGroupsFromAttributes(attrs)).toEqual([
+        'users',
+        'guests',
+        'admins',
+      ]);
     });
   });
 });

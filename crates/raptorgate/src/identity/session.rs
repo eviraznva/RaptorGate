@@ -17,7 +17,7 @@ pub struct IdentitySession {
     pub client_ip: IpAddr,
     pub authenticated_at: SystemTime,
     pub expires_at: SystemTime,
-    // TODO(Issue 4): backend wypelnia po rozwiazaniu mapowania user -> grupy w LDAP / VSA.
+    // Grupy sa snapshotem z backendu uzywanym przez policy evaluator.
     pub groups: Vec<String>,
 }
 
@@ -79,14 +79,24 @@ impl IdentitySession {
             client_ip,
             authenticated_at,
             expires_at,
-            // TODO(Issue 4): proto dostanie pole groups, na razie empty.
-            groups: Vec::new(),
+            groups: normalize_groups(proto.groups),
         })
     }
 
     pub fn is_expired_at(&self, now: SystemTime) -> bool {
         self.expires_at <= now
     }
+}
+
+fn normalize_groups(groups: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for group in groups {
+        let group = group.trim();
+        if !group.is_empty() && !normalized.iter().any(|existing| existing == group) {
+            normalized.push(group.to_string());
+        }
+    }
+    normalized
 }
 
 fn timestamp_to_system_time(
@@ -127,6 +137,7 @@ mod tests {
             called_station_id: "r1".into(),
             authenticated_at: Some(ts(1_700_000_000)),
             expires_at: Some(ts(1_700_003_600)),
+            groups: vec!["admins".into(), " users ".into(), "admins".into(), "".into()],
         }
     }
 
@@ -139,6 +150,7 @@ mod tests {
             session.authenticated_at,
             UNIX_EPOCH + Duration::from_secs(1_700_000_000)
         );
+        assert_eq!(session.groups, vec!["admins", "users"]);
     }
 
     #[test]

@@ -62,6 +62,7 @@ export class GrpcIdentitySessionSyncService
             calledStationId: session.calledStationId,
             authenticatedAt: this.toTimestamp(session.authenticatedAt),
             expiresAt: this.toTimestamp(session.expiresAt),
+            groups: session.groups,
           },
         }),
       );

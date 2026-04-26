@@ -6,7 +6,6 @@ import "google/protobuf/timestamp.proto";
 
 // Aktywna sesja uzytkownika uwierzytelnionego przez RADIUS.
 // Runtime state (ADR 0002), dystrybuowane wylacznie przez IdentitySessionService.
-// TODO(Issue 4): groups moga trafic tu jako snapshot grup zresolvowanych z LDAP.
 message IdentityManagerUserSession {
   string                    id                = 1;
   string                    identity_user_id  = 2;
@@ -17,6 +16,7 @@ message IdentityManagerUserSession {
   string                    called_station_id = 7;
   google.protobuf.Timestamp authenticated_at  = 8;
   google.protobuf.Timestamp expires_at        = 9;
+  repeated string           groups            = 10;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

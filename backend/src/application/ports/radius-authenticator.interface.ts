@@ -3,7 +3,7 @@
 // retransmisje i timeout. Use-case rozrozni 4 stany: accept/reject/timeout/error.
 
 export type RadiusAuthResult =
-  | { kind: 'accept' }
+  | { kind: 'accept'; groups?: string[] }
   | { kind: 'reject'; reason: string }
   | { kind: 'timeout' }
   | { kind: 'error'; message: string };

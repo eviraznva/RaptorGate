@@ -299,7 +299,6 @@ async fn main() {
             tail: Chain {
                 head: IdentityLookupStage {
                     store: Arc::clone(&identity_sessions),
-                    enforcement: Arc::clone(&identity_enforcement),
                 },
                 tail: Chain {
                     head: DpiStage {
@@ -337,6 +336,7 @@ async fn main() {
                                                     head: PolicyEvalStage {
                                                         provider: Arc::clone(&policy_provider),
                                                         dnssec: Some(dnssec_provider),
+                                                        identity_enforcement: Arc::clone(&identity_enforcement),
                                                     },
                                                     tail: Chain {
                                                         head: NatPostroutingStage {

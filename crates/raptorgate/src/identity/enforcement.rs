@@ -53,11 +53,7 @@ impl IdentityContext {
     }
 }
 
-// Konfiguracja pre-auth gate dla IdentityLookupStage.
-// Pusta lista CIDR-ow = gate wylaczony (np. dev / brak identity zone).
-// Gate dziala niezaleznie od polityk: domyslnie blokuje pakiety bez sesji w
-// chronionym CIDR. Polityki Issue 6 (auth_state / identity_user / identity_group)
-// dopelniaja go i moga dawac drobniejsza kontrola na poziomie regul.
+// Konfiguracja pre-auth gate dla zrodel wymagajacych aktywnej sesji.
 #[derive(Debug, Clone, Default)]
 pub struct IdentityEnforcementConfig {
     pub require_identity_src_cidrs: Vec<IpNet>,

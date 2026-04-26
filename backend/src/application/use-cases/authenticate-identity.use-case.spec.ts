@@ -44,7 +44,7 @@ describe('AuthenticateIdentityUseCase', () => {
   });
 
   it('creates a session and sends firewall upsert after Access-Accept', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'accept' } as RadiusAuthResult);
+    radius.authenticate.mockResolvedValue({ kind: 'accept', groups: ['users', ' users ', '', 'guests'] } as RadiusAuthResult);
     sync.upsertIdentitySession.mockResolvedValue(undefined);
 
     const result = await useCase.execute({
@@ -62,11 +62,13 @@ describe('AuthenticateIdentityUseCase', () => {
     const stored = await store.findBySourceIp('192.168.10.10');
     expect(stored).not.toBeNull();
     expect(stored?.getUsername()).toBe('user');
+    expect(stored?.getGroups()).toEqual(['users', 'guests']);
 
     expect(sync.upsertIdentitySession).toHaveBeenCalledTimes(1);
     const payload = sync.upsertIdentitySession.mock.calls[0][0];
     expect(payload.ipAddress).toBe('192.168.10.10');
     expect(payload.radiusUsername).toBe('user');
+    expect(payload.groups).toEqual(['users', 'guests']);
   });
 
   it('does not create a session or call upsert after Access-Reject', async () => {

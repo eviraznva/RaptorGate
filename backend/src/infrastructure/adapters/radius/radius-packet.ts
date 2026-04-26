@@ -11,6 +11,9 @@ export const RADIUS_ATTR_USER_NAME = 1;
 export const RADIUS_ATTR_USER_PASSWORD = 2;
 export const RADIUS_ATTR_NAS_IP_ADDRESS = 4;
 export const RADIUS_ATTR_NAS_PORT = 5;
+export const RADIUS_ATTR_FILTER_ID = 11;
+export const RADIUS_ATTR_CLASS = 25;
+export const RADIUS_ATTR_VENDOR_SPECIFIC = 26;
 export const RADIUS_ATTR_CALLED_STATION_ID = 30;
 export const RADIUS_ATTR_CALLING_STATION_ID = 31;
 export const RADIUS_ATTR_NAS_IDENTIFIER = 32;
@@ -138,6 +141,26 @@ export function parseResponse(buffer: Buffer): ParsedRadiusResponse {
   };
 }
 
+export function extractGroupsFromAttributes(attributes: Buffer): string[] {
+  const values = decodeAttributes(attributes);
+  const rawGroups = [
+    ...(values.get(RADIUS_ATTR_FILTER_ID) ?? []),
+    ...(values.get(RADIUS_ATTR_CLASS) ?? []),
+    ...extractCiscoAvPairs(values.get(RADIUS_ATTR_VENDOR_SPECIFIC) ?? []),
+  ];
+  const groups: string[] = [];
+
+  for (const raw of rawGroups) {
+    for (const group of splitGroupValue(raw.toString('utf8'))) {
+      if (!groups.includes(group)) {
+        groups.push(group);
+      }
+    }
+  }
+
+  return groups;
+}
+
 // Sprawdza Response Authenticator wedlug RFC 2865 sec. 3:
 // MD5(Code + Identifier + Length + RequestAuthenticator + Attributes + Secret).
 export function verifyResponseAuthenticator(
@@ -158,6 +181,69 @@ export function verifyResponseAuthenticator(
     .digest();
 
   return timingSafeEqualBuffer(expected, response.responseAuthenticator);
+}
+
+function decodeAttributes(attributes: Buffer): Map<number, Buffer[]> {
+  const out = new Map<number, Buffer[]>();
+  let offset = 0;
+
+  while (offset < attributes.length) {
+    if (offset + 2 > attributes.length) {
+      throw new Error('RADIUS attribute header truncated');
+    }
+
+    const type = attributes.readUInt8(offset);
+    const length = attributes.readUInt8(offset + 1);
+    if (length < 2 || offset + length > attributes.length) {
+      throw new Error(`RADIUS attribute ${type} length invalid`);
+    }
+
+    const values = out.get(type) ?? [];
+    values.push(attributes.subarray(offset + 2, offset + length));
+    out.set(type, values);
+    offset += length;
+  }
+
+  return out;
+}
+
+function extractCiscoAvPairs(attributes: Buffer[]): Buffer[] {
+  const pairs: Buffer[] = [];
+
+  for (const attribute of attributes) {
+    if (attribute.length < 6) continue;
+
+    const vendorId = attribute.readUInt32BE(0);
+    if (vendorId !== 9) continue;
+
+    let offset = 4;
+    while (offset + 2 <= attribute.length) {
+      const vendorType = attribute.readUInt8(offset);
+      const vendorLength = attribute.readUInt8(offset + 1);
+      if (vendorLength < 2 || offset + vendorLength > attribute.length) break;
+      if (vendorType === 1) {
+        pairs.push(attribute.subarray(offset + 2, offset + vendorLength));
+      }
+      offset += vendorLength;
+    }
+  }
+
+  return pairs;
+}
+
+function splitGroupValue(value: string): string[] {
+  const normalized = value.trim();
+  if (!normalized) return [];
+
+  const afterEquals = normalized.includes('=')
+    ? normalized.slice(normalized.indexOf('=') + 1)
+    : normalized;
+  const unquoted = afterEquals.trim().replace(/^["']|["']$/g, '');
+
+  return unquoted
+    .split(/[,\s;]+/)
+    .map((group) => group.trim())
+    .filter((group) => group.length > 0);
 }
 
 function timingSafeEqualBuffer(a: Buffer, b: Buffer): boolean {

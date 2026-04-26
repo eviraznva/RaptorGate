@@ -3,7 +3,7 @@ import { IpAddress } from '../value-objects/ip-address.vo.js';
 // Runtime sesja identity (ADR 0002). Trzymana w pamieci backendu i syncowana
 // do firewalla (Issue 2). Nie wchodzi w config snapshot ani persistence.
 // Minimum z Issue 3: sourceIp, username, createdAt, expiresAt.
-// TODO(Issue 4): grupy LDAP dologa sie po zresolvowaniu.
+// TODO(Issue 4): LDAP stanie sie docelowym zrodlem grup.
 // TODO(Issue 7): macAddress moze pochodzic z portalu/DHCP snoopingu.
 export class IdentitySession {
   private constructor(
@@ -12,6 +12,7 @@ export class IdentitySession {
     private readonly sourceIp: IpAddress,
     private readonly createdAt: Date,
     private expiresAt: Date,
+    private readonly groups: string[],
   ) {}
 
   public static create(
@@ -20,8 +21,9 @@ export class IdentitySession {
     sourceIp: IpAddress,
     createdAt: Date,
     expiresAt: Date,
+    groups: string[] = [],
   ): IdentitySession {
-    return new IdentitySession(id, username, sourceIp, createdAt, expiresAt);
+    return new IdentitySession(id, username, sourceIp, createdAt, expiresAt, normalizeGroups(groups));
   }
 
   public getId(): string {
@@ -44,6 +46,10 @@ export class IdentitySession {
     return this.expiresAt;
   }
 
+  public getGroups(): string[] {
+    return [...this.groups];
+  }
+
   public renew(newExpiresAt: Date): void {
     this.expiresAt = newExpiresAt;
   }
@@ -51,4 +57,15 @@ export class IdentitySession {
   public isExpiredAt(now: Date): boolean {
     return this.expiresAt.getTime() <= now.getTime();
   }
+}
+
+function normalizeGroups(groups: string[]): string[] {
+  const normalized: string[] = [];
+  for (const raw of groups) {
+    const group = raw.trim();
+    if (group && !normalized.includes(group)) {
+      normalized.push(group);
+    }
+  }
+  return normalized;
 }

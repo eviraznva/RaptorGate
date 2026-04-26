@@ -9,6 +9,7 @@ import type {
 import type { Env } from '../../shared/config/env.validation.js';
 import {
   buildAccessRequest,
+  extractGroupsFromAttributes,
   parseResponse,
   RADIUS_CODE_ACCESS_ACCEPT,
   RADIUS_CODE_ACCESS_REJECT,
@@ -172,7 +173,10 @@ export class UdpRadiusAuthenticator implements IRadiusAuthenticator {
           }
 
           if (parsed.code === RADIUS_CODE_ACCESS_ACCEPT) {
-            settle({ kind: 'accept' });
+            settle({
+              kind: 'accept',
+              groups: extractGroupsFromAttributes(parsed.attributesRaw),
+            });
           } else if (parsed.code === RADIUS_CODE_ACCESS_REJECT) {
             settle({ kind: 'reject', reason: 'Access-Reject' });
           } else {

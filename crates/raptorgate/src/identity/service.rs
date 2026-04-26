@@ -102,6 +102,7 @@ mod tests {
             called_station_id: "r1".into(),
             authenticated_at: Some(ts(1_700_000_000)),
             expires_at: Some(ts(1_700_003_600)),
+            groups: vec!["users".into()],
         }
     }
 

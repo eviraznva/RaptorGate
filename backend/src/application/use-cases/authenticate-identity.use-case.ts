@@ -82,6 +82,7 @@ export class AuthenticateIdentityUseCase {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
     const sessionId = randomUUID();
+    const groups = result.groups ?? [];
 
     const session = IdentitySession.create(
       sessionId,
@@ -89,6 +90,7 @@ export class AuthenticateIdentityUseCase {
       sourceIp,
       now,
       expiresAt,
+      groups,
     );
 
     await this.store.runExclusiveBySourceIp(sourceIp.getValue, async () => {
@@ -103,6 +105,7 @@ export class AuthenticateIdentityUseCase {
         calledStationId: nasIdentifier,
         authenticatedAt: now,
         expiresAt,
+        groups: session.getGroups(),
       });
       await this.store.upsert(session);
     });

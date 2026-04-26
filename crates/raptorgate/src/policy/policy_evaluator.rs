@@ -152,7 +152,7 @@ impl PolicyEvaluator {
 
     fn missing_value_matches(kind: MatchKind, pattern: &Pattern) -> bool {
         match kind {
-            MatchKind::AppProto | MatchKind::IdentityUser => Self::pattern_accepts_missing(pattern),
+            MatchKind::AppProto => Self::pattern_accepts_missing(pattern),
             _ => false,
         }
     }
@@ -199,11 +199,9 @@ impl PolicyEvaluator {
         }
     }
 
-    // identity_group: regula trzyma jedna nazwe, sesja liste, dopasowanie po przynaleznosci.
-    // Brak sesji => tylko Wildcard pasuje (analogicznie do AppProto bez DPI).
     fn pattern_matches_group(pattern: &Pattern, groups: Option<&[String]>) -> bool {
         match pattern {
-            Pattern::Wildcard => true,
+            Pattern::Wildcard => groups.is_some_and(|gs| !gs.is_empty()),
             Pattern::Equal(FieldValue::IdentityGroup(name)) => {
                 groups.is_some_and(|gs| gs.iter().any(|g| g == name))
             }
@@ -1796,7 +1794,7 @@ mod tests {
     }
 
     #[test]
-    fn wildcard_identity_user_no_session_matches() {
+    fn wildcard_identity_user_no_session_drops() {
         let tree = RuleTree::new(
             MatchBuilder::with_arm(
                 MatchKind::IdentityUser,
@@ -1807,6 +1805,24 @@ mod tests {
             .unwrap(),
         );
         let ctx = unknown_ctx();
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn wildcard_identity_user_authenticated_matches() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityUser,
+                Pattern::Wildcard,
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = authenticated_ctx(authenticated_session("alice", vec![]));
         assert_eq!(
             eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
             Verdict::Allow
@@ -1876,6 +1892,24 @@ mod tests {
             MatchBuilder::with_arm(
                 MatchKind::IdentityGroup,
                 Pattern::Equal(FieldValue::IdentityGroup("admins".into())),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = unknown_ctx();
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn wildcard_identity_group_no_session_drops() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityGroup,
+                Pattern::Wildcard,
                 ArmEnd::Verdict(Verdict::Allow),
             )
             .build()
