@@ -306,6 +306,13 @@ impl Event {
 }
 
 #[derive(Debug, Clone)]
+pub struct RouteInfo {
+    pub destination: String,
+    pub out_interface_index: u32,
+    pub priority: u32,
+}
+
+#[derive(Debug, Clone)]
 pub enum EventKind {
     TcpSessionEstabilished { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
@@ -365,6 +372,9 @@ pub enum EventKind {
         interface: String,
         payload_length: u32,
     },
+    RouteAdded { route: RouteInfo },
+    RouteModified { old_route: RouteInfo, new_route: RouteInfo },
+    RouteDeleted { route: RouteInfo },
     EventBusConnectedEvent {}
 }
 
@@ -398,6 +408,9 @@ impl EventKind {
             | E::InterfaceRenamed { .. }
             | E::IpsSignatureMatched { .. }
             | E::MlThreatDetected { .. }
+            | E::RouteAdded { .. }
+            | E::RouteModified { .. }
+            | E::RouteDeleted { .. }
             | E::EventBusConnectedEvent { .. } => true,
         }
     }
@@ -689,6 +702,35 @@ impl From<EventKind> for proto::EventKind {
                     interface,
                     payload_length,
                 }),
+                EventKind::RouteAdded { route } =>
+                    Item::RouteAdded(proto::RouteAddedEvent {
+                        route: Some(proto::Route {
+                            destination: route.destination,
+                            out_interface_index: route.out_interface_index,
+                            priority: route.priority,
+                        }),
+                    }),
+                EventKind::RouteModified { old_route, new_route } =>
+                    Item::RouteModified(proto::RouteModifiedEvent {
+                        old_route: Some(proto::Route {
+                            destination: old_route.destination,
+                            out_interface_index: old_route.out_interface_index,
+                            priority: old_route.priority,
+                        }),
+                        new_route: Some(proto::Route {
+                            destination: new_route.destination,
+                            out_interface_index: new_route.out_interface_index,
+                            priority: new_route.priority,
+                        }),
+                    }),
+                EventKind::RouteDeleted { route } =>
+                    Item::RouteDeleted(proto::RouteDeletedEvent {
+                        route: Some(proto::Route {
+                            destination: route.destination,
+                            out_interface_index: route.out_interface_index,
+                            priority: route.priority,
+                        }),
+                    }),
                 EventKind::EventBusConnectedEvent { .. } => Item::EventBusConnected(proto::EventBusConnectedEvent {})
             }),
         }

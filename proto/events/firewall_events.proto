@@ -17,6 +17,25 @@ message TunDeviceSwappedEvent {
   string new_address = 4;
 }
 
+message Route {
+  string destination = 1;        // CIDR, e.g., "10.0.0.0/24"
+  uint32 out_interface_index = 2; // ifindex of outgoing interface
+  uint32 priority = 3;           // route metric/priority
+}
+
+message RouteAddedEvent {
+  Route route = 1;
+}
+
+message RouteModifiedEvent {
+  Route old_route = 1;
+  Route new_route = 2;
+}
+
+message RouteDeletedEvent {
+  Route route = 1;
+}
+
 message EventKind {
   oneof item {
     TcpSessionEstablishedEvent     tcp_session_established  = 1;
@@ -46,6 +65,9 @@ message EventKind {
     InterfaceStateChangedEvent        interface_state_changed         = 25;
     InterfaceRenamedEvent             interface_renamed               = 26;
     MlThreatDetectedEvent             ml_threat_detected              = 27;
+    RouteAddedEvent    route_added    = 28;
+    RouteModifiedEvent route_modified = 29;
+    RouteDeletedEvent  route_deleted  = 30;
   }
 }
 

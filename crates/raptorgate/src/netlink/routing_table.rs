@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use futures::StreamExt;
 use crate::netlink::listener::NetlinkListener;
 use crate::interfaces::SystemInterfaceId;
+use crate::events::{self, Event, EventKind, RouteInfo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteEntry {
@@ -56,12 +57,37 @@ impl RoutingTable {
                         match result {
                             Ok(RouteNetlinkMessage::NewRoute(route)) => {
                                 if route.header.table == 254 {
-                                    table_clone.add_route(route);
+                                    if let Some(new_entry) = Self::parse_route_message(&route) {
+                                        let old_entry = table_clone.find_exact_route(&new_entry.destination, new_entry.priority);
+                                        table_clone.apply_new_route(new_entry.clone());
+
+                                        if let Some(old) = old_entry {
+                                            if old != new_entry {
+                                                events::emit(Event::new(EventKind::RouteModified {
+                                                    old_route: RouteInfo::from(&old),
+                                                    new_route: RouteInfo::from(&new_entry),
+                                                }));
+                                            }
+                                        } else {
+                                            events::emit(Event::new(EventKind::RouteAdded {
+                                                route: RouteInfo::from(&new_entry),
+                                            }));
+                                        }
+                                    }
                                 }
                             }
                             Ok(RouteNetlinkMessage::DelRoute(route)) => {
                                 if route.header.table == 254 {
-                                    table_clone.remove_route(route);
+                                    if let Some(entry_to_remove) = Self::parse_route_message(&route) {
+                                        let removed_entry = table_clone.find_exact_route(&entry_to_remove.destination, entry_to_remove.priority);
+                                        table_clone.apply_del_route(entry_to_remove);
+
+                                        if let Some(removed) = removed_entry {
+                                            events::emit(Event::new(EventKind::RouteDeleted {
+                                                route: RouteInfo::from(&removed),
+                                            }));
+                                        }
+                                    }
                                 }
                             }
                             Ok(_) => {}
@@ -120,27 +146,29 @@ impl RoutingTable {
         })
     }
 
-    fn add_route(&self, route: RouteMessage) {
-        if let Some(new_entry) = Self::parse_route_message(&route) {
-            self.routes.rcu(|routes| {
-                let mut new_routes = (**routes).clone();
-                // Remove existing if identical destination and priority
-                new_routes.retain(|r| r.destination != new_entry.destination || r.priority != new_entry.priority);
-                new_routes.push(new_entry.clone());
-                new_routes.sort_by_key(|r| (r.destination.prefix_len(), -(r.priority as i64)));
-                new_routes
-            });
-        }
+    pub fn find_exact_route(&self, destination: &IpNet, priority: u32) -> Option<RouteEntry> {
+        self.routes.load().iter()
+            .find(|r| r.destination == *destination && r.priority == priority)
+            .cloned()
     }
 
-    fn remove_route(&self, route: RouteMessage) {
-        if let Some(entry_to_remove) = Self::parse_route_message(&route) {
-            self.routes.rcu(|routes| {
-                let mut new_routes = (**routes).clone();
-                new_routes.retain(|r| r.destination != entry_to_remove.destination || r.priority != entry_to_remove.priority);
-                new_routes
-            });
-        }
+    fn apply_new_route(&self, new_entry: RouteEntry) {
+        self.routes.rcu(|routes| {
+            let mut new_routes = (**routes).clone();
+            // Remove existing if identical destination and priority
+            new_routes.retain(|r| r.destination != new_entry.destination || r.priority != new_entry.priority);
+            new_routes.push(new_entry.clone());
+            new_routes.sort_by_key(|r| (r.destination.prefix_len(), -(r.priority as i64)));
+            new_routes
+        });
+    }
+
+    fn apply_del_route(&self, entry_to_remove: RouteEntry) {
+        self.routes.rcu(|routes| {
+            let mut new_routes = (**routes).clone();
+            new_routes.retain(|r| r.destination != entry_to_remove.destination || r.priority != entry_to_remove.priority);
+            new_routes
+        });
     }
 
     pub fn route_lookup(&self, ip: IpAddr) -> Option<SystemInterfaceId> {
@@ -152,6 +180,16 @@ impl RoutingTable {
             .filter(|r| r.destination.contains(&ip))
             .last()
             .map(|r| r.out_interface_index)
+    }
+}
+
+impl From<&RouteEntry> for RouteInfo {
+    fn from(entry: &RouteEntry) -> Self {
+        RouteInfo {
+            destination: entry.destination.to_string(),
+            out_interface_index: u32::from(entry.out_interface_index),
+            priority: entry.priority,
+        }
     }
 }
 
