@@ -31,7 +31,7 @@ use crate::data_plane::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
-use crate::identity::{IdentityEnforcementConfig, IdentitySessionStore};
+use crate::identity::IdentitySessionStore;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
     DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
@@ -277,18 +277,6 @@ async fn main() {
     let dnssec_provider: Arc<dyn DnssecProvider> =
         Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
 
-    let identity_enforcement = match identity_enforcement_from_env() {
-        Ok(enforcement) => Arc::new(enforcement),
-        Err(err) => {
-            tracing::error!(
-                event = "startup.identity_enforcement.failed",
-                error = %err,
-                "failed to initialize identity enforcement"
-            );
-            return;
-        }
-    };
-
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
@@ -336,7 +324,6 @@ async fn main() {
                                                     head: PolicyEvalStage {
                                                         provider: Arc::clone(&policy_provider),
                                                         dnssec: Some(dnssec_provider),
-                                                        identity_enforcement: Arc::clone(&identity_enforcement),
                                                     },
                                                     tail: Chain {
                                                         head: NatPostroutingStage {
@@ -392,7 +379,6 @@ async fn main() {
                         pipeline.clone(),
                         Arc::clone(&dpi_classifier),
                         Arc::clone(&identity_sessions),
-                        Arc::clone(&identity_enforcement),
                     )),
                     cancel: tls_runtime_cancel,
                 };
@@ -452,22 +438,6 @@ async fn main() {
             });
         }
     }
-}
-
-fn identity_enforcement_from_env() -> anyhow::Result<IdentityEnforcementConfig> {
-    let raw = std::env::var("IDENTITY_REQUIRED_SRC_CIDRS")
-        .unwrap_or_else(|_| "192.168.10.0/24".into());
-    let cidrs = raw
-        .split(',')
-        .map(str::trim)
-        .filter(|cidr| !cidr.is_empty())
-        .map(|cidr| {
-            cidr.parse().map_err(|err| {
-                anyhow::anyhow!("invalid IDENTITY_REQUIRED_SRC_CIDRS entry '{cidr}': {err}")
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(IdentityEnforcementConfig::new(cidrs))
 }
 
 fn resolve_interface_ips(capture_interfaces: &[String]) -> HashMap<String, Vec<IpAddr>> {

@@ -16,10 +16,7 @@ use crate::{
     },
     dpi::{DpiClassifier, InspectResult},
     events::{self, Event, EventKind},
-    identity::{
-        enforce, resolve_identity, EnforcementOutcome, IdentityEnforcementConfig,
-        IdentitySessionStore,
-    },
+    identity::{resolve_identity, IdentitySessionStore},
     packet_validator::validate,
     pipeline::{Stage, StageOutcome},
     policy::provider::DiskPolicyProvider,
@@ -591,7 +588,6 @@ pub struct PolicyEvalStage {
     pub provider: Arc<DiskPolicyProvider>,
     /// Opcjonalny dostawca DNSSEC — wstrzykiwany z `DnsInspection`.
     pub dnssec: Option<Arc<dyn DnssecProvider>>,
-    pub identity_enforcement: Arc<IdentityEnforcementConfig>,
 }
 
 impl Stage for PolicyEvalStage {
@@ -642,12 +638,7 @@ impl Stage for PolicyEvalStage {
         });
 
         match verdict {
-            Verdict::Allow => {
-                if self.preauth_blocks(ctx) {
-                    return preauth_block(ctx, "policy_eval");
-                }
-                StageOutcome::Continue
-            }
+            Verdict::Allow => StageOutcome::Continue,
             Verdict::Drop => {
                 log_packet_decision(
                     ctx,
@@ -659,9 +650,6 @@ impl Stage for PolicyEvalStage {
                 StageOutcome::Halt
             }
             Verdict::AllowWarn(msg) => {
-                if self.preauth_blocks(ctx) {
-                    return preauth_block(ctx, "policy_eval");
-                }
                 log_packet_decision(
                     ctx,
                     "policy.packet.allowed_with_warning",
@@ -685,26 +673,6 @@ impl Stage for PolicyEvalStage {
             }
         }
     }
-}
-
-impl PolicyEvalStage {
-    fn preauth_blocks(&self, ctx: &PacketContext) -> bool {
-        ctx.borrow_identity_ctx()
-            .as_ref()
-            .is_some_and(|identity| {
-                matches!(
-                    enforce(&self.identity_enforcement, identity),
-                    EnforcementOutcome::Drop
-                )
-            })
-    }
-}
-
-fn preauth_block(ctx: &mut PacketContext, stage: &'static str) -> StageOutcome {
-    let reason = "no active identity session for required source CIDR";
-    log_packet_decision(ctx, "identity.preauth.blocked", stage, "drop", reason);
-    ctx.with_warnings_mut(|w| w.push(reason.to_string()));
-    StageOutcome::Halt
 }
 
 #[derive(Clone)]
@@ -1042,9 +1010,7 @@ mod tests {
 
     use std::time::{Duration, UNIX_EPOCH};
 
-    use crate::identity::{
-        AuthState, IdentityEnforcementConfig, IdentitySession, IdentitySessionStore,
-    };
+    use crate::identity::{AuthState, IdentityContext, IdentitySession, IdentitySessionStore};
 
     fn identity_packet(src: [u8; 4], dst: [u8; 4]) -> PacketContext {
         let mut raw = Vec::new();
@@ -1076,12 +1042,6 @@ mod tests {
         session
     }
 
-    fn user_zone_enforcement() -> Arc<IdentityEnforcementConfig> {
-        Arc::new(IdentityEnforcementConfig::new(vec![
-            "192.168.10.0/24".parse().unwrap(),
-        ]))
-    }
-
     #[tokio::test]
     async fn identity_lookup_attaches_active_session() {
         let store = IdentitySessionStore::new_shared();
@@ -1100,7 +1060,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn identity_lookup_attaches_unknown_session_in_user_zone() {
+    async fn identity_lookup_attaches_unknown_for_missing_session() {
         let store = IdentitySessionStore::new_shared();
         let stage = IdentityLookupStage {
             store,
@@ -1132,7 +1092,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn identity_lookup_allows_traffic_outside_required_cidr() {
+    async fn identity_lookup_attaches_unknown_for_unrecognized_source() {
         let store = IdentitySessionStore::new_shared();
         let stage = IdentityLookupStage {
             store,
@@ -1166,22 +1126,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn policy_eval_blocks_unknown_identity_after_policy_allow() {
+    async fn policy_eval_allows_unknown_when_policy_allows_unknown() {
         let mut config = sample_config();
         config.dev_config = Some(crate::config::DevConfig {
-            policy_override: Some("match auth_state { _ : verdict allow }".into()),
+            policy_override: Some("match auth_state { = unknown : verdict allow _ : verdict drop }".into()),
         });
         let provider = Arc::new(DiskPolicyProvider::from_loaded(&config).await.unwrap());
         let stage = PolicyEvalStage {
             provider,
             dnssec: None,
-            identity_enforcement: user_zone_enforcement(),
         };
         let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
         ctx.with_identity_ctx_mut(|slot| {
-            *slot = Some(crate::identity::IdentityContext::unknown(
-                "192.168.10.10".parse().unwrap(),
-            ));
+            *slot = Some(IdentityContext::unknown("192.168.10.10".parse().unwrap()));
+        });
+
+        let outcome = stage.process(&mut ctx).await;
+        assert!(matches!(outcome, StageOutcome::Continue));
+    }
+
+    #[tokio::test]
+    async fn policy_eval_blocks_unknown_via_auth_state() {
+        let mut config = sample_config();
+        config.dev_config = Some(crate::config::DevConfig {
+            policy_override: Some("match auth_state { = unknown : verdict drop _ : verdict allow }".into()),
+        });
+        let provider = Arc::new(DiskPolicyProvider::from_loaded(&config).await.unwrap());
+        let stage = PolicyEvalStage {
+            provider,
+            dnssec: None,
+        };
+        let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
+        ctx.with_identity_ctx_mut(|slot| {
+            *slot = Some(IdentityContext::unknown("192.168.10.10".parse().unwrap()));
         });
 
         let outcome = stage.process(&mut ctx).await;
@@ -1189,7 +1166,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn policy_blocks_guest_via_identity_group() {
+    async fn policy_eval_allows_authenticated_user() {
+        let store = IdentitySessionStore::new_shared();
+        store.upsert(user_session("192.168.10.10", 1_700_003_600));
+        let lookup = IdentityLookupStage {
+            store: Arc::clone(&store),
+        };
+        let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
+        assert!(matches!(lookup.process(&mut ctx).await, StageOutcome::Continue));
+
+        let mut config = sample_config();
+        config.dev_config = Some(crate::config::DevConfig {
+            policy_override: Some("match auth_state { = authenticated : match identity_user { = \"alice\" : verdict allow _ : verdict drop } _ : verdict drop }".into()),
+        });
+        let provider = Arc::new(DiskPolicyProvider::from_loaded(&config).await.unwrap());
+        let stage = PolicyEvalStage {
+            provider,
+            dnssec: None,
+        };
+
+        let outcome = stage.process(&mut ctx).await;
+        assert!(matches!(outcome, StageOutcome::Continue));
+    }
+
+    #[tokio::test]
+    async fn policy_eval_blocks_expired_session_via_auth_state() {
+        let store = IdentitySessionStore::new_shared();
+        store.upsert(user_session("192.168.10.10", 1_700_000_400));
+        let lookup = IdentityLookupStage {
+            store: Arc::clone(&store),
+        };
+        let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
+        assert!(matches!(lookup.process(&mut ctx).await, StageOutcome::Continue));
+
+        let mut config = sample_config();
+        config.dev_config = Some(crate::config::DevConfig {
+            policy_override: Some("match auth_state { = unknown : verdict drop _ : verdict allow }".into()),
+        });
+        let provider = Arc::new(DiskPolicyProvider::from_loaded(&config).await.unwrap());
+        let stage = PolicyEvalStage {
+            provider,
+            dnssec: None,
+        };
+
+        let outcome = stage.process(&mut ctx).await;
+        assert!(matches!(outcome, StageOutcome::Halt));
+    }
+
+    #[tokio::test]
+    async fn policy_eval_blocks_guest_via_identity_group() {
         let store = IdentitySessionStore::new_shared();
         store.upsert(user_session_with_groups("192.168.10.10", 1_700_003_600, &["guests"]));
         let lookup = IdentityLookupStage {
@@ -1206,7 +1231,6 @@ mod tests {
         let stage = PolicyEvalStage {
             provider,
             dnssec: None,
-            identity_enforcement: user_zone_enforcement(),
         };
 
         let outcome = stage.process(&mut ctx).await;

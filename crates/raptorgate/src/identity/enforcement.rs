@@ -1,8 +1,6 @@
 use std::net::IpAddr;
 use std::time::SystemTime;
 
-use ipnet::IpNet;
-
 use super::session::IdentitySession;
 
 // Stan auth doklejany do PacketContext przez IdentityLookupStage.
@@ -53,48 +51,6 @@ impl IdentityContext {
     }
 }
 
-// Konfiguracja pre-auth gate dla zrodel wymagajacych aktywnej sesji.
-#[derive(Debug, Clone, Default)]
-pub struct IdentityEnforcementConfig {
-    pub require_identity_src_cidrs: Vec<IpNet>,
-}
-
-impl IdentityEnforcementConfig {
-    pub fn new(require_identity_src_cidrs: Vec<IpNet>) -> Self {
-        Self {
-            require_identity_src_cidrs,
-        }
-    }
-
-    pub fn requires_identity(&self, src_ip: IpAddr) -> bool {
-        self.require_identity_src_cidrs
-            .iter()
-            .any(|cidr| cidr.contains(&src_ip))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EnforcementOutcome {
-    Allow,
-    Drop,
-}
-
-// Decyzja per pakiet: aktywna sesja przechodzi, brak/expired sesja w wymaganym
-// CIDR-ze zostaje odrzucona przez pre-auth gate.
-pub fn enforce(
-    enforcement: &IdentityEnforcementConfig,
-    context: &IdentityContext,
-) -> EnforcementOutcome {
-    if context.is_authenticated() {
-        return EnforcementOutcome::Allow;
-    }
-    if enforcement.requires_identity(context.original_src_ip) {
-        EnforcementOutcome::Drop
-    } else {
-        EnforcementOutcome::Allow
-    }
-}
-
 // Wybiera identity dla pakietu na podstawie store i czasu arrival.
 // Sesje wygasle (expires_at <= now) traktujemy jak brak sesji (ADR 0003).
 pub fn resolve_identity(
@@ -125,43 +81,6 @@ mod tests {
             expires_at: UNIX_EPOCH + Duration::from_secs(expires_secs),
             groups: Vec::new(),
         }
-    }
-
-    #[test]
-    fn requires_identity_matches_cidr() {
-        let cfg = IdentityEnforcementConfig::new(vec!["192.168.10.0/24".parse().unwrap()]);
-        assert!(cfg.requires_identity("192.168.10.10".parse().unwrap()));
-        assert!(!cfg.requires_identity("192.168.20.10".parse().unwrap()));
-    }
-
-    #[test]
-    fn empty_config_never_requires_identity() {
-        let cfg = IdentityEnforcementConfig::default();
-        assert!(!cfg.requires_identity("192.168.10.10".parse().unwrap()));
-    }
-
-    #[test]
-    fn enforce_allows_authenticated_packet() {
-        let cfg = IdentityEnforcementConfig::new(vec!["192.168.10.0/24".parse().unwrap()]);
-        let ctx = IdentityContext::authenticated(
-            "192.168.10.10".parse().unwrap(),
-            session("192.168.10.10", 1_700_003_600),
-        );
-        assert_eq!(enforce(&cfg, &ctx), EnforcementOutcome::Allow);
-    }
-
-    #[test]
-    fn enforce_drops_unknown_when_required() {
-        let cfg = IdentityEnforcementConfig::new(vec!["192.168.10.0/24".parse().unwrap()]);
-        let ctx = IdentityContext::unknown("192.168.10.10".parse().unwrap());
-        assert_eq!(enforce(&cfg, &ctx), EnforcementOutcome::Drop);
-    }
-
-    #[test]
-    fn enforce_allows_unknown_outside_required_cidr() {
-        let cfg = IdentityEnforcementConfig::new(vec!["192.168.10.0/24".parse().unwrap()]);
-        let ctx = IdentityContext::unknown("10.0.0.1".parse().unwrap());
-        assert_eq!(enforce(&cfg, &ctx), EnforcementOutcome::Allow);
     }
 
     #[test]

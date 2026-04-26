@@ -9,8 +9,7 @@ use tonic::async_trait;
 use crate::data_plane::packet_context::PacketContext;
 use crate::dpi::{DpiClassifier, DpiContext};
 use crate::identity::{
-    enforce, resolve_identity, EnforcementOutcome, IdentityContext, IdentityEnforcementConfig,
-    IdentitySessionStore,
+    resolve_identity, IdentityContext, IdentitySessionStore,
 };
 use crate::pipeline::{Stage, StageOutcome};
 use crate::tls::inspection_relay::{Direction, SessionMeta};
@@ -63,7 +62,6 @@ pub struct DecryptedChainInspector<P> {
     pipeline: P,
     dpi_classifier: Arc<DpiClassifier>,
     identity_sessions: Arc<IdentitySessionStore>,
-    identity_enforcement: Arc<IdentityEnforcementConfig>,
 }
 
 impl<P> DecryptedChainInspector<P> {
@@ -72,7 +70,6 @@ impl<P> DecryptedChainInspector<P> {
             pipeline,
             dpi_classifier,
             IdentitySessionStore::new_shared(),
-            Arc::new(IdentityEnforcementConfig::default()),
         )
     }
 
@@ -80,13 +77,11 @@ impl<P> DecryptedChainInspector<P> {
         pipeline: P,
         dpi_classifier: Arc<DpiClassifier>,
         identity_sessions: Arc<IdentitySessionStore>,
-        identity_enforcement: Arc<IdentityEnforcementConfig>,
     ) -> Self {
         Self {
             pipeline,
             dpi_classifier,
             identity_sessions,
-            identity_enforcement,
         }
     }
 }
@@ -107,7 +102,6 @@ where
         let endpoints = endpoints_for_direction(meta, direction);
         let arrival_time = SystemTime::now();
         let identity = resolve_identity(&self.identity_sessions, meta.peer.ip(), arrival_time);
-        let enforcement = enforce(&self.identity_enforcement, &identity);
 
         let mut packet_ctx = match build_packet_context(
             payload,
@@ -133,22 +127,6 @@ where
                 };
             }
         };
-
-        if matches!(enforcement, EnforcementOutcome::Drop) {
-            tracing::debug!(
-                event = "identity.preauth.blocked",
-                stage = "tls_decrypted_chain",
-                peer = %meta.peer,
-                server = %meta.server,
-                direction = ?direction,
-                "decrypted traffic blocked by identity pre-auth gate"
-            );
-            return InspectionDecision {
-                disposition: InspectionDisposition::Drop,
-                ctx: seed_ctx.clone(),
-                payload: Vec::new(),
-            };
-        }
 
         let disposition = match self.pipeline.process(&mut packet_ctx).await {
             StageOutcome::Continue => InspectionDisposition::Forward,
@@ -313,14 +291,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn synthetic_packet_blocks_missing_identity_when_required() {
+    async fn synthetic_packet_forwards_missing_identity_to_pipeline() {
         let inspector = DecryptedChainInspector::with_identity(
             MarkingStage,
             Arc::new(DpiClassifier::new()),
             crate::identity::IdentitySessionStore::new_shared(),
-            Arc::new(crate::identity::IdentityEnforcementConfig::new(vec![
-                "10.0.0.0/24".parse().unwrap(),
-            ])),
         );
         let seed_ctx = DpiContext {
             decrypted: true,
@@ -338,8 +313,8 @@ mod tests {
             )
             .await;
 
-        assert_eq!(decision.disposition, InspectionDisposition::Drop);
-        assert!(decision.payload.is_empty());
+        assert_eq!(decision.disposition, InspectionDisposition::Forward);
+        assert_eq!(decision.ctx.app_proto, Some(crate::dpi::AppProto::Http));
     }
 
     #[tokio::test]
@@ -350,9 +325,6 @@ mod tests {
             MarkingStage,
             Arc::new(DpiClassifier::new()),
             store,
-            Arc::new(crate::identity::IdentityEnforcementConfig::new(vec![
-                "10.0.0.0/24".parse().unwrap(),
-            ])),
         );
         let seed_ctx = DpiContext {
             decrypted: true,

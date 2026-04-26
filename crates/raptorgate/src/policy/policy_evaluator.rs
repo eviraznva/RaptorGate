@@ -201,7 +201,7 @@ impl PolicyEvaluator {
 
     fn pattern_matches_group(pattern: &Pattern, groups: Option<&[String]>) -> bool {
         match pattern {
-            Pattern::Wildcard => groups.is_some_and(|gs| !gs.is_empty()),
+            Pattern::Wildcard => groups.is_some(),
             Pattern::Equal(FieldValue::IdentityGroup(name)) => {
                 groups.is_some_and(|gs| gs.iter().any(|g| g == name))
             }
@@ -1919,6 +1919,24 @@ mod tests {
         assert_eq!(
             eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
             Verdict::Drop
+        );
+    }
+
+    #[test]
+    fn wildcard_identity_group_authenticated_without_groups_matches() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::IdentityGroup,
+                Pattern::Wildcard,
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let ctx = authenticated_ctx(authenticated_session("alice", vec![]));
+        assert_eq!(
+            eval_with_identity(tree, &default_packet(), &default_arrival(), None, Some(&ctx)),
+            Verdict::Allow
         );
     }
 
