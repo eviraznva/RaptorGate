@@ -5,6 +5,7 @@ import { Provider } from "react-redux";
 import { store } from "./app/store.ts";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import LoginPage from "./pages/LoginPage.tsx";
+import PortalPage from "./pages/PortalPage.tsx";
 import ResetPasswordPage from "./pages/ResetPasswordPage.tsx";
 import Dashboard from "./pages/Dashboard.tsx";
 import Dns from "./pages/Dns.tsx";
@@ -33,6 +34,14 @@ const router = createBrowserRouter([
       {
         path: "/reset-password",
         element: <ResetPasswordPage />,
+      },
+      {
+        path: "/portal",
+        element: <PortalPage />,
+      },
+      {
+        path: "/portal/login",
+        element: <PortalPage />,
       },
       {
         path: "/dashboard",

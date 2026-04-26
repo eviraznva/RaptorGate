@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { RADIUS_AUTHENTICATOR_TOKEN } from '../application/ports/radius-authenticator.interface.js';
 import { AuthenticateIdentityUseCase } from '../application/use-cases/authenticate-identity.use-case.js';
+import { GetIdentitySessionUseCase } from '../application/use-cases/get-identity-session.use-case.js';
 import { LogoutIdentityUseCase } from '../application/use-cases/logout-identity.use-case.js';
 import { IDENTITY_SESSION_STORE_TOKEN } from '../domain/repositories/identity-session-store.js';
 import { UdpRadiusAuthenticator } from '../infrastructure/adapters/udp-radius-authenticator.js';
@@ -19,6 +20,7 @@ import { IdentitySessionModule } from './identity-session.module.js';
   providers: [
     AuthenticateIdentityUseCase,
     LogoutIdentityUseCase,
+    GetIdentitySessionUseCase,
     IdentitySessionSweeperService,
     { provide: RADIUS_AUTHENTICATOR_TOKEN, useClass: UdpRadiusAuthenticator },
     {

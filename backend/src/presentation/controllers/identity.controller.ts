@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Inject,
@@ -12,6 +13,7 @@ import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { AuthenticateIdentityUseCase } from '../../application/use-cases/authenticate-identity.use-case.js';
+import { GetIdentitySessionUseCase } from '../../application/use-cases/get-identity-session.use-case.js';
 import { LogoutIdentityUseCase } from '../../application/use-cases/logout-identity.use-case.js';
 import { IsPublic } from '../../infrastructure/decorators/public.decorator.js';
 import {
@@ -28,6 +30,7 @@ import { ResponseMessage } from '../decorators/response-message.decorator.js';
 import { IdentityLoginDto } from '../dtos/identity-login.dto.js';
 import { IdentityLoginResponseDto } from '../dtos/identity-login-response.dto.js';
 import { IdentityLogoutResponseDto } from '../dtos/identity-logout-response.dto.js';
+import { IdentitySessionResponseDto } from '../dtos/identity-session-response.dto.js';
 
 // Endpointy identity dla portalu/captive sa publiczne, bo uzytkownik nie ma JWT admina.
 // sourceIp pochodzi z TCP peer albo z XFF od lokalnego proxy.
@@ -39,6 +42,8 @@ export class IdentityController {
     private readonly authenticateIdentityUseCase: AuthenticateIdentityUseCase,
     @Inject(LogoutIdentityUseCase)
     private readonly logoutIdentityUseCase: LogoutIdentityUseCase,
+    @Inject(GetIdentitySessionUseCase)
+    private readonly getIdentitySessionUseCase: GetIdentitySessionUseCase,
   ) {}
 
   @ApiOperation({
@@ -94,6 +99,37 @@ export class IdentityController {
   async logout(@Req() req: Request): Promise<IdentityLogoutResponseDto> {
     const sourceIp = this.resolveSourceIp(req);
     return this.logoutIdentityUseCase.execute({ sourceIp });
+  }
+
+  // Issue 7: portal odpyta status sesji przy mountcie zeby pokazac
+  // already-authenticated zamiast formularza loginu.
+  @ApiOperation({
+    summary: 'Identity session status',
+    description:
+      'Returns the active identity session for the calling source IP, or authenticated=false when no live session is bound to that IP.',
+  })
+  @IsPublic()
+  @Get('session')
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage('Identity session status')
+  @ApiOkEnvelope(IdentitySessionResponseDto, 'Identity session status')
+  @ApiError400('Invalid source IP')
+  @ApiError429('Too many session lookups')
+  @ApiError500()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async session(@Req() req: Request): Promise<IdentitySessionResponseDto> {
+    const sourceIp = this.resolveSourceIp(req);
+    const result = await this.getIdentitySessionUseCase.execute({ sourceIp });
+
+    return {
+      authenticated: result.authenticated,
+      sourceIp: result.sourceIp,
+      sessionId: result.sessionId,
+      username: result.username,
+      authenticatedAt: result.authenticatedAt,
+      expiresAt: result.expiresAt,
+      groups: result.groups,
+    };
   }
 
   private resolveSourceIp(req: Request): string {

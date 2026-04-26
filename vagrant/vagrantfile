@@ -72,6 +72,9 @@ def setup_nftables
     fi
     nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 443 ct state new accept
     nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 9428 ct state new accept
+
+    # Issue 7: portal captive na interfejsie h1, nginx vhost 192.168.10.254:443.
+    nft add rule inet filter input iifname "eth1" ip daddr 192.168.10.254 tcp dport 443 ct state new accept
   SHELL
 end
 
