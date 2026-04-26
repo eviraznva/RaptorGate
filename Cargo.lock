@@ -1431,7 +1431,6 @@ dependencies = [
  "log",
  "tokio",
 ]
-]
 
 [[package]]
 name = "ngfw"

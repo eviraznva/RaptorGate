@@ -40,7 +40,6 @@ impl NetlinkListener {
                     msg = messages.next() => {
                         if let Some((message, _)) = msg {
                             if let rtnetlink::packet_core::NetlinkPayload::InnerMessage(inner) = message.payload {
-                                // Ignore send error (happens if there are no receivers yet)
                                 let _ = tx.send(inner);
                             }
                         } else {
