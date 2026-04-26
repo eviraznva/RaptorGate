@@ -55,6 +55,41 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(30_000),
+  // LDAP provider (Issue 4, ADR 0005). Backend laczy sie do slapd w labie (192.168.20.40).
+  IDENTITY_LDAP_ENABLED: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => (typeof v === 'boolean' ? v : v.toLowerCase() === 'true'))
+    .default(true),
+  IDENTITY_LDAP_HOST: z.string().min(1).default('192.168.20.40'),
+  IDENTITY_LDAP_PORT: z.coerce.number().int().positive().max(65535).default(389),
+  IDENTITY_LDAP_BIND_DN: z.string().min(1).default('cn=admin,dc=raptorgate,dc=local'),
+  IDENTITY_LDAP_BIND_PASSWORD: z.string().min(1).default('admin'),
+  IDENTITY_LDAP_USER_BASE_DN: z
+    .string()
+    .min(1)
+    .default('ou=users,dc=raptorgate,dc=local'),
+  IDENTITY_LDAP_USER_FILTER_ATTRIBUTE: z.string().min(1).default('uid'),
+  IDENTITY_LDAP_GROUP_BASE_DN: z
+    .string()
+    .min(1)
+    .default('ou=groups,dc=raptorgate,dc=local'),
+  IDENTITY_LDAP_GROUP_MEMBER_ATTRIBUTE: z.string().min(1).default('memberUid'),
+  IDENTITY_LDAP_GROUP_NAME_ATTRIBUTE: z.string().min(1).default('cn'),
+  IDENTITY_LDAP_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
+  // Cache grup user -> groups: zywotnosc wpisu, niezalezna od TTL sesji identity.
+  IDENTITY_LDAP_GROUP_CACHE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(300),
+  // Wybor zrodla grup (Issue 4): docelowo ldap, vsa jako fallback / tryb MVP.
+  IDENTITY_GROUP_SOURCE_PRIMARY: z.enum(['ldap', 'vsa']).default('ldap'),
+  // Refresher grup dla aktywnych sesji: pozwala podmienic grupy bez relogowania.
+  IDENTITY_GROUP_REFRESH_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .default(60_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -18,11 +18,12 @@ import {
   RADIUS_AUTHENTICATOR_TOKEN,
   type IRadiusAuthenticator,
 } from '../ports/radius-authenticator.interface.js';
+import { IdentityGroupResolverService } from '../services/identity-group-resolver.service.js';
 import { AuthenticateIdentityDto } from '../dtos/authenticate-identity.dto.js';
 import { AuthenticateIdentityResponseDto } from '../dtos/authenticate-identity-response.dto.js';
 
 // Stale technicze dla pol IdentitySessionSyncPayload, ktore Issue 3 nie wypelnia.
-// MAC: na MVP brak; Issue 7 lub Issue 4 moga go dolozyc.
+// MAC: na MVP brak; Issue 7 moze go dolozyc z portalu/DHCP snoopingu.
 // nas-ip / called-station-id: bierzemy z konfigu RADIUS, zeby firewall mial ten sam
 // kontekst NAS co RADIUS provider.
 const PLACEHOLDER_MAC = '00:00:00:00:00:00';
@@ -40,6 +41,8 @@ export class AuthenticateIdentityUseCase {
     private readonly sync: IIdentitySessionSyncService,
     @Inject(ConfigService)
     private readonly configService: ConfigService<Env, true>,
+    @Inject(IdentityGroupResolverService)
+    private readonly groupResolver: IdentityGroupResolverService,
   ) {}
 
   async execute(
@@ -82,7 +85,23 @@ export class AuthenticateIdentityUseCase {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
     const sessionId = randomUUID();
-    const groups = result.groups;
+
+    // Issue 4: rozdzielamy auth od zrodla grup. RADIUS VSA jest shortcutem,
+    // LDAP jest source of truth. Resolver decyduje, ktore zrodlo wygrywa.
+    const resolution = await this.groupResolver.resolve({
+      username: dto.username,
+      vsaGroups: result.groups,
+    });
+    const groups = resolution.groups;
+    this.logger.log({
+      event: 'identity.groups.resolved',
+      message: 'identity groups resolved for new session',
+      username: dto.username,
+      source: resolution.source,
+      ldapDiagnostic: resolution.ldapDiagnostic,
+      ldapError: resolution.ldapError,
+      groupCount: groups.length,
+    });
 
     const session = IdentitySession.create(
       sessionId,
@@ -96,8 +115,8 @@ export class AuthenticateIdentityUseCase {
     await this.store.runExclusiveBySourceIp(sourceIp.getValue, async () => {
       await this.sync.upsertIdentitySession({
         id: sessionId,
-        // TODO(Issue 4): identityUserId zostanie zresolvowane z LDAP do realnego rekordu IdentityUser.
-        identityUserId: dto.username,
+        // identityUserId pochodzi z resolvera (Issue 4): DN z LDAP albo username (VSA/cache/none).
+        identityUserId: resolution.externalId,
         radiusUsername: dto.username,
         macAddress: PLACEHOLDER_MAC,
         ipAddress: sourceIp.getValue,

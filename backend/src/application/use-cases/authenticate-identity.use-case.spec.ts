@@ -9,6 +9,7 @@ import type {
   IRadiusAuthenticator,
   RadiusAuthResult,
 } from '../ports/radius-authenticator.interface.js';
+import type { IdentityGroupResolverService } from '../services/identity-group-resolver.service.js';
 import { AuthenticateIdentityUseCase } from './authenticate-identity.use-case.js';
 
 function makeConfig(): ConfigService {
@@ -24,6 +25,9 @@ describe('AuthenticateIdentityUseCase', () => {
   let store: InMemoryIdentitySessionStore;
   let radius: jest.Mocked<IRadiusAuthenticator>;
   let sync: jest.Mocked<IIdentitySessionSyncService>;
+  let groupResolver: jest.Mocked<
+    Pick<IdentityGroupResolverService, 'resolve' | 'invalidate'>
+  >;
   let useCase: AuthenticateIdentityUseCase;
 
   beforeEach(() => {
@@ -33,6 +37,12 @@ describe('AuthenticateIdentityUseCase', () => {
       upsertIdentitySession: jest.fn<() => Promise<void>>(),
       revokeIdentitySession: jest.fn<() => Promise<boolean>>(),
     };
+    groupResolver = {
+      resolve: jest.fn(),
+      invalidate: jest.fn(),
+    } as unknown as jest.Mocked<
+      Pick<IdentityGroupResolverService, 'resolve' | 'invalidate'>
+    >;
     useCase = new AuthenticateIdentityUseCase(
       radius,
       store,
@@ -40,35 +50,68 @@ describe('AuthenticateIdentityUseCase', () => {
       makeConfig() as unknown as ConstructorParameters<
         typeof AuthenticateIdentityUseCase
       >[3],
+      groupResolver as unknown as IdentityGroupResolverService,
     );
   });
 
-  it('creates a session and sends firewall upsert after Access-Accept', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'accept', groups: ['users', ' users ', '', 'guests'] } as RadiusAuthResult);
+  it('creates a session with LDAP groups and external DN as identityUserId', async () => {
+    radius.authenticate.mockResolvedValue({
+      kind: 'accept',
+      groups: ['vsa-only'],
+    } as RadiusAuthResult);
     sync.upsertIdentitySession.mockResolvedValue(undefined);
+    groupResolver.resolve.mockResolvedValue({
+      groups: ['admins'],
+      source: 'ldap',
+      externalId: 'uid=admin,ou=users,dc=raptorgate,dc=local',
+      ldapDiagnostic: 'ok',
+    });
 
     const result = await useCase.execute({
+      username: 'admin',
+      password: 'admin123',
+      sourceIp: '192.168.10.10',
+    });
+
+    expect(result.username).toBe('admin');
+
+    const stored = await store.findBySourceIp('192.168.10.10');
+    expect(stored?.getGroups()).toEqual(['admins']);
+
+    const payload = sync.upsertIdentitySession.mock.calls[0][0];
+    expect(payload.groups).toEqual(['admins']);
+    expect(payload.identityUserId).toBe(
+      'uid=admin,ou=users,dc=raptorgate,dc=local',
+    );
+    expect(groupResolver.resolve).toHaveBeenCalledWith({
+      username: 'admin',
+      vsaGroups: ['vsa-only'],
+    });
+  });
+
+  it('falls back to VSA groups and username as identityUserId when LDAP errors', async () => {
+    radius.authenticate.mockResolvedValue({
+      kind: 'accept',
+      groups: ['users'],
+    } as RadiusAuthResult);
+    sync.upsertIdentitySession.mockResolvedValue(undefined);
+    groupResolver.resolve.mockResolvedValue({
+      groups: ['users'],
+      source: 'vsa',
+      externalId: 'user',
+      ldapDiagnostic: 'error',
+      ldapError: 'ECONNREFUSED',
+    });
+
+    await useCase.execute({
       username: 'user',
       password: 'user123',
       sourceIp: '192.168.10.10',
     });
 
-    expect(result.username).toBe('user');
-    expect(result.sourceIp).toBe('192.168.10.10');
-    expect(result.expiresAt.getTime()).toBeGreaterThan(
-      result.authenticatedAt.getTime(),
-    );
-
-    const stored = await store.findBySourceIp('192.168.10.10');
-    expect(stored).not.toBeNull();
-    expect(stored?.getUsername()).toBe('user');
-    expect(stored?.getGroups()).toEqual(['users', 'guests']);
-
-    expect(sync.upsertIdentitySession).toHaveBeenCalledTimes(1);
     const payload = sync.upsertIdentitySession.mock.calls[0][0];
-    expect(payload.ipAddress).toBe('192.168.10.10');
-    expect(payload.radiusUsername).toBe('user');
-    expect(payload.groups).toEqual(['users', 'guests']);
+    expect(payload.groups).toEqual(['users']);
+    expect(payload.identityUserId).toBe('user');
   });
 
   it('does not create a session or call upsert after Access-Reject', async () => {
@@ -87,10 +130,13 @@ describe('AuthenticateIdentityUseCase', () => {
 
     expect(await store.findBySourceIp('192.168.10.10')).toBeNull();
     expect(sync.upsertIdentitySession).not.toHaveBeenCalled();
+    expect(groupResolver.resolve).not.toHaveBeenCalled();
   });
 
   it('returns a clear error and does not create a session on RADIUS timeout', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'timeout' } as RadiusAuthResult);
+    radius.authenticate.mockResolvedValue({
+      kind: 'timeout',
+    } as RadiusAuthResult);
 
     await expect(
       useCase.execute({
@@ -135,7 +181,16 @@ describe('AuthenticateIdentityUseCase', () => {
   });
 
   it('does not store the session when firewall sync fails', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'accept', groups: [] } as RadiusAuthResult);
+    radius.authenticate.mockResolvedValue({
+      kind: 'accept',
+      groups: [],
+    } as RadiusAuthResult);
+    groupResolver.resolve.mockResolvedValue({
+      groups: [],
+      source: 'none',
+      externalId: 'user',
+      ldapDiagnostic: 'disabled',
+    });
     sync.upsertIdentitySession.mockRejectedValue(
       new Error('firewall unreachable'),
     );
@@ -152,7 +207,16 @@ describe('AuthenticateIdentityUseCase', () => {
   });
 
   it('keeps the previous session for the IP when new session sync fails', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'accept', groups: [] } as RadiusAuthResult);
+    radius.authenticate.mockResolvedValue({
+      kind: 'accept',
+      groups: [],
+    } as RadiusAuthResult);
+    groupResolver.resolve.mockResolvedValue({
+      groups: [],
+      source: 'none',
+      externalId: 'old-user',
+      ldapDiagnostic: 'disabled',
+    });
     sync.upsertIdentitySession.mockResolvedValueOnce(undefined);
 
     const first = await useCase.execute({
@@ -164,6 +228,12 @@ describe('AuthenticateIdentityUseCase', () => {
     sync.upsertIdentitySession.mockRejectedValueOnce(
       new Error('firewall unreachable'),
     );
+    groupResolver.resolve.mockResolvedValueOnce({
+      groups: [],
+      source: 'none',
+      externalId: 'new-user',
+      ldapDiagnostic: 'disabled',
+    });
 
     await expect(
       useCase.execute({
@@ -179,13 +249,28 @@ describe('AuthenticateIdentityUseCase', () => {
   });
 
   it('replaces the previous session on second login from the same IP', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'accept', groups: [] } as RadiusAuthResult);
+    radius.authenticate.mockResolvedValue({
+      kind: 'accept',
+      groups: [],
+    } as RadiusAuthResult);
+    groupResolver.resolve.mockResolvedValue({
+      groups: [],
+      source: 'none',
+      externalId: 'user-a',
+      ldapDiagnostic: 'disabled',
+    });
     sync.upsertIdentitySession.mockResolvedValue(undefined);
 
     await useCase.execute({
       username: 'user-a',
       password: 'pw',
       sourceIp: '10.0.0.5',
+    });
+    groupResolver.resolve.mockResolvedValueOnce({
+      groups: [],
+      source: 'none',
+      externalId: 'user-b',
+      ldapDiagnostic: 'disabled',
     });
     const second = await useCase.execute({
       username: 'user-b',
@@ -200,7 +285,16 @@ describe('AuthenticateIdentityUseCase', () => {
   });
 
   it('passes sourceIp to RADIUS as callingStationId instead of body data', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'accept', groups: [] } as RadiusAuthResult);
+    radius.authenticate.mockResolvedValue({
+      kind: 'accept',
+      groups: [],
+    } as RadiusAuthResult);
+    groupResolver.resolve.mockResolvedValue({
+      groups: [],
+      source: 'none',
+      externalId: 'user',
+      ldapDiagnostic: 'disabled',
+    });
     sync.upsertIdentitySession.mockResolvedValue(undefined);
 
     await useCase.execute({

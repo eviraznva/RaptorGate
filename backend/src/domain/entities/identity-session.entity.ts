@@ -12,7 +12,7 @@ export class IdentitySession {
     private readonly sourceIp: IpAddress,
     private readonly createdAt: Date,
     private expiresAt: Date,
-    private readonly groups: string[],
+    private groups: string[],
   ) {}
 
   public static create(
@@ -52,6 +52,11 @@ export class IdentitySession {
 
   public renew(newExpiresAt: Date): void {
     this.expiresAt = newExpiresAt;
+  }
+
+  // Issue 4: refresher LDAP podmienia grupy w aktywnej sesji bez relogowania.
+  public replaceGroups(groups: string[]): void {
+    this.groups = normalizeGroups(groups);
   }
 
   public isExpiredAt(now: Date): boolean {
