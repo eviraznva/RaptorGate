@@ -1,4 +1,4 @@
-export type ZonePairPolicy = 'ALLOW' | 'DROP';
+export type ZonePairPolicy = 'UNSPECIFIED' | 'ALLOW' | 'DROP';
 
 export class ZonePair {
   constructor(

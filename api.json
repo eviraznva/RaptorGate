@@ -5589,6 +5589,348 @@
         ]
       }
     },
+    "/zone-interface": {
+      "get": {
+        "description": "Gets live zone interfaces from firewall gRPC query service",
+        "operationId": "ZoneInterfaceController_getLiveZoneInterfaces",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 200
+                        },
+                        "message": {
+                          "example": "Live zone interfaces retrieved"
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/GetLiveZoneInterfacesResponseDto"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 401
+                        },
+                        "message": {
+                          "example": "Access token is missing, invalid, or expired"
+                        },
+                        "error": {
+                          "example": "Unauthorized"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 403
+                        },
+                        "message": {
+                          "example": "Insufficient permissions to view zone interfaces"
+                        },
+                        "error": {
+                          "example": "Forbidden"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 429
+                        },
+                        "message": {
+                          "example": "Too many requests"
+                        },
+                        "error": {
+                          "example": "Too Many Requests"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 500
+                        },
+                        "message": {
+                          "example": "Internal server error while retrieving zone interfaces"
+                        },
+                        "error": {
+                          "example": "Internal Server Error"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get live zone interfaces",
+        "tags": [
+          "ZoneInterface"
+        ]
+      }
+    },
+    "/zone-interface/{id}": {
+      "put": {
+        "description": "Updates zone interface configuration and forwards supported properties to firewall gRPC service",
+        "operationId": "ZoneInterfaceController_editZoneInterface",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditZoneInterfaceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 200
+                        },
+                        "message": {
+                          "example": "Zone interface updated"
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/EditZoneInterfaceResponseDto"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 400
+                        },
+                        "message": {
+                          "example": "Validation failed"
+                        },
+                        "error": {
+                          "example": "Bad Request"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 401
+                        },
+                        "message": {
+                          "example": "Access token is missing, invalid, or expired"
+                        },
+                        "error": {
+                          "example": "Unauthorized"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 403
+                        },
+                        "message": {
+                          "example": "Insufficient permissions to edit zone interfaces"
+                        },
+                        "error": {
+                          "example": "Forbidden"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 429
+                        },
+                        "message": {
+                          "example": "Too many requests"
+                        },
+                        "error": {
+                          "example": "Too Many Requests"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 500
+                        },
+                        "message": {
+                          "example": "Internal server error while editing zone interface"
+                        },
+                        "error": {
+                          "example": "Internal Server Error"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Edit zone interface configuration",
+        "tags": [
+          "ZoneInterface"
+        ]
+      }
+    },
     "/nat": {
       "post": {
         "description": "Creates a new NAT rule with the specified parameters. Requires Operator role and NAT_RULES_CREATE permission.",
@@ -9038,6 +9380,125 @@
           "description",
           "isActive"
         ]
+      },
+      "ZoneInterfaceItemResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "123e4567-e89b-12d3-a456-426614174000"
+          },
+          "zoneId": {
+            "type": "string",
+            "example": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4"
+          },
+          "interfaceName": {
+            "type": "string",
+            "example": "eth0"
+          },
+          "vlanId": {
+            "type": "object",
+            "example": 20,
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "example": "active",
+            "enum": [
+              "unspecified",
+              "active",
+              "inactive",
+              "missing",
+              "unknown"
+            ]
+          },
+          "addresses": {
+            "example": [
+              "192.168.50.10/24"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string",
+            "example": "2024-06-01T12:00:00Z"
+          }
+        },
+        "required": [
+          "id",
+          "zoneId",
+          "interfaceName",
+          "vlanId",
+          "status",
+          "addresses",
+          "createdAt"
+        ]
+      },
+      "GetLiveZoneInterfacesResponseDto": {
+        "type": "object",
+        "properties": {
+          "zoneInterfaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ZoneInterfaceItemResponseDto"
+            }
+          }
+        },
+        "required": [
+          "zoneInterfaces"
+        ]
+      },
+      "EditZoneInterfaceResponseDto": {
+        "type": "object",
+        "properties": {
+          "zoneInterface": {
+            "$ref": "#/components/schemas/ZoneInterfaceItemResponseDto"
+          }
+        },
+        "required": [
+          "zoneInterface"
+        ]
+      },
+      "EditZoneInterfaceDto": {
+        "type": "object",
+        "properties": {
+          "zoneId": {
+            "type": "string",
+            "example": "00000000-0000-0000-0000-000000000000"
+          },
+          "vlanId": {
+            "type": "object",
+            "example": 20,
+            "nullable": true
+          },
+          "ipv4Address": {
+            "type": "object",
+            "example": "192.168.20.1",
+            "nullable": true
+          },
+          "ipv4Mask": {
+            "type": "object",
+            "example": 24,
+            "nullable": true
+          },
+          "ipv6Address": {
+            "type": "object",
+            "example": "fd00:20::1",
+            "nullable": true
+          },
+          "ipv6Mask": {
+            "type": "object",
+            "example": 64,
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true
+          }
+        }
       },
       "NatRuleItemResponseDto": {
         "type": "object",

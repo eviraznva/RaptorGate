@@ -1,0 +1,33 @@
+{
+  "general": {
+    "enabled": true
+  },
+  "detection": {
+    "enabled": true,
+    "max_payload_bytes": 8192,
+    "max_matches_per_packet": 10
+  },
+  "signatures": [
+    {
+      "id": "c48f2d5e-0b40-414c-90e3-267419e1e21f",
+      "name": "SQL Injection Attempt",
+      "enabled": true,
+      "category": "sqli",
+      "pattern": "(?i)(UNION.*SELECT)",
+      "severity": "high",
+      "action": "block",
+      "app_protocols": [
+        "http",
+        "tls"
+      ],
+      "src_ports": [
+        80,
+        443
+      ],
+      "dst_ports": [
+        80,
+        443
+      ]
+    }
+  ]
+}

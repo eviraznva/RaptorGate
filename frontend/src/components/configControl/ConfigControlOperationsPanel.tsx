@@ -5,12 +5,6 @@ import type { ApiFailure, ApiSuccess } from "../../types/ApiResponse";
 import type { SnapshotType } from "../../types/config/Config";
 import { generateSHA256 } from "../../utils/generateSHA256";
 
-const APPLY_PREVIEW = `{
-  "snapshotType": "manual_import",
-  "isActive": true,
-  "changeSummary": "Applied current running config"
-}`;
-
 const IMPORT_PREVIEW = `{
   "id": "123e4567-e89b-12d3-a456-426614174000",
   "versionNumber": 19,

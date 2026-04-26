@@ -14,6 +14,8 @@ import { zonesApi } from "../services/zones";
 import ZonesReducer from "../features/zonesSlice";
 import { zonePairsApi } from "../services/zonePairs";
 import ZonePairsReducer from "../features/zonePairsSlice";
+import { zoneInterfacesApi } from "../services/zoneInterfaces";
+import ZoneInterfacesReducer from "../features/zoneInterfacesSlice";
 import { natRulesApi } from "../services/natRules";
 import NatRulesReducer from "../features/natRulesSlice";
 import { usersApi } from "../services/users";
@@ -30,6 +32,7 @@ export const store = configureStore({
     loginData: LoginDataReducer,
     ipsConfig: IpsConfigReducer,
     zonePairs: ZonePairsReducer,
+    zoneInterfaces: ZoneInterfacesReducer,
     natRules: NatRulesReducer,
     config: ConfigReducer,
     configDiff: ConfigDiffReducer,
@@ -39,6 +42,7 @@ export const store = configureStore({
     [dnsInspectionApi.reducerPath]: dnsInspectionApi.reducer,
     [ipsConfigApi.reducerPath]: ipsConfigApi.reducer,
     [zonePairsApi.reducerPath]: zonePairsApi.reducer,
+    [zoneInterfacesApi.reducerPath]: zoneInterfacesApi.reducer,
     [natRulesApi.reducerPath]: natRulesApi.reducer,
     [configApi.reducerPath]: configApi.reducer,
     [usersApi.reducerPath]: usersApi.reducer,
@@ -51,6 +55,7 @@ export const store = configureStore({
     getDefaultMiddleware().concat(
       dnsInspectionApi.middleware,
       zonePairsApi.middleware,
+      zoneInterfacesApi.middleware,
       ipsConfigApi.middleware,
       natRulesApi.middleware,
       configApi.middleware,
