@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use derive_more::Display;
+use derive_more::{Display, From, Into};
 use futures::stream::StreamExt;
 use futures::TryStreamExt;
 use ipnet::IpNet;
@@ -38,20 +38,8 @@ pub enum NetworkInterfaceMonitorError {
     MulticastConnection(#[source] std::io::Error),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, Hash, From, Into)]
 pub struct SystemInterfaceId(u32);
-
-impl From<u32> for SystemInterfaceId {
-    fn from(id: u32) -> Self {
-        Self(id)
-    }
-}
-
-impl From<SystemInterfaceId> for u32 {
-    fn from(id: SystemInterfaceId) -> Self {
-        id.0
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
 pub enum OperState {

@@ -41,7 +41,7 @@ impl RoutingTable {
             }
         }
         
-        initial_routes.sort_by_key(|r| (r.destination.prefix_len(), -(r.priority as i64)));
+        initial_routes.sort_by_key(|r| (r.destination.prefix_len(), -i64::from(r.priority)));
 
         let table = Arc::new(Self { 
             routes: ArcSwap::from_pointee(initial_routes) 
@@ -52,13 +52,16 @@ impl RoutingTable {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = cancel.cancelled() => break,
+                    () = cancel.cancelled() => break,
                     result = rx.recv() => {
                         match result {
                             Ok(RouteNetlinkMessage::NewRoute(route)) => {
-                                if route.header.table == 254 {
-                                    if let Some(new_entry) = Self::parse_route_message(&route) {
-                                        let old_entry = table_clone.find_exact_route(&new_entry.destination, new_entry.priority);
+                                if route.header.table == 254
+                                    && let Some(new_entry) = Self::parse_route_message(&route) {
+                                        let old_entry = table_clone.find_route_by_destination_and_interface(
+                                            &new_entry.destination,
+                                            new_entry.out_interface_index
+                                        );
                                         table_clone.apply_new_route(new_entry.clone());
 
                                         if let Some(old) = old_entry {
@@ -74,11 +77,10 @@ impl RoutingTable {
                                             }));
                                         }
                                     }
-                                }
                             }
                             Ok(RouteNetlinkMessage::DelRoute(route)) => {
-                                if route.header.table == 254 {
-                                    if let Some(entry_to_remove) = Self::parse_route_message(&route) {
+                                if route.header.table == 254
+                                    && let Some(entry_to_remove) = Self::parse_route_message(&route) {
                                         let removed_entry = table_clone.find_exact_route(&entry_to_remove.destination, entry_to_remove.priority);
                                         table_clone.apply_del_route(entry_to_remove);
 
@@ -88,7 +90,6 @@ impl RoutingTable {
                                             }));
                                         }
                                     }
-                                }
                             }
                             Ok(_) => {}
                             Err(broadcast::error::RecvError::Lagged(count)) => {
@@ -152,11 +153,16 @@ impl RoutingTable {
             .cloned()
     }
 
+    pub fn find_route_by_destination_and_interface(&self, destination: &IpNet, if_index: SystemInterfaceId) -> Option<RouteEntry> {
+        self.routes.load().iter()
+            .find(|r| r.destination == *destination && r.out_interface_index == if_index)
+            .cloned()
+    }
+
     fn apply_new_route(&self, new_entry: RouteEntry) {
         self.routes.rcu(|routes| {
             let mut new_routes = (**routes).clone();
-            // Remove existing if identical destination and priority
-            new_routes.retain(|r| r.destination != new_entry.destination || r.priority != new_entry.priority);
+            new_routes.retain(|r| r.destination != new_entry.destination || r.out_interface_index != new_entry.out_interface_index);
             new_routes.push(new_entry.clone());
             new_routes.sort_by_key(|r| (r.destination.prefix_len(), -(r.priority as i64)));
             new_routes

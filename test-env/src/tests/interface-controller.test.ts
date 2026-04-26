@@ -140,6 +140,16 @@ async function pushZoneInterfaceConfig(zoneInterface: ZoneInterface): Promise<vo
   });
 }
 
+describe('Provider check RPC', () => {
+	beforeAll(async () => {
+		await resetFirewallState(getClient(), getSnapshotClient());
+	});
+
+	test('GetLiveZoneInterfaces returns correct data', async () => {
+		await request('GetLiveZoneInterfaces', {}).run()
+	})
+})
+
 describe('Interface Controller RPC', () => {
   beforeAll(async () => {
     await resetFirewallState(getClient(), getSnapshotClient());
