@@ -91,6 +91,10 @@ impl InterfaceMonitor for StaticInterfaceMonitor {
         self.interfaces.get(name).cloned()
     }
 
+    fn get_by_index(&self, index: u32) -> Option<SystemInterface> {
+        self.interfaces.values().find(|i| i.index == index).cloned()
+    }
+
     fn snapshot(&self) -> HashMap<String, SystemInterface> {
         self.interfaces.clone()
     }

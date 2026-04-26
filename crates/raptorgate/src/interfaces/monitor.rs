@@ -60,6 +60,7 @@ pub struct SystemInterface {
 #[cfg_attr(test, mockall::automock)]
 pub trait InterfaceMonitor: Send + Sync {
     fn get(&self, name: &str) -> Option<SystemInterface>;
+    fn get_by_index(&self, index: u32) -> Option<SystemInterface>;
     fn snapshot(&self) -> HashMap<String, SystemInterface>;
 }
 
@@ -150,6 +151,10 @@ impl InterfaceMonitor for NetworkInterfaceMonitor {
         self.interfaces.get(name).map(|entry| entry.value().clone())
     }
 
+    fn get_by_index(&self, index: u32) -> Option<SystemInterface> {
+        self.find_by_index(index).map(|(_, interface)| interface)
+    }
+
     fn snapshot(&self) -> HashMap<String, SystemInterface> {
         self.interfaces
             .iter()
@@ -238,7 +243,6 @@ impl NetworkInterfaceMonitor {
         self.interfaces
             .iter()
             .find(|entry| entry.value().index == index)
-            .inspect(|entry| if entry.name == "dummy-rename" { tracing::info!("DUMMY-RENAME found") })
             .map(|entry| (entry.key().clone(), entry.value().clone()))
     }
 
@@ -390,6 +394,28 @@ mod tests {
         let result = monitor.get("eth0");
         assert!(result.is_some());
         assert_eq!(result.expect("interface exists").oper_state, OperState::Up);
+    }
+
+    #[test]
+    fn mock_interface_monitor_get_by_index_contract() {
+        let mut monitor = MockInterfaceMonitor::new();
+        let expected = SystemInterface {
+            index: 2,
+            name: "eth0".to_string(),
+            oper_state: OperState::Up,
+            addresses: vec![],
+            vlan_id: None,
+        };
+
+        monitor
+            .expect_get_by_index()
+            .with(eq(2))
+            .times(1)
+            .return_once(move |_| Some(expected));
+
+        let result = monitor.get_by_index(2);
+        assert!(result.is_some());
+        assert_eq!(result.expect("interface exists").index, 2);
     }
 
     #[test]

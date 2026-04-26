@@ -443,6 +443,7 @@ async fn main() {
                 ) {
                     return;
                 }
+
                 let result: StageOutcome = pipeline.process(&mut ctx).await;
 
                 if matches!(result, StageOutcome::Continue) {
