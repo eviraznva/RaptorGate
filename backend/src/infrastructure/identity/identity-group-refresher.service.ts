@@ -20,11 +20,7 @@ import type { Env } from '../../shared/config/env.validation.js';
 
 const PLACEHOLDER_MAC = '00:00:00:00:00:00';
 
-// Refresher grup dla aktywnych sesji (Issue 4, ADR 0005). Dzieki niemu zmiana
-// grupy uzytkownika w LDAP propaguje sie do polityk firewalla bez relogowania:
-// resolver -> nowe grupy -> upsert (renew) tej samej sesji do firewalla.
-// Cache LDAP starzeje sie wlasnym TTL, wiec nie odpytujemy LDAP-a co tick —
-// odpytujemy tylko gdy cache miss.
+// Odswieza grupy aktywnych sesji bez relogowania.
 @Injectable()
 export class IdentityGroupRefresherService
   implements OnModuleInit, OnModuleDestroy
@@ -63,7 +59,6 @@ export class IdentityGroupRefresherService
     }
   }
 
-  // Wystawione publicznie dla testow i Issue 8 (manualny trigger z UI).
   async refreshOnce(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -81,9 +76,11 @@ export class IdentityGroupRefresherService
     const username = session.getUsername();
     const ip = session.getSourceIp().getValue;
 
-    // Refresh nie zna VSA — VSA jest shortcutem znanym tylko w momencie loginu.
-    // Po Issue 4 LDAP jest source of truth, wiec brak VSA tutaj jest OK.
-    const resolution = await this.resolver.resolve({ username, vsaGroups: [] });
+    const resolution = await this.resolver.resolve({
+      username,
+      vsaGroups: [],
+      forceRefresh: true,
+    });
     if (
       resolution.ldapDiagnostic === 'disabled' ||
       resolution.ldapDiagnostic === 'skipped' ||

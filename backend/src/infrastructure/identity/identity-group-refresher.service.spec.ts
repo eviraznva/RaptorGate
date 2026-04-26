@@ -120,6 +120,11 @@ describe('IdentityGroupRefresherService', () => {
 
     await refresher.refreshOnce();
 
+    expect(resolver.resolve).toHaveBeenCalledWith({
+      username: 'admin',
+      vsaGroups: [],
+      forceRefresh: true,
+    });
     expect(sync.upsertIdentitySession).toHaveBeenCalledTimes(1);
     const payload = sync.upsertIdentitySession.mock.calls[0][0];
     expect(payload.id).toBe('sess-1');

@@ -10,12 +10,6 @@ import {
 } from '../ports/ldap-group-cache.interface.js';
 import type { Env } from '../../shared/config/env.validation.js';
 
-// Pojedyncze zrodlo prawdy dla "user -> groups" dla polityk identity (Issue 4).
-// Priorytet: LDAP gdy enabled i jako primary. VSA jest shortcutem MVP — uzywany
-// gdy LDAP jest disabled, ustawiony jako primary=vsa, lub zwroci blad.
-//
-// Decyzje rozdzielenia LDAP/VSA opisuje ADR 0005.
-
 export type IdentityGroupSource = 'ldap' | 'ldap-cache' | 'vsa' | 'none';
 
 export type IdentityGroupLdapDiagnostic =
@@ -29,9 +23,6 @@ export type IdentityGroupLdapDiagnostic =
 export interface IdentityGroupResolution {
   groups: string[];
   source: IdentityGroupSource;
-  // externalId — DN z LDAP gdy source=ldap; inaczej username (VSA/none/cache).
-  // Cache nie pamieta DN celowo, zeby nie sztywno wiazac wpisu z konkretnym DN
-  // przy zmianie OU; refresher trafi na cache miss i zaktualizuje.
   externalId: string;
   ldapDiagnostic: IdentityGroupLdapDiagnostic;
   ldapError?: string;
@@ -40,6 +31,7 @@ export interface IdentityGroupResolution {
 export interface ResolveGroupsInput {
   username: string;
   vsaGroups: string[];
+  forceRefresh?: boolean;
 }
 
 @Injectable()
@@ -68,14 +60,16 @@ export class IdentityGroupResolverService {
       return this.fallbackToVsa(input, 'skipped');
     }
 
-    const cached = this.cache.get(input.username);
-    if (cached) {
-      return {
-        groups: cached,
-        source: 'ldap-cache',
-        externalId: input.username,
-        ldapDiagnostic: 'cache-hit',
-      };
+    if (!input.forceRefresh) {
+      const cached = this.cache.get(input.username);
+      if (cached) {
+        return {
+          groups: cached,
+          source: 'ldap-cache',
+          externalId: input.username,
+          ldapDiagnostic: 'cache-hit',
+        };
+      }
     }
 
     const lookup = await this.directory.resolveGroups(input.username);
@@ -97,7 +91,6 @@ export class IdentityGroupResolverService {
       return this.fallbackToVsa(input, 'not-found');
     }
     if (lookup.kind === 'disabled') {
-      // Nie powinno sie wydarzyc: isEnabled() bylo true, ale na wszelki wypadek.
       return this.fallbackToVsa(input, 'disabled');
     }
 

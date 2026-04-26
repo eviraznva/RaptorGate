@@ -70,6 +70,27 @@ describe('IdentityGroupResolverService', () => {
     expect(directory.resolveGroups).not.toHaveBeenCalled();
   });
 
+  it('pomija cache przy forceRefresh i zapisuje nowy wynik LDAP', async () => {
+    build('ldap');
+    cache.get.mockReturnValueOnce(['admins']);
+    directory.resolveGroups.mockResolvedValue({
+      kind: 'ok',
+      userDn: 'uid=admin,ou=users,dc=raptorgate,dc=local',
+      groups: ['admins', 'auditors'],
+    });
+
+    const result = await service.resolve({
+      username: 'admin',
+      vsaGroups: [],
+      forceRefresh: true,
+    });
+
+    expect(result.source).toBe('ldap');
+    expect(result.groups).toEqual(['admins', 'auditors']);
+    expect(cache.get).not.toHaveBeenCalled();
+    expect(cache.set).toHaveBeenCalledWith('admin', ['admins', 'auditors']);
+  });
+
   it('fallback na VSA gdy LDAP zwroci error i przekazuje ldapError diagnostycznie', async () => {
     build('ldap');
     directory.resolveGroups.mockResolvedValue({

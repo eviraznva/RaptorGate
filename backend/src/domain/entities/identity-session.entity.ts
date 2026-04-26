@@ -3,7 +3,6 @@ import { IpAddress } from '../value-objects/ip-address.vo.js';
 // Runtime sesja identity (ADR 0002). Trzymana w pamieci backendu i syncowana
 // do firewalla (Issue 2). Nie wchodzi w config snapshot ani persistence.
 // Minimum z Issue 3: sourceIp, username, createdAt, expiresAt.
-// TODO(Issue 4): LDAP stanie sie docelowym zrodlem grup.
 // TODO(Issue 7): macAddress moze pochodzic z portalu/DHCP snoopingu.
 export class IdentitySession {
   private constructor(
@@ -54,7 +53,6 @@ export class IdentitySession {
     this.expiresAt = newExpiresAt;
   }
 
-  // Issue 4: refresher LDAP podmienia grupy w aktywnej sesji bez relogowania.
   public replaceGroups(groups: string[]): void {
     this.groups = normalizeGroups(groups);
   }
