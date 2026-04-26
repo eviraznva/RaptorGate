@@ -176,7 +176,7 @@ async fn main() {
     );
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
-    let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
+    let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::collect(&config, &*interface_monitor).await);
 
     config_provider
         .register(Arc::clone(&policy_provider), "DiskPolicyProvider")
