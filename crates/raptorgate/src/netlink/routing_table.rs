@@ -7,7 +7,7 @@ use netlink_packet_route::{RouteNetlinkMessage, route::{RouteMessage, RouteAttri
 use tokio_util::sync::CancellationToken;
 use futures::StreamExt;
 use crate::netlink::listener::NetlinkListener;
-use crate::interfaces::monitor::SystemInterfaceId;
+use crate::interfaces::SystemInterfaceId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteEntry {

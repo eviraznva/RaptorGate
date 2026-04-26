@@ -8,6 +8,7 @@ mod interfaces;
 mod ip_defrag;
 mod logging;
 mod ml;
+mod netlink;
 mod packet_validator;
 mod pipeline;
 mod policy;
@@ -46,6 +47,8 @@ use crate::tls::{
     PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
 use crate::interfaces::{InterfaceController, NetworkInterfaceMonitor};
+use crate::netlink::listener::NetlinkListener;
+use crate::netlink::routing_table::RoutingTable;
 use etherparse::NetSlice;
 use pcap::Device;
 use std::collections::{HashMap, HashSet};
@@ -57,7 +60,7 @@ use tokio_util::sync::CancellationToken;
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() {
-    type DataPipeline = Chain<
+    type DataPipeline<M> = Chain<
         ValidationStage,
         Chain<
             LocalOwnershipStage,
@@ -79,7 +82,7 @@ async fn main() {
                                             TcpClassificationStage,
                                             Chain<
                                                 MlAlertStage,
-                                                Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                                Chain<PolicyEvalStage, Chain<NatPostroutingStage<M>, FtpAlgStage>>,
                                             >,
                                         >,
                                     >,
@@ -178,6 +181,30 @@ async fn main() {
     let interface_controller = Arc::new(
         InterfaceController::new().expect("Failed to initialize interface controller"),
     );
+    
+    let netlink_cancel = CancellationToken::new();
+    let netlink_listener = match NetlinkListener::new(netlink_cancel.clone()) {
+        Ok(listener) => listener,
+        Err(err) => {
+            tracing::error!(
+                event = "startup.netlink_listener.failed",
+                error = %err,
+                "failed to initialize netlink listener"
+            );
+            return;
+        }
+    };
+    let routing_table = match RoutingTable::new(&netlink_listener, netlink_cancel).await {
+        Ok(table) => table,
+        Err(err) => {
+            tracing::error!(
+                event = "startup.routing_table.failed",
+                error = %err,
+                "failed to initialize routing table"
+            );
+            return;
+        }
+    };
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
     let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
@@ -258,7 +285,7 @@ async fn main() {
             decision_engine: Arc::clone(&decision_engine),
             server_key_store: Arc::clone(&server_key_store),
             pinning_detector: decision_engine.pinning_detector_arc(),
-            interface_monitor,
+            interface_monitor: Arc::clone(&interface_monitor),
             interface_controller,
         },
         &config.query_socket_path,
@@ -290,7 +317,7 @@ async fn main() {
     let ml_detector: Arc<dyn crate::ml::MlPacketInspector> =
         Arc::new(crate::ml::MlDetector::from_env());
 
-    let pipeline = DataPipeline {
+    let pipeline: DataPipeline<NetworkInterfaceMonitor> = DataPipeline {
         head: ValidationStage,
         tail: Chain {
             head: LocalOwnershipStage {
@@ -342,6 +369,8 @@ async fn main() {
                                                     tail: Chain {
                                                         head: NatPostroutingStage {
                                                             engine: Arc::clone(&nat_engine),
+                                                            routing_table: Arc::clone(&routing_table),
+                                                            interface_monitor: Arc::clone(&interface_monitor),
                                                         },
                                                         tail: FtpAlgStage {
                                                             engine: Arc::clone(&nat_engine),

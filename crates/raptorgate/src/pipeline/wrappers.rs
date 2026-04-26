@@ -28,6 +28,7 @@ use crate::{
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 use crate::dpi::AppProto;
+use crate::interfaces::InterfaceMonitor;
 use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext};
 
 #[derive(Clone)]
@@ -155,11 +156,13 @@ impl Stage for NatPreroutingStage {
 }
 
 #[derive(Clone)]
-pub struct NatPostroutingStage {
+pub struct NatPostroutingStage<M: InterfaceMonitor> {
     pub engine: Arc<Mutex<NatEngine>>,
+    pub routing_table: Arc<crate::netlink::routing_table::RoutingTable>,
+    pub interface_monitor: Arc<M>,
 }
 
-impl Stage for NatPostroutingStage {
+impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
         !packet_is_decrypted(ctx)
     }
@@ -171,7 +174,11 @@ impl Stage for NatPostroutingStage {
             _ => return StageOutcome::Continue,
         };
 
-        let Some(out_iface) = infer_out_interface(dst_ip) else {
+        let Some(out_iface_idx) = self.routing_table.route_lookup(dst_ip) else {
+            return StageOutcome::Continue;
+        };
+
+        let Some(out_iface_sys) = self.interface_monitor.get_by_index(out_iface_idx) else {
             return StageOutcome::Continue;
         };
 
@@ -183,7 +190,7 @@ impl Stage for NatPostroutingStage {
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        engine.process_postrouting(raw_mut, out_iface, None);
+        engine.process_postrouting(raw_mut, &out_iface_sys.name, None);
         StageOutcome::Continue
     }
 }
@@ -256,17 +263,7 @@ impl Stage for FtpAlgStage {
     }
 }
 
-// FIXME: no ale nie hardcodujemy tego pany, to czeba sie kernela pytac
-// Kiedyś się zaimplementuje
-fn infer_out_interface(dst_ip: IpAddr) -> Option<&'static str> {
-    match dst_ip {
-        IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 10] => Some("eth1"),
-        IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 20] => Some("eth2"),
-        IpAddr::V6(ip) if ip.segments()[0] == 0xfd10 => Some("eth1"),
-        IpAddr::V6(ip) if ip.segments()[0] == 0xfd20 => Some("eth2"),
-        _ => None,
-    }
-}
+
 
 /// Stage sprawdzający blocklist DNS.
 ///

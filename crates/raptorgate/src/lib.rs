@@ -6,6 +6,7 @@ pub mod integrity;
 pub mod interfaces;
 pub mod ip_defrag;
 pub mod ml;
+pub mod netlink;
 pub mod packet_validator;
 pub mod pipeline;
 pub mod policy;
