@@ -1,8 +1,9 @@
-export type ZonesTabKey = "zones" | "zone-pairs";
+export type ZonesTabKey = "zones" | "zone-pairs" | "zone-interfaces";
 
 const tabs: { key: ZonesTabKey; label: string }[] = [
   { key: "zones", label: "Zones" },
   { key: "zone-pairs", label: "Zone Pairs" },
+  { key: "zone-interfaces", label: "Zone Interfaces" },
 ];
 
 type ZonesTabsProps = {

@@ -122,7 +122,8 @@ fn shared_server() -> &'static SharedServer {
                     .expect("failed to load policy provider");
                 let zones = ZoneProvider::from_disk(&config).await;
                 let zone_pairs = ZonePairProvider::from_disk(&config).await;
-                let zone_interfaces = ZoneInterfaceProvider::from_disk(&config).await;
+                let interface_monitor = Arc::new(StaticInterfaceMonitor::new());
+                let zone_interfaces = ZoneInterfaceProvider::collect(&config, &*interface_monitor).await;
                 let dns_inspection_store =
                     Arc::new(DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await);
                 let dns_initial_config = dns_inspection_store.get_config().clone();
@@ -141,7 +142,6 @@ fn shared_server() -> &'static SharedServer {
                     EchTlsPolicy::default(),
                     PinningConfig::default(),
                 ));
-                let interface_monitor = Arc::new(StaticInterfaceMonitor::new());
                 let interface_controller = Arc::new(
                     InterfaceController::new().expect("failed to init interface controller"),
                 );

@@ -1,0 +1,59 @@
+{
+  "rules": [
+    {
+      "id": "07c5b5fb-4304-4997-90e4-115af50098bb",
+      "rule_type": "Snat",
+      "src_ip": "192.168.1.10",
+      "dst_ip": null,
+      "src_port": null,
+      "dst_port": null,
+      "translated_ip": "172.16.0.20",
+      "translated_port": null,
+      "priority": 10
+    },
+    {
+      "id": "b29c1dda-9515-4f83-86cf-48aed6f661ae",
+      "rule_type": "Snat",
+      "src_ip": "192.168.1.10",
+      "dst_ip": null,
+      "src_port": null,
+      "dst_port": null,
+      "translated_ip": "172.16.0.20",
+      "translated_port": null,
+      "priority": 10
+    },
+    {
+      "id": "f877657b-687e-43a4-bb77-079e42167540",
+      "rule_type": "Dnat",
+      "src_ip": null,
+      "dst_ip": "10.0.0.5",
+      "src_port": null,
+      "dst_port": null,
+      "translated_ip": "192.168.1.50",
+      "translated_port": null,
+      "priority": 20
+    },
+    {
+      "id": "3349d1c9-c725-474a-b4ce-77a2558f6298",
+      "rule_type": "Pat",
+      "src_ip": null,
+      "dst_ip": "10.0.0.5",
+      "src_port": null,
+      "dst_port": 443,
+      "translated_ip": "192.168.1.50",
+      "translated_port": 8443,
+      "priority": 30
+    },
+    {
+      "id": "6c7faecd-56c8-4f85-b39f-10a63470b04a",
+      "rule_type": "Snat",
+      "src_ip": "192.168.1.99",
+      "dst_ip": null,
+      "src_port": null,
+      "dst_port": null,
+      "translated_ip": "10.0.0.5",
+      "translated_port": null,
+      "priority": 99
+    }
+  ]
+}

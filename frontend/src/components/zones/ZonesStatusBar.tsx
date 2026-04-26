@@ -1,4 +1,5 @@
 import type { Zone } from "../../types/zones/Zone";
+import type { ZoneInterface } from "../../types/zones/ZoneInterface";
 import type { ZonePair } from "../../types/zones/ZonePair";
 import type { ZonesTabKey } from "./ZonesTabs";
 
@@ -6,6 +7,7 @@ type ZonesStatusBarProps = {
   activeTab: ZonesTabKey;
   zones: Zone[];
   zonePairs: ZonePair[];
+  zoneInterfaces: ZoneInterface[];
 };
 
 function ActiveDot() {
@@ -27,10 +29,17 @@ export default function ZonesStatusBar({
   activeTab,
   zones,
   zonePairs,
+  zoneInterfaces,
 }: ZonesStatusBarProps) {
   const activeZones = zones.filter((z) => z.isActive).length;
   const allowPairs = zonePairs.filter((p) => p.defaultPolicy === "ALLOW").length;
   const dropPairs = zonePairs.filter((p) => p.defaultPolicy === "DROP").length;
+  const activeInterfaces = zoneInterfaces.filter(
+    (zoneInterface) => zoneInterface.status === "active",
+  ).length;
+  const missingInterfaces = zoneInterfaces.filter(
+    (zoneInterface) => zoneInterface.status === "missing",
+  ).length;
 
   return (
     <div className="bg-[#161616] border border-[#262626] px-5 py-3 mb-4 flex flex-wrap items-center gap-5 text-[11px]">
@@ -63,7 +72,7 @@ export default function ZonesStatusBar({
             </span>
           </div>
         </>
-      ) : (
+      ) : activeTab === "zone-pairs" ? (
         <>
           <div className="flex items-center gap-2">
             <span className="text-[#8a8a8a]">Total pairs</span>
@@ -83,6 +92,29 @@ export default function ZonesStatusBar({
             <span className="text-[#8a8a8a]">Drop</span>
             <span className="text-[#f43f5e] font-mono tabular-nums">
               {dropPairs}
+            </span>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex items-center gap-2">
+            <span className="text-[#8a8a8a]">Interfaces</span>
+            <span className="text-[#f5f5f5] font-mono tabular-nums">
+              {zoneInterfaces.length}
+            </span>
+          </div>
+          <span className="text-[#262626]">│</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[#8a8a8a]">Active</span>
+            <span className="text-[#10b981] font-mono tabular-nums">
+              {activeInterfaces}
+            </span>
+          </div>
+          <span className="text-[#262626]">│</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[#8a8a8a]">Missing</span>
+            <span className="text-[#f43f5e] font-mono tabular-nums">
+              {missingInterfaces}
             </span>
           </div>
         </>
