@@ -1070,6 +1070,12 @@ mod tests {
         }
     }
 
+    fn user_session_with_groups(ip: &str, expires_secs: u64, groups: &[&str]) -> IdentitySession {
+        let mut session = user_session(ip, expires_secs);
+        session.groups = groups.iter().map(|group| (*group).to_string()).collect();
+        session
+    }
+
     fn user_zone_enforcement() -> Arc<IdentityEnforcementConfig> {
         Arc::new(IdentityEnforcementConfig::new(vec![
             "192.168.10.0/24".parse().unwrap(),
@@ -1177,6 +1183,31 @@ mod tests {
                 "192.168.10.10".parse().unwrap(),
             ));
         });
+
+        let outcome = stage.process(&mut ctx).await;
+        assert!(matches!(outcome, StageOutcome::Halt));
+    }
+
+    #[tokio::test]
+    async fn policy_blocks_guest_via_identity_group() {
+        let store = IdentitySessionStore::new_shared();
+        store.upsert(user_session_with_groups("192.168.10.10", 1_700_003_600, &["guests"]));
+        let lookup = IdentityLookupStage {
+            store: Arc::clone(&store),
+        };
+        let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
+        assert!(matches!(lookup.process(&mut ctx).await, StageOutcome::Continue));
+
+        let mut config = sample_config();
+        config.dev_config = Some(crate::config::DevConfig {
+            policy_override: Some("match auth_state { = authenticated : match identity_group { = \"guests\" : verdict drop _ : verdict allow } _ : verdict drop }".into()),
+        });
+        let provider = Arc::new(DiskPolicyProvider::from_loaded(&config).await.unwrap());
+        let stage = PolicyEvalStage {
+            provider,
+            dnssec: None,
+            identity_enforcement: user_zone_enforcement(),
+        };
 
         let outcome = stage.process(&mut ctx).await;
         assert!(matches!(outcome, StageOutcome::Halt));

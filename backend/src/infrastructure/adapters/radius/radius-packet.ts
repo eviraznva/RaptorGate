@@ -222,13 +222,23 @@ function extractCiscoAvPairs(attributes: Buffer[]): Buffer[] {
       const vendorLength = attribute.readUInt8(offset + 1);
       if (vendorLength < 2 || offset + vendorLength > attribute.length) break;
       if (vendorType === 1) {
-        pairs.push(attribute.subarray(offset + 2, offset + vendorLength));
+        const value = attribute.subarray(offset + 2, offset + vendorLength);
+        if (isCiscoRolesAvPair(value.toString('utf8'))) {
+          pairs.push(value);
+        }
       }
       offset += vendorLength;
     }
   }
 
   return pairs;
+}
+
+function isCiscoRolesAvPair(value: string): boolean {
+  const eqIdx = value.indexOf('=');
+  if (eqIdx <= 0) return false;
+  const key = value.slice(0, eqIdx).trim();
+  return key === 'shell:roles' || key === 'roles';
 }
 
 function splitGroupValue(value: string): string[] {

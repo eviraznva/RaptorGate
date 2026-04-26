@@ -82,7 +82,7 @@ export class AuthenticateIdentityUseCase {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
     const sessionId = randomUUID();
-    const groups = result.groups ?? [];
+    const groups = result.groups;
 
     const session = IdentitySession.create(
       sessionId,

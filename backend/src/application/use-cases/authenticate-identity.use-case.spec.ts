@@ -135,7 +135,7 @@ describe('AuthenticateIdentityUseCase', () => {
   });
 
   it('does not store the session when firewall sync fails', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'accept' } as RadiusAuthResult);
+    radius.authenticate.mockResolvedValue({ kind: 'accept', groups: [] } as RadiusAuthResult);
     sync.upsertIdentitySession.mockRejectedValue(
       new Error('firewall unreachable'),
     );
@@ -152,7 +152,7 @@ describe('AuthenticateIdentityUseCase', () => {
   });
 
   it('keeps the previous session for the IP when new session sync fails', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'accept' } as RadiusAuthResult);
+    radius.authenticate.mockResolvedValue({ kind: 'accept', groups: [] } as RadiusAuthResult);
     sync.upsertIdentitySession.mockResolvedValueOnce(undefined);
 
     const first = await useCase.execute({
@@ -179,7 +179,7 @@ describe('AuthenticateIdentityUseCase', () => {
   });
 
   it('replaces the previous session on second login from the same IP', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'accept' } as RadiusAuthResult);
+    radius.authenticate.mockResolvedValue({ kind: 'accept', groups: [] } as RadiusAuthResult);
     sync.upsertIdentitySession.mockResolvedValue(undefined);
 
     await useCase.execute({
@@ -200,7 +200,7 @@ describe('AuthenticateIdentityUseCase', () => {
   });
 
   it('passes sourceIp to RADIUS as callingStationId instead of body data', async () => {
-    radius.authenticate.mockResolvedValue({ kind: 'accept' } as RadiusAuthResult);
+    radius.authenticate.mockResolvedValue({ kind: 'accept', groups: [] } as RadiusAuthResult);
     sync.upsertIdentitySession.mockResolvedValue(undefined);
 
     await useCase.execute({

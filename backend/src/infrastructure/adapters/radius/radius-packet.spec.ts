@@ -216,5 +216,15 @@ describe('radius-packet', () => {
         'admins',
       ]);
     });
+
+    it('ignoruje Cisco-AVPair bez klucza roles', () => {
+      const cisco = Buffer.concat([
+        Buffer.from([0, 0, 0, 9]),
+        attr(1, 'ip:addr-pool=guest'),
+      ]);
+      const attrs = attr(RADIUS_ATTR_VENDOR_SPECIFIC, cisco);
+
+      expect(extractGroupsFromAttributes(attrs)).toEqual([]);
+    });
   });
 });
