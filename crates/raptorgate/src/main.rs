@@ -173,15 +173,6 @@ async fn main() {
             .await
             .expect("Failed to initialize policy provider"),
     );
-    let interface_monitor = Arc::new(
-        NetworkInterfaceMonitor::new(CancellationToken::new())
-            .await
-            .expect("Failed to initialize network interface monitor"),
-    );
-    let interface_controller = Arc::new(
-        InterfaceController::new().expect("Failed to initialize interface controller"),
-    );
-    
     let netlink_cancel = CancellationToken::new();
     let netlink_listener = match NetlinkListener::new(netlink_cancel.clone()) {
         Ok(listener) => listener,
@@ -194,6 +185,16 @@ async fn main() {
             return;
         }
     };
+
+    let interface_monitor = Arc::new(
+        NetworkInterfaceMonitor::new(netlink_cancel.clone(), &netlink_listener)
+            .await
+            .expect("Failed to initialize network interface monitor"),
+    );
+    let interface_controller = Arc::new(
+        InterfaceController::new().expect("Failed to initialize interface controller"),
+    );
+    
     let routing_table = match RoutingTable::new(&netlink_listener, netlink_cancel).await {
         Ok(table) => table,
         Err(err) => {

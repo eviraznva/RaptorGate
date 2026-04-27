@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use derive_more::{Display, From, Into};
-use futures::stream::StreamExt;
 use futures::TryStreamExt;
 use ipnet::IpNet;
 use netlink_packet_route::RouteNetlinkMessage;
@@ -18,13 +17,13 @@ use netlink_packet_route::{
         State as LinkState,
     },
 };
-use rtnetlink::MulticastGroup;
-use rtnetlink::packet_core::NetlinkPayload;
 use thiserror::Error;
 use tokio::select;
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use crate::events::{self, Event, EventKind};
+use crate::netlink::listener::NetlinkListener;
 
 #[derive(Debug, Error)]
 pub enum NetworkInterfaceMonitorError {
@@ -34,8 +33,6 @@ pub enum NetworkInterfaceMonitorError {
     LinkDump(#[source] rtnetlink::Error),
     #[error("failed to read address dump from netlink")]
     AddressDump(#[source] rtnetlink::Error),
-    #[error("failed to open netlink multicast connection")]
-    MulticastConnection(#[source] std::io::Error),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, Hash, From, Into)]
@@ -73,7 +70,10 @@ pub struct NetworkInterfaceMonitor {
 }
 
 impl NetworkInterfaceMonitor {
-    pub async fn new(cancel: CancellationToken) -> Result<Self, NetworkInterfaceMonitorError> {
+    pub async fn new(
+        cancel: CancellationToken,
+        listener: &NetlinkListener,
+    ) -> Result<Self, NetworkInterfaceMonitorError> {
         let (connection, handle, _) =
             rtnetlink::new_connection().map_err(NetworkInterfaceMonitorError::Connection)?;
         tokio::spawn(connection);
@@ -110,21 +110,13 @@ impl NetworkInterfaceMonitor {
         }
 
         let monitor = Self { interfaces: Arc::new(interfaces) };
-        monitor.spawn_live_updates(cancel)?;
+        monitor.spawn_live_updates(cancel, listener);
         Ok(monitor)
     }
 
-    fn spawn_live_updates(&self, cancel: CancellationToken) -> Result<(), NetworkInterfaceMonitorError> {
-        let groups = [
-            MulticastGroup::Link,
-            MulticastGroup::Ipv4Ifaddr,
-            MulticastGroup::Ipv6Ifaddr,
-        ];
-        let (connection, _handle, mut messages) = rtnetlink::new_multicast_connection(&groups)
-            .map_err(NetworkInterfaceMonitorError::MulticastConnection)?;
+    fn spawn_live_updates(&self, cancel: CancellationToken, listener: &NetlinkListener) {
+        let mut rx = listener.subscribe();
         let monitor = self.clone();
-
-        tokio::spawn(connection);
 
         tokio::spawn(async move {
             loop {
@@ -132,20 +124,23 @@ impl NetworkInterfaceMonitor {
                     _ = cancel.cancelled() => {
                         break;
                     }
-                    msg = messages.next() => {
-                        let Some((message, _addr)) = msg else {
-                            break;
-                        };
-
-                        if let NetlinkPayload::InnerMessage(inner) = message.payload {
-                            monitor.handle_route_message(inner);
+                    msg = rx.recv() => {
+                        match msg {
+                            Ok(inner) => {
+                                monitor.handle_route_message(inner);
+                            }
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!(missed_messages = n, "NetworkInterfaceMonitor subscriber lagged");
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                tracing::error!("NetlinkListener broadcast channel closed, monitor stopping live updates");
+                                break;
+                            }
                         }
                     }
                 }
             }
         });
-
-        Ok(())
     }
 }
 
