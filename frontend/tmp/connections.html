@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RaptorGate - Connections</title>
+  <link rel="stylesheet" href="./connections.css" />
+</head>
+<body>
+  <nav class="top-nav" aria-label="Dashboard navigation">
+    <div class="nav-left">
+      <button type="button" class="nav-item">Metrics</button>
+      <span>|</span>
+      <button type="button" class="nav-item">DNS</button>
+      <span>|</span>
+      <button type="button" class="nav-item">IPS</button>
+      <span>|</span>
+      <button type="button" class="nav-item">Policy Engine</button>
+      <span>|</span>
+      <button type="button" class="nav-item">Zones</button>
+      <span>|</span>
+      <button type="button" class="nav-item">NAT Rules</button>
+      <span>|</span>
+      <button type="button" class="nav-item is-active">Connections</button>
+      <span>|</span>
+      <button type="button" class="nav-item">Config</button>
+    </div>
+    <div class="nav-right">
+      <span>admin</span>
+      <span class="accent">|</span>
+      <button type="button" class="nav-icon" aria-label="Notifications">!</button>
+      <button type="button" class="nav-icon" aria-label="Log out">-></button>
+    </div>
+  </nav>
+
+  <main class="page-shell">
+    <header class="page-header">
+      <div class="brand">RaptorGate</div>
+      <div class="divider">
+        <div class="divider-line"></div>
+        <h1>Connections</h1>
+        <div class="divider-line right"></div>
+      </div>
+      <div class="subtitle">TCP Tracked Sessions / FirewallQueryService.GetTcpSessions</div>
+    </header>
+
+    <section class="status-bar panel" aria-label="Connection status summary">
+      <div class="status-item module">
+        <span class="live-dot"></span>
+        <span>Session Tracker Active</span>
+      </div>
+      <span class="separator">|</span>
+      <div class="status-item">
+        <span class="label">Tracked</span>
+        <strong id="trackedCount">0</strong>
+      </div>
+      <span class="separator">|</span>
+      <div class="status-item">
+        <span class="label">Established</span>
+        <strong class="success" id="establishedCount">0</strong>
+      </div>
+      <span class="separator">|</span>
+      <div class="status-item">
+        <span class="label">Closing</span>
+        <strong class="warning" id="closingCount">0</strong>
+      </div>
+      <span class="separator">|</span>
+      <div class="status-item">
+        <span class="label">Updated</span>
+        <strong id="updatedAt">14:32:08</strong>
+      </div>
+    </section>
+
+    <section class="session-stats-panel panel">
+      <div class="panel-head">
+        <div>
+          <h2>Session Statistics</h2>
+          <p>Live TCP tracker distribution and pressure</p>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="ghost-button" id="refreshButton">Refresh</button>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <article class="stat-card primary">
+          <span class="stat-label">Tracked Sessions</span>
+          <strong id="statTracked">0</strong>
+          <small>active entries returned by gRPC</small>
+        </article>
+        <article class="stat-card success">
+          <span class="stat-label">Established Ratio</span>
+          <strong id="statEstablishedRatio">0%</strong>
+          <small id="statEstablishedMeta">0 stable flows</small>
+        </article>
+        <article class="stat-card cyan">
+          <span class="stat-label">Handshake Pressure</span>
+          <strong id="statHandshake">0</strong>
+          <small>SYN / SYN ACK sessions</small>
+        </article>
+        <article class="stat-card warning">
+          <span class="stat-label">Closing Queue</span>
+          <strong id="statClosing">0</strong>
+          <small>FIN / ACK / TIME WAIT</small>
+        </article>
+      </div>
+    </section>
+
+    <section class="workspace-grid">
+      <section class="panel table-panel">
+        <div class="panel-head table-head">
+          <div>
+            <h2>Tracked Sessions</h2>
+            <p>Endpoint A -> Endpoint B</p>
+          </div>
+          <div class="filters">
+            <label class="search-box">
+              <span>?</span>
+              <input id="searchInput" placeholder="Search IP, port, state" />
+            </label>
+            <select id="stateFilter" aria-label="Filter by state">
+              <option value="all">All states</option>
+              <option value="established">Established</option>
+              <option value="syn_sent">SYN sent</option>
+              <option value="syn_ack_received">SYN ACK</option>
+              <option value="fin_sent">FIN sent</option>
+              <option value="ack_sent">ACK sent</option>
+              <option value="ack_fin_sent">ACK FIN</option>
+              <option value="time_wait">Time wait</option>
+              <option value="closed">Closed</option>
+              <option value="unspecified">Unspecified</option>
+              <option value="unknown">Unknown</option>
+            </select>
+            <button type="button" class="ghost-button" id="exportButton">Export</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Endpoint A</th>
+                <th>Port</th>
+                <th>Direction</th>
+                <th>Endpoint B</th>
+                <th>Port</th>
+              </tr>
+            </thead>
+            <tbody id="sessionRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="panel inspector-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Session Inspector</h2>
+            <p id="selectedId">No session selected</p>
+          </div>
+        </div>
+
+        <div class="inspector-body">
+          <div class="endpoint-stack">
+            <div class="endpoint-box">
+              <span>Endpoint A</span>
+              <strong id="inspectA">-</strong>
+            </div>
+            <div class="direction-mark">-></div>
+            <div class="endpoint-box">
+              <span>Endpoint B</span>
+              <strong id="inspectB">-</strong>
+            </div>
+          </div>
+
+          <div class="detail-grid">
+            <div class="detail-item">
+              <span>State</span>
+              <strong id="inspectState">-</strong>
+            </div>
+            <div class="detail-item">
+              <span>Endpoint A Port</span>
+              <strong id="inspectAPort">-</strong>
+            </div>
+            <div class="detail-item">
+              <span>Endpoint B Port</span>
+              <strong id="inspectBPort">-</strong>
+            </div>
+            <div class="detail-item">
+              <span>API Method</span>
+              <strong>GET</strong>
+            </div>
+          </div>
+
+          <div class="payload-box">
+            <div class="trace-head">
+              <span>Response Item</span>
+              <strong>/tcp-sessions</strong>
+            </div>
+            <pre id="inspectPayload"></pre>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <footer class="page-footer">
+      Connections
+      <span>|</span>
+      TCP Tracker
+      <span>|</span>
+      Runtime Firewall State
+    </footer>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="./connections.js"></script>
+</body>
+</html>

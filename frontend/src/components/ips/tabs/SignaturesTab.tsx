@@ -7,6 +7,8 @@ import type {
 import {
   ipsActionOptions,
   ipsAppProtocolOptions,
+  ipsMatchTypeOptions,
+  ipsPatternEncodingOptions,
   ipsSeverityOptions,
 } from "../../../types/ipsConfig/IpsConfig";
 import Toggle from "../common/Toggle";
@@ -225,7 +227,7 @@ export default function SignaturesTab({
             </label>
 
             <label className="text-sm">
-              <div className="text-[#8a8a8a] mb-2">Pattern (regex)</div>
+              <div className="text-[#8a8a8a] mb-2">Pattern</div>
               <textarea
                 value={selectedSignature.pattern}
                 onChange={(event) =>
@@ -235,6 +237,54 @@ export default function SignaturesTab({
                 className="w-full bg-[#0c0c0c] border border-[#262626] px-4 py-3 text-white focus:outline-none focus:border-[#06b6d4]"
               />
             </label>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <label className="text-sm">
+                <div className="text-[#8a8a8a] mb-2">Match type</div>
+                <select
+                  value={selectedSignature.matchType}
+                  onChange={(event) =>
+                    onUpdateSelectedSignature({
+                      matchType: event.target.value as IpsSignatureConfig["matchType"],
+                    })
+                  }
+                  className="w-full bg-[#0c0c0c] border border-[#262626] px-4 py-3 focus:outline-none focus:border-[#06b6d4]"
+                >
+                  {ipsMatchTypeOptions.map((matchType) => (
+                    <option key={matchType} value={matchType}>
+                      {matchType.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="text-sm">
+                <div className="text-[#8a8a8a] mb-2">Encoding</div>
+                <select
+                  value={selectedSignature.patternEncoding}
+                  onChange={(event) =>
+                    onUpdateSelectedSignature({
+                      patternEncoding: event.target.value as IpsSignatureConfig["patternEncoding"],
+                    })
+                  }
+                  className="w-full bg-[#0c0c0c] border border-[#262626] px-4 py-3 focus:outline-none focus:border-[#06b6d4]"
+                >
+                  {ipsPatternEncodingOptions.map((patternEncoding) => (
+                    <option key={patternEncoding} value={patternEncoding}>
+                      {patternEncoding.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <Toggle
+                label="Case insensitive"
+                checked={selectedSignature.caseInsensitive}
+                onToggle={(caseInsensitive) =>
+                  onUpdateSelectedSignature({ caseInsensitive })
+                }
+              />
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <label className="text-sm">
@@ -333,4 +383,3 @@ export default function SignaturesTab({
     </div>
   );
 }
-

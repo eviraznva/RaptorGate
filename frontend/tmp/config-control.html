@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RaptorGate - Configuration Control</title>
+  <link rel="stylesheet" href="./config-control.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="page-header">
+      <div class="brand">RaptorGate</div>
+      <div class="divider">
+        <div class="divider-line"></div>
+        <div class="title">Configuration Control</div>
+        <div class="divider-line right"></div>
+      </div>
+      <div class="subtitle">Snapshot Lifecycle Management</div>
+    </header>
+
+    <section class="status-bar panel">
+      <div class="status-item module">
+        <span class="dot"></span>
+        <span>Module Active</span>
+      </div>
+      <span class="sep">|</span>
+      <div class="status-item">
+        <span class="label">Active Version</span>
+        <span class="value" id="activeVersion">-</span>
+      </div>
+      <span class="sep">|</span>
+      <div class="status-item">
+        <span class="label">Snapshots</span>
+        <span class="value" id="snapshotCount">0</span>
+      </div>
+      <span class="sep">|</span>
+      <div class="status-item">
+        <span class="label">Last Update</span>
+        <span class="value" id="lastUpdate">-</span>
+      </div>
+    </section>
+
+    <section class="main-grid">
+      <aside class="panel operations-panel">
+        <div class="panel-head">
+          <h2>Operations</h2>
+          <span class="meta">/config/*</span>
+        </div>
+
+        <div class="op-tabs" role="tablist" aria-label="Config operations">
+          <button type="button" class="op-tab is-active" data-tab="apply">Apply</button>
+          <button type="button" class="op-tab" data-tab="import">Import</button>
+          <button type="button" class="op-tab" data-tab="export">Export</button>
+          <button type="button" class="op-tab" data-tab="rollback">Rollback</button>
+        </div>
+
+        <div class="op-panels">
+          <form id="applyPanel" class="op-panel is-active" data-panel="apply">
+            <div class="field-group">
+              <label for="applySnapshotType">snapshotType</label>
+              <select id="applySnapshotType" name="snapshotType" class="field-input">
+                <option value="manual_import">manual_import</option>
+                <option value="rollback_point">rollback_point</option>
+                <option value="auto_save">auto_save</option>
+              </select>
+            </div>
+            <div class="field-group inline">
+              <label class="toggle-row" for="applyIsActive">
+                <span>
+                  <strong>isActive</strong>
+                  <small>Publish as active snapshot</small>
+                </span>
+                <span class="toggle">
+                  <input id="applyIsActive" name="isActive" type="checkbox" checked />
+                  <span class="toggle-track"></span>
+                  <span class="toggle-thumb"></span>
+                </span>
+              </label>
+            </div>
+            <div class="field-group">
+              <label for="applyChangeSummary">changeSummary</label>
+              <textarea id="applyChangeSummary" name="changeSummary" class="field-input" rows="3" placeholder="Applied current running config"></textarea>
+            </div>
+            <pre id="applyPreview" class="json-preview"></pre>
+            <button type="submit" class="btn-primary">POST /config/apply</button>
+          </form>
+
+          <form id="importPanel" class="op-panel" data-panel="import">
+            <div class="field-group">
+              <label for="importPayload">ImportConfigSnapshotDto JSON</label>
+              <textarea id="importPayload" class="field-input" rows="12" spellcheck="false"></textarea>
+            </div>
+            <div class="row-actions">
+              <button type="button" class="btn-secondary" id="fillFromSelected">Load Selected Snapshot</button>
+              <button type="submit" class="btn-primary">POST /config/import</button>
+            </div>
+            <p id="importValidation" class="hint"></p>
+          </form>
+
+          <section id="exportPanel" class="op-panel" data-panel="export">
+            <div class="field-group">
+              <label>Active snapshot preview</label>
+              <pre id="exportPreview" class="json-preview json-preview-large"></pre>
+            </div>
+            <div class="row-actions">
+              <button type="button" class="btn-secondary" id="refreshExport">GET /config/export</button>
+              <button type="button" class="btn-primary" id="copyExport">Copy JSON</button>
+            </div>
+          </section>
+
+          <form id="rollbackPanel" class="op-panel" data-panel="rollback">
+            <div class="field-group">
+              <label for="rollbackId">Target Snapshot ID</label>
+              <select id="rollbackId" class="field-input"></select>
+            </div>
+            <div class="field-group">
+              <label for="rollbackSummary">Reason</label>
+              <input id="rollbackSummary" class="field-input" placeholder="Rollback requested after validation" />
+            </div>
+            <button type="submit" class="btn-primary">POST /config/rollback/{id}</button>
+          </form>
+        </div>
+      </aside>
+
+      <main class="panel history-panel">
+        <div class="panel-head">
+          <h2>Snapshot History</h2>
+          <span class="meta">GET /config/history</span>
+        </div>
+
+        <div class="history-tools">
+          <div class="chip-row" role="radiogroup" aria-label="Filter snapshot type">
+            <button type="button" class="chip is-active" data-filter="all">All</button>
+            <button type="button" class="chip" data-filter="manual_import">manual_import</button>
+            <button type="button" class="chip" data-filter="rollback_point">rollback_point</button>
+            <button type="button" class="chip" data-filter="auto_save">auto_save</button>
+          </div>
+          <input id="historySearch" class="field-input search" placeholder="Search by id, checksum, actor" />
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Version</th>
+                <th>Type</th>
+                <th>Checksum</th>
+                <th>State</th>
+                <th>Created</th>
+                <th>Actor</th>
+              </tr>
+            </thead>
+            <tbody id="historyRows"></tbody>
+          </table>
+        </div>
+      </main>
+    </section>
+
+    <section class="panel details-panel">
+      <div class="panel-head">
+        <h2>Snapshot Details</h2>
+        <span class="meta" id="selectedSnapshotId">No snapshot selected</span>
+      </div>
+
+      <div class="details-grid">
+        <div class="detail-item">
+          <span>Version</span>
+          <strong id="detailVersion">-</strong>
+        </div>
+        <div class="detail-item">
+          <span>Type</span>
+          <strong id="detailType">-</strong>
+        </div>
+        <div class="detail-item">
+          <span>isActive</span>
+          <strong id="detailActive">-</strong>
+        </div>
+        <div class="detail-item">
+          <span>createdAt</span>
+          <strong id="detailCreatedAt">-</strong>
+        </div>
+        <div class="detail-item detail-wide">
+          <span>changeSummary</span>
+          <strong id="detailSummary">-</strong>
+        </div>
+      </div>
+
+      <div class="payload-wrap">
+        <div class="payload-head">
+          <span>payloadJson</span>
+          <button type="button" id="copyPayload" class="btn-ghost">Copy</button>
+        </div>
+        <pre id="payloadPreview" class="json-preview json-preview-large"></pre>
+      </div>
+    </section>
+
+    <footer class="page-footer">
+      Configuration Control
+      <span>|</span>
+      Snapshot Pipeline
+      <span>|</span>
+      Next-Generation Firewall
+    </footer>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <script src="./config-control.js"></script>
+</body>
+</html>

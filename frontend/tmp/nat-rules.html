@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Policy Engine — NAT Rules</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-deep:   #0c0c0c;
+      --bg-card:   #161616;
+      --bg-hover:  #1c1c1c;
+      --border:    #262626;
+      --primary:   #06b6d4;
+      --danger:    #f43f5e;
+      --success:   #10b981;
+      --warning:   #f59e0b;
+      --txt:       #f5f5f5;
+      --txt-sec:   #8a8a8a;
+      --txt-muted: #4a4a4a;
+    }
+
+    body {
+      background: var(--bg-deep);
+      color: var(--txt);
+      font-family: 'Courier New', Courier, monospace;
+      min-height: 100vh;
+      padding: 32px 24px 64px;
+    }
+
+    /* ── Header ── */
+    .page-header { text-align: center; margin-bottom: 32px; }
+    .brand { font-size: 10px; letter-spacing: .35em; color: var(--txt-muted); text-transform: uppercase; margin-bottom: 8px; }
+    .divider { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 8px; }
+    .divider-line { height: 1px; width: 80px; background: linear-gradient(to right, transparent, var(--primary)); }
+    .divider-line.r { background: linear-gradient(to left, transparent, var(--primary)); }
+    .title { font-size: 13px; letter-spacing: .3em; color: var(--primary); text-transform: uppercase; }
+    .subtitle { font-size: 10px; letter-spacing: .25em; color: var(--txt-sec); text-transform: uppercase; margin-top: 6px; }
+
+    /* ── Status bar ── */
+    .status-bar {
+      display: flex; align-items: center; gap: 24px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      padding: 10px 20px; margin-bottom: 24px;
+      font-size: 10px; letter-spacing: .15em; text-transform: uppercase;
+    }
+    .si { display: flex; align-items: center; gap: 8px; color: var(--txt-sec); }
+    .si .val { color: var(--txt); }
+    .si.module { margin-right: auto; }
+    .dot-pulse {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--success); box-shadow: 0 0 6px var(--success);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1;box-shadow:0 0 6px var(--success)} 50%{opacity:.5;box-shadow:0 0 2px var(--success)} }
+
+    /* ── Toolbar ── */
+    .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .toolbar-title { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--txt-sec); }
+    .toolbar-right { display: flex; align-items: center; gap: 12px; }
+    .btn-new {
+      background: var(--primary); color: #000;
+      font-family: inherit; font-size: 10px; letter-spacing: .15em; text-transform: uppercase;
+      padding: 7px 16px; cursor: pointer; border: none;
+      transition: background 150ms;
+    }
+    .btn-new:hover { background: #0891b2; }
+
+    /* Filter pills */
+    .filter-pills { display: flex; gap: 0; }
+    .filter-pill {
+      font-family: inherit; font-size: 9px; letter-spacing: .15em; text-transform: uppercase;
+      padding: 5px 12px; cursor: pointer; background: var(--bg-deep);
+      border: 1px solid var(--border); color: var(--txt-muted);
+      transition: all 120ms;
+    }
+    .filter-pill:not(:first-child) { border-left: none; }
+    .filter-pill.active { color: var(--primary); border-color: var(--primary); background: rgba(6,182,212,.08); }
+    .filter-pill:hover:not(.active) { color: var(--txt); border-color: var(--txt-muted); }
+
+    /* ── Table ── */
+    .table-wrap { border: 1px solid var(--border); overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; min-width: 900px; }
+    thead tr { background: var(--bg-card); border-bottom: 1px solid var(--border); }
+    thead th {
+      padding: 10px 14px; text-align: left;
+      font-size: 9px; letter-spacing: .2em; text-transform: uppercase;
+      color: var(--txt-muted); font-weight: normal; white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background 120ms; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--bg-hover); }
+    tbody tr.confirm-delete { background: rgba(244,63,94,.06); }
+    tbody tr.row-enter { animation: rowIn 200ms ease-out; }
+    tbody tr.row-exit  { animation: rowOut 200ms ease-out forwards; }
+    @keyframes rowIn  { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes rowOut { from{opacity:1;transform:translateY(0)} to{opacity:0;transform:translateY(6px)} }
+    td { padding: 11px 14px; vertical-align: middle; }
+
+    /* Priority bar — same as PolicyEngine */
+    .priority-wrap { display: flex; align-items: center; gap: 8px; }
+    .priority-bar { width: 2px; height: 28px; flex-shrink: 0; border-radius: 1px; }
+    .priority-num { font-family: monospace; font-size: 12px; font-weight: bold; tabular-nums: true; width: 20px; text-align: right; }
+
+    /* Type badge */
+    .type-badge {
+      display: inline-block; padding: 2px 8px;
+      font-size: 9px; letter-spacing: .15em; text-transform: uppercase;
+      font-weight: bold; border: 1px solid;
+    }
+    .type-snat { color: var(--primary);  border-color: rgba(6,182,212,.35);  background: rgba(6,182,212,.08); }
+    .type-dnat { color: var(--warning);  border-color: rgba(245,158,11,.35);  background: rgba(245,158,11,.08); }
+    .type-pat  { color: var(--success);  border-color: rgba(16,185,129,.35);  background: rgba(16,185,129,.08); }
+
+    /* Status */
+    .status-cell { display: flex; align-items: center; gap: 6px; }
+    .status-dot { position: relative; width: 8px; height: 8px; }
+    .status-dot-ring {
+      position: absolute; inset: 0; border-radius: 50%;
+      animation: pingSlow 2.4s ease-in-out infinite;
+    }
+    .status-dot-core { position: absolute; inset: 0; border-radius: 50%; }
+    @keyframes pingSlow { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .status-label { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; font-weight: 500; }
+
+    /* Network flow cells */
+    .net-cell { font-size: 11px; }
+    .net-ip   { color: var(--txt); font-family: monospace; }
+    .net-port { color: var(--txt-sec); font-size: 10px; }
+    .net-sep  { color: var(--txt-muted); }
+    .net-null { color: var(--txt-muted); font-size: 10px; font-style: italic; }
+    .flow-arrow { color: var(--primary); font-size: 14px; padding: 0 4px; }
+
+    .mono-id { font-family: monospace; font-size: 10px; color: var(--txt-muted); }
+    .ts      { font-size: 10px; color: var(--txt-muted); white-space: nowrap; }
+
+    /* Actions */
+    .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
+    .btn-icon {
+      background: transparent; border: 1px solid transparent; cursor: pointer;
+      padding: 3px 6px; font-size: 11px; font-family: inherit;
+      letter-spacing: .1em; text-transform: uppercase; transition: color 120ms, border-color 120ms;
+    }
+    .btn-icon.edit   { color: var(--txt-muted); }
+    .btn-icon.edit:hover   { color: var(--primary); border-color: var(--primary); }
+    .btn-icon.del    { color: var(--txt-muted); }
+    .btn-icon.del:hover    { color: var(--danger);  border-color: var(--danger); }
+    .confirm-row { display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap; }
+    .confirm-lbl { font-size: 9px; color: var(--danger); text-transform: uppercase; letter-spacing: .15em; }
+    .btn-yes,.btn-no { font-family:inherit; font-size:9px; letter-spacing:.1em; text-transform:uppercase; padding:3px 10px; cursor:pointer; border:1px solid; background:transparent; transition: background 120ms, color 120ms; }
+    .btn-yes { color:var(--danger); border-color:var(--danger); } .btn-yes:hover{ background:var(--danger); color:#fff; }
+    .btn-no  { color:var(--txt-muted); border-color:var(--border); } .btn-no:hover { color:var(--txt); border-color:var(--txt-muted); }
+
+    /* Empty state */
+    .empty-state { text-align: center; padding: 64px 24px; border: 1px dashed var(--border); }
+    .empty-state p { color: var(--txt-sec); font-size: 11px; letter-spacing: .15em; text-transform: uppercase; }
+    .empty-state span { display: block; font-size: 9px; color: var(--txt-muted); margin-top: 8px; letter-spacing: .1em; }
+
+    /* ── Drawer ── */
+    .backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,.65);
+      opacity: 0; pointer-events: none; transition: opacity 200ms; z-index: 100;
+    }
+    .backdrop.open { opacity: 1; pointer-events: all; }
+    .drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; width: 500px;
+      background: var(--bg-card); border-left: 1px solid var(--border);
+      transform: translateX(100%); transition: transform 200ms ease-out;
+      z-index: 101; display: flex; flex-direction: column;
+    }
+    .drawer.open { transform: translateX(0); }
+
+    .drawer-header {
+      padding: 22px 24px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0;
+    }
+    .drawer-sup   { font-size: 9px; color: var(--txt-muted); letter-spacing: .4em; text-transform: uppercase; margin-bottom: 4px; }
+    .drawer-title { font-size: 13px; letter-spacing: .3em; text-transform: uppercase; color: var(--txt); }
+    .drawer-sub   { font-size: 10px; color: var(--primary); font-family: monospace; margin-top: 3px; letter-spacing: .05em; }
+    .btn-close { background: transparent; border: none; color: var(--txt-muted); font-size: 16px; cursor: pointer; padding: 2px 6px; transition: color 120ms; }
+    .btn-close:hover { color: var(--txt); }
+
+    .drawer-body { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }
+
+    /* Section dividers inside form */
+    .form-section-label {
+      font-size: 9px; letter-spacing: .25em; text-transform: uppercase;
+      color: var(--txt-muted); border-bottom: 1px solid var(--border);
+      padding-bottom: 6px; margin-bottom: 2px;
+    }
+
+    .field  { display: flex; flex-direction: column; gap: 6px; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .lbl { font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--txt-muted); }
+    .lbl .req { color: var(--danger); }
+    .lbl .opt { color: var(--txt-muted); font-size: 8px; margin-left: 4px; }
+
+    .f-input, .f-select {
+      background: var(--bg-deep); border: 1px solid var(--border);
+      color: var(--txt); font-family: inherit; font-size: 12px;
+      padding: 9px 11px; outline: none; transition: border-color 150ms; width: 100%;
+    }
+    .f-input:focus, .f-select:focus { border-color: var(--primary); }
+    .f-input.err, .f-select.err { border-color: var(--danger); }
+    .f-select { appearance: none; cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a8a8a'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 11px center; }
+    .f-error { font-size: 9px; color: var(--danger); letter-spacing: .1em; }
+
+    /* Type selector */
+    .type-toggle { display: flex; }
+    .type-btn {
+      flex: 1; padding: 9px; text-align: center;
+      font-family: inherit; font-size: 10px; letter-spacing: .15em; text-transform: uppercase;
+      cursor: pointer; background: var(--bg-deep); border: 1px solid var(--border);
+      color: var(--txt-muted); transition: all 150ms;
+    }
+    .type-btn:not(:first-child) { border-left: none; }
+    .type-btn.active-snat { background: rgba(6,182,212,.12);  color: var(--primary); border-color: rgba(6,182,212,.4); }
+    .type-btn.active-dnat { background: rgba(245,158,11,.12); color: var(--warning); border-color: rgba(245,158,11,.4); }
+    .type-btn.active-pat  { background: rgba(16,185,129,.12); color: var(--success); border-color: rgba(16,185,129,.4); }
+    .type-btn:hover:not([class*="active"]) { border-color: var(--txt-muted); color: var(--txt); }
+
+    /* Priority row */
+    .priority-row { display: flex; align-items: center; gap: 12px; }
+    .priority-input { width: 80px; flex-shrink: 0; }
+    .priority-track { flex: 1; height: 3px; background: var(--border); position: relative; overflow: hidden; }
+    .priority-fill  { position: absolute; inset-y: 0; left: 0; transition: width 120ms, background 120ms; }
+
+    /* Active toggle */
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .toggle-info .t-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .2em; color: var(--txt-sec); }
+    .toggle-info .t-sub { font-size: 9px; color: var(--txt-muted); margin-top: 2px; }
+    .toggle { position: relative; width: 36px; height: 20px; cursor: pointer; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-track { position: absolute; inset: 0; border-radius: 10px; background: var(--border); transition: background 200ms; }
+    .toggle input:checked + .toggle-track { background: var(--primary); }
+    .toggle-thumb { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; background: #fff; border-radius: 50%; transition: transform 200ms; }
+    .toggle input:checked ~ .toggle-thumb { transform: translateX(16px); }
+
+    /* Dynamic field sections */
+    .form-section {
+      overflow: hidden;
+      max-height: 200px;
+      transition: max-height 240ms ease, opacity 200ms ease;
+    }
+    .form-section.hidden {
+      max-height: 0 !important;
+      opacity: 0;
+      pointer-events: none;
+    }
+    /* Full-width IP when port is hidden */
+    .field-row.single-col { grid-template-columns: 1fr; }
+
+    /* Submit error */
+    .submit-err { border: 1px solid rgba(244,63,94,.3); background: rgba(244,63,94,.06); padding: 10px 14px; font-size: 10px; color: var(--danger); letter-spacing: .1em; display: none; }
+    .submit-err.show { display: block; }
+
+    .drawer-footer {
+      padding: 18px 24px; border-top: 1px solid var(--border);
+      display: flex; gap: 10px; justify-content: flex-end; flex-shrink: 0;
+    }
+    .btn-cancel {
+      background: transparent; border: 1px solid var(--border); color: var(--txt-muted);
+      font-family: inherit; font-size: 10px; letter-spacing: .15em; text-transform: uppercase;
+      padding: 8px 18px; cursor: pointer; transition: border-color 120ms, color 120ms;
+    }
+    .btn-cancel:hover { border-color: var(--txt-muted); color: var(--txt); }
+    .btn-submit {
+      background: var(--primary); border: none; color: #000;
+      font-family: inherit; font-size: 10px; letter-spacing: .15em; text-transform: uppercase;
+      padding: 8px 22px; cursor: pointer; transition: background 150ms; min-width: 110px;
+    }
+    .btn-submit:hover:not(:disabled) { background: #0891b2; }
+    .btn-submit:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* Footer */
+    .page-footer { text-align: center; margin-top: 40px; font-size: 9px; color: var(--txt-muted); letter-spacing: .2em; text-transform: uppercase; }
+    .page-footer span { margin: 0 8px; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="page-header">
+    <div class="brand">RaptorGate</div>
+    <div class="divider">
+      <div class="divider-line"></div>
+      <div class="title">Policy Engine</div>
+      <div class="divider-line r"></div>
+    </div>
+    <div class="subtitle">NAT Rule Management</div>
+  </header>
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    <div class="si module">
+      <div class="dot-pulse"></div>
+      <span>Module: <span class="val">Active</span></span>
+    </div>
+    <div class="si">Total: <span class="val" id="stat-total">0</span></div>
+    <div class="si">Active: <span class="val" style="color:var(--success)" id="stat-active">0</span></div>
+    <div class="si">SNAT: <span class="val" style="color:var(--primary)" id="stat-snat">0</span></div>
+    <div class="si">DNAT: <span class="val" style="color:var(--warning)" id="stat-dnat">0</span></div>
+    <div class="si">PAT: <span class="val" style="color:var(--success)" id="stat-pat">0</span></div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div class="toolbar-title">NAT Rules</div>
+      <div class="filter-pills" id="filter-pills">
+        <button class="filter-pill active" data-filter="all" onclick="setFilter('all',this)">All</button>
+        <button class="filter-pill" data-filter="SNAT" onclick="setFilter('SNAT',this)">SNAT</button>
+        <button class="filter-pill" data-filter="DNAT" onclick="setFilter('DNAT',this)">DNAT</button>
+        <button class="filter-pill" data-filter="PAT"  onclick="setFilter('PAT',this)">PAT</button>
+      </div>
+    </div>
+    <button class="btn-new" onclick="openDrawer(null)">+ New NAT Rule</button>
+  </div>
+
+  <!-- Table -->
+  <div id="table-area"></div>
+
+  <!-- Footer -->
+  <footer class="page-footer">
+    Policy Engine <span>|</span> NAT Rule Management <span>|</span> RaptorGate
+  </footer>
+
+  <!-- Backdrop -->
+  <div class="backdrop" id="backdrop" onclick="closeDrawer()"></div>
+
+  <!-- Drawer -->
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div>
+        <div class="drawer-sup" id="drawer-sup">Creating</div>
+        <div class="drawer-title" id="drawer-title">New NAT Rule</div>
+        <div class="drawer-sub" id="drawer-sub"></div>
+      </div>
+      <button class="btn-close" onclick="closeDrawer()">✕</button>
+    </div>
+
+    <div class="drawer-body">
+
+      <!-- Type -->
+      <div class="field">
+        <div class="lbl">Rule Type <span class="req">*</span></div>
+        <div class="type-toggle">
+          <button class="type-btn active-snat" id="type-snat" onclick="setType('SNAT')">SNAT</button>
+          <button class="type-btn" id="type-dnat" onclick="setType('DNAT')">DNAT</button>
+          <button class="type-btn" id="type-pat"  onclick="setType('PAT')">PAT</button>
+        </div>
+        <div style="font-size:9px;color:var(--txt-muted);line-height:1.5" id="type-hint">
+          Source NAT — rewrites the source IP/port of outgoing packets.
+        </div>
+      </div>
+
+      <!-- Priority -->
+      <div class="field">
+        <div class="lbl">Priority <span class="req">*</span> <span class="opt">(1 = highest, 100 = lowest)</span></div>
+        <div class="priority-row">
+          <input class="f-input priority-input" id="f-priority" type="number" min="1" max="100" value="10" oninput="updatePriorityBar()" />
+          <div class="priority-track">
+            <div class="priority-fill" id="priority-fill"></div>
+          </div>
+        </div>
+        <div class="f-error" id="err-priority"></div>
+      </div>
+
+      <!-- Active toggle -->
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="t-lbl">Active</div>
+          <div class="t-sub">Rule is enforced immediately when active</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="f-active" checked />
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <!-- Source section — SNAT, PAT -->
+      <div id="section-src" class="form-section">
+        <div class="form-section-label" id="lbl-src">Source (Original)</div>
+        <div class="field-row" id="row-src" style="margin-top:10px">
+          <div class="field" id="wrap-src-ip">
+            <div class="lbl" id="lbl-src-ip">IP Address <span class="opt">optional</span></div>
+            <input class="f-input" id="f-src-ip" type="text" placeholder="e.g. 192.168.1.0/24" autocomplete="off" />
+          </div>
+          <div class="field" id="wrap-src-port">
+            <div class="lbl">Port <span class="opt">1–65535</span></div>
+            <input class="f-input" id="f-src-port" type="number" min="1" max="65535" placeholder="e.g. 443" />
+            <div class="f-error" id="err-src-port"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Destination section — DNAT only -->
+      <div id="section-dst" class="form-section">
+        <div class="form-section-label">Destination (Original)</div>
+        <div class="field-row" style="margin-top:10px">
+          <div class="field">
+            <div class="lbl">IP Address <span class="opt">optional</span></div>
+            <input class="f-input" id="f-dst-ip" type="text" placeholder="e.g. 203.0.113.10" autocomplete="off" />
+          </div>
+          <div class="field">
+            <div class="lbl">Port <span class="opt">1–65535</span></div>
+            <input class="f-input" id="f-dst-port" type="number" min="1" max="65535" placeholder="e.g. 443" />
+            <div class="f-error" id="err-dst-port"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Translated section — all types -->
+      <div id="section-nat" class="form-section">
+        <div class="form-section-label" id="lbl-nat">Translated (After NAT)</div>
+        <div class="field-row" id="row-nat" style="margin-top:10px">
+          <div class="field" id="wrap-nat-ip">
+            <div class="lbl">IP Address <span class="opt">optional</span></div>
+            <input class="f-input" id="f-nat-ip" type="text" placeholder="e.g. 172.16.0.20" autocomplete="off" />
+          </div>
+          <div class="field" id="wrap-nat-port">
+            <div class="lbl">Port <span class="opt">1–65535</span></div>
+            <input class="f-input" id="f-nat-port" type="number" min="1" max="65535" placeholder="e.g. 8443" />
+            <div class="f-error" id="err-nat-port"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="submit-err" id="submit-err">Failed to save NAT rule. Please try again.</div>
+    </div>
+
+    <div class="drawer-footer">
+      <button class="btn-cancel" onclick="closeDrawer()">Cancel</button>
+      <button class="btn-submit" id="btn-submit" onclick="submitRule()">Create Rule</button>
+    </div>
+  </div>
+
+<script>
+  // ── Type hints ──
+  const TYPE_HINTS = {
+    SNAT: 'Source NAT — rewrites the source IP/port of outgoing packets.',
+    DNAT: 'Destination NAT — rewrites the destination IP/port of incoming packets.',
+    PAT:  'Port Address Translation — maps multiple private IPs to a single public IP using port numbers.',
+  };
+
+  // ── Mock data ──
+  let natRules = [
+    { id: 'a1b2c3d4-0001-0001-0001-000000000001', type: 'SNAT', isActive: true,
+      sourceIp: '192.168.1.0/24', sourcePort: null,
+      destinationIp: null, destinationPort: null,
+      translatedIp: '203.0.113.10', translatedPort: null,
+      priority: 5, createdAt: '2026-02-10T08:00:00.000Z', updatedAt: '2026-03-15T12:00:00.000Z' },
+    { id: 'a1b2c3d4-0002-0002-0002-000000000002', type: 'DNAT', isActive: true,
+      sourceIp: null, sourcePort: null,
+      destinationIp: '203.0.113.10', destinationPort: 443,
+      translatedIp: '10.0.0.5', translatedPort: 8443,
+      priority: 10, createdAt: '2026-02-12T09:30:00.000Z', updatedAt: '2026-03-20T14:00:00.000Z' },
+    { id: 'a1b2c3d4-0003-0003-0003-000000000003', type: 'PAT', isActive: false,
+      sourceIp: '10.0.0.0/8', sourcePort: null,
+      destinationIp: null, destinationPort: null,
+      translatedIp: '198.51.100.1', translatedPort: null,
+      priority: 20, createdAt: '2026-03-01T11:00:00.000Z', updatedAt: '2026-04-01T09:00:00.000Z' },
+    { id: 'a1b2c3d4-0004-0004-0004-000000000004', type: 'DNAT', isActive: true,
+      sourceIp: null, sourcePort: null,
+      destinationIp: '203.0.113.10', destinationPort: 80,
+      translatedIp: '10.0.0.5', translatedPort: 8080,
+      priority: 15, createdAt: '2026-03-05T10:00:00.000Z', updatedAt: '2026-03-05T10:00:00.000Z' },
+  ];
+
+  let editingId     = null;
+  let selectedType  = 'SNAT';
+  let confirmTimers = {};
+  let activeFilter  = 'all';
+
+  function shortId(id) { return id.slice(0, 8) + '…'; }
+  function fmtDate(iso) { return new Date(iso).toISOString().split('T')[0]; }
+
+  function priorityColor(p) {
+    return p <= 3 ? '#f43f5e' : p <= 7 ? '#f59e0b' : '#06b6d4';
+  }
+
+  function netCell(ip, port) {
+    if (!ip && !port) return '<span class="net-null">—</span>';
+    let out = '';
+    if (ip)   out += `<span class="net-ip">${ip}</span>`;
+    if (ip && port) out += `<span class="net-sep">:</span>`;
+    if (port) out += `<span class="net-port">${port}</span>`;
+    return out;
+  }
+
+  function updateStats() {
+    document.getElementById('stat-total').textContent  = natRules.length;
+    document.getElementById('stat-active').textContent = natRules.filter(r => r.isActive).length;
+    document.getElementById('stat-snat').textContent   = natRules.filter(r => r.type === 'SNAT').length;
+    document.getElementById('stat-dnat').textContent   = natRules.filter(r => r.type === 'DNAT').length;
+    document.getElementById('stat-pat').textContent    = natRules.filter(r => r.type === 'PAT').length;
+  }
+
+  function setFilter(f, el) {
+    activeFilter = f;
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    el.classList.add('active');
+    render();
+  }
+
+  function render() {
+    updateStats();
+    const area = document.getElementById('table-area');
+
+    const filtered = activeFilter === 'all'
+      ? natRules
+      : natRules.filter(r => r.type === activeFilter);
+
+    if (filtered.length === 0) {
+      area.innerHTML = `
+        <div class="empty-state">
+          <p>No NAT rules${activeFilter !== 'all' ? ' of type ' + activeFilter : ''}</p>
+          <span>Click "+ New NAT Rule" to create the first rule</span>
+        </div>`;
+      return;
+    }
+
+    const rows = filtered.map(r => {
+      const pColor = priorityColor(r.priority);
+      const typeCls = `type-${r.type.toLowerCase()}`;
+      const isConfirm = !!confirmTimers[r.id];
+
+      return `
+        <tr id="row-${r.id}" class="${isConfirm ? 'confirm-delete' : ''}">
+          <!-- Priority -->
+          <td>
+            <div class="priority-wrap">
+              <div class="priority-bar" style="background:${pColor}"></div>
+              <span class="priority-num" style="color:${pColor}">${r.priority}</span>
+            </div>
+          </td>
+          <!-- Type -->
+          <td><span class="type-badge ${typeCls}">${r.type}</span></td>
+          <!-- Status -->
+          <td>
+            <div class="status-cell">
+              <div class="status-dot">
+                ${r.isActive ? `<div class="status-dot-ring" style="background:rgba(16,185,129,.4)"></div>` : ''}
+                <div class="status-dot-core" style="background:${r.isActive ? '#10b981' : '#4a4a4a'}"></div>
+              </div>
+              <span class="status-label" style="color:${r.isActive ? '#10b981' : '#4a4a4a'}">
+                ${r.isActive ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+          </td>
+          <!-- Source -->
+          <td class="net-cell">${netCell(r.sourceIp, r.sourcePort)}</td>
+          <!-- Arrow -->
+          <td class="flow-arrow">→</td>
+          <!-- Translated -->
+          <td class="net-cell">${netCell(r.translatedIp, r.translatedPort)}</td>
+          <!-- Destination -->
+          <td class="net-cell">${netCell(r.destinationIp, r.destinationPort)}</td>
+          <!-- ID -->
+          <td><span class="mono-id" title="${r.id}">${shortId(r.id)}</span></td>
+          <!-- Updated -->
+          <td><span class="ts">${fmtDate(r.updatedAt)}</span></td>
+          <!-- Actions -->
+          <td>
+            ${isConfirm
+              ? `<div class="confirm-row">
+                   <span class="confirm-lbl">Delete?</span>
+                   <button class="btn-yes" onclick="confirmDelete('${r.id}')">Yes</button>
+                   <button class="btn-no"  onclick="cancelDelete('${r.id}')">No</button>
+                 </div>`
+              : `<div class="actions">
+                   <button class="btn-icon edit" onclick="openDrawer('${r.id}')">Edit</button>
+                   <button class="btn-icon del"  onclick="startDelete('${r.id}')">Del</button>
+                 </div>`
+            }
+          </td>
+        </tr>`;
+    }).join('');
+
+    area.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Source IP:Port</th>
+              <th></th>
+              <th>Translated IP:Port</th>
+              <th>Destination IP:Port</th>
+              <th>ID</th>
+              <th>Updated</th>
+              <th style="text-align:right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  // ── Delete flow ──
+  function startDelete(id) {
+    confirmTimers[id] = setTimeout(() => cancelDelete(id), 3000);
+    render();
+  }
+  function cancelDelete(id) {
+    clearTimeout(confirmTimers[id]);
+    delete confirmTimers[id];
+    render();
+  }
+  function confirmDelete(id) {
+    clearTimeout(confirmTimers[id]);
+    delete confirmTimers[id];
+    const row = document.getElementById(`row-${id}`);
+    if (row) {
+      row.classList.add('row-exit');
+      row.addEventListener('animationend', () => {
+        natRules = natRules.filter(r => r.id !== id);
+        render();
+      }, { once: true });
+    }
+  }
+
+  // ── Field visibility config per type ──
+  const TYPE_CONFIG = {
+    SNAT: {
+      sections:     { src: true,  dst: false, nat: true  },
+      showSrcPort:  true,
+      showNatPort:  true,
+      srcLabel:     'Source (Original)',
+      natLabel:     'Translated (After SNAT)',
+      srcIpLabel:   'IP Address',
+      srcIpPh:      'e.g. 192.168.1.0/24',
+      natIpPh:      'e.g. 203.0.113.10',
+    },
+    DNAT: {
+      sections:     { src: false, dst: true,  nat: true  },
+      showSrcPort:  false,
+      showNatPort:  true,
+      srcLabel:     '',
+      natLabel:     'Redirect To (Internal Server)',
+      srcIpLabel:   '',
+      srcIpPh:      '',
+      natIpPh:      'e.g. 10.0.0.5',
+    },
+    PAT: {
+      sections:     { src: true,  dst: false, nat: true  },
+      showSrcPort:  false,
+      showNatPort:  false,
+      srcLabel:     'Source Range (Private Network)',
+      natLabel:     'Translated (Single Public IP)',
+      srcIpLabel:   'IP Range',
+      srcIpPh:      'e.g. 10.0.0.0/8',
+      natIpPh:      'e.g. 203.0.113.1',
+    },
+  };
+
+  // ── Type toggle ──
+  function setType(t) {
+    selectedType = t;
+
+    // Update pill buttons
+    ['SNAT','DNAT','PAT'].forEach(x => {
+      const btn = document.getElementById(`type-${x.toLowerCase()}`);
+      btn.className = 'type-btn' + (x === t ? ` active-${x.toLowerCase()}` : '');
+    });
+    document.getElementById('type-hint').textContent = TYPE_HINTS[t];
+
+    const cfg = TYPE_CONFIG[t];
+
+    // Show / hide whole sections
+    const sectionMap = { src: 'section-src', dst: 'section-dst', nat: 'section-nat' };
+    Object.entries(cfg.sections).forEach(([key, visible]) => {
+      const el = document.getElementById(sectionMap[key]);
+      if (visible) {
+        el.classList.remove('hidden');
+        el.style.maxHeight = el.scrollHeight + 120 + 'px'; // generous headroom
+        el.style.opacity   = '1';
+      } else {
+        el.classList.add('hidden');
+        el.style.maxHeight = '0';
+        el.style.opacity   = '0';
+      }
+    });
+
+    // Source section internals
+    if (cfg.sections.src) {
+      document.getElementById('lbl-src').textContent     = cfg.srcLabel;
+      document.getElementById('lbl-src-ip').childNodes[0].textContent = cfg.srcIpLabel + ' ';
+      document.getElementById('f-src-ip').placeholder    = cfg.srcIpPh;
+
+      const wrapSrcPort = document.getElementById('wrap-src-port');
+      const rowSrc      = document.getElementById('row-src');
+      if (cfg.showSrcPort) {
+        wrapSrcPort.style.display = '';
+        rowSrc.classList.remove('single-col');
+      } else {
+        wrapSrcPort.style.display = 'none';
+        rowSrc.classList.add('single-col');
+        document.getElementById('f-src-port').value = '';
+        document.getElementById('err-src-port').textContent = '';
+      }
+    }
+
+    // Translated section internals
+    if (cfg.sections.nat) {
+      document.getElementById('lbl-nat').textContent  = cfg.natLabel;
+      document.getElementById('f-nat-ip').placeholder = cfg.natIpPh;
+
+      const wrapNatPort = document.getElementById('wrap-nat-port');
+      const rowNat      = document.getElementById('row-nat');
+      if (cfg.showNatPort) {
+        wrapNatPort.style.display = '';
+        rowNat.classList.remove('single-col');
+      } else {
+        wrapNatPort.style.display = 'none';
+        rowNat.classList.add('single-col');
+        document.getElementById('f-nat-port').value = '';
+        document.getElementById('err-nat-port').textContent = '';
+      }
+    }
+
+    // Clear hidden section values so they don't end up in payload
+    if (!cfg.sections.dst) {
+      document.getElementById('f-dst-ip').value   = '';
+      document.getElementById('f-dst-port').value = '';
+      document.getElementById('err-dst-port').textContent = '';
+    }
+    if (!cfg.sections.src) {
+      document.getElementById('f-src-ip').value   = '';
+      document.getElementById('f-src-port').value = '';
+    }
+  }
+
+  // ── Priority bar ──
+  function updatePriorityBar() {
+    const val = Math.min(100, Math.max(0, Number(document.getElementById('f-priority').value) || 0));
+    const fill = document.getElementById('priority-fill');
+    fill.style.width  = val + '%';
+    fill.style.background = priorityColor(val);
+  }
+
+  // ── Drawer ──
+  function openDrawer(id) {
+    editingId = id;
+    document.getElementById('submit-err').classList.remove('show');
+    ['priority','src-port','dst-port','nat-port'].forEach(k => {
+      const el = document.getElementById(`err-${k}`);
+      if (el) el.textContent = '';
+    });
+    ['f-priority','f-src-ip','f-src-port','f-dst-ip','f-dst-port','f-nat-ip','f-nat-port']
+      .forEach(k => document.getElementById(k)?.classList.remove('err'));
+
+    if (id) {
+      const r = natRules.find(x => x.id === id);
+      document.getElementById('drawer-sup').textContent   = 'Editing';
+      document.getElementById('drawer-title').textContent = 'Edit NAT Rule';
+      document.getElementById('drawer-sub').textContent   = r.id.slice(0,8) + '…';
+      document.getElementById('btn-submit').textContent   = 'Save Changes';
+      applyTypeImmediate(r.type);
+      document.getElementById('f-priority').value  = r.priority;
+      document.getElementById('f-active').checked  = r.isActive;
+      document.getElementById('f-src-ip').value    = r.sourceIp    ?? '';
+      document.getElementById('f-src-port').value  = r.sourcePort  ?? '';
+      document.getElementById('f-dst-ip').value    = r.destinationIp   ?? '';
+      document.getElementById('f-dst-port').value  = r.destinationPort ?? '';
+      document.getElementById('f-nat-ip').value    = r.translatedIp    ?? '';
+      document.getElementById('f-nat-port').value  = r.translatedPort  ?? '';
+    } else {
+      document.getElementById('drawer-sup').textContent   = 'Creating';
+      document.getElementById('drawer-title').textContent = 'New NAT Rule';
+      document.getElementById('drawer-sub').textContent   = '';
+      document.getElementById('btn-submit').textContent   = 'Create Rule';
+      applyTypeImmediate('SNAT');
+      document.getElementById('f-priority').value  = '10';
+      document.getElementById('f-active').checked  = true;
+      ['f-src-ip','f-src-port','f-dst-ip','f-dst-port','f-nat-ip','f-nat-port']
+        .forEach(k => { document.getElementById(k).value = ''; });
+    }
+
+    updatePriorityBar();
+    document.getElementById('backdrop').classList.add('open');
+    document.getElementById('drawer').classList.add('open');
+  }
+
+  function closeDrawer() {
+    document.getElementById('backdrop').classList.remove('open');
+    document.getElementById('drawer').classList.remove('open');
+    editingId = null;
+  }
+
+  function validatePort(val, errId) {
+    if (val === '' || val === null) return true;
+    const n = Number(val);
+    if (isNaN(n) || !Number.isInteger(n) || n < 1 || n > 65535) {
+      document.getElementById(errId).textContent = 'Must be 1–65535';
+      return false;
+    }
+    return true;
+  }
+
+  function submitRule() {
+    let ok = true;
+
+    // Priority
+    const pVal = Number(document.getElementById('f-priority').value);
+    if (!pVal || isNaN(pVal) || pVal < 1 || pVal > 100) {
+      document.getElementById('err-priority').textContent = 'Integer 1–100 required';
+      document.getElementById('f-priority').classList.add('err');
+      ok = false;
+    } else {
+      document.getElementById('err-priority').textContent = '';
+      document.getElementById('f-priority').classList.remove('err');
+    }
+
+    // Ports
+    if (!validatePort(document.getElementById('f-src-port').value,  'err-src-port'))  ok = false;
+    if (!validatePort(document.getElementById('f-dst-port').value,  'err-dst-port'))  ok = false;
+    if (!validatePort(document.getElementById('f-nat-port').value,  'err-nat-port'))  ok = false;
+
+    if (!ok) return;
+
+    const btn = document.getElementById('btn-submit');
+    const orig = btn.textContent;
+    btn.textContent = 'Saving…';
+    btn.disabled = true;
+
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.disabled = false;
+
+      const toNull = v => v === '' ? null : isNaN(Number(v)) ? v : (Number(v) || null);
+      const rule = {
+        id:              editingId ?? crypto.randomUUID(),
+        type:            selectedType,
+        isActive:        document.getElementById('f-active').checked,
+        priority:        pVal,
+        sourceIp:        document.getElementById('f-src-ip').value.trim()   || null,
+        sourcePort:      toNull(document.getElementById('f-src-port').value),
+        destinationIp:   document.getElementById('f-dst-ip').value.trim()   || null,
+        destinationPort: toNull(document.getElementById('f-dst-port').value),
+        translatedIp:    document.getElementById('f-nat-ip').value.trim()   || null,
+        translatedPort:  toNull(document.getElementById('f-nat-port').value),
+        createdAt:  editingId ? natRules.find(r=>r.id===editingId).createdAt : new Date().toISOString(),
+        updatedAt:  new Date().toISOString(),
+      };
+
+      if (editingId) {
+        natRules = natRules.map(r => r.id === editingId ? rule : r);
+      } else {
+        natRules.unshift(rule);
+      }
+
+      closeDrawer();
+      render();
+    }, 600);
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+  // Apply type without transition (used on drawer open to avoid flash)
+  function applyTypeImmediate(t) {
+    ['section-src','section-dst','section-nat'].forEach(id => {
+      const el = document.getElementById(id);
+      el.style.transition = 'none';
+      el.style.opacity    = '';
+      el.style.maxHeight  = '';
+    });
+    setType(t);
+    // Re-enable transitions after paint
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        ['section-src','section-dst','section-nat'].forEach(id => {
+          document.getElementById(id).style.transition = '';
+        });
+      });
+    });
+  }
+
+  // Init
+  updatePriorityBar();
+  applyTypeImmediate('SNAT');
+  render();
+</script>
+</body>
+</html>

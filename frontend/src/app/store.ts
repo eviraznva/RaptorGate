@@ -23,6 +23,8 @@ import ConfigReducer from "../features/configSlice";
 import ConfigDiffReducer from "../features/configDiffSlice";
 import UsersManagementSlice from "../features/usersManagementSlice";
 import { configApi } from "../services/config";
+import SessionsReducer from "../features/sessionsSlice";
+import { sessionsApi } from "../services/sessions";
 
 export const store = configureStore({
   reducer: {
@@ -36,6 +38,7 @@ export const store = configureStore({
     natRules: NatRulesReducer,
     config: ConfigReducer,
     configDiff: ConfigDiffReducer,
+    sessions: SessionsReducer,
     zones: ZonesReducer,
     rules: RulesReducer,
     user: UserReducer,
@@ -46,6 +49,7 @@ export const store = configureStore({
     [natRulesApi.reducerPath]: natRulesApi.reducer,
     [configApi.reducerPath]: configApi.reducer,
     [usersApi.reducerPath]: usersApi.reducer,
+    [sessionsApi.reducerPath]: sessionsApi.reducer,
     [rulesApi.reducerPath]: rulesApi.reducer,
     [zonesApi.reducerPath]: zonesApi.reducer,
     [authApi.reducerPath]: authApi.reducer,
@@ -60,6 +64,7 @@ export const store = configureStore({
       natRulesApi.middleware,
       configApi.middleware,
       usersApi.middleware,
+      sessionsApi.middleware,
       zonesApi.middleware,
       rulesApi.middleware,
       authApi.middleware,

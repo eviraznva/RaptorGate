@@ -12,6 +12,8 @@ import { IpsConfig } from "src/domain/entities/ips-config.entity";
 import { IpsSignature } from "src/domain/entities/ips-signature.entity";
 import { IpsAction as IpsActionVo } from "src/domain/value-objects/ips-action.vo";
 import { IpsAppProtocol as IpsAppProtocolVo } from "src/domain/value-objects/ips-app-protocol.vo";
+import { IpsMatchType as IpsMatchTypeVo } from "src/domain/value-objects/ips-match-type.vo";
+import { IpsPatternEncoding as IpsPatternEncodingVo } from "src/domain/value-objects/ips-pattern-encoding.vo";
 import { Port } from "src/domain/value-objects/port.vo";
 import { RegexPattern } from "src/domain/value-objects/regex-pattern.vo";
 import { SignatureCategory } from "src/domain/value-objects/signature-category.vo";
@@ -20,14 +22,36 @@ import { Severity } from "../grpc/generated/common/common";
 import {
   IpsAction,
   IpsAppProtocol,
-  IpsMatchType,
-  IpsPatternEncoding,
+  IpsMatchType as ProtoIpsMatchType,
+  IpsPatternEncoding as ProtoIpsPatternEncoding,
 } from "../grpc/generated/config/config_models";
 import {
   FIREWALL_QUERY_SERVICE_NAME,
   FirewallQueryServiceClient,
 } from "../grpc/generated/services/query_service";
 import { FIREWALL_QUERY_GRPC_CLIENT_TOKEN } from "./grpc-firewall-dns-inspection-query.service";
+
+function mapMatchTypeFromProto(value: ProtoIpsMatchType): string {
+  switch (value) {
+    case ProtoIpsMatchType.IPS_MATCH_TYPE_LITERAL:
+      return "IPS_MATCH_TYPE_LITERAL";
+    case ProtoIpsMatchType.IPS_MATCH_TYPE_REGEX:
+    case ProtoIpsMatchType.IPS_MATCH_TYPE_UNSPECIFIED:
+    default:
+      return "IPS_MATCH_TYPE_REGEX";
+  }
+}
+
+function mapPatternEncodingFromProto(value: ProtoIpsPatternEncoding): string {
+  switch (value) {
+    case ProtoIpsPatternEncoding.IPS_PATTERN_ENCODING_HEX:
+      return "IPS_PATTERN_ENCODING_HEX";
+    case ProtoIpsPatternEncoding.IPS_PATTERN_ENCODING_TEXT:
+    case ProtoIpsPatternEncoding.IPS_PATTERN_ENCODING_UNSPECIFIED:
+    default:
+      return "IPS_PATTERN_ENCODING_TEXT";
+  }
+}
 
 @Injectable()
 export class GrpcFirewallIpsConfigQueryService
@@ -77,9 +101,13 @@ export class GrpcFirewallIpsConfigQueryService
                   .map((appProtocol) => IpsAppProtocol[appProtocol.getValue()]),
                 srcPorts: signature.getSrcPorts().map((port) => port.getValue),
                 dstPorts: signature.getDstPorts().map((port) => port.getValue),
-                matchType: IpsMatchType.IPS_MATCH_TYPE_REGEX,
-                patternEncoding: IpsPatternEncoding.IPS_PATTERN_ENCODING_TEXT,
-                caseInsensitive: false,
+                matchType:
+                  ProtoIpsMatchType[signature.getMatchType().getValue()],
+                patternEncoding:
+                  ProtoIpsPatternEncoding[
+                    signature.getPatternEncoding().getValue()
+                  ],
+                caseInsensitive: signature.getCaseInsensitive(),
               };
             }),
           },
@@ -144,6 +172,11 @@ export class GrpcFirewallIpsConfigQueryService
             signature.enabled,
             SignatureCategory.create(signature.category),
             RegexPattern.create(signature.pattern),
+            IpsMatchTypeVo.create(mapMatchTypeFromProto(signature.matchType)),
+            IpsPatternEncodingVo.create(
+              mapPatternEncodingFromProto(signature.patternEncoding),
+            ),
+            signature.caseInsensitive,
             SignatureSeverity.create(Severity[signature.severity]),
             IpsActionVo.create(IpsAction[signature.action]),
             signature.appProtocols.map((appProtocol) =>

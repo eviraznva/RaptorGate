@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard - User Management</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-deep: #0c0c0c;
+      --bg-card: #161616;
+      --bg-hover: #1c1c1c;
+      --bg-soft: #121212;
+      --border: #262626;
+      --primary: #06b6d4;
+      --danger: #f43f5e;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --txt: #f5f5f5;
+      --txt-sec: #8a8a8a;
+      --txt-muted: #4a4a4a;
+    }
+
+    body {
+      background: var(--bg-deep);
+      color: var(--txt);
+      font-family: "Courier New", Courier, monospace;
+      min-height: 100vh;
+    }
+
+    .nav-shell {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+    }
+
+    .nav {
+      max-width: 1440px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      min-height: 58px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      flex-wrap: wrap;
+    }
+
+    .nav-link {
+      color: var(--txt-sec);
+      text-decoration: none;
+      padding: 18px 14px;
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      border-bottom: 2px solid transparent;
+      transition: color 120ms, border-color 120ms;
+    }
+
+    .nav-link:hover { color: var(--txt); }
+    .nav-link.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .nav-sep { color: var(--border); font-size: 12px; }
+
+    .nav-user {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--txt-sec);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .nav-user .accent { color: var(--primary); }
+
+    .page {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+
+    .page-header { text-align: center; margin-bottom: 32px; }
+    .page-header .brand {
+      font-size: 10px;
+      letter-spacing: 0.35em;
+      color: var(--txt-muted);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .page-header .divider {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .page-header .divider-line {
+      height: 1px;
+      width: 80px;
+      background: linear-gradient(to right, transparent, var(--primary));
+    }
+    .page-header .divider-line.right {
+      background: linear-gradient(to left, transparent, var(--primary));
+    }
+    .page-header .title {
+      font-size: 13px;
+      letter-spacing: 0.3em;
+      color: var(--primary);
+      text-transform: uppercase;
+    }
+    .page-header .subtitle {
+      font-size: 10px;
+      letter-spacing: 0.25em;
+      color: var(--txt-sec);
+      text-transform: uppercase;
+      margin-top: 6px;
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 10px 20px;
+      margin-bottom: 24px;
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      overflow-x: auto;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--txt-sec);
+      white-space: nowrap;
+    }
+
+    .status-item .val { color: var(--txt); }
+    .status-item.module { margin-right: auto; }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--success); }
+      50% { opacity: 0.45; box-shadow: 0 0 2px var(--success); }
+    }
+
+    .panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      margin-bottom: 24px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .toolbar-title {
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--txt-sec);
+    }
+
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .filter-pills { display: flex; gap: 0; }
+
+    .filter-pill {
+      font-family: inherit;
+      font-size: 9px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 6px 12px;
+      cursor: pointer;
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      color: var(--txt-muted);
+      transition: all 120ms;
+    }
+
+    .filter-pill:not(:first-child) { border-left: none; }
+    .filter-pill.active {
+      color: var(--primary);
+      border-color: var(--primary);
+      background: rgba(6, 182, 212, 0.08);
+    }
+
+    .filter-pill:hover:not(.active) {
+      color: var(--txt);
+      border-color: var(--txt-sec);
+    }
+
+    .btn-new,
+    .btn-secondary,
+    .btn-danger,
+    .btn-ghost {
+      font-family: inherit;
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: background 150ms, color 150ms, border-color 150ms;
+      background: transparent;
+      border: 1px solid;
+    }
+
+    .btn-new {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+    .btn-new:hover { background: var(--primary); color: #000; }
+
+    .btn-secondary {
+      border-color: var(--border);
+      color: var(--txt-sec);
+    }
+    .btn-secondary:hover {
+      border-color: var(--txt-sec);
+      color: var(--txt);
+    }
+
+    .btn-danger {
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+
+    .btn-ghost {
+      border-color: var(--border);
+      color: var(--txt-muted);
+    }
+    .btn-ghost:hover {
+      border-color: var(--txt-sec);
+      color: var(--txt);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.65fr) 340px;
+      min-height: 620px;
+    }
+
+    .table-side { min-width: 0; }
+    .side-panel {
+      border-left: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.08);
+    }
+
+    .search-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .meta-inline {
+      color: var(--txt-muted);
+      font-size: 9px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      min-width: 940px;
+    }
+
+    thead tr {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+    }
+
+    thead th {
+      padding: 10px 16px;
+      text-align: left;
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--txt-muted);
+      font-weight: normal;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 120ms;
+      cursor: pointer;
+    }
+
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--bg-hover); }
+    tbody tr.selected { background: rgba(6, 182, 212, 0.06); }
+    tbody tr.confirm-delete { background: rgba(244, 63, 94, 0.06); }
+
+    td {
+      padding: 12px 16px;
+      vertical-align: middle;
+    }
+
+    .user-cell {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--primary);
+      color: var(--primary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      flex-shrink: 0;
+    }
+
+    .user-name {
+      color: var(--txt);
+      font-weight: bold;
+      font-size: 12px;
+    }
+
+    .user-desc,
+    .mono-id,
+    .created,
+    .side-copy,
+    .state-copy,
+    .drawer-subtitle,
+    .field-hint {
+      color: var(--txt-sec);
+    }
+
+    .user-desc {
+      font-size: 10px;
+      max-width: 260px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mono-id {
+      font-size: 10px;
+      color: var(--txt-muted);
+      font-family: inherit;
+    }
+
+    .created {
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .role-stack {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .role-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      border: 1px solid var(--border);
+      color: var(--txt-sec);
+      background: var(--bg-soft);
+    }
+
+    .role-badge.admin { color: var(--primary); border-color: rgba(6, 182, 212, 0.35); background: rgba(6, 182, 212, 0.08); }
+    .role-badge.superadmin { color: var(--warning); border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.08); }
+    .role-badge.viewer { color: var(--txt); }
+    .role-badge.auditor { color: var(--success); border-color: rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.08); }
+
+    .status-cell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .status-active .status-dot { background: var(--success); box-shadow: 0 0 5px var(--success); }
+    .status-pending .status-dot { background: var(--warning); box-shadow: 0 0 5px var(--warning); }
+    .status-locked .status-dot { background: var(--danger); box-shadow: 0 0 5px var(--danger); }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: 1px solid transparent;
+      cursor: pointer;
+      padding: 4px 6px;
+      font-size: 10px;
+      font-family: inherit;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--txt-muted);
+      transition: color 120ms, border-color 120ms;
+    }
+
+    .btn-icon.edit:hover { color: var(--primary); border-color: var(--primary); }
+    .btn-icon.delete:hover { color: var(--danger); border-color: var(--danger); }
+
+    .side-section {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .side-title {
+      font-size: 9px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--txt-muted);
+      margin-bottom: 14px;
+    }
+
+    .side-card {
+      border: 1px solid var(--border);
+      background: var(--bg-soft);
+      padding: 14px;
+    }
+
+    .side-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .side-head .avatar { width: 32px; height: 32px; }
+
+    .side-name {
+      font-size: 12px;
+      color: var(--txt);
+      font-weight: bold;
+    }
+
+    .side-copy {
+      font-size: 10px;
+      line-height: 1.7;
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0;
+      border-top: 1px solid var(--border);
+      font-size: 10px;
+    }
+
+    .detail-row:first-of-type { border-top: none; }
+    .detail-key {
+      color: var(--txt-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+    }
+
+    .detail-value {
+      color: var(--txt);
+      text-align: right;
+      max-width: 180px;
+      line-height: 1.6;
+    }
+
+    .api-box {
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      background: #101010;
+      font-size: 10px;
+      line-height: 1.7;
+      color: var(--txt-sec);
+      margin-bottom: 10px;
+    }
+
+    .api-box strong { color: var(--txt); }
+
+    .state-panel {
+      padding: 18px 20px 20px;
+    }
+
+    .state-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .state-title {
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--txt-sec);
+    }
+
+    .state-box {
+      border: 1px dashed var(--border);
+      min-height: 180px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      background: rgba(0, 0, 0, 0.08);
+    }
+
+    .state-box.active { display: flex; }
+
+    .state-stack { max-width: 500px; }
+
+    .state-icon {
+      width: 52px;
+      height: 52px;
+      margin: 0 auto 16px;
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      color: var(--txt-sec);
+    }
+
+    .state-icon.error { color: var(--danger); border-color: rgba(244, 63, 94, 0.3); }
+    .state-icon.success { color: var(--success); border-color: rgba(16, 185, 129, 0.3); }
+
+    .spinner {
+      width: 38px;
+      height: 38px;
+      margin: 0 auto 16px;
+      border-radius: 50%;
+      border: 2px solid rgba(6, 182, 212, 0.12);
+      border-top-color: var(--primary);
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .state-heading {
+      font-size: 12px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--txt);
+      margin-bottom: 10px;
+    }
+
+    .state-copy {
+      font-size: 10px;
+      line-height: 1.8;
+      letter-spacing: 0.08em;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+    }
+
+    .backdrop,
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 200ms;
+      z-index: 100;
+    }
+
+    .backdrop.open,
+    .modal-backdrop.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 480px;
+      background: var(--bg-card);
+      border-left: 1px solid var(--border);
+      transform: translateX(100%);
+      transition: transform 200ms ease-out;
+      z-index: 101;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .drawer.open { transform: translateX(0); }
+
+    .drawer-header {
+      padding: 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .drawer-title {
+      font-size: 10px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--primary);
+    }
+
+    .drawer-subtitle {
+      font-size: 9px;
+      margin-top: 4px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      line-height: 1.7;
+    }
+
+    .btn-close {
+      background: transparent;
+      border: none;
+      color: var(--txt-muted);
+      font-size: 16px;
+      cursor: pointer;
+      padding: 2px 6px;
+      line-height: 1;
+      transition: color 120ms;
+    }
+
+    .btn-close:hover { color: var(--txt); }
+
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .form-section-label {
+      font-size: 9px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--txt-muted);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+      margin-bottom: 2px;
+    }
+
+    .field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .field-label {
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--txt-muted);
+    }
+
+    .field-input,
+    .field-textarea {
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      color: var(--txt);
+      font-family: inherit;
+      font-size: 12px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color 150ms;
+      resize: vertical;
+      width: 100%;
+    }
+
+    .field-input:focus,
+    .field-textarea:focus { border-color: var(--primary); }
+
+    .field-hint {
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      line-height: 1.7;
+    }
+
+    .role-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .role-option {
+      border: 1px solid var(--border);
+      background: var(--bg-soft);
+      padding: 10px 12px;
+      transition: border-color 120ms, color 120ms, background 120ms;
+    }
+
+    .role-option.active {
+      border-color: var(--primary);
+      background: rgba(6, 182, 212, 0.08);
+    }
+
+    .role-option .role-name {
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--txt);
+      margin-bottom: 6px;
+    }
+
+    .role-option .role-copy {
+      font-size: 9px;
+      line-height: 1.6;
+      color: var(--txt-sec);
+      text-transform: uppercase;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .toggle-row:first-of-type { border-top: none; }
+
+    .toggle-copy .label {
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--txt);
+      margin-bottom: 4px;
+    }
+
+    .toggle-copy .sub {
+      font-size: 9px;
+      line-height: 1.6;
+      color: var(--txt-sec);
+      text-transform: uppercase;
+    }
+
+    .toggle {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: var(--border);
+      border-radius: 11px;
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 180ms;
+    }
+
+    .toggle.on .toggle-track { background: var(--success); }
+    .toggle.on .toggle-thumb { transform: translateX(18px); }
+
+    .drawer-footer {
+      padding: 20px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .modal {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      width: min(520px, calc(100vw - 32px));
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      transform: translate(-50%, -46%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms, transform 180ms;
+      z-index: 102;
+    }
+
+    .modal.open {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translate(-50%, -50%);
+    }
+
+    .modal-header,
+    .modal-body,
+    .modal-footer {
+      padding: 20px 22px;
+    }
+
+    .modal-header { border-bottom: 1px solid var(--border); }
+    .modal-footer {
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .modal-title {
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--danger);
+      margin-bottom: 8px;
+    }
+
+    .modal-copy {
+      font-size: 10px;
+      line-height: 1.8;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--txt-sec);
+    }
+
+    .page-footer {
+      text-align: center;
+      margin-top: 36px;
+      font-size: 9px;
+      color: var(--txt-muted);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    @media (max-width: 1120px) {
+      .layout { grid-template-columns: 1fr; }
+      .side-panel { border-left: none; border-top: 1px solid var(--border); }
+    }
+
+    @media (max-width: 720px) {
+      .page { padding-inline: 14px; }
+      .nav-shell { padding-inline: 12px; }
+      .nav { align-items: flex-start; padding: 10px 0; }
+      .field-row,
+      .role-grid { grid-template-columns: 1fr; }
+      .toolbar,
+      .search-row,
+      .state-top { align-items: flex-start; }
+      .drawer { width: 100vw; }
+    }
+  </style>
+</head>
+<body>
+  <div class="nav-shell">
+    <div class="nav">
+      <div class="nav-links">
+        <a class="nav-link" href="#">Metrics</a>
+        <span class="nav-sep">│</span>
+        <a class="nav-link" href="#">DNS</a>
+        <span class="nav-sep">│</span>
+        <a class="nav-link" href="#">IPS</a>
+        <span class="nav-sep">│</span>
+        <a class="nav-link" href="#">Policy Engine</a>
+        <span class="nav-sep">│</span>
+        <a class="nav-link" href="#">Zones</a>
+        <span class="nav-sep">│</span>
+        <a class="nav-link" href="#">NAT Rules</a>
+        <span class="nav-sep">│</span>
+        <a class="nav-link" href="#">Connections</a>
+        <span class="nav-sep">│</span>
+        <a class="nav-link" href="#">Settings</a>
+        <span class="nav-sep">│</span>
+        <a class="nav-link active" href="#">Users</a>
+      </div>
+      <div class="nav-user">
+        <span>marek</span>
+        <span class="accent">│</span>
+        <span>superadmin</span>
+      </div>
+    </div>
+  </div>
+
+  <main class="page">
+    <header class="page-header">
+      <div class="brand">Administrative Control Surface</div>
+      <div class="divider">
+        <div class="divider-line"></div>
+        <div class="title">User Management</div>
+        <div class="divider-line right"></div>
+      </div>
+      <div class="subtitle">Dashboard module for users list, create, edit, delete and ui states</div>
+    </header>
+
+    <section class="status-bar">
+      <div class="status-item module"><span class="dot"></span><span class="val">User management module active</span></div>
+      <div class="status-item">directory <span class="val">8 users</span></div>
+      <div class="status-item">first login <span class="val">2 pending</span></div>
+      <div class="status-item">roles <span class="val">4 mapped</span></div>
+      <div class="status-item">api <span class="val">/user</span></div>
+    </section>
+
+    <section class="panel">
+      <div class="toolbar">
+        <div class="toolbar-title">Users directory / list and operator actions</div>
+        <div class="toolbar-actions">
+          <div class="filter-pills">
+            <button class="filter-pill active" type="button">All</button>
+            <button class="filter-pill" type="button">Admins</button>
+            <button class="filter-pill" type="button">Pending</button>
+            <button class="filter-pill" type="button">Locked</button>
+          </div>
+          <button class="btn-new" type="button" data-open-drawer="create">Add user</button>
+        </div>
+      </div>
+
+      <div class="layout">
+        <div class="table-side">
+          <div class="search-row">
+            <div class="toolbar-title">Users list / selectable rows and row actions</div>
+            <div class="meta-inline">Ready for GET /user response mapping</div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Roles</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Updated</th>
+                  <th>ID</th>
+                  <th style="text-align: right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="users-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <aside class="side-panel">
+          <div class="side-section">
+            <div class="side-title">Selected user</div>
+            <div class="side-card" id="selected-user-card"></div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="state-panel">
+        <div class="state-top">
+          <div class="toolbar-title">Ui states gallery</div>
+          <div class="filter-pills">
+            <button class="filter-pill active" type="button" data-state="loading">Loading</button>
+            <button class="filter-pill" type="button" data-state="empty">Empty</button>
+            <button class="filter-pill" type="button" data-state="error">Error</button>
+            <button class="filter-pill" type="button" data-state="success">Success</button>
+          </div>
+        </div>
+
+        <div class="state-box active" data-panel="loading">
+          <div class="state-stack">
+            <div class="spinner"></div>
+            <div class="state-heading">Loading users</div>
+            <div class="state-copy">placeholder for request in progress while dashboard shell remains visible and stable</div>
+          </div>
+        </div>
+
+        <div class="state-box" data-panel="empty">
+          <div class="state-stack">
+            <div class="state-icon">[]</div>
+            <div class="state-heading">No users found</div>
+            <div class="state-copy">empty state prepared for clean deployment or filtered result with no matching accounts</div>
+            <button class="btn-new" type="button" data-open-drawer="create">Create first user</button>
+          </div>
+        </div>
+
+        <div class="state-box" data-panel="error">
+          <div class="state-stack">
+            <div class="state-icon error">!</div>
+            <div class="state-heading">Directory unavailable</div>
+            <div class="state-copy">state for 401 403 404 429 or 500 response with dedicated retry action area</div>
+            <button class="btn-danger" type="button">Retry request</button>
+          </div>
+        </div>
+
+        <div class="state-box" data-panel="success">
+          <div class="state-stack">
+            <div class="state-icon success">OK</div>
+            <div class="state-heading">User saved</div>
+            <div class="state-copy">success presentation for create and edit flow without changing screen structure</div>
+            <button class="btn-secondary" type="button">Stay on list</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="page-footer">Temporary dashboard mock saved in frontend/tmp</div>
+  </main>
+
+  <div class="backdrop" id="drawer-backdrop"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div>
+        <div class="drawer-title" id="drawer-title">Create user</div>
+        <div class="drawer-subtitle" id="drawer-subtitle">Static form aligned to create and edit dto fields</div>
+      </div>
+      <button class="btn-close" type="button" id="drawer-close">×</button>
+    </div>
+
+    <div class="drawer-body">
+      <section>
+        <div class="form-section-label">Identity</div>
+        <div class="field-group">
+          <div class="field-row">
+            <label>
+              <div class="field-label">Username</div>
+              <input class="field-input" id="form-username" type="text" readonly />
+            </label>
+            <label>
+              <div class="field-label">Password</div>
+              <input class="field-input" id="form-password" type="text" readonly />
+            </label>
+          </div>
+          <div class="field-hint">Edit dto also requires password, so field remains visible in edit view.</div>
+        </div>
+      </section>
+
+      <section>
+        <div class="form-section-label">Roles</div>
+        <div class="role-grid" id="role-grid"></div>
+      </section>
+
+      <section>
+        <div class="form-section-label">Flags</div>
+        <div class="toggle-row">
+          <div class="toggle-copy">
+            <div class="label">First login required</div>
+            <div class="sub">Visual state for newly created users awaiting first access</div>
+          </div>
+          <div class="toggle on">
+            <div class="toggle-track"></div>
+            <div class="toggle-thumb"></div>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-copy">
+            <div class="label">Show recovery token</div>
+            <div class="sub">Aligned with current dashboard behavior on first login</div>
+          </div>
+          <div class="toggle">
+            <div class="toggle-track"></div>
+            <div class="toggle-thumb"></div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="form-section-label">Operator note</div>
+        <div class="field-group">
+          <label>
+            <div class="field-label">Context</div>
+            <textarea class="field-textarea" rows="4" readonly>Reserved area for future inline validation, helper text or local note for administrator workflow.</textarea>
+          </label>
+        </div>
+      </section>
+    </div>
+
+    <div class="drawer-footer">
+      <button class="btn-ghost" type="button" id="drawer-cancel">Cancel</button>
+      <button class="btn-new" type="button" id="drawer-save">Save user</button>
+    </div>
+  </aside>
+
+  <div class="modal-backdrop" id="modal-backdrop"></div>
+  <div class="modal" id="delete-modal">
+    <div class="modal-header">
+      <div class="modal-title">Delete user confirmation</div>
+      <div class="modal-copy" id="modal-copy"></div>
+    </div>
+    <div class="modal-body">
+      <div class="side-card" id="modal-card"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" type="button" id="modal-cancel">Cancel</button>
+      <button class="btn-danger" type="button" id="modal-confirm">Delete user</button>
+    </div>
+  </div>
+
+  <script>
+    const users = [
+      {
+        id: "c1f6a5d2-8c3f-4c7f-9f1d-2d3e4f5a6b7c",
+        username: "marek.root",
+        createdAt: "2026-03-28T10:15:30.000Z",
+        updatedAt: "2026-04-20T07:12:11.000Z",
+        roles: ["SuperAdmin", "Admin"],
+        status: "active",
+        description: "Primary infrastructure owner",
+      },
+      {
+        id: "ec4a5f91-32d0-4fe2-88ab-4df0120a010e",
+        username: "anna.ops",
+        createdAt: "2026-04-12T09:05:08.000Z",
+        updatedAt: "2026-04-20T06:58:14.000Z",
+        roles: ["Admin", "Viewer"],
+        status: "active",
+        description: "Operations administrator",
+      },
+      {
+        id: "92719b6b-734a-470d-b2c8-f9fd1e3107fb",
+        username: "john.viewer",
+        createdAt: "2026-04-02T12:20:14.000Z",
+        updatedAt: "2026-04-18T18:26:02.000Z",
+        roles: ["Viewer"],
+        status: "pending",
+        description: "Awaiting first login",
+      },
+      {
+        id: "01131e18-a7c3-4851-95f4-3af64dcb9bb1",
+        username: "backup.audit",
+        createdAt: "2026-04-19T22:11:48.000Z",
+        updatedAt: "2026-04-19T22:11:48.000Z",
+        roles: ["Auditor"],
+        status: "active",
+        description: "Audit-only account",
+      },
+      {
+        id: "c13b6c8c-2650-4d54-bde8-638c59f4cba3",
+        username: "root-shadow",
+        createdAt: "2026-02-09T01:14:18.000Z",
+        updatedAt: "2026-04-17T02:42:33.000Z",
+        roles: ["Admin"],
+        status: "locked",
+        description: "Suspended privileged account",
+      },
+    ];
+
+    const rolesCatalog = [
+      { name: "SuperAdmin", copy: "Full administrative scope" },
+      { name: "Admin", copy: "Operational dashboard management" },
+      { name: "Viewer", copy: "Read-only access" },
+      { name: "Auditor", copy: "Traceability and review" },
+    ];
+
+    const table = document.getElementById("users-table");
+    const selectedUserCard = document.getElementById("selected-user-card");
+    const roleGrid = document.getElementById("role-grid");
+    const drawer = document.getElementById("drawer");
+    const drawerBackdrop = document.getElementById("drawer-backdrop");
+    const modal = document.getElementById("delete-modal");
+    const modalBackdrop = document.getElementById("modal-backdrop");
+    const modalCopy = document.getElementById("modal-copy");
+    const modalCard = document.getElementById("modal-card");
+    const drawerTitle = document.getElementById("drawer-title");
+    const drawerSubtitle = document.getElementById("drawer-subtitle");
+    const formUsername = document.getElementById("form-username");
+    const formPassword = document.getElementById("form-password");
+
+    let selectedId = users[0].id;
+
+    function initials(name) {
+      return name.split(/[._-]/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join("");
+    }
+
+    function formatDate(value) {
+      const date = new Date(value);
+      return new Intl.DateTimeFormat("pl-PL", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(date).replace(",", "");
+    }
+
+    function roleBadge(role) {
+      return '<span class="role-badge ' + role.toLowerCase() + '">' + role + '</span>';
+    }
+
+    function statusCell(status) {
+      const labels = {
+        active: "Active",
+        pending: "First Login",
+        locked: "Locked",
+      };
+      return '<div class="status-cell status-' + status + '"><span class="status-dot"></span><span>' + labels[status] + '</span></div>';
+    }
+
+    function currentUser() {
+      return users.find((user) => user.id === selectedId) || users[0];
+    }
+
+    function renderTable() {
+      table.innerHTML = users.map((user) => `
+        <tr class="${user.id === selectedId ? "selected" : ""}" data-row-id="${user.id}">
+          <td>
+            <div class="user-cell">
+              <div class="avatar">${initials(user.username)}</div>
+              <div>
+                <div class="user-name">${user.username}</div>
+                <div class="user-desc">${user.description}</div>
+              </div>
+            </div>
+          </td>
+          <td><div class="role-stack">${user.roles.map(roleBadge).join("")}</div></td>
+          <td>${statusCell(user.status)}</td>
+          <td><div class="created">${formatDate(user.createdAt)}</div></td>
+          <td><div class="created">${formatDate(user.updatedAt)}</div></td>
+          <td><div class="mono-id">${user.id}</div></td>
+          <td>
+            <div class="actions">
+              <button class="btn-icon edit" type="button" data-action="edit" data-id="${user.id}">Edit</button>
+              <button class="btn-icon delete" type="button" data-action="delete" data-id="${user.id}">Delete</button>
+            </div>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function renderSelectedUser() {
+      const user = currentUser();
+      selectedUserCard.innerHTML = `
+        <div class="side-head">
+          <div class="avatar">${initials(user.username)}</div>
+          <div>
+            <div class="side-name">${user.username}</div>
+            <div class="side-copy">${user.description}</div>
+          </div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-key">Roles</div>
+          <div class="detail-value">${user.roles.join(", ")}</div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-key">Status</div>
+          <div class="detail-value">${user.status}</div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-key">Created</div>
+          <div class="detail-value">${formatDate(user.createdAt)}</div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-key">Updated</div>
+          <div class="detail-value">${formatDate(user.updatedAt)}</div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-key">ID</div>
+          <div class="detail-value mono-id">${user.id}</div>
+        </div>
+      `;
+    }
+
+    function renderRoleOptions(activeRoles) {
+      roleGrid.innerHTML = rolesCatalog.map((role) => `
+        <div class="role-option ${activeRoles.includes(role.name) ? "active" : ""}">
+          <div class="role-name">${role.name}</div>
+          <div class="role-copy">${role.copy}</div>
+        </div>
+      `).join("");
+    }
+
+    function openDrawer(mode, id) {
+      const user = users.find((item) => item.id === id);
+      if (mode === "edit" && user) {
+        drawerTitle.textContent = "Edit user";
+        drawerSubtitle.textContent = "Static edit form aligned to api dto and dashboard layout";
+        formUsername.value = user.username;
+        formPassword.value = "StrongPass123!";
+        renderRoleOptions(user.roles);
+      } else {
+        drawerTitle.textContent = "Create user";
+        drawerSubtitle.textContent = "Static create form aligned to api dto and dashboard layout";
+        formUsername.value = "new.operator";
+        formPassword.value = "StrongPass123!";
+        renderRoleOptions(["Admin"]);
+      }
+
+      drawer.classList.add("open");
+      drawerBackdrop.classList.add("open");
+    }
+
+    function closeDrawer() {
+      drawer.classList.remove("open");
+      drawerBackdrop.classList.remove("open");
+    }
+
+    function openModal(id) {
+      const user = users.find((item) => item.id === id);
+      if (!user) return;
+      modalCopy.textContent = 'Delete confirmation for user "' + user.username + '" prepared for destructive action flow.';
+      modalCard.innerHTML = `
+        <div class="detail-row"><div class="detail-key">Username</div><div class="detail-value">${user.username}</div></div>
+        <div class="detail-row"><div class="detail-key">Roles</div><div class="detail-value">${user.roles.join(", ")}</div></div>
+        <div class="detail-row"><div class="detail-key">Status</div><div class="detail-value">${user.status}</div></div>
+        <div class="detail-row"><div class="detail-key">ID</div><div class="detail-value mono-id">${user.id}</div></div>
+      `;
+      modal.classList.add("open");
+      modalBackdrop.classList.add("open");
+    }
+
+    function closeModal() {
+      modal.classList.remove("open");
+      modalBackdrop.classList.remove("open");
+    }
+
+    function switchState(state) {
+      document.querySelectorAll("[data-state]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.state === state);
+      });
+
+      document.querySelectorAll("[data-panel]").forEach((panel) => {
+        panel.classList.toggle("active", panel.dataset.panel === state);
+      });
+    }
+
+    renderTable();
+    renderSelectedUser();
+    renderRoleOptions(["Admin"]);
+
+    table.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+
+      const action = target.closest("[data-action]");
+      if (action) {
+        const id = action.dataset.id;
+        if (action.dataset.action === "edit") openDrawer("edit", id);
+        if (action.dataset.action === "delete") openModal(id);
+        event.stopPropagation();
+        return;
+      }
+
+      const row = target.closest("[data-row-id]");
+      if (!row) return;
+      selectedId = row.dataset.rowId;
+      renderTable();
+      renderSelectedUser();
+    });
+
+    document.querySelectorAll("[data-open-drawer]").forEach((button) => {
+      button.addEventListener("click", () => openDrawer(button.dataset.openDrawer));
+    });
+
+    document.querySelectorAll("[data-state]").forEach((button) => {
+      button.addEventListener("click", () => switchState(button.dataset.state));
+    });
+
+    document.getElementById("drawer-close").addEventListener("click", closeDrawer);
+    document.getElementById("drawer-cancel").addEventListener("click", closeDrawer);
+    document.getElementById("drawer-save").addEventListener("click", () => switchState("success"));
+    drawerBackdrop.addEventListener("click", closeDrawer);
+
+    document.getElementById("modal-cancel").addEventListener("click", closeModal);
+    document.getElementById("modal-confirm").addEventListener("click", () => {
+      closeModal();
+      switchState("success");
+    });
+    modalBackdrop.addEventListener("click", closeModal);
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeDrawer();
+        closeModal();
+      }
+    });
+  </script>
+</body>
+</html>

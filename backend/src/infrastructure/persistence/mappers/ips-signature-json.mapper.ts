@@ -1,6 +1,8 @@
 import { IpsSignature } from "src/domain/entities/ips-signature.entity";
 import { IpsAction } from "src/domain/value-objects/ips-action.vo";
 import { IpsAppProtocol } from "src/domain/value-objects/ips-app-protocol.vo";
+import { IpsMatchType } from "src/domain/value-objects/ips-match-type.vo";
+import { IpsPatternEncoding } from "src/domain/value-objects/ips-pattern-encoding.vo";
 import { Port } from "src/domain/value-objects/port.vo";
 import { RegexPattern } from "src/domain/value-objects/regex-pattern.vo";
 import { SignatureCategory } from "src/domain/value-objects/signature-category.vo";
@@ -17,6 +19,9 @@ export class IpsSignatureJsonMapper {
       isActive: signature.getIsActive(),
       category: signature.getCategory().getValue(),
       pattern: signature.getPattern().getValue(),
+      matchType: signature.getMatchType().getValue(),
+      patternEncoding: signature.getPatternEncoding().getValue(),
+      caseInsensitive: signature.getCaseInsensitive(),
       severity: signature.getSeverity().getValue(),
       action: signature.getAction().getValue(),
       appProtocols: signature
@@ -36,6 +41,9 @@ export class IpsSignatureJsonMapper {
       record.isActive,
       SignatureCategory.create(record.category),
       RegexPattern.create(record.pattern),
+      IpsMatchType.create(record.matchType),
+      IpsPatternEncoding.create(record.patternEncoding),
+      record.caseInsensitive,
       SignatureSeverity.create(record.severity),
       IpsAction.create(record.action),
       record.appProtocols.map((appProtocol) =>

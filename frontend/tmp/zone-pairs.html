@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Policy Engine — Zone Pair Management</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-deep:    #0c0c0c;
+      --bg-card:    #161616;
+      --bg-hover:   #1c1c1c;
+      --border:     #262626;
+      --primary:    #06b6d4;
+      --danger:     #f43f5e;
+      --success:    #10b981;
+      --warning:    #f59e0b;
+      --txt:        #f5f5f5;
+      --txt-sec:    #8a8a8a;
+      --txt-muted:  #4a4a4a;
+    }
+
+    body {
+      background: var(--bg-deep);
+      color: var(--txt);
+      font-family: 'Courier New', Courier, monospace;
+      min-height: 100vh;
+      padding: 32px 24px 64px;
+    }
+
+    /* ── Header ── */
+    .page-header { text-align: center; margin-bottom: 32px; }
+    .page-header .brand {
+      font-size: 10px; letter-spacing: 0.35em;
+      color: var(--txt-muted); text-transform: uppercase; margin-bottom: 8px;
+    }
+    .page-header .divider {
+      display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 8px;
+    }
+    .page-header .divider-line {
+      height: 1px; width: 80px;
+      background: linear-gradient(to right, transparent, var(--primary));
+    }
+    .page-header .divider-line.right {
+      background: linear-gradient(to left, transparent, var(--primary));
+    }
+    .page-header .title {
+      font-size: 13px; letter-spacing: 0.3em; color: var(--primary); text-transform: uppercase;
+    }
+    .page-header .subtitle {
+      font-size: 10px; letter-spacing: 0.25em; color: var(--txt-sec);
+      text-transform: uppercase; margin-top: 6px;
+    }
+
+    /* ── Status bar ── */
+    .status-bar {
+      display: flex; align-items: center; gap: 24px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      padding: 10px 20px; margin-bottom: 24px;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    }
+    .status-item { display: flex; align-items: center; gap: 8px; color: var(--txt-sec); }
+    .status-item .val { color: var(--txt); }
+    .status-item.module { margin-right: auto; }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--success); box-shadow: 0 0 6px var(--success);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--success); }
+      50%       { opacity: 0.5; box-shadow: 0 0 2px var(--success); }
+    }
+    .val-allow { color: var(--success); }
+    .val-drop  { color: var(--danger); }
+
+    /* ── Toolbar ── */
+    .toolbar {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;
+    }
+    .toolbar-title { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--txt-sec); }
+    .btn-new {
+      background: transparent; border: 1px solid var(--primary);
+      color: var(--primary); font-family: inherit;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      padding: 7px 16px; cursor: pointer;
+      transition: background 150ms, color 150ms;
+    }
+    .btn-new:hover { background: var(--primary); color: #000; }
+
+    /* ── Table ── */
+    .table-wrap { border: 1px solid var(--border); overflow: hidden; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; min-width: 800px; }
+    thead tr { background: var(--bg-card); border-bottom: 1px solid var(--border); }
+    thead th {
+      padding: 10px 16px; text-align: left;
+      font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase;
+      color: var(--txt-muted); font-weight: normal; white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background 120ms; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--bg-hover); }
+    tbody tr.confirm-delete { background: rgba(244, 63, 94, 0.06); }
+    tbody tr.row-enter { animation: rowIn 200ms ease-out; }
+    tbody tr.row-exit  { animation: rowOut 200ms ease-out forwards; }
+    @keyframes rowIn  { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes rowOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(6px); } }
+    td { padding: 12px 16px; vertical-align: middle; }
+
+    /* Flow cell */
+    .flow-cell { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+    .flow-zone { font-size: 12px; font-weight: bold; color: var(--txt); }
+    .flow-arrow { color: var(--primary); font-size: 13px; }
+
+    /* Policy badge */
+    .policy-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase;
+      border-radius: 2px; font-weight: bold;
+    }
+    .policy-badge.allow { background: rgba(16,185,129,0.15); color: var(--success); border: 1px solid rgba(16,185,129,0.3); }
+    .policy-badge.drop  { background: rgba(244,63,94,0.15);  color: var(--danger);  border: 1px solid rgba(244,63,94,0.3); }
+
+    .mono-id   { font-family: 'Courier New', monospace; font-size: 10px; color: var(--txt-muted); white-space: nowrap; }
+    .created   { font-size: 10px; color: var(--txt-muted); white-space: nowrap; }
+
+    /* Actions */
+    .actions { display: flex; gap: 8px; align-items: center; }
+    .btn-icon {
+      background: transparent; border: 1px solid transparent; cursor: pointer;
+      padding: 4px 6px; font-size: 11px; font-family: inherit;
+      letter-spacing: 0.1em; text-transform: uppercase; transition: color 120ms, border-color 120ms;
+    }
+    .btn-icon.edit   { color: var(--txt-muted); }
+    .btn-icon.edit:hover   { color: var(--primary); border-color: var(--primary); }
+    .btn-icon.delete { color: var(--txt-muted); }
+    .btn-icon.delete:hover { color: var(--danger);  border-color: var(--danger); }
+
+    .confirm-actions { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+    .confirm-label { font-size: 9px; letter-spacing: 0.15em; color: var(--danger); text-transform: uppercase; }
+    .btn-yes, .btn-no {
+      font-family: inherit; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+      padding: 3px 10px; cursor: pointer; border: 1px solid; background: transparent;
+      transition: background 120ms, color 120ms;
+    }
+    .btn-yes { color: var(--danger); border-color: var(--danger); }
+    .btn-yes:hover { background: var(--danger); color: #fff; }
+    .btn-no  { color: var(--txt-muted); border-color: var(--border); }
+    .btn-no:hover  { color: var(--txt); border-color: var(--txt-muted); }
+
+    /* Empty state */
+    .empty-state { text-align: center; padding: 64px 24px; border: 1px dashed var(--border); }
+    .empty-state p { color: var(--txt-sec); font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; }
+    .empty-state span { display: block; font-size: 9px; color: var(--txt-muted); margin-top: 8px; letter-spacing: 0.1em; }
+
+    /* ── Drawer ── */
+    .backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+      opacity: 0; pointer-events: none;
+      transition: opacity 200ms; z-index: 100;
+    }
+    .backdrop.open { opacity: 1; pointer-events: all; }
+    .drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; width: 480px;
+      background: var(--bg-card); border-left: 1px solid var(--border);
+      transform: translateX(100%); transition: transform 200ms ease-out;
+      z-index: 101; display: flex; flex-direction: column;
+    }
+    .drawer.open { transform: translateX(0); }
+
+    .drawer-header {
+      padding: 24px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: flex-start; justify-content: space-between;
+    }
+    .drawer-title   { font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--primary); }
+    .drawer-subtitle{ font-size: 9px; color: var(--txt-muted); margin-top: 4px; letter-spacing: 0.1em; }
+    .btn-close {
+      background: transparent; border: none; color: var(--txt-muted);
+      font-size: 16px; cursor: pointer; padding: 2px 6px; line-height: 1;
+      transition: color 120ms;
+    }
+    .btn-close:hover { color: var(--txt); }
+
+    .drawer-body { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+
+    .field-group { display: flex; flex-direction: column; gap: 8px; }
+    .field-label { font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--txt-muted); }
+    .field-select {
+      background: var(--bg-deep); border: 1px solid var(--border);
+      color: var(--txt); font-family: inherit; font-size: 12px;
+      padding: 10px 12px; outline: none; cursor: pointer;
+      transition: border-color 150ms; appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a8a8a'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 12px center;
+    }
+    .field-select:focus { border-color: var(--primary); }
+    .field-select.error { border-color: var(--danger); }
+    .field-error { font-size: 9px; color: var(--danger); letter-spacing: 0.1em; }
+
+    /* Policy toggle */
+    .policy-toggle { display: flex; gap: 0; }
+    .policy-btn {
+      flex: 1; padding: 10px; text-align: center;
+      font-family: inherit; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      cursor: pointer; background: var(--bg-deep); border: 1px solid var(--border);
+      color: var(--txt-muted); transition: all 150ms;
+    }
+    .policy-btn:first-child { border-right: none; }
+    .policy-btn.allow.active { background: rgba(16,185,129,0.15); color: var(--success); border-color: rgba(16,185,129,0.4); }
+    .policy-btn.drop.active  { background: rgba(244,63,94,0.15);  color: var(--danger);  border-color: rgba(244,63,94,0.4); }
+    .policy-btn:hover:not(.active) { border-color: var(--txt-muted); color: var(--txt); }
+
+    .submit-error {
+      border: 1px solid var(--danger); padding: 10px 14px;
+      font-size: 10px; color: var(--danger); letter-spacing: 0.1em; display: none;
+    }
+    .submit-error.show { display: block; }
+
+    .validation-hint {
+      font-size: 9px; color: var(--warning); letter-spacing: 0.1em; display: none;
+    }
+    .validation-hint.show { display: block; }
+
+    .drawer-footer {
+      padding: 20px 24px; border-top: 1px solid var(--border);
+      display: flex; gap: 10px; justify-content: flex-end;
+    }
+    .btn-cancel {
+      background: transparent; border: 1px solid var(--border); color: var(--txt-muted);
+      font-family: inherit; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      padding: 9px 20px; cursor: pointer; transition: border-color 120ms, color 120ms;
+    }
+    .btn-cancel:hover { border-color: var(--txt-muted); color: var(--txt); }
+    .btn-submit {
+      background: transparent; border: 1px solid var(--primary); color: var(--primary);
+      font-family: inherit; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      padding: 9px 24px; cursor: pointer; transition: background 150ms, color 150ms;
+      min-width: 110px;
+    }
+    .btn-submit:hover:not(:disabled) { background: var(--primary); color: #000; }
+    .btn-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Footer */
+    .page-footer {
+      text-align: center; margin-top: 40px;
+      font-size: 9px; color: var(--txt-muted); letter-spacing: 0.2em; text-transform: uppercase;
+    }
+    .page-footer span { margin: 0 8px; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="page-header">
+    <div class="brand">RaptorGate</div>
+    <div class="divider">
+      <div class="divider-line"></div>
+      <div class="title">Policy Engine</div>
+      <div class="divider-line right"></div>
+    </div>
+    <div class="subtitle">Zone Pair Management</div>
+  </header>
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    <div class="status-item module">
+      <div class="dot"></div>
+      <span>Module: <span class="val">Active</span></span>
+    </div>
+    <div class="status-item">Total pairs: <span class="val" id="stat-total">0</span></div>
+    <div class="status-item">Allow: <span class="val val-allow" id="stat-allow">0</span></div>
+    <div class="status-item">Drop: <span class="val val-drop" id="stat-drop">0</span></div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="toolbar-title">Zone Pairs</div>
+    <button class="btn-new" onclick="openDrawer(null)">+ New Zone Pair</button>
+  </div>
+
+  <!-- Table -->
+  <div id="table-area"></div>
+
+  <!-- Footer -->
+  <footer class="page-footer">
+    RaptorGate <span>|</span> Policy Engine <span>|</span> Zone Pair Management
+  </footer>
+
+  <!-- Backdrop -->
+  <div class="backdrop" id="backdrop" onclick="closeDrawer()"></div>
+
+  <!-- Drawer -->
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div>
+        <div class="drawer-title" id="drawer-title">New Zone Pair</div>
+        <div class="drawer-subtitle" id="drawer-subtitle">Define traffic flow between two zones</div>
+      </div>
+      <button class="btn-close" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div class="field-group">
+        <label class="field-label" for="f-src">Source Zone *</label>
+        <select class="field-select" id="f-src" onchange="onZoneSelect()"></select>
+        <div class="field-error" id="err-src"></div>
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="f-dst">Destination Zone *</label>
+        <select class="field-select" id="f-dst" onchange="onZoneSelect()"></select>
+        <div class="field-error" id="err-dst"></div>
+      </div>
+      <div class="validation-hint" id="hint-same">Source and destination zones must differ.</div>
+      <div class="field-group">
+        <div class="field-label">Default Policy *</div>
+        <div class="policy-toggle">
+          <button class="policy-btn allow active" id="policy-allow" onclick="setPolicy('ALLOW')">Allow</button>
+          <button class="policy-btn drop"          id="policy-drop"  onclick="setPolicy('DROP')">Drop</button>
+        </div>
+      </div>
+      <div class="submit-error" id="submit-error">Failed to save zone pair. Please try again.</div>
+    </div>
+    <div class="drawer-footer">
+      <button class="btn-cancel" onclick="closeDrawer()">Cancel</button>
+      <button class="btn-submit" id="btn-submit" onclick="submitPair()">Save Pair</button>
+    </div>
+  </div>
+
+<script>
+  // ── Mock data — same zones as zones.html ──
+  const zones = [
+    {
+      id: 'c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4',
+      name: 'DMZ',
+      description: 'Demilitarized zone for public-facing services',
+      isActive: true,
+    },
+    {
+      id: 'a0db06f9-5063-4035-aadd-845248db19e4',
+      name: 'LAN',
+      description: 'Internal local area network',
+      isActive: true,
+    },
+    {
+      id: 'f8a1b3c4-1234-4abc-9def-000000000001',
+      name: 'MGMT',
+      description: 'Management network — admin only',
+      isActive: false,
+    },
+  ];
+
+  const pairs = [
+    {
+      id: 'dcb9f221-cc1b-4432-a40d-9890b8a74dd2',
+      srcZoneId: 'c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4',
+      dstZoneId: 'a0db06f9-5063-4035-aadd-845248db19e4',
+      defaultPolicy: 'ALLOW',
+      createdAt: '2026-02-20T10:00:00.000Z',
+      createdBy: '00000000-0000-4000-8000-000000000001',
+    },
+    {
+      id: 'aabb1122-dead-beef-cafe-000000000002',
+      srcZoneId: 'a0db06f9-5063-4035-aadd-845248db19e4',
+      dstZoneId: 'f8a1b3c4-1234-4abc-9def-000000000001',
+      defaultPolicy: 'DROP',
+      createdAt: '2026-03-05T08:15:00.000Z',
+      createdBy: '00000000-0000-4000-8000-000000000001',
+    },
+  ];
+
+  let editingId     = null;
+  let selectedPolicy = 'ALLOW';
+  let confirmTimers  = {};
+
+  function zoneName(id) {
+    const z = zones.find(x => x.id === id);
+    return z ? z.name : id.slice(0, 8) + '…';
+  }
+
+  function shortId(id) { return id.slice(0, 8) + '…'; }
+
+  function fmtDate(iso) { return new Date(iso).toISOString().split('T')[0]; }
+
+  function updateStats() {
+    document.getElementById('stat-total').textContent = pairs.length;
+    document.getElementById('stat-allow').textContent = pairs.filter(p => p.defaultPolicy === 'ALLOW').length;
+    document.getElementById('stat-drop').textContent  = pairs.filter(p => p.defaultPolicy === 'DROP').length;
+  }
+
+  function render() {
+    updateStats();
+    const area = document.getElementById('table-area');
+
+    if (pairs.length === 0) {
+      area.innerHTML = `
+        <div class="empty-state">
+          <p>No zone pairs configured</p>
+          <span>Click "+ New Zone Pair" to define traffic flow between zones</span>
+        </div>`;
+      return;
+    }
+
+    const rows = pairs.map(p => `
+      <tr id="row-${p.id}" class="${confirmTimers[p.id] ? 'confirm-delete' : ''}">
+        <td>
+          <div class="flow-cell">
+            <span class="flow-zone">${zoneName(p.srcZoneId)}</span>
+            <span class="flow-arrow">→</span>
+            <span class="flow-zone">${zoneName(p.dstZoneId)}</span>
+          </div>
+        </td>
+        <td>
+          <span class="policy-badge ${p.defaultPolicy === 'ALLOW' ? 'allow' : 'drop'}">
+            ${p.defaultPolicy}
+          </span>
+        </td>
+        <td><span class="mono-id" title="${p.srcZoneId}">${shortId(p.srcZoneId)}</span></td>
+        <td><span class="mono-id" title="${p.dstZoneId}">${shortId(p.dstZoneId)}</span></td>
+        <td><span class="mono-id" title="${p.id}">${shortId(p.id)}</span></td>
+        <td><span class="created">${fmtDate(p.createdAt)}</span></td>
+        <td>
+          ${confirmTimers[p.id]
+            ? `<div class="confirm-actions">
+                 <span class="confirm-label">Delete?</span>
+                 <button class="btn-yes" onclick="confirmDelete('${p.id}')">Yes</button>
+                 <button class="btn-no"  onclick="cancelDelete('${p.id}')">No</button>
+               </div>`
+            : `<div class="actions">
+                 <button class="btn-icon edit"   onclick="openDrawer('${p.id}')">Edit</button>
+                 <button class="btn-icon delete" onclick="startDelete('${p.id}')">Del</button>
+               </div>`
+          }
+        </td>
+      </tr>`).join('');
+
+    area.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Flow</th>
+              <th>Default Policy</th>
+              <th>Src Zone ID</th>
+              <th>Dst Zone ID</th>
+              <th>Pair ID</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  // ── Delete flow ──
+  function startDelete(id) {
+    confirmTimers[id] = setTimeout(() => cancelDelete(id), 3000);
+    render();
+  }
+  function cancelDelete(id) {
+    clearTimeout(confirmTimers[id]);
+    delete confirmTimers[id];
+    render();
+  }
+  function confirmDelete(id) {
+    clearTimeout(confirmTimers[id]);
+    delete confirmTimers[id];
+    const row = document.getElementById(`row-${id}`);
+    if (row) {
+      row.classList.add('row-exit');
+      row.addEventListener('animationend', () => {
+        const idx = pairs.findIndex(p => p.id === id);
+        if (idx !== -1) pairs.splice(idx, 1);
+        render();
+      }, { once: true });
+    }
+  }
+
+  // ── Policy toggle ──
+  function setPolicy(policy) {
+    selectedPolicy = policy;
+    document.getElementById('policy-allow').classList.toggle('active', policy === 'ALLOW');
+    document.getElementById('policy-drop').classList.toggle('active',  policy === 'DROP');
+  }
+
+  // ── Select population ──
+  function populateSelects(srcVal, dstVal) {
+    const src = document.getElementById('f-src');
+    const dst = document.getElementById('f-dst');
+
+    const opts = zones.map(z =>
+      `<option value="${z.id}">${z.name}${z.isActive ? '' : ' (inactive)'}</option>`
+    ).join('');
+    const placeholder = `<option value="">— Select zone —</option>`;
+
+    src.innerHTML = placeholder + opts;
+    dst.innerHTML = placeholder + opts;
+
+    if (srcVal) src.value = srcVal;
+    if (dstVal) dst.value = dstVal;
+  }
+
+  function onZoneSelect() {
+    const src = document.getElementById('f-src').value;
+    const dst = document.getElementById('f-dst').value;
+    const hint = document.getElementById('hint-same');
+    if (src && dst && src === dst) {
+      hint.classList.add('show');
+    } else {
+      hint.classList.remove('show');
+    }
+    // Clear errors on change
+    document.getElementById('f-src').classList.remove('error');
+    document.getElementById('err-src').textContent = '';
+    document.getElementById('f-dst').classList.remove('error');
+    document.getElementById('err-dst').textContent = '';
+  }
+
+  // ── Drawer ──
+  function openDrawer(id) {
+    editingId = id;
+    document.getElementById('submit-error').classList.remove('show');
+    document.getElementById('hint-same').classList.remove('show');
+    ['src','dst'].forEach(f => {
+      document.getElementById(`f-${f}`).classList.remove('error');
+      document.getElementById(`err-${f}`).textContent = '';
+    });
+
+    if (id) {
+      const p = pairs.find(x => x.id === id);
+      document.getElementById('drawer-title').textContent    = 'Edit Zone Pair';
+      document.getElementById('drawer-subtitle').textContent = `ID: ${id}`;
+      populateSelects(p.srcZoneId, p.dstZoneId);
+      setPolicy(p.defaultPolicy);
+    } else {
+      document.getElementById('drawer-title').textContent    = 'New Zone Pair';
+      document.getElementById('drawer-subtitle').textContent = 'Define traffic flow between two zones';
+      populateSelects('', '');
+      setPolicy('ALLOW');
+    }
+
+    document.getElementById('backdrop').classList.add('open');
+    document.getElementById('drawer').classList.add('open');
+  }
+
+  function closeDrawer() {
+    document.getElementById('backdrop').classList.remove('open');
+    document.getElementById('drawer').classList.remove('open');
+    editingId = null;
+  }
+
+  function validate() {
+    let ok = true;
+    const src = document.getElementById('f-src').value;
+    const dst = document.getElementById('f-dst').value;
+
+    if (!src) {
+      document.getElementById('f-src').classList.add('error');
+      document.getElementById('err-src').textContent = 'Source zone is required';
+      ok = false;
+    }
+    if (!dst) {
+      document.getElementById('f-dst').classList.add('error');
+      document.getElementById('err-dst').textContent = 'Destination zone is required';
+      ok = false;
+    }
+    if (src && dst && src === dst) {
+      document.getElementById('f-dst').classList.add('error');
+      document.getElementById('err-dst').textContent = 'Must differ from source zone';
+      ok = false;
+    }
+    return ok;
+  }
+
+  function submitPair() {
+    if (!validate()) return;
+
+    const btn = document.getElementById('btn-submit');
+    btn.textContent = 'Saving…';
+    btn.disabled = true;
+
+    setTimeout(() => {
+      btn.textContent = 'Save Pair';
+      btn.disabled = false;
+
+      const srcZoneId    = document.getElementById('f-src').value;
+      const dstZoneId    = document.getElementById('f-dst').value;
+      const defaultPolicy = selectedPolicy;
+
+      if (editingId) {
+        const p = pairs.find(x => x.id === editingId);
+        p.srcZoneId     = srcZoneId;
+        p.dstZoneId     = dstZoneId;
+        p.defaultPolicy = defaultPolicy;
+      } else {
+        pairs.unshift({
+          id: crypto.randomUUID(),
+          srcZoneId, dstZoneId, defaultPolicy,
+          createdAt: new Date().toISOString(),
+          createdBy: 'current-user',
+        });
+      }
+      closeDrawer();
+      render();
+    }, 700);
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+  render();
+</script>
+</body>
+</html>
