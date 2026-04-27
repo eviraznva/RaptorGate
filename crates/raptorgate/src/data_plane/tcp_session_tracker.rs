@@ -271,7 +271,6 @@ impl TcpSessionTracker {
 
     #[allow(clippy::too_many_lines)]
     fn process_session_state(&self, session: &mut TcpSession, packet: TcpPacketInfo) -> (Result<Option<TcpSessionState>, TcpSessionError>, PostAction) {
-        session.last_seen = Instant::now();
         match session.state {
             TcpSessionState::Handshake(s) => {
                 if packet.flags.contains(TcpFlags::RST) {
@@ -283,6 +282,7 @@ impl TcpSessionTracker {
                     if packet.flags.contains(TcpFlags::SYN | TcpFlags::ACK)
                         && packet.src == session.receiver.id
                             && packet.acknowledgment_number == session.initiator.next_expected_seq {
+                                session.last_seen = Instant::now();
                                 session.receiver.next_expected_seq = packet.sequence_number.wrapping_add(1);
                                 session.receiver.max_window_size = packet.window_size;
                                 session.state = TcpSessionState::Handshake(TcpHandshakeState::SynAckReceived);
@@ -297,6 +297,7 @@ impl TcpSessionTracker {
                         && packet.src == session.initiator.id
                             && packet.sequence_number == session.initiator.next_expected_seq
                             && packet.acknowledgment_number == session.receiver.next_expected_seq {
+                                session.last_seen = Instant::now();
                                 session.initiator.next_expected_seq = session.initiator.next_expected_seq.wrapping_add(u32::from(packet.payload_size));
                                 session.state = TcpSessionState::Established;
 
@@ -336,6 +337,7 @@ impl TcpSessionTracker {
                         return (Err(TcpSessionError::OutOfWindow { lo: lo.into(), hi: hi.into(), seq: packet.sequence_number.into() }), PostAction::None);
                     }
 
+                    session.last_seen = Instant::now();
                     sender.next_expected_seq = sender.next_expected_seq
                         .wrapping_add(u32::from(packet.payload_size));
 
@@ -385,6 +387,7 @@ impl TcpSessionTracker {
                             && packet.src == responder.id
                             && packet.acknowledgment_number == initiator.next_expected_seq
                         {
+                            session.last_seen = Instant::now();
                             session.state = TcpSessionState::Closing(TcpClosingState::AckFinSent);
                             let from = initiator.id.clone();
                             return (Ok(Some(session.state)), PostAction::ProcessBuffer { flags: Some(TcpFlags::ACK), from: Some(from) });
@@ -392,6 +395,7 @@ impl TcpSessionTracker {
                             && packet.src == responder.id
                             && packet.acknowledgment_number == initiator.next_expected_seq
                         {
+                            session.last_seen = Instant::now();
                             session.state = TcpSessionState::Closing(TcpClosingState::AckSent);
                             let from = responder.id.clone();
                             return (Ok(Some(session.state)), PostAction::ProcessBuffer { flags: Some(TcpFlags::FIN), from: Some(from) });
@@ -403,6 +407,7 @@ impl TcpSessionTracker {
                             && packet.src == responder.id
                             && packet.acknowledgment_number == initiator.next_expected_seq
                         {
+                            session.last_seen = Instant::now();
                             session.state = TcpSessionState::Closing(TcpClosingState::AckFinSent);
                             let from = initiator.id.clone();
                             return (Ok(Some(session.state)), PostAction::ProcessBuffer { flags: Some(TcpFlags::ACK), from: Some(from) });
@@ -414,6 +419,7 @@ impl TcpSessionTracker {
                             && packet.src == initiator.id
                             && packet.acknowledgment_number == responder.next_expected_seq
                         {
+                            session.last_seen = Instant::now();
                             session.state = TcpSessionState::TimeWait;
                             emit(Event::new(EventKind::TcpSessionEnteredTimeWait { src: initiator.id.clone(), dst: responder.id.clone() }));
                             return (Ok(Some(session.state)), PostAction::ScheduleTimeWaitCleanup);
@@ -1237,5 +1243,84 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         assert!(!tracker.sessions.contains_key(&id), "stuck closing session should be evicted after timeout");
+    }
+
+    #[tokio::test]
+    async fn synsent_session_removed_after_handshake_timeout() {
+        let tracker = make_tracker_with_timeouts(100, 10_000, 10_000, 50);
+        let id = session_id();
+
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0)).unwrap();
+
+        assert!(tracker.sessions.contains_key(&id), "session should exist after SYN");
+        assert_eq!(
+            tracker.sessions.get(&id).unwrap().state,
+            TcpSessionState::Handshake(TcpHandshakeState::SynSent),
+            "session should be in SynSent state"
+        );
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        assert!(!tracker.sessions.contains_key(&id), "SynSent session should be removed after handshake timeout");
+    }
+
+    #[tokio::test]
+    async fn synsent_session_removed_on_rst() {
+        let tracker = TcpSessionTracker::new();
+        let id = session_id();
+
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0)).unwrap();
+
+        assert!(tracker.sessions.contains_key(&id), "session should exist after SYN");
+        assert_eq!(
+            tracker.sessions.get(&id).unwrap().state,
+            TcpSessionState::Handshake(TcpHandshakeState::SynSent),
+            "session should be in SynSent state"
+        );
+
+        let result = tracker.process_tcp(make_packet(server(), client(), TcpFlags::RST, 0, 1001, 0, 0));
+        assert_eq!(result.unwrap(), Some(TcpSessionState::Closed));
+
+        assert!(!tracker.sessions.contains_key(&id), "SynSent session should be removed after RST");
+    }
+
+    #[tokio::test]
+    async fn invalid_packets_do_not_prevent_synsent_timeout() {
+        let tracker = make_tracker_with_timeouts(100, 10_000, 10_000, 50);
+        let id = session_id();
+
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0)).unwrap();
+        assert!(tracker.sessions.contains_key(&id), "session should exist after SYN");
+
+        for _ in 0..5 {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            tracker.process_tcp(make_packet(
+                server(), client(), TcpFlags::ACK, 9999, 9999, 8192, 0,
+            )).unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        assert!(!tracker.sessions.contains_key(&id), "SynSent session should still timeout despite invalid packets");
+    }
+
+    #[tokio::test]
+    async fn invalid_packets_do_not_keep_synsent_session_alive() {
+        let tracker = make_tracker_with_timeouts(100, 10_000, 10_000, 50);
+        let id = session_id();
+
+        tracker.process_tcp(make_packet(client(), server(), TcpFlags::SYN, 1000, 0, 8192, 0)).unwrap();
+        assert!(tracker.sessions.contains_key(&id), "session should exist after SYN");
+
+        for _ in 0..3 {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            let _ = tracker.process_tcp(make_packet(
+                server(), client(), TcpFlags::ACK, 9999, 9999, 8192, 0,
+            ));
+        }
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        assert!(!tracker.sessions.contains_key(&id), "SynSent session should timeout despite invalid packets");
     }
 }
