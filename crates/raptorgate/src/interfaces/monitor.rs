@@ -480,4 +480,33 @@ mod tests {
         assert_eq!(NetworkInterfaceMonitor::status_from_interface(Some(&down)), "inactive");
         assert_eq!(NetworkInterfaceMonitor::status_from_interface(Some(&unknown)), "unknown");
     }
+
+    #[test]
+    fn test_monitor_state_update_logic() {
+        let monitor = NetworkInterfaceMonitor {
+            interfaces: std::sync::Arc::new(dashmap::DashMap::new()),
+        };
+        
+        let interface = SystemInterface {
+            index: SystemInterfaceId::from(10),
+            name: "test0".to_string(),
+            oper_state: OperState::Up,
+            addresses: vec![],
+            vlan_id: None,
+        };
+        
+        // Test upsert_link directly to avoid complex Netlink message construction in unit tests
+        monitor.upsert_link(interface.clone());
+        
+        let retrieved = monitor.get("test0").expect("interface should exist");
+        assert_eq!(retrieved.index, SystemInterfaceId::from(10));
+        assert_eq!(retrieved.oper_state, OperState::Up);
+        
+        // Test remove_link logic
+        let mut del_link = netlink_packet_route::link::LinkMessage::default();
+        del_link.header.index = 10;
+        monitor.remove_link(&del_link);
+        
+        assert!(monitor.get("test0").is_none());
+    }
 }

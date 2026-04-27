@@ -78,7 +78,7 @@ impl NetlinkListener {
                                                     break; // Exit inner reconnect loop and resume outer listener loop
                                                 }
                                                 Err(err) => {
-                                                    let next_backoff = std::cmp::min(backoff * 2, Duration::from_secs(30));
+                                                    let next_backoff = next_backoff(backoff);
                                                     tracing::error!(
                                                         error = %err,
                                                         retry_delay_secs = next_backoff.as_secs(),
@@ -102,5 +102,30 @@ impl NetlinkListener {
 
     pub fn subscribe(&self) -> broadcast::Receiver<RouteNetlinkMessage> {
         self.sender.subscribe()
+    }
+}
+
+fn next_backoff(current: Duration) -> Duration {
+    std::cmp::min(current * 2, Duration::from_secs(30))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_backoff_progression() {
+        let b1 = Duration::from_secs(1);
+        let b2 = next_backoff(b1);
+        assert_eq!(b2, Duration::from_secs(2));
+        
+        let b3 = next_backoff(b2);
+        assert_eq!(b3, Duration::from_secs(4));
+        
+        let b4 = next_backoff(Duration::from_secs(16));
+        assert_eq!(b4, Duration::from_secs(30));
+        
+        let b5 = next_backoff(Duration::from_secs(30));
+        assert_eq!(b5, Duration::from_secs(30));
     }
 }
