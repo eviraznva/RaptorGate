@@ -1,28 +1,16 @@
 {
   "items": [
     {
-      "id": "a1c6151b-e916-456d-b4f9-2d57d2075aff",
-      "name": "Allow HTTPS",
-      "zonePairId": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
+      "id": "77777777-7777-4777-8777-777777777777",
+      "name": "Identity gate h1-to-h2",
+      "zonePairId": "33333333-3333-4333-8333-333333333333",
       "isActive": true,
-      "content": "match dst_port { = 53 : verdict drop }",
-      "priority": 69,
+      "content": "match auth_state {\n  = authenticated:\n    match identity_group {\n      = \"guests\": verdict drop\n      _:\n        match protocol {\n          = tcp:\n            match dst_port {\n              = 8080: verdict allow\n              _: verdict drop\n            }\n          = icmp: verdict allow\n          _: verdict drop\n        }\n    }\n  _: verdict drop\n}",
+      "priority": 0,
       "createdBy": "00000000-0000-4000-8000-000000000001",
-      "createdAt": "2026-03-22T17:26:23.485Z",
-      "updatedAt": "2026-03-22T17:26:23.485Z",
-      "description": "Allow outgoing HTTPS traffic to external APIs"
-    },
-    {
-      "id": "88263938-f3db-4d2c-8b4a-4db7bd379057",
-      "name": "Allow HTTP",
-      "zonePairId": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
-      "isActive": true,
-      "content": "match ip_ver { = v4 : match protocol { = tcp : match dst_port { = 443 : verdict allow _ : verdict drop } = udp : verdict drop } = v6 : verdict drop }",
-      "priority": 10,
-      "createdBy": "00000000-0000-4000-8000-000000000001",
-      "createdAt": "2026-03-23T10:24:10.635Z",
-      "updatedAt": "2026-03-23T10:24:10.635Z",
-      "description": "Allow outgoing HTTPS traffic to external APIs"
+      "createdAt": "2026-04-27T00:00:00.000Z",
+      "updatedAt": "2026-04-27T00:00:00.000Z",
+      "description": "Allow authenticated non-guests from h1 to reach protected h2 HTTP"
     }
   ]
 }

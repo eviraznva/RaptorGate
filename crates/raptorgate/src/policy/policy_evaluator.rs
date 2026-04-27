@@ -18,6 +18,7 @@ pub struct DnsEvalContext {
     pub dnssec_status: Option<DnssecStatus>,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct PolicyEvalContext<'a, 'p> {
     pub packet: &'a SlicedPacket<'p>,
     pub arrival: &'a ArrivalInfo,
@@ -28,6 +29,7 @@ pub(crate) struct PolicyEvalContext<'a, 'p> {
     pub identity: Option<&'a IdentityContext>,
 }
 
+#[derive(Clone)]
 pub struct PolicyEvaluator {
     rules: RuleTree,
     orphaned_verdict: Verdict,
@@ -42,6 +44,15 @@ impl PolicyEvaluator {
     }
 
     pub(crate) fn evaluate(&self, ctx: PolicyEvalContext<'_, '_>) -> Verdict {
+        self
+            .evaluate_if_matches(ctx)
+            .unwrap_or_else(|| self.orphaned_verdict.clone())
+    }
+
+    pub(crate) fn evaluate_if_matches(
+        &self,
+        ctx: PolicyEvalContext<'_, '_>,
+    ) -> Option<Verdict> {
         let mut walker = TreeWalker::new(&self.rules);
 
         loop {
@@ -49,11 +60,11 @@ impl PolicyEvaluator {
                 Step::NeedsMatch { kind, pattern } => {
                     let matched = Self::matches_kind(*kind, pattern, &ctx);
                     if let Step::Verdict(v) = walker.advance(matched) {
-                        return v.clone();
+                        return Some(v.clone());
                     }
                 }
-                Step::Verdict(v) => return v.clone(),
-                Step::NoMatch => return self.orphaned_verdict.clone(),
+                Step::Verdict(v) => return Some(v.clone()),
+                Step::NoMatch => return None,
             }
         }
     }

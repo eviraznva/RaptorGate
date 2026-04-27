@@ -19,6 +19,7 @@ import { NatRuleJsonMapper } from './nat-rule-json.mapper';
 import { RuleJsonMapper } from './rule-json.mapper';
 import { SslBypassJsonMapper } from './ssl-bypass-json.mapper';
 import { UserJsonMapper } from './user-json.mapper';
+import { ZoneInterfaceJsonMapper } from './zone-interface-json.mapper';
 import { ZoneJsonMapper } from './zone-json.mapper';
 import { ZonePairJsonMapper } from './zone-pair-json.mapper';
 
@@ -62,6 +63,10 @@ export function mapConfigSnapshotToPayloadRecord(
     ZonePairJsonMapper.toRecord(zonePair),
   );
 
+  const toZoneInterfacesFile = payload.bundle.zone_interfaces.items.map(
+    (zoneInterface) => ZoneInterfaceJsonMapper.toRecord(zoneInterface),
+  );
+
   const toZonesFile = payload.bundle.zones.items.map((zone) =>
     ZoneJsonMapper.toRecord(zone, crypto.randomUUID()),
   );
@@ -87,7 +92,7 @@ export function mapConfigSnapshotToPayloadRecord(
         items: toZonesFile,
       },
       zone_interfaces: {
-        items: [],
+        items: toZoneInterfacesFile,
       },
       zone_pairs: {
         items: toZonePairFile,
@@ -138,6 +143,10 @@ export function mapConfigBundlePayloadToDomain(
     ZonePairJsonMapper.toDomain(zonePair),
   );
 
+  const toZoneInterfacesDomain = payload.bundle.zone_interfaces.items.map(
+    (zoneInterface) => ZoneInterfaceJsonMapper.toDomain(zoneInterface),
+  );
+
   const toZonesDomain = payload.bundle.zones.items.map((zone) =>
     ZoneJsonMapper.toDomain(zone),
   );
@@ -163,7 +172,7 @@ export function mapConfigBundlePayloadToDomain(
         items: toZonesDomain,
       },
       zone_interfaces: {
-        items: [],
+        items: toZoneInterfacesDomain,
       },
       zone_pairs: {
         items: toZonePairDomain,

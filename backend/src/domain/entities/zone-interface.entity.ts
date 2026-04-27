@@ -1,29 +1,35 @@
 export class ZoneInterface {
   private constructor(
     private readonly id: string,
+    private readonly zoneId: string,
     private interfaceName: string,
-    private vlanId: number,
+    private vlanId: number | null,
     private readonly createdAt: Date,
   ) {}
 
   public static create(
     id: string,
+    zoneId: string,
     interfaceName: string,
-    vlanId: number,
+    vlanId: number | null,
     createdAt: Date,
   ): ZoneInterface {
-    return new ZoneInterface(id, interfaceName, vlanId, createdAt);
+    return new ZoneInterface(id, zoneId, interfaceName, vlanId, createdAt);
   }
 
   public getId(): string {
     return this.id;
   }
 
+  public getZoneId(): string {
+    return this.zoneId;
+  }
+
   public getInterfaceName(): string {
     return this.interfaceName;
   }
 
-  public getVlanId(): number {
+  public getVlanId(): number | null {
     return this.vlanId;
   }
 

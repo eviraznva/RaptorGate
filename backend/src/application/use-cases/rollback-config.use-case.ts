@@ -25,6 +25,10 @@ import {
   ZONE_REPOSITORY_TOKEN,
 } from '../../domain/repositories/zone.repository.js';
 import {
+  type IZoneInterfaceRepository,
+  ZONE_INTERFACE_REPOSITORY_TOKEN,
+} from '../../domain/repositories/zone-interface.repository.js';
+import {
   type IZonePairRepository,
   ZONE_PAIR_REPOSITORY_TOKEN,
 } from '../../domain/repositories/zone-pair.repository.js';
@@ -50,6 +54,8 @@ export class RollbackConfigUseCase {
     private readonly zonePairRepository: IZonePairRepository,
     @Inject(ZONE_REPOSITORY_TOKEN)
     private readonly zoneRepository: IZoneRepository,
+    @Inject(ZONE_INTERFACE_REPOSITORY_TOKEN)
+    private readonly zoneInterfaceRepository: IZoneInterfaceRepository,
     @Inject(FIREWALL_CERTIFICATE_REPOSITORY_TOKEN)
     private readonly firewallCertificateRepository: IFirewallCertificateRepository,
     @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
@@ -68,6 +74,9 @@ export class RollbackConfigUseCase {
     const configBundle = configSnapshot.deserializePayload();
 
     await this.zoneRepository.overwriteAll(configBundle.bundle.zones.items);
+    await this.zoneInterfaceRepository.overwriteAll(
+      configBundle.bundle.zone_interfaces.items,
+    );
     await this.zonePairRepository.overwriteAll(
       configBundle.bundle.zone_pairs.items,
     );
@@ -95,6 +104,7 @@ export class RollbackConfigUseCase {
       counts: {
         rules: configBundle.bundle.rules.items.length,
         zones: configBundle.bundle.zones.items.length,
+        zoneInterfaces: configBundle.bundle.zone_interfaces.items.length,
         zonePairs: configBundle.bundle.zone_pairs.items.length,
         natRules: configBundle.bundle.nat_rules.items.length,
       },

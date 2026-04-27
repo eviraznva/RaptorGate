@@ -12,6 +12,7 @@ use crate::identity::{
     resolve_identity, IdentityContext, IdentitySessionStore,
 };
 use crate::pipeline::{Stage, StageOutcome};
+use crate::pipeline::wrappers::infer_interface_for_ip;
 use crate::tls::inspection_relay::{Direction, SessionMeta};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,10 +173,11 @@ fn build_packet_context(
     identity_ctx: Option<IdentityContext>,
 ) -> anyhow::Result<PacketContext> {
     let raw = build_tcp_packet(payload, src, dst)?;
+    let src_interface = infer_interface_for_ip(src.ip()).unwrap_or("tls-decrypted");
 
     PacketContext::from_raw_full(
         raw,
-        Arc::from("tls-decrypted"),
+        Arc::from(src_interface),
         Vec::new(),
         arrival_time,
         Some(seed_ctx.clone()),

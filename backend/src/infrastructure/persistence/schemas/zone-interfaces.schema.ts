@@ -6,7 +6,7 @@ export const ZoneInterfaceRecordSchema = z
     id: uuidSchema,
     zoneId: uuidSchema,
     interfaceName: z.string().min(1).max(64),
-    vlanId: z.number().int(),
+    vlanId: z.number().int().nullable(),
     createdAt: isoDateTimeSchema,
   })
   .strict();

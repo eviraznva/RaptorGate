@@ -134,6 +134,14 @@ export class GrpcConfigSnapshotPushService
 
   private toBundle(payload: ConfigSnapshotPayload): ConfigBundle {
     const b = payload.bundle;
+    const zoneInterfacesByZoneId = new Map<string, string[]>();
+
+    for (const zoneInterface of b.zone_interfaces.items) {
+      const items =
+        zoneInterfacesByZoneId.get(zoneInterface.getZoneId()) ?? [];
+      items.push(zoneInterface.getInterfaceName());
+      zoneInterfacesByZoneId.set(zoneInterface.getZoneId(), items);
+    }
 
     return {
       rules: b.rules.items.map((r) => ({
@@ -146,14 +154,23 @@ export class GrpcConfigSnapshotPushService
       zones: b.zones.items.map((z) => ({
         id: z.getId(),
         name: z.getName(),
-        interfaceIds: [],
+        interfaceIds: zoneInterfacesByZoneId.get(z.getId()) ?? [],
       })),
-      zoneInterfaces: b.zone_interfaces.items.map((zi) => ({
-        id: zi.getId(),
-        zoneId: '',
-        interfaceName: zi.getInterfaceName(),
-        vlanId: zi.getVlanId(),
-      })),
+      zoneInterfaces: b.zone_interfaces.items.map((zi) => {
+        const zoneInterface = {
+          id: zi.getId(),
+          zoneId: zi.getZoneId(),
+          interfaceName: zi.getInterfaceName(),
+        };
+        const vlanId = zi.getVlanId();
+
+        return vlanId === null
+          ? zoneInterface
+          : {
+              ...zoneInterface,
+              vlanId,
+            };
+      }),
       zonePairs: b.zone_pairs.items.map((zp) => ({
         id: zp.getId(),
         srcZoneId: zp.getSrcZoneId(),
@@ -295,6 +312,7 @@ function bundleCounts(payload: ConfigSnapshotPayload) {
   return {
     rules: bundle.rules.items.length,
     zones: bundle.zones.items.length,
+    zoneInterfaces: bundle.zone_interfaces.items.length,
     zonePairs: bundle.zone_pairs.items.length,
     natRules: bundle.nat_rules.items.length,
     dnsBlacklist: bundle.dns_blacklist.items.length,

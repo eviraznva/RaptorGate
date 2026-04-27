@@ -26,6 +26,8 @@ import type { IFirewallCertificateRepository } from '../../domain/repositories/f
 import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../../domain/repositories/firewall-certificate.repository.js';
 import type { ISslBypassRepository } from '../../domain/repositories/ssl-bypass.repository.js';
 import { SSL_BYPASS_REPOSITORY_TOKEN } from '../../domain/repositories/ssl-bypass.repository.js';
+import type { IZoneInterfaceRepository } from '../../domain/repositories/zone-interface.repository.js';
+import { ZONE_INTERFACE_REPOSITORY_TOKEN } from '../../domain/repositories/zone-interface.repository.js';
 import {
   normalizeTlsInspectionPolicy,
   type ConfigSnapshotPayload,
@@ -60,6 +62,8 @@ export class ApplyConfigSnapshotUseCase {
     private readonly zonePairRepository: IZonePairRepository,
     @Inject(ZONE_REPOSITORY_TOKEN)
     private readonly zoneRepository: IZoneRepository,
+    @Inject(ZONE_INTERFACE_REPOSITORY_TOKEN)
+    private readonly zoneInterfaceRepository: IZoneInterfaceRepository,
     @Inject(TOKEN_SERVICE_TOKEN) private readonly tokenService: ITokenService,
     @Inject(ROLE_PERMISSIONS_REPOSITORY_TOKEN)
     private readonly rolePermissionsRepository: IRolePermissionsRepository,
@@ -85,6 +89,7 @@ export class ApplyConfigSnapshotUseCase {
     const activeRules = await this.rulesRepository.findActive();
     const allUsers = await this.userRepository.findAll();
     const activeZones = await this.zoneRepository.findActive();
+    const allZoneInterfaces = await this.zoneInterfaceRepository.findAll();
     const allZonePairs = await this.zonePairRepository.findAll();
     const allCerts = await this.firewallCertificateRepository.findAll();
     const snapshotCerts = allCerts.filter((cert) =>
@@ -112,7 +117,7 @@ export class ApplyConfigSnapshotUseCase {
           items: [...activeZones],
         },
         zone_interfaces: {
-          items: [], // TODO: implement zone interfaces repository and add to snapshot
+          items: [...allZoneInterfaces],
         },
         zone_pairs: {
           items: [...allZonePairs],
@@ -194,6 +199,7 @@ export class ApplyConfigSnapshotUseCase {
       counts: {
         rules: activeRules.length,
         zones: activeZones.length,
+        zoneInterfaces: allZoneInterfaces.length,
         zonePairs: allZonePairs.length,
         natRules: activeNatRules.length,
         users: allUsers.length,

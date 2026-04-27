@@ -46,6 +46,13 @@ impl ZonePairProvider {
     pub fn get_zone_pair(&self, id: &ZonePairId) -> Option<ZonePair> {
         self.swapper.get(id)
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_items(zone_pairs: HashMap<ZonePairId, ZonePair>) -> Self {
+        Self {
+            swapper: Swapper::new(zone_pairs, ListDiskStore::new("zone_pairs", std::env::temp_dir())),
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -95,6 +102,13 @@ impl ZoneProvider {
     pub fn get_zone(&self, id: &ZoneId) -> Option<Zone> {
         self.swapper.get(id)
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_items(zones: HashMap<ZoneId, Zone>) -> Self {
+        Self {
+            swapper: Swapper::new(zones, ListDiskStore::new("zones", std::env::temp_dir())),
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -137,6 +151,16 @@ impl ZoneInterfaceProvider {
 
     pub fn get_zone_interface(&self, id: &ZoneInterfaceId) -> Option<ZoneInterface> {
         self.swapper.get(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_items(zone_interfaces: HashMap<ZoneInterfaceId, ZoneInterface>) -> Self {
+        Self {
+            swapper: Swapper::new(
+                zone_interfaces,
+                ListDiskStore::new("zone_interfaces", std::env::temp_dir()),
+            ),
+        }
     }
 }
 

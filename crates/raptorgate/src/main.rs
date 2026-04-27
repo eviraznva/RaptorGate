@@ -241,8 +241,8 @@ async fn main() {
             nat_engine: Arc::clone(&nat_engine),
             nat_store: Arc::clone(&nat_store),
             policy_store: Arc::clone(&policy_provider),
-            zone_store: zones,
-            zone_pair_store: zone_pairs,
+            zone_store: Arc::clone(&zones),
+            zone_pair_store: Arc::clone(&zone_pairs),
             zone_interface_store: Arc::clone(&zone_interfaces),
             config_provider: Arc::clone(&config_provider),
             dns_inspection_store: Arc::clone(&dns_inspection_store),
@@ -323,6 +323,9 @@ async fn main() {
                                                 tail: Chain {
                                                     head: PolicyEvalStage {
                                                         provider: Arc::clone(&policy_provider),
+                                                        zone_store: Arc::clone(&zones),
+                                                        zone_pair_store: Arc::clone(&zone_pairs),
+                                                        zone_interface_store: Arc::clone(&zone_interfaces),
                                                         dnssec: Some(dnssec_provider),
                                                     },
                                                     tail: Chain {

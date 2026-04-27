@@ -13,6 +13,14 @@ pub struct Zone {
 }
 
 impl Zone {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn interface_ids(&self) -> &[String] {
+        &self.interface_ids
+    }
+
     pub fn try_from_proto(value: config::Zone) -> Result<(ZoneId, Self), anyhow::Error> {
         let id = ZoneId(Uuid::parse_str(&value.id)?);
         Ok((
@@ -41,6 +49,18 @@ pub struct ZoneInterface {
 }
 
 impl ZoneInterface {
+    pub fn zone_id(&self) -> &ZoneId {
+        &self.zone_id
+    }
+
+    pub fn interface_name(&self) -> &str {
+        &self.interface_name
+    }
+
+    pub fn vlan_id(&self) -> Option<u32> {
+        self.vlan_id
+    }
+
     pub fn try_from_proto(value: config::ZoneInterface) -> Result<(ZoneInterfaceId, Self), anyhow::Error> {
         let id = ZoneInterfaceId(Uuid::parse_str(&value.id)?);
         let zone_id = ZoneId(Uuid::parse_str(&value.zone_id)?);
@@ -71,7 +91,7 @@ pub struct ZonePair {
     default_policy: DefaultPolicy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DefaultPolicy {
     Unspecified,
     Allow,
@@ -90,6 +110,18 @@ impl From<common::DefaultPolicy> for DefaultPolicy {
 }
 
 impl ZonePair {
+    pub fn src_zone_id(&self) -> &ZoneId {
+        &self.src_zone_id
+    }
+
+    pub fn dst_zone_id(&self) -> &ZoneId {
+        &self.dst_zone_id
+    }
+
+    pub fn default_policy(&self) -> DefaultPolicy {
+        self.default_policy
+    }
+
     pub fn try_from_proto(value: config::ZonePair) -> Result<(ZonePairId, Self), anyhow::Error> {
         let id = ZonePairId(Uuid::parse_str(&value.id)?);
         let src_zone_id = ZoneId(Uuid::parse_str(&value.src_zone_id)?);
