@@ -2,6 +2,8 @@ export type IpsTabKey = "general" | "detection" | "signatures";
 
 export type IpsSeverity = "info" | "low" | "medium" | "high" | "critical";
 export type IpsAction = "alert" | "block";
+export type IpsMatchType = "literal" | "regex";
+export type IpsPatternEncoding = "text" | "hex";
 export type IpsAppProtocol =
   | "http"
   | "tls"
@@ -30,6 +32,9 @@ export interface IpsSignatureConfig {
   enabled: boolean;
   category: string;
   pattern: string;
+  matchType: IpsMatchType;
+  patternEncoding: IpsPatternEncoding;
+  caseInsensitive: boolean;
   severity: IpsSeverity;
   action: IpsAction;
   appProtocols: IpsAppProtocol[];
@@ -65,6 +70,8 @@ export const ipsSeverityOptions: IpsSeverity[] = [
 ];
 
 export const ipsActionOptions: IpsAction[] = ["alert", "block"];
+export const ipsMatchTypeOptions: IpsMatchType[] = ["literal", "regex"];
+export const ipsPatternEncodingOptions: IpsPatternEncoding[] = ["text", "hex"];
 
 export const ipsAppProtocolOptions: IpsAppProtocol[] = [
   "http",

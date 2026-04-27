@@ -4,6 +4,12 @@ function isValidPort(value: number): boolean {
   return Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
+function isValidHexPattern(value: string): boolean {
+  const normalized = value.replace(/\s+/g, "");
+
+  return normalized.length > 0 && normalized.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(normalized);
+}
+
 export function validateIpsConfig(config: IpsConfig): string[] {
   const errors: string[] = [];
 
@@ -40,15 +46,32 @@ export function validateIpsConfig(config: IpsConfig): string[] {
     }
 
     if (!pattern) {
-      errors.push(`Signature '${signatureLabel}': regex pattern is required.`);
-    } else {
+      errors.push(`Signature '${signatureLabel}': pattern is required.`);
+    } else if (
+      signature.patternEncoding === "hex" &&
+      !isValidHexPattern(pattern)
+    ) {
+      errors.push(
+        `Signature '${signatureLabel}': hex pattern must contain whole bytes.`,
+      );
+    } else if (signature.matchType === "regex") {
       try {
-        // Backend validates regex with Rust regex syntax; this is a best-effort client check.
-        // eslint-disable-next-line no-new
         new RegExp(pattern);
       } catch {
         errors.push(`Signature '${signatureLabel}': invalid regex pattern.`);
       }
+    }
+
+    if (signature.patternEncoding === "hex" && signature.matchType === "regex") {
+      errors.push(
+        `Signature '${signatureLabel}': hex encoding cannot be used with regex matching.`,
+      );
+    }
+
+    if (signature.patternEncoding === "hex" && signature.caseInsensitive) {
+      errors.push(
+        `Signature '${signatureLabel}': hex encoding cannot be case insensitive.`,
+      );
     }
 
     for (const port of signature.srcPorts) {
@@ -76,4 +99,3 @@ export function validateIpsConfig(config: IpsConfig): string[] {
 
   return errors;
 }
-

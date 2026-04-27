@@ -13,6 +13,9 @@ import {
 import type { Request, Response } from "express";
 import { IpsActionIsInvalidException } from "src/domain/exceptions/ips-action-is-invalid.exception.js";
 import { IpsAppProtocolIsInvalidException } from "src/domain/exceptions/ips-app-protocol-is-invalid.exception.js";
+import { IpsMatchTypeIsInvalidException } from "src/domain/exceptions/ips-match-type-is-invalid.exception.js";
+import { IpsPatternEncodingIsInvalidException } from "src/domain/exceptions/ips-pattern-encoding-is-invalid.exception.js";
+import { IpsSignatureConfigIsInvalidException } from "src/domain/exceptions/ips-signature-config-is-invalid.exception.js";
 import { SignatureSeverityIsInvalidException } from "src/domain/exceptions/signature-severity-is-invalid.exception.js";
 import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
 import { AtLeastOneFieldRequiredException } from "../../domain/exceptions/at-least-one-field-required.exception.js";
@@ -111,6 +114,9 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
       exception instanceof DomainNameIsInvalidException ||
       exception instanceof IpsActionIsInvalidException ||
       exception instanceof IpsAppProtocolIsInvalidException ||
+      exception instanceof IpsMatchTypeIsInvalidException ||
+      exception instanceof IpsPatternEncodingIsInvalidException ||
+      exception instanceof IpsSignatureConfigIsInvalidException ||
       exception instanceof SignatureSeverityIsInvalidException
     ) {
       return new BadRequestException(exception.message);

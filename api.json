@@ -7025,6 +7025,154 @@
         ]
       }
     },
+    "/tcp-sessions": {
+      "get": {
+        "description": "Gets TCP tracked sessions from firewall gRPC query service",
+        "operationId": "TcpSessionsController_getTcpSessions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 200
+                        },
+                        "message": {
+                          "example": "TCP sessions retrieved"
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/GetTcpSessionsResponseDto"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 401
+                        },
+                        "message": {
+                          "example": "Access token is missing, invalid, or expired"
+                        },
+                        "error": {
+                          "example": "Unauthorized"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 403
+                        },
+                        "message": {
+                          "example": "Insufficient permissions to view TCP sessions"
+                        },
+                        "error": {
+                          "example": "Forbidden"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 429
+                        },
+                        "message": {
+                          "example": "Too many requests"
+                        },
+                        "error": {
+                          "example": "Too Many Requests"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 500
+                        },
+                        "message": {
+                          "example": "Internal server error while retrieving TCP sessions"
+                        },
+                        "error": {
+                          "example": "Internal Server Error"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get TCP tracked sessions",
+        "tags": [
+          "TcpSessions"
+        ]
+      }
+    },
     "/ssl/ca": {
       "get": {
         "description": "Returns the CA certificate PEM, SHA-256 fingerprint and expiration date.",
@@ -8533,6 +8681,32 @@
             "description": "Wzorzec dopasowania sygnatury (np. Regex)",
             "example": "(?i)(UNION.*SELECT)"
           },
+          "matchType": {
+            "type": "string",
+            "enum": [
+              "literal",
+              "regex"
+            ],
+            "description": "Typ dopasowania wzorca",
+            "example": "regex",
+            "default": "regex"
+          },
+          "patternEncoding": {
+            "type": "string",
+            "enum": [
+              "text",
+              "hex"
+            ],
+            "description": "Kodowanie wzorca",
+            "example": "text",
+            "default": "text"
+          },
+          "caseInsensitive": {
+            "type": "boolean",
+            "description": "Czy dopasowanie tekstowe ma ignorować wielkość liter",
+            "example": false,
+            "default": false
+          },
           "severity": {
             "type": "string",
             "enum": [
@@ -8610,6 +8784,9 @@
           "enabled",
           "category",
           "pattern",
+          "matchType",
+          "patternEncoding",
+          "caseInsensitive",
           "severity",
           "action",
           "appProtocols",
@@ -9844,6 +10021,69 @@
           "found",
           "reason",
           "failureCount"
+        ]
+      },
+      "TcpSessionEndpointResponseDto": {
+        "type": "object",
+        "properties": {
+          "ip": {
+            "type": "string",
+            "example": "192.168.1.10"
+          },
+          "port": {
+            "type": "number",
+            "example": 443
+          }
+        },
+        "required": [
+          "ip",
+          "port"
+        ]
+      },
+      "TcpTrackedSessionItemResponseDto": {
+        "type": "object",
+        "properties": {
+          "endpointA": {
+            "$ref": "#/components/schemas/TcpSessionEndpointResponseDto"
+          },
+          "endpointB": {
+            "$ref": "#/components/schemas/TcpSessionEndpointResponseDto"
+          },
+          "state": {
+            "type": "string",
+            "example": "established",
+            "enum": [
+              "unspecified",
+              "syn_sent",
+              "syn_ack_received",
+              "established",
+              "fin_sent",
+              "ack_sent",
+              "ack_fin_sent",
+              "time_wait",
+              "closed",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "endpointA",
+          "endpointB",
+          "state"
+        ]
+      },
+      "GetTcpSessionsResponseDto": {
+        "type": "object",
+        "properties": {
+          "tcpSessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TcpTrackedSessionItemResponseDto"
+            }
+          }
+        },
+        "required": [
+          "tcpSessions"
         ]
       },
       "GetCaCertificateResponseDto": {
