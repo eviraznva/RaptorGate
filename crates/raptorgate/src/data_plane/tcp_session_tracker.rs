@@ -198,7 +198,6 @@ impl TcpSessionTracker {
         }
     }
 
-    #[cfg(debug_assertions)]
     pub fn get_sessions(&self) -> Vec<(TcpIdentifier, TcpSessionState)> {
         self.sessions.iter().map(|entry| (entry.key().clone(), entry.value().state)).collect()
     }
@@ -508,6 +507,12 @@ pub enum TcpSessionError {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct TcpIdentifier {
     endpoints: UnorderedPair<EndpointIdentifier>
+}
+
+impl TcpIdentifier {
+    pub fn endpoints(&self) -> (EndpointIdentifier, EndpointIdentifier) {
+        self.endpoints.clone().into_ordered_tuple()
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
