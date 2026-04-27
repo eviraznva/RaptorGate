@@ -22,7 +22,9 @@ use crate::data_plane::ips::config::IpsConfig;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::data_plane::nat::{NatConfigProvider, NatEngine};
-use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
+use crate::data_plane::tcp_session_tracker::{
+    EndpointIdentifier, TcpClosingState, TcpHandshakeState, TcpSessionState, TcpSessionTracker,
+};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::PolicyManager;
 use crate::policy::{Policy, PolicyId};
@@ -39,7 +41,8 @@ use crate::proto::services::{
     GetNatBindingsRequest, GetNatBindingsResponse, GetNatConfigRequest, GetNatConfigResponse,
     GetPinningBypassRequest, GetPinningBypassResponse, GetPinningStatsRequest,
     GetPinningStatsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest,
-    GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse,
+    GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, TcpSessionEndpoint,
+    TcpTrackedSession, TcpTrackedSessionState,
     GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
     GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest,
     SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
@@ -188,6 +191,29 @@ where
         .collect()
 }
 
+fn tcp_endpoint_into_proto(endpoint: EndpointIdentifier) -> TcpSessionEndpoint {
+    TcpSessionEndpoint {
+        ip: endpoint.ip.to_string(),
+        port: u16::from(endpoint.port) as u32,
+    }
+}
+
+fn tcp_session_state_into_proto(state: TcpSessionState) -> TcpTrackedSessionState {
+    match state {
+        TcpSessionState::Handshake(TcpHandshakeState::SynSent) =>
+            TcpTrackedSessionState::SynSent,
+        TcpSessionState::Handshake(TcpHandshakeState::SynAckReceived) =>
+            TcpTrackedSessionState::SynAckReceived,
+        TcpSessionState::Established => TcpTrackedSessionState::Established,
+        TcpSessionState::Closed => TcpTrackedSessionState::Closed,
+        TcpSessionState::Closing(TcpClosingState::FinSent) => TcpTrackedSessionState::FinSent,
+        TcpSessionState::Closing(TcpClosingState::AckSent) => TcpTrackedSessionState::AckSent,
+        TcpSessionState::Closing(TcpClosingState::AckFinSent) =>
+            TcpTrackedSessionState::AckFinSent,
+        TcpSessionState::TimeWait => TcpTrackedSessionState::TimeWait,
+    }
+}
+
 #[tonic::async_trait]
 impl<Swapper, Monitor> FirewallQueryService for QueryHandler<Swapper, Monitor>
 where
@@ -198,7 +224,22 @@ where
         &self,
         _request: Request<GetTcpSessionsRequest>,
     ) -> Result<Response<GetTcpSessionsResponse>, Status> {
-        Err(Status::unimplemented("not yet implemented"))
+        let sessions = self
+            .tcp_tracker
+            .get_sessions()
+            .into_iter()
+            .map(|(id, state)| {
+                let (endpoint_a, endpoint_b) = id.endpoints();
+
+                TcpTrackedSession {
+                    endpoint_a: Some(tcp_endpoint_into_proto(endpoint_a)),
+                    endpoint_b: Some(tcp_endpoint_into_proto(endpoint_b)),
+                    state: tcp_session_state_into_proto(state) as i32,
+                }
+            })
+            .collect();
+
+        Ok(Response::new(GetTcpSessionsResponse { sessions }))
     }
 
     async fn get_policies(

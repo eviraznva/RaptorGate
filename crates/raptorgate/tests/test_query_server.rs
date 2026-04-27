@@ -20,7 +20,7 @@ use ngfw::proto::services::{
     GetLiveZoneInterfacesRequest, GetNatConfigRequest, GetPinningBypassRequest,
     GetPinningStatsRequest, GetPoliciesRequest, GetZoneInterfaceRequest,
     GetZoneInterfacesRequest, GetZonePairsRequest, GetZonesRequest,
-    PushActiveConfigSnapshotRequest, SwapConfigRequest, SwapIpsConfigRequest,
+    GetTcpSessionsRequest, PushActiveConfigSnapshotRequest, SwapConfigRequest, SwapIpsConfigRequest,
     SwapNatConfigRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
@@ -385,6 +385,19 @@ async fn push_active_config_snapshot_raptorlang_error() {
     let response = client.push_active_config_snapshot(request).await;
 
     assert!(response.is_err());
+}
+
+#[tokio::test]
+async fn get_tcp_sessions_returns_empty_tracker_sessions() {
+    let mut query_client = connect(&shared_server().socket).await;
+
+    let resp = query_client
+        .get_tcp_sessions(GetTcpSessionsRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(resp.sessions.is_empty());
 }
 
 #[tokio::test]
