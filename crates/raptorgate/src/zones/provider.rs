@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Error;
 use anyhow::Result;
+use arc_swap::ArcSwap;
 use uuid::Uuid;
 
 use crate::{
@@ -119,6 +120,7 @@ impl ConfigObserver for ZoneProvider {
 
 pub struct ZoneInterfaceProvider {
     swapper: Swapper<ZoneInterfaceId, ZoneInterface>,
+    name_index: ArcSwap<HashMap<String, ZoneInterfaceId>>,
 }
 
 impl ZoneInterfaceProvider {
@@ -129,15 +131,20 @@ impl ZoneInterfaceProvider {
             let items: HashMap<ZoneInterfaceId, ZoneInterface> = HashMap::from_iter(
                 loaded.into_iter().map(|prop| (prop.id.into(), prop.contents))
             );
-            return Self { swapper: Swapper::new(items, store) };
+            let name_index = ArcSwap::new(Arc::new(build_name_index(items.iter())));
+            return Self { swapper: Swapper::new(items, store), name_index };
         }
 
         tracing::info!("no zone interfaces found on disk, initializing empty");
-        Self { swapper: Swapper::new(HashMap::new(), store) }
+        let name_index = ArcSwap::new(Arc::new(HashMap::new()));
+        Self { swapper: Swapper::new(HashMap::new(), store), name_index }
     }
 
     pub async fn swap_zone_interfaces(&self, new: Vec<(ZoneInterfaceId, ZoneInterface)>) -> Result<(), Error> {
-        self.swapper.swap(new).await.map_err(|e| e.into())
+        let name_index = build_name_index(new.iter().map(|(id, zone_interface)| (id, zone_interface)));
+        self.swapper.swap(new).await.map_err(|e| e.into())?;
+        self.name_index.swap(Arc::new(name_index));
+        Ok(())
     }
 
     pub fn get_zone_interfaces(&self) -> arc_swap::Guard<Arc<HashMap<ZoneInterfaceId, ZoneInterface>>> {
@@ -146,6 +153,15 @@ impl ZoneInterfaceProvider {
 
     pub fn get_zone_interface(&self, id: &ZoneInterfaceId) -> Option<ZoneInterface> {
         self.swapper.get(id)
+    }
+
+    pub fn get_zone_interface_by_name(
+        &self,
+        name: &str,
+    ) -> Option<(ZoneInterfaceId, ZoneInterface)> {
+        let index = self.name_index.load();
+        let id = index.get(name)?;
+        self.swapper.get(id).map(|interface| (id.clone(), interface))
     }
 
     pub fn get_live_zone_interfaces<M>(&self, monitor: &M) -> HashMap<ZoneInterfaceId, ZoneInterface>
@@ -181,6 +197,16 @@ impl ZoneInterfaceProvider {
             })
             .collect()
     }
+}
+
+fn build_name_index<'a, I>(entries: I) -> HashMap<String, ZoneInterfaceId>
+where
+    I: IntoIterator<Item = (&'a ZoneInterfaceId, &'a ZoneInterface)>,
+{
+    entries
+        .into_iter()
+        .map(|(id, zone_interface)| (zone_interface.interface_name.clone(), id.clone()))
+        .collect()
 }
 
 #[tonic::async_trait]
