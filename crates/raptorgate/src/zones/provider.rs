@@ -89,7 +89,7 @@ impl ZoneProvider {
             interface_ids: vec![],
         };
 
-        let zones = HashMap::from([(Uuid::now_v7().into(), default_zone)]);
+        let zones = HashMap::from([(Uuid::nil().into(), default_zone)]);
         Self { swapper: Swapper::new(zones, store) }
     }
 

@@ -174,6 +174,8 @@ pub struct ZonePairId(Uuid);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct ZoneId(Uuid);
 
+pub const DEFAULT_ZONE_ID: ZoneId = ZoneId(Uuid::nil());
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct ZoneInterfaceId(Uuid);
 
