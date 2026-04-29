@@ -229,6 +229,11 @@ struct ValidBundle {
 }
 
 fn create_valid_bundle(rule_name: &str, content: &str) -> ValidBundle {
+    let default_zone = Zone {
+        id: Uuid::nil().to_string(),
+        name: "default".to_string(),
+        interface_ids: vec![],
+    };
     let src_zone = Zone {
         id: Uuid::now_v7().to_string(),
         name: format!("{rule_name}_src"),
@@ -255,7 +260,7 @@ fn create_valid_bundle(rule_name: &str, content: &str) -> ValidBundle {
 
     let bundle = ConfigBundle {
         rules: vec![rule.clone()],
-        zones: vec![src_zone.clone(), dst_zone.clone()],
+        zones: vec![default_zone.clone(), src_zone.clone(), dst_zone.clone()],
         zone_pairs: vec![zone_pair.clone()],
         ..Default::default()
     };
@@ -864,6 +869,24 @@ async fn swap_nat_config_rejects_missing_config() {
         .unwrap_err();
 
     assert_eq!(err.code(), tonic::Code::InvalidArgument);
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle)]
+async fn push_active_config_snapshot_rejects_missing_default_zone() {
+    let mut client = connect_snapshot(&shared_server().socket).await;
+    let mut valid = create_valid_bundle("snapshot_missing_default", "match ip_ver { =v4: verdict allow =v6: verdict drop }");
+    valid.bundle.zones = valid.bundle.zones.into_iter().filter(|z| z.id != Uuid::nil().to_string()).collect();
+    let (request, _, _) = create_snapshot_request(valid.bundle);
+
+    let response = client
+        .push_active_config_snapshot(request)
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(!response.accepted);
+    assert!(response.message.to_lowercase().contains("default"));
 }
 
 #[tokio::test]
