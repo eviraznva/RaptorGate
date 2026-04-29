@@ -57,5 +57,5 @@ impl Policy {
     }
 }
 
-use crate::integrity::foreign_keys;
+use crate::validation::foreign_keys;
 foreign_keys!(Policy { zone_pair_id: ZonePairId });

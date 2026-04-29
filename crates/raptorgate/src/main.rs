@@ -19,7 +19,7 @@ mod server_certificate_server;
 mod tls;
 mod zones;
 mod swapper;
-mod integrity;
+mod validation;
 
 use crate::config::provider::AppConfigProvider;
 use crate::control_server::ControlServer;

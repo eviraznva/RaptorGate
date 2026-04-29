@@ -179,17 +179,17 @@ pub const DEFAULT_ZONE_ID: ZoneId = ZoneId(Uuid::nil());
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct ZoneInterfaceId(Uuid);
 
-use crate::integrity::foreign_keys;
-impl crate::integrity::ForeignKeys for Zone {
-    fn foreign_keys(&self) -> Vec<crate::integrity::ForeignKey> {
+use crate::validation::{fk, foreign_keys, ForeignKey, ForeignKeys};
+impl ForeignKeys for Zone {
+    fn foreign_keys(&self) -> Vec<ForeignKey> {
         self.interface_ids
             .iter()
             .filter_map(|interface_id| {
                 Uuid::parse_str(interface_id)
                     .ok()
-                    .map(crate::zones::ZoneInterfaceId::from)
+                    .map(ZoneInterfaceId::from)
             })
-            .map(|interface_id| crate::integrity::fk::<ZoneInterfaceId>("interface_ids", &interface_id))
+            .map(|interface_id| fk::<ZoneInterfaceId>("interface_ids", &interface_id))
             .collect()
     }
 }

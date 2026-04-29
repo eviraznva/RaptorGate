@@ -50,6 +50,7 @@ use crate::proto::services::{
 };
 use crate::tls::pinning_detector::PinningDetector;
 use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
+use crate::validation::validate_bundle;
 use crate::zones::Zone;
 use crate::interfaces::{InterfaceController, InterfaceMonitor};
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
@@ -709,8 +710,7 @@ where
         .map_err(|e| Status::invalid_argument(format!("invalid nat config: {e}")))?;
 
         // 2. Validate referential integrity across the entire bundle
-        let errors =
-            crate::integrity::validate_bundle(&policies, &zone_pairs, &zones, &zone_interfaces);
+        let errors = validate_bundle(&policies, &zone_pairs, &zones, &zone_interfaces);
 
         if !errors.is_empty() {
             let messages: Vec<String> = errors.iter().map(std::string::ToString::to_string).collect();

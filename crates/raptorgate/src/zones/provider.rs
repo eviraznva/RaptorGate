@@ -142,7 +142,7 @@ impl ZoneInterfaceProvider {
 
     pub async fn swap_zone_interfaces(&self, new: Vec<(ZoneInterfaceId, ZoneInterface)>) -> Result<(), Error> {
         let name_index = build_name_index(new.iter().map(|(id, zone_interface)| (id, zone_interface)));
-        self.swapper.swap(new).await.map_err(|e| e.into())?;
+        self.swapper.swap(new).await?;
         self.name_index.swap(Arc::new(name_index));
         Ok(())
     }
