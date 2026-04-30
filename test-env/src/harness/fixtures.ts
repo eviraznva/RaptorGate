@@ -40,6 +40,11 @@ export const DEFAULT_ZONE_INTERFACES: ZoneInterface[] = [
 
 export const DEFAULT_ZONES: Zone[] = [
   {
+    id: '00000000-0000-0000-0000-000000000000',
+    name: 'default',
+    interfaceIds: [],
+  },
+  {
     id: OUTSIDE_ZONE_ID,
     name: 'outside',
     interfaceIds: [DEFAULT_ZONE_INTERFACES[0]!.id],
@@ -54,8 +59,8 @@ export const DEFAULT_ZONES: Zone[] = [
 export const DEFAULT_ZONE_PAIRS: ZonePair[] = [
   {
     id: crypto.randomUUID(),
-    srcZoneId: DEFAULT_ZONES[0]!.id,
-    dstZoneId: DEFAULT_ZONES[1]!.id,
+    srcZoneId: OUTSIDE_ZONE_ID,
+    dstZoneId: INSIDE_ZONE_ID,
     defaultPolicy: DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED,
   },
 ];
