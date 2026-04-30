@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { Subject } from 'rxjs';
-import type { RealtimeFirewallEventDto } from '../../application/dtos/realtime-firewall-event.dto.js';
+import { Injectable } from "@nestjs/common";
+import { Subject } from "rxjs";
+import type { RealtimeFirewallEventDto } from "../../application/dtos/realtime-firewall-event.dto.js";
 
 const MAX_RECENT_EVENTS = 100;
 
