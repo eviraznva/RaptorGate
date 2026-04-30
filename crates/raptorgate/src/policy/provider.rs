@@ -54,12 +54,12 @@ impl DiskPolicyProvider {
         if let Some(DevConfig { policy_override: Some(policy_override), .. }) = &config.dev_config {
             let dev_policy = Policy { 
                 name: "DEV OVERRIDE".into(),
-                zone_pair_id: Uuid::now_v7().into(),
+                zone_pair_id: Uuid::nil().into(),
                 priority: 0,
                 rule_tree: RuleTree::new(parse_rule_tree(policy_override).expect("COULDNT APPLY DEV POLICY OVERRIDE"))
             };
 
-            let policies = HashMap::from([(Uuid::now_v7().into(), dev_policy)]);
+            let policies = HashMap::from([(Uuid::nil().into(), dev_policy)]);
 
             tracing::debug!("DEV MODE: Using policy override from environment variable DEV_OVERRIDE_POLICY");
 
@@ -80,7 +80,7 @@ impl DiskPolicyProvider {
 
         let default_policy = Policy {
             name: "Default policy".into(),
-            zone_pair_id: Uuid::now_v7().into(),
+            zone_pair_id: Uuid::nil().into(),
             priority: 0,
             rule_tree: RuleTree::new(MatchBuilder::with_arm(
                     MatchKind::IpVer,
@@ -89,7 +89,7 @@ impl DiskPolicyProvider {
                     )).build()?)
         };
 
-        let policies = HashMap::from([(Uuid::now_v7().into(), default_policy)]);
+        let policies = HashMap::from([(Uuid::nil().into(), default_policy)]);
 
         tracing::info!("No policies found on disk, using default drop all policy.");
         Ok(Self { swapper: Swapper::new(policies, store)})

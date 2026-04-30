@@ -35,12 +35,12 @@ impl ZonePairProvider {
 
         tracing::info!("no zone pairs found on disk, initializing with default zone pair");
         let default_zone_pair = ZonePair {
-            src_zone_id: Uuid::now_v7().into(),
-            dst_zone_id: Uuid::now_v7().into(),
+            src_zone_id: Uuid::nil().into(),
+            dst_zone_id: Uuid::nil().into(),
             default_policy: DefaultPolicy::Unspecified,
         };
 
-        let zone_pairs = HashMap::from([(Uuid::now_v7().into(), default_zone_pair)]);
+        let zone_pairs = HashMap::from([(Uuid::nil().into(), default_zone_pair)]);
 
         Self { swapper: Swapper::new(zone_pairs, store) }
     }
