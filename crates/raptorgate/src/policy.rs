@@ -4,7 +4,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{proto::config::Rule, rule_tree::RuleTree, zones::ZonePairId};
-pub use crate::rule_tree::{parsing::{RaptorlangError, parse_rule_tree}};
+pub use crate::rule_tree::parsing::{RaptorlangError, parse_rule_tree};
 
 pub mod engine;
 pub mod policy_evaluator;

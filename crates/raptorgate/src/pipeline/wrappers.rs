@@ -563,16 +563,41 @@ fn emit_ml_threat_detected(ctx: &PacketContext, prediction: &MlPrediction) {
 /// dla pakietów DNS wywołuje walidację DNSSEC w `spawn_blocking` (blokujące I/O
 /// sieciowe nie może odbywać się bezpośrednio w kontekście async).
 #[derive(Clone)]
-pub struct PolicyEvalStage {
+pub struct PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneResolver {
     pub policy_engine: Arc<PolicyEngine>,
-    pub zone_pair_id: ZonePairId,
+    pub zone_resolver: Arc<ZR>,
     /// Opcjonalny dostawca DNSSEC — wstrzykiwany z `DnsInspection`.
     pub dnssec: Option<Arc<dyn DnssecProvider>>,
 }
 
-impl Stage for PolicyEvalStage {
+impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneResolver {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let arrival = ArrivalInfo::from_time(ctx.borrow_arrival_time());
+
+        // Resolve egress IP for routing table lookup.
+        // DNAT has already happened, so dst_ip is the final destination.
+        let dst_ip = match &ctx.borrow_sliced_packet().net {
+            Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
+            Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
+            _ => return StageOutcome::Continue,
+        };
+
+        // Resolve the zone pair dynamically based on src interface and dst ip.
+        let pair = self.zone_resolver.resolve(ctx.borrow_src_interface(), dst_ip);
+        
+        let pair_id = match pair {
+            Some(ref p) => &p.id,
+            None => {
+                log_packet_decision(
+                    ctx,
+                    "policy.packet.dropped",
+                    "policy_eval",
+                    "drop",
+                    "no matching zone pair found",
+                );
+                return StageOutcome::Halt;
+            }
+        };
 
         // Wyznacz status DNSSEC dla pakietów DNS (leniwie, przez spawn_blocking).
         let dnssec_status = if let Some(provider) = &self.dnssec {
@@ -609,7 +634,7 @@ impl Stage for PolicyEvalStage {
             dnssec_status: Some(status),
         });
 
-        let verdict = self.policy_engine.evaluate(&self.zone_pair_id, PolicyEvalContext {
+        let verdict = self.policy_engine.evaluate(pair_id, PolicyEvalContext {
             packet: ctx.borrow_sliced_packet(),
             arrival: &arrival,
             dns: dns_ctx.as_ref(),
@@ -653,14 +678,20 @@ impl Stage for PolicyEvalStage {
                 StageOutcome::Halt
             }
             None => {
-                log_packet_decision(
-                    ctx,
-                    "policy.packet.dropped",
-                    "policy_eval",
-                    "drop",
-                    "no policy or default drop",
-                );
-                StageOutcome::Halt
+                let fallback = pair.map(|p| p.default_policy).unwrap_or(crate::zones::DefaultPolicy::Drop);
+                match fallback {
+                    crate::zones::DefaultPolicy::Allow => StageOutcome::Continue,
+                    _ => {
+                        log_packet_decision(
+                            ctx,
+                            "policy.packet.dropped",
+                            "policy_eval",
+                            "drop",
+                            "no policy or default drop",
+                        );
+                        StageOutcome::Halt
+                    }
+                }
             }
         }
     }
@@ -1138,13 +1169,20 @@ mod tests {
         assert!(should_halt_for_tls_redirect(&ctx, &sample_config()));
     }
 
+    struct MockZoneResolver(ZonePairId);
+    impl crate::zones::resolver::ZoneResolver for MockZoneResolver {
+        fn resolve(&self, _src: &str, _dst: std::net::IpAddr) -> Option<crate::zones::ResolvedZonePair> {
+            None // Return None to trigger halt in the first test
+        }
+    }
+
     #[test]
     fn policy_eval_stage_returns_halt_on_none_evaluator() {
         let engine = Arc::new(PolicyEngine::from_policies(&HashMap::new(), &HashMap::new()).unwrap());
         let zp_id = ZonePairId::from(Uuid::now_v7());
         let stage = PolicyEvalStage {
             policy_engine: engine,
-            zone_pair_id: zp_id,
+            zone_resolver: Arc::new(MockZoneResolver(zp_id)),
             dnssec: None,
         };
 
@@ -1187,9 +1225,19 @@ mod tests {
         zone_pairs.insert(zp_id.clone(), zp);
 
         let engine = Arc::new(PolicyEngine::from_policies(&policies, &zone_pairs).unwrap());
+        struct MockZoneResolverAllow(ZonePairId);
+        impl crate::zones::resolver::ZoneResolver for MockZoneResolverAllow {
+            fn resolve(&self, _src: &str, _dst: std::net::IpAddr) -> Option<crate::zones::ResolvedZonePair> {
+                Some(crate::zones::ResolvedZonePair {
+                    id: self.0.clone(),
+                    default_policy: crate::zones::DefaultPolicy::Drop,
+                })
+            }
+        }
+
         let stage = PolicyEvalStage {
             policy_engine: engine,
-            zone_pair_id: zp_id,
+            zone_resolver: Arc::new(MockZoneResolverAllow(zp_id)),
             dnssec: None,
         };
 

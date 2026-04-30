@@ -18,6 +18,7 @@ use crate::{
 
 pub struct ZonePairProvider {
     swapper: Swapper<ZonePairId, ZonePair>,
+    pair_index: ArcSwap<HashMap<(ZoneId, ZoneId), ZonePairId>>,
 }
 
 impl ZonePairProvider {
@@ -25,12 +26,16 @@ impl ZonePairProvider {
         let store: ListDiskStore<ZonePair> = ListDiskStore::new("zone_pairs", config.data_dir.clone());
 
         if let Ok(loaded) = store.load().await {
-            #[allow(clippy::from_iter_instead_of_collect)]
-            let zone_pairs: HashMap<ZonePairId, ZonePair> = HashMap::from_iter(
-                loaded.into_iter().map(|prop| (prop.id.into(), prop.contents))
-            );
+            let mut zone_pairs: HashMap<ZonePairId, ZonePair> = HashMap::new();
+            let mut pair_index = HashMap::new();
+            for prop in loaded {
+                let id: ZonePairId = prop.id.into();
+                let pair = prop.contents;
+                pair_index.insert((pair.src_zone_id.clone(), pair.dst_zone_id.clone()), id.clone());
+                zone_pairs.insert(id, pair);
+            }
 
-            return Self { swapper: Swapper::new(zone_pairs, store) };
+            return Self { swapper: Swapper::new(zone_pairs, store), pair_index: ArcSwap::new(Arc::new(pair_index)) };
         }
 
         tracing::info!("no zone pairs found on disk, initializing with default zone pair");
@@ -40,13 +45,28 @@ impl ZonePairProvider {
             default_policy: DefaultPolicy::Unspecified,
         };
 
-        let zone_pairs = HashMap::from([(Uuid::nil().into(), default_zone_pair)]);
+        let default_id: ZonePairId = Uuid::nil().into();
+        let zone_pairs = HashMap::from([(default_id.clone(), default_zone_pair.clone())]);
+        let mut pair_index = HashMap::new();
+        pair_index.insert((default_zone_pair.src_zone_id.clone(), default_zone_pair.dst_zone_id.clone()), default_id);
 
-        Self { swapper: Swapper::new(zone_pairs, store) }
+        Self { swapper: Swapper::new(zone_pairs, store), pair_index: ArcSwap::new(Arc::new(pair_index)) }
     }
 
     pub async fn swap_zone_pairs(&self, new_zone_pairs: Vec<(ZonePairId, ZonePair)>) -> Result<(), Error> {
-        self.swapper.swap(new_zone_pairs).await.map_err(|e| e.into())
+        let mut pair_index = HashMap::new();
+        for (id, pair) in &new_zone_pairs {
+            pair_index.insert((pair.src_zone_id.clone(), pair.dst_zone_id.clone()), id.clone());
+        }
+        self.swapper.swap(new_zone_pairs).await.map_err(anyhow::Error::from)?;
+        self.pair_index.swap(Arc::new(pair_index));
+        Ok(())
+    }
+
+    pub fn get_zone_pair_by_zones(&self, src: &ZoneId, dst: &ZoneId) -> Option<(ZonePairId, ZonePair)> {
+        let index = self.pair_index.load();
+        let id = index.get(&(src.clone(), dst.clone()))?;
+        self.swapper.get(id).map(|pair| (id.clone(), pair))
     }
 
     pub fn get_zone_pairs(&self) -> arc_swap::Guard<Arc<HashMap<ZonePairId, ZonePair>>> {

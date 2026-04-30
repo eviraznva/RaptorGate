@@ -82,7 +82,7 @@ async fn main() {
                                             TcpClassificationStage,
                                             Chain<
                                                 MlAlertStage,
-                                                Chain<PolicyEvalStage, Chain<NatPostroutingStage<M>, FtpAlgStage>>,
+                                                Chain<PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>, Chain<NatPostroutingStage<M>, FtpAlgStage>>,
                                             >,
                                         >,
                                     >,
@@ -209,6 +209,12 @@ async fn main() {
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
     let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
+    let zone_resolver = Arc::new(crate::zones::resolver::RoutingZoneResolver::new(
+        Arc::clone(&zone_interfaces),
+        Arc::clone(&zone_pairs),
+        Arc::clone(&routing_table),
+        Arc::clone(&interface_monitor),
+    ));
 
     let policy_engine = Arc::new(
         crate::policy::engine::PolicyEngine::from_policies(
@@ -375,16 +381,7 @@ async fn main() {
                                                     // TODO: change this to work with multiple zones
                                                     head: PolicyEvalStage {
                                                         policy_engine: Arc::clone(&policy_engine),
-                                                        zone_pair_id: zone_pairs
-                                                            .get_zone_pairs()
-                                                            .keys()
-                                                            .next()
-                                                            .cloned()
-                                                            .unwrap_or_else(|| {
-                                                                crate::zones::ZonePairId::from(
-                                                                    uuid::Uuid::nil(),
-                                                                )
-                                                            }),
+                                                        zone_resolver: Arc::clone(&zone_resolver),
                                                         dnssec: Some(dnssec_provider),
                                                     },
                                                     tail: Chain {

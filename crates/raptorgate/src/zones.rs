@@ -1,4 +1,5 @@
 pub mod provider;
+pub mod resolver;
 
 use derive_more::{Display, From, Into};
 use serde::{Deserialize, Serialize};
@@ -122,6 +123,12 @@ impl ZoneInterface {
 pub struct ZonePair {
     pub src_zone_id: ZoneId,
     pub dst_zone_id: ZoneId,
+    pub default_policy: DefaultPolicy,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedZonePair {
+    pub id: ZonePairId,
     pub default_policy: DefaultPolicy,
 }
 
