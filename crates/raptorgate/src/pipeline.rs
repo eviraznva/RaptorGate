@@ -7,6 +7,7 @@ pub trait Stage: Send + Sync {
     fn process(&self, ctx: &mut PacketContext) -> impl std::future::Future<Output = StageOutcome> + Send;
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum StageOutcome { Continue, Halt }
 
 #[derive(Clone)]

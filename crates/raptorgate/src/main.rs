@@ -210,6 +210,14 @@ async fn main() {
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
     let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
 
+    let policy_engine = Arc::new(
+        crate::policy::engine::PolicyEngine::from_policies(
+            &policy_provider.get_policies(),
+            &zone_pairs.get_zone_pairs(),
+        )
+        .expect("Failed to initialize policy engine"),
+    );
+
     config_provider
         .register(Arc::clone(&policy_provider), "DiskPolicyProvider")
         .await;
@@ -275,8 +283,9 @@ async fn main() {
             nat_engine: Arc::clone(&nat_engine),
             nat_store: Arc::clone(&nat_store),
             policy_store: Arc::clone(&policy_provider),
+            policy_engine: Arc::clone(&policy_engine),
             zone_store: zones,
-            zone_pair_store: zone_pairs,
+            zone_pair_store: Arc::clone(&zone_pairs),
             zone_interface_store: Arc::clone(&zone_interfaces),
             config_provider: Arc::clone(&config_provider),
             dns_inspection_store: Arc::clone(&dns_inspection_store),
@@ -363,8 +372,19 @@ async fn main() {
                                             tail: Chain {
                                                 head: MlAlertStage::new(Arc::clone(&ml_detector)),
                                                 tail: Chain {
+                                                    // TODO: change this to work with multiple zones
                                                     head: PolicyEvalStage {
-                                                        provider: Arc::clone(&policy_provider),
+                                                        policy_engine: Arc::clone(&policy_engine),
+                                                        zone_pair_id: zone_pairs
+                                                            .get_zone_pairs()
+                                                            .keys()
+                                                            .next()
+                                                            .cloned()
+                                                            .unwrap_or_else(|| {
+                                                                crate::zones::ZonePairId::from(
+                                                                    uuid::Uuid::nil(),
+                                                                )
+                                                            }),
                                                         dnssec: Some(dnssec_provider),
                                                     },
                                                     tail: Chain {

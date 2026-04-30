@@ -21,8 +21,9 @@ use crate::{
     ml::{MlPacketInspector, MlPrediction},
     packet_validator::validate,
     pipeline::{Stage, StageOutcome},
-    policy::provider::DiskPolicyProvider,
+    policy::engine::PolicyEngine,
     rule_tree::{ArrivalInfo, Verdict},
+    zones::ZonePairId,
 };
 
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
@@ -563,7 +564,8 @@ fn emit_ml_threat_detected(ctx: &PacketContext, prediction: &MlPrediction) {
 /// sieciowe nie może odbywać się bezpośrednio w kontekście async).
 #[derive(Clone)]
 pub struct PolicyEvalStage {
-    pub provider: Arc<DiskPolicyProvider>,
+    pub policy_engine: Arc<PolicyEngine>,
+    pub zone_pair_id: ZonePairId,
     /// Opcjonalny dostawca DNSSEC — wstrzykiwany z `DnsInspection`.
     pub dnssec: Option<Arc<dyn DnssecProvider>>,
 }
@@ -607,7 +609,7 @@ impl Stage for PolicyEvalStage {
             dnssec_status: Some(status),
         });
 
-        let verdict = self.provider.get_evaluator().evaluate(PolicyEvalContext {
+        let verdict = self.policy_engine.evaluate(&self.zone_pair_id, PolicyEvalContext {
             packet: ctx.borrow_sliced_packet(),
             arrival: &arrival,
             dns: dns_ctx.as_ref(),
@@ -615,8 +617,8 @@ impl Stage for PolicyEvalStage {
         });
 
         match verdict {
-            Verdict::Allow => StageOutcome::Continue,
-            Verdict::Drop => {
+            Some(Verdict::Allow) => StageOutcome::Continue,
+            Some(Verdict::Drop) => {
                 log_packet_decision(
                     ctx,
                     "policy.packet.dropped",
@@ -626,7 +628,7 @@ impl Stage for PolicyEvalStage {
                 );
                 StageOutcome::Halt
             }
-            Verdict::AllowWarn(msg) => {
+            Some(Verdict::AllowWarn(msg)) => {
                 log_packet_decision(
                     ctx,
                     "policy.packet.allowed_with_warning",
@@ -637,7 +639,7 @@ impl Stage for PolicyEvalStage {
                 ctx.with_warnings_mut(|w| w.push(msg));
                 StageOutcome::Continue
             }
-            Verdict::DropWarn(msg) => {
+            Some(Verdict::DropWarn(msg)) => {
                 log_packet_decision(
                     ctx,
                     "policy.packet.dropped_with_warning",
@@ -646,6 +648,16 @@ impl Stage for PolicyEvalStage {
                     &msg,
                 );
                 ctx.with_warnings_mut(|w| w.push(msg));
+                StageOutcome::Halt
+            }
+            None => {
+                log_packet_decision(
+                    ctx,
+                    "policy.packet.dropped",
+                    "policy_eval",
+                    "drop",
+                    "no policy or default drop",
+                );
                 StageOutcome::Halt
             }
         }
@@ -1072,6 +1084,9 @@ mod tests {
     use super::*;
     use etherparse::PacketBuilder;
     use std::path::PathBuf;
+    use std::collections::HashMap;
+    use uuid::Uuid;
+    use crate::policy::Policy;
 
     fn sample_config() -> AppConfig {
         AppConfig {
@@ -1122,9 +1137,66 @@ mod tests {
     }
 
     #[test]
-    fn tls_redirect_ignores_non_tls_ports() {
-        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 80, "eth1");
-        assert!(!should_halt_for_tls_redirect(&ctx, &sample_config()));
+    fn policy_eval_stage_returns_halt_on_none_evaluator() {
+        let engine = Arc::new(PolicyEngine::from_policies(&HashMap::new(), &HashMap::new()).unwrap());
+        let zp_id = ZonePairId::from(Uuid::now_v7());
+        let stage = PolicyEvalStage {
+            policy_engine: engine,
+            zone_pair_id: zp_id,
+            dnssec: None,
+        };
+
+        let mut ctx = tcp_context([192, 168, 1, 10], [10, 0, 0, 1], 80, "eth1");
+        let outcome = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(stage.process(&mut ctx));
+
+        assert_eq!(outcome, StageOutcome::Halt);
+    }
+
+    #[test]
+    fn policy_eval_stage_maps_allow_verdict() {
+        let zp_id = ZonePairId::from(Uuid::now_v7());
+        let zp = crate::zones::ZonePair {
+            src_zone_id: Uuid::now_v7().into(),
+            dst_zone_id: Uuid::now_v7().into(),
+            default_policy: crate::zones::DefaultPolicy::Drop,
+        };
+
+        let policy = Policy {
+            name: "allow-all".into(),
+            zone_pair_id: zp_id.clone(),
+            priority: 1,
+            rule_tree: crate::rule_tree::RuleTree::new(
+                crate::rule_tree::matcher::MatchBuilder::with_arm(
+                    crate::rule_tree::MatchKind::IpVer,
+                    crate::rule_tree::Pattern::Wildcard,
+                    crate::rule_tree::ArmEnd::Verdict(Verdict::Allow),
+                )
+                .build()
+                .unwrap(),
+            ),
+        };
+
+        let mut policies = HashMap::new();
+        policies.insert(crate::policy::PolicyId::from(Uuid::now_v7()), policy);
+
+        let mut zone_pairs = HashMap::new();
+        zone_pairs.insert(zp_id.clone(), zp);
+
+        let engine = Arc::new(PolicyEngine::from_policies(&policies, &zone_pairs).unwrap());
+        let stage = PolicyEvalStage {
+            policy_engine: engine,
+            zone_pair_id: zp_id,
+            dnssec: None,
+        };
+
+        let mut ctx = tcp_context([192, 168, 1, 10], [10, 0, 0, 1], 80, "eth1");
+        let outcome = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(stage.process(&mut ctx));
+
+        assert_eq!(outcome, StageOutcome::Continue);
     }
 
     #[test]

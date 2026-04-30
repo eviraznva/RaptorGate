@@ -24,6 +24,7 @@ use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::data_plane::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::policy::nat::nat_rules::NatRules;
+use crate::policy::engine::PolicyEngine;
 use crate::policy::provider::PolicyManager;
 use crate::policy::{Policy, PolicyId};
 use crate::proto::common::CertificateType;
@@ -127,6 +128,7 @@ where
     pub nat_engine: Arc<Mutex<NatEngine>>,
     pub nat_store: Arc<NatConfigProvider>,
     pub policy_store: Arc<PolicySwap>,
+    pub policy_engine: Arc<PolicyEngine>,
     pub zone_store: Arc<ZoneProvider>,
     pub zone_pair_store: Arc<ZonePairProvider>,
     pub zone_interface_store: Arc<crate::zones::provider::ZoneInterfaceProvider>,
@@ -156,6 +158,7 @@ where
             nat_engine: Arc::clone(&self.nat_engine),
             nat_store: Arc::clone(&self.nat_store),
             policy_store: Arc::clone(&self.policy_store),
+            policy_engine: Arc::clone(&self.policy_engine),
             zone_store: Arc::clone(&self.zone_store),
             zone_pair_store: Arc::clone(&self.zone_pair_store),
             zone_interface_store: Arc::clone(&self.zone_interface_store),
@@ -794,6 +797,15 @@ where
             .swap_policies(policies.into_iter().collect())
             .await
             .map_err(|e| Status::internal(format!("failed to swap policies: {e}")))?;
+
+        // Rebuild and swap the PolicyEngine evaluators using the new configuration.
+        // We reload from stores because self.policy_store was just updated.
+        let updated_policies = self.policy_store.get_policies();
+        let updated_zone_pairs = self.zone_pair_store.get_zone_pairs();
+        
+        self.policy_engine
+            .update_from_policies(&updated_policies, &updated_zone_pairs)
+            .map_err(|e| Status::internal(format!("failed to rebuild policy engine: {e}")))?;
 
         tracing::info!(
             event = "config_snapshot.push.succeeded",

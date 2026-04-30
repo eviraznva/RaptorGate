@@ -150,11 +150,20 @@ fn shared_server() -> &'static SharedServer {
                     InterfaceController::new().expect("failed to init interface controller"),
                 );
 
+                let policy_engine = Arc::new(
+                    ngfw::policy::engine::PolicyEngine::from_policies(
+                        &policy.get_policies(),
+                        &zone_pairs.get_zone_pairs(),
+                    )
+                    .unwrap(),
+                );
+
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
                     nat_engine: Arc::new(Mutex::new(NatEngine::new(&None, HashMap::new()))),
                     nat_store,
                     policy_store: Arc::new(policy),
+                    policy_engine,
                     zone_store: Arc::new(zones),
                     zone_pair_store: Arc::new(zone_pairs),
                     zone_interface_store: Arc::new(zone_interfaces),

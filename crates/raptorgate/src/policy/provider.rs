@@ -2,32 +2,40 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use anyhow::Result;
 use arc_swap::Guard;
 use mockall::automock;
 use tonic::async_trait;
 use uuid::Uuid;
 
 
-use crate::{config::{AppConfig, ConfigObserver, DevConfig}, disk_store::ListDiskStore, policy::{Policy, PolicyId, policy_evaluator::PolicyEvaluator}, rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict, parsing::parse_rule_tree}, swapper::Swapper};
+use crate::{config::{AppConfig, ConfigObserver, DevConfig}, disk_store::ListDiskStore, policy::{Policy, PolicyId}, rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict, parsing::parse_rule_tree}, swapper::Swapper};
+
+#[derive(Debug, thiserror::Error)]
+pub enum PolicyProviderError {
+    #[error("Failed to swap policies: {0}")]
+    SwapError(#[from] anyhow::Error),
+    #[error("Rule tree parsing error: {0}")]
+    ParseError(#[from] crate::rule_tree::parsing::RaptorlangError),
+    #[error("Rule error: {0}")]
+    RuleError(#[from] crate::rule_tree::RuleError),
+}
 
 #[async_trait]
 #[automock]
 pub trait PolicyManager {
-    async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), anyhow::Error>; // should write to disk, thats why its async
+    async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), PolicyProviderError>; // should write to disk, thats why its async
     fn get_policies(&self) -> Guard<Arc<HashMap<PolicyId, Policy>>>;
     fn get_policy(&self, policy_id: &PolicyId) -> Option<Policy>;
 }
 
 pub struct DiskPolicyProvider {
     swapper: Swapper<PolicyId, Policy>,
-    evaluator: PolicyEvaluator, //TODO: don't bundle the evaluator with this
 }
 
 #[async_trait]
 impl PolicyManager for DiskPolicyProvider {
-    async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), anyhow::Error> {
-        self.swapper.swap(new_policies).await
+    async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), PolicyProviderError> {
+        self.swapper.swap(new_policies).await.map_err(Into::into)
     }
 
     fn get_policies(&self) -> Guard<Arc<HashMap<PolicyId, Policy>>> {
@@ -52,11 +60,10 @@ impl DiskPolicyProvider {
             };
 
             let policies = HashMap::from([(Uuid::now_v7().into(), dev_policy)]);
-            let evaluator = PolicyEvaluator::new(policies.values().next().unwrap().rule_tree.clone(), crate::rule_tree::Verdict::Drop);
 
             tracing::debug!("DEV MODE: Using policy override from environment variable DEV_OVERRIDE_POLICY");
 
-            return Ok(Self { swapper: Swapper::new(policies, ListDiskStore::new("policies", "/tmp/".into())), evaluator })
+            return Ok(Self { swapper: Swapper::new(policies, ListDiskStore::new("policies", "/tmp/".into())) })
         }
 
         let store: ListDiskStore<Policy> = ListDiskStore::new("policies", config.data_dir.clone());
@@ -67,10 +74,8 @@ impl DiskPolicyProvider {
                 loaded.into_iter().map(|prop| (prop.id.into(), prop.contents))
             );
 
-            let evaluator = PolicyEvaluator::new(policies.iter().next().unwrap().1.rule_tree.clone(), crate::rule_tree::Verdict::Drop);
-
             tracing::info!("Loaded policies from disk, count: {}", policies.len());
-            return Ok(Self { swapper: Swapper::new(policies, store), evaluator })
+            return Ok(Self { swapper: Swapper::new(policies, store) })
         }
 
         let default_policy = Policy {
@@ -85,24 +90,19 @@ impl DiskPolicyProvider {
         };
 
         let policies = HashMap::from([(Uuid::now_v7().into(), default_policy)]);
-        let evaluator = PolicyEvaluator::new(policies.iter().next().unwrap().1.rule_tree.clone(), crate::rule_tree::Verdict::Drop);
 
         tracing::info!("No policies found on disk, using default drop all policy.");
-        Ok(Self { swapper: Swapper::new(policies, store), evaluator})
+        Ok(Self { swapper: Swapper::new(policies, store)})
     }
 
     pub fn get_policies(&self) -> arc_swap::Guard<Arc<HashMap<PolicyId, Policy>>> {
         self.swapper.get_all()
     }
-
-    pub fn get_evaluator(&self) -> &PolicyEvaluator {
-        &self.evaluator
-    }
 }
 
 #[tonic::async_trait]
 impl ConfigObserver for DiskPolicyProvider {
-    async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
+    async fn on_config_change(&self, new_config: &AppConfig) -> anyhow::Result<()> {
         tracing::info!(
             data_dir = ?new_config.data_dir,
             dev_mode = new_config.dev_config.is_some(),

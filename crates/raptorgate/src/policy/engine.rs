@@ -23,6 +23,16 @@ impl PolicyEngine {
         policies: &HashMap<PolicyId, Policy>,
         zone_pairs: &HashMap<ZonePairId, ZonePair>,
     ) -> Result<Self, PolicyEngineError> {
+        let evaluators = Self::rebuild_evaluators(policies, zone_pairs)?;
+        Ok(Self {
+            evaluators: ArcSwap::new(Arc::new(evaluators)),
+        })
+    }
+
+    pub fn rebuild_evaluators(
+        policies: &HashMap<PolicyId, Policy>,
+        zone_pairs: &HashMap<ZonePairId, ZonePair>,
+    ) -> Result<HashMap<ZonePairId, PolicyEvaluator>, PolicyEngineError> {
         let mut grouped: HashMap<ZonePairId, &Policy> = HashMap::new();
 
         for policy in policies.values() {
@@ -56,9 +66,17 @@ impl PolicyEngine {
             );
         }
 
-        Ok(Self {
-            evaluators: ArcSwap::new(Arc::new(evaluators)),
-        })
+        Ok(evaluators)
+    }
+
+    pub fn update_from_policies(
+        &self,
+        policies: &HashMap<PolicyId, Policy>,
+        zone_pairs: &HashMap<ZonePairId, ZonePair>,
+    ) -> Result<(), PolicyEngineError> {
+        let evaluators = Self::rebuild_evaluators(policies, zone_pairs)?;
+        self.replace(evaluators);
+        Ok(())
     }
 
     pub fn replace(&self, evaluators: HashMap<ZonePairId, PolicyEvaluator>) {
