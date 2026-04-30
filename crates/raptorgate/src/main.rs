@@ -5,8 +5,10 @@ mod disk_store;
 mod dpi;
 mod events;
 mod identity;
+mod interfaces;
 mod ip_defrag;
 mod logging;
+mod ml;
 mod packet_validator;
 mod pipeline;
 mod policy;
@@ -35,7 +37,8 @@ use crate::identity::IdentitySessionStore;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
     DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
-    IdentityLookupStage, IpsStage, LocalOwnershipStage, NatPostroutingStage, NatPreroutingStage,
+    IdentityLookupStage, IpsStage, LocalOwnershipStage, MlAlertStage, NatPostroutingStage,
+    NatPreroutingStage,
     PolicyEvalStage, TcpClassificationStage, TlsPortEnforcementStage, ValidationStage,
 };
 use crate::pipeline::{Chain, Stage, StageOutcome};
@@ -45,6 +48,7 @@ use crate::tls::{
     CaManager, DecryptedChainInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig,
     PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
+use crate::interfaces::{InterfaceController, NetworkInterfaceMonitor};
 use etherparse::NetSlice;
 use pcap::Device;
 use std::collections::{HashMap, HashSet};
@@ -78,7 +82,10 @@ async fn main() {
                                             NatPreroutingStage,
                                             Chain<
                                                 TcpClassificationStage,
-                                                Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                                Chain<
+                                                    MlAlertStage,
+                                                    Chain<PolicyEvalStage, Chain<NatPostroutingStage, FtpAlgStage>>,
+                                                >,
                                             >,
                                         >,
                                     >,
@@ -169,9 +176,17 @@ async fn main() {
             .await
             .expect("Failed to initialize policy provider"),
     );
+    let interface_monitor = Arc::new(
+        NetworkInterfaceMonitor::new(CancellationToken::new())
+            .await
+            .expect("Failed to initialize network interface monitor"),
+    );
+    let interface_controller = Arc::new(
+        InterfaceController::new().expect("Failed to initialize interface controller"),
+    );
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
-    let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
+    let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::collect(&config, &*interface_monitor).await);
 
     config_provider
         .register(Arc::clone(&policy_provider), "DiskPolicyProvider")
@@ -235,7 +250,7 @@ async fn main() {
     // Runtime store aktywnych sesji identity (ADR 0002), dzielony z handlerem gRPC i pipeline.
     let identity_sessions = IdentitySessionStore::new_shared();
 
-    let query_server = QueryServer::<DiskPolicyProvider>::new(
+    let query_server = QueryServer::<DiskPolicyProvider, NetworkInterfaceMonitor>::new(
         QueryHandler {
             tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
@@ -252,6 +267,8 @@ async fn main() {
             decision_engine: Arc::clone(&decision_engine),
             server_key_store: Arc::clone(&server_key_store),
             pinning_detector: decision_engine.pinning_detector_arc(),
+            interface_monitor,
+            interface_controller,
         },
         Arc::clone(&identity_sessions),
         &config.query_socket_path,
@@ -277,6 +294,12 @@ async fn main() {
     let dnssec_provider: Arc<dyn DnssecProvider> =
         Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
 
+    let ml_flow_stats = Arc::new(crate::ml::FlowStatsAggregator::new(
+        std::time::Duration::from_secs(60),
+    ));
+    let ml_detector: Arc<dyn crate::ml::MlPacketInspector> =
+        Arc::new(crate::ml::MlDetector::from_env());
+
     let pipeline = DataPipeline {
         head: ValidationStage,
         tail: Chain {
@@ -291,6 +314,8 @@ async fn main() {
                 tail: Chain {
                     head: DpiStage {
                         classifier: Arc::clone(&dpi_classifier),
+                        flow_stats: Arc::clone(&ml_flow_stats),
+                        pinning_detector: Some(decision_engine.pinning_detector_arc()),
                     },
                     tail: Chain {
                         head: TlsPortEnforcementStage {
@@ -319,21 +344,25 @@ async fn main() {
                                             tail: Chain {
                                                 head: TcpClassificationStage {
                                                     tracker: Arc::clone(&tcp_session_tracker),
+                                                    flow_stats: Arc::clone(&ml_flow_stats),
                                                 },
                                                 tail: Chain {
-                                                    head: PolicyEvalStage {
-                                                        provider: Arc::clone(&policy_provider),
-                                                        zone_store: Arc::clone(&zones),
-                                                        zone_pair_store: Arc::clone(&zone_pairs),
-                                                        zone_interface_store: Arc::clone(&zone_interfaces),
-                                                        dnssec: Some(dnssec_provider),
-                                                    },
+                                                    head: MlAlertStage::new(Arc::clone(&ml_detector)),
                                                     tail: Chain {
-                                                        head: NatPostroutingStage {
-                                                            engine: Arc::clone(&nat_engine),
+                                                        head: PolicyEvalStage {
+                                                            provider: Arc::clone(&policy_provider),
+                                                            zone_store: Arc::clone(&zones),
+                                                            zone_pair_store: Arc::clone(&zone_pairs),
+                                                            zone_interface_store: Arc::clone(&zone_interfaces),
+                                                            dnssec: Some(dnssec_provider),
                                                         },
-                                                        tail: FtpAlgStage {
-                                                            engine: Arc::clone(&nat_engine),
+                                                        tail: Chain {
+                                                            head: NatPostroutingStage {
+                                                                engine: Arc::clone(&nat_engine),
+                                                            },
+                                                            tail: FtpAlgStage {
+                                                                engine: Arc::clone(&nat_engine),
+                                                            },
                                                         },
                                                     },
                                                 },

@@ -20,14 +20,14 @@ import type { IUserRolesRepository } from '../../domain/repositories/user-roles.
 import { USER_ROLES_REPOSITORY_TOKEN } from '../../domain/repositories/user-roles.repository.js';
 import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
 import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
+import type { IZoneInterfaceRepository } from '../../domain/repositories/zone-interface.repository.js';
+import { ZONE_INTERFACE_REPOSITORY_TOKEN } from '../../domain/repositories/zone-interface.repository.js';
 import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
 import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
 import type { IFirewallCertificateRepository } from '../../domain/repositories/firewall-certificate.repository.js';
 import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../../domain/repositories/firewall-certificate.repository.js';
 import type { ISslBypassRepository } from '../../domain/repositories/ssl-bypass.repository.js';
 import { SSL_BYPASS_REPOSITORY_TOKEN } from '../../domain/repositories/ssl-bypass.repository.js';
-import type { IZoneInterfaceRepository } from '../../domain/repositories/zone-interface.repository.js';
-import { ZONE_INTERFACE_REPOSITORY_TOKEN } from '../../domain/repositories/zone-interface.repository.js';
 import {
   normalizeTlsInspectionPolicy,
   type ConfigSnapshotPayload,

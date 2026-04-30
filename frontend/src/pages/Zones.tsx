@@ -4,11 +4,14 @@ import ZonesStatusBar from "../components/zones/ZonesStatusBar";
 import ZonesTabs, { type ZonesTabKey } from "../components/zones/ZonesTabs";
 import ZonesTable from "../components/zones/ZonesTable";
 import ZonePairsTable from "../components/zones/ZonePairsTable";
+import ZoneInterfacesView from "../components/zones/ZoneInterfacesView";
 import ZoneForm from "../components/zones/ZoneForm";
 import ZonePairForm from "../components/zones/ZonePairForm";
+import ZoneInterfaceForm from "../components/zones/ZoneInterfaceForm";
 import ZonesFooter from "../components/zones/ZonesFooter";
 import type { Zone } from "../types/zones/Zone";
 import type { ZonePair } from "../types/zones/ZonePair";
+import type { ZoneInterface } from "../types/zones/ZoneInterface";
 import { useAppDispatch, useAppSelector } from "../app/hooks";
 import {
   useCreateZoneMutation,
@@ -26,22 +29,37 @@ import {
   type CreateZonePairBody,
   type ZonePairsPayload,
 } from "../services/zonePairs";
+import {
+  useGetZoneInterfacesQuery,
+  useEditZoneInterfaceMutation,
+  type ZoneInterfacesPayload,
+  type EditZoneInterfaceBody,
+} from "../services/zoneInterfaces";
 import * as zonesSliceReducers from "../features/zonesSlice";
 import * as zonePairsSliceReducers from "../features/zonePairsSlice";
+import * as zoneInterfacesSliceReducers from "../features/zoneInterfacesSlice";
 import type { ApiSuccess } from "../types/ApiResponse";
 
 export default function Zones() {
   const dispatch = useAppDispatch();
   const zonesState = useAppSelector((state) => state.zones);
   const zonePairsState = useAppSelector((state) => state.zonePairs);
+  const zoneInterfacesState = useAppSelector((state) => state.zoneInterfaces);
 
   const { data: zonesData } = useGetZonesQuery();
   const { data: zonePairsData } = useGetZonePairsQuery();
+  const {
+    data: zoneInterfacesData,
+    isFetching: isFetchingZoneInterfaces,
+    refetch: refetchZoneInterfaces,
+  } = useGetZoneInterfacesQuery();
 
   const [createZone] = useCreateZoneMutation();
   const [updateZone] = useUpdateZoneMutation();
   const [deleteZone, { isError: isDeletingZoneError }] =
     useDeleteZoneMutation();
+
+  const [editZoneInterface] = useEditZoneInterfaceMutation();
 
   const [createZonePair] = useCreateZonePairMutation();
   const [updateZonePair] = useUpdateZonePairMutation();
@@ -64,6 +82,18 @@ export default function Zones() {
     dispatch(zonePairsSliceReducers.setZonePairs(payload.data.zonePairs));
   }, [zonePairsData, dispatch]);
 
+  useEffect(() => {
+    if (!zoneInterfacesData) return;
+
+    const payload = zoneInterfacesData as ApiSuccess<ZoneInterfacesPayload>;
+
+    dispatch(
+      zoneInterfacesSliceReducers.setZoneInterfaces(
+        payload.data.zoneInterfaces,
+      ),
+    );
+  }, [zoneInterfacesData, dispatch]);
+
   const [activeTab, setActiveTab] = useState<ZonesTabKey>("zones");
 
   const [isZoneFormOpen, setIsZoneFormOpen] = useState(false);
@@ -77,6 +107,10 @@ export default function Zones() {
   const [confirmDeletePairId, setConfirmDeletePairId] = useState<string | null>(
     null,
   );
+
+  const [isZoneInterfaceFormOpen, setIsZoneInterfaceFormOpen] = useState(false);
+  const [editingZoneInterface, setEditingZoneInterface] =
+    useState<ZoneInterface | null>(null);
 
   // ── Zone handlers ──
   const handleCreateZone = async function (data: CreateZoneBody) {
@@ -260,6 +294,33 @@ export default function Zones() {
     [dispatch, isDeletingZonePairError],
   );
 
+  // ── Zone interface handlers ──
+  const handleEditZoneInterfaceClick = useCallback((zi: ZoneInterface) => {
+    setEditingZoneInterface(zi);
+    setIsZoneInterfaceFormOpen(true);
+  }, []);
+
+  const handleCloseZoneInterfaceForm = useCallback(
+    () => setIsZoneInterfaceFormOpen(false),
+    [],
+  );
+
+  const handleZoneInterfaceSuccess = useCallback(
+    async (id: string, body: EditZoneInterfaceBody) => {
+      try {
+        const res = await editZoneInterface({ id, ...body }).unwrap();
+        if (res.statusCode === 200) {
+          const { data } = res as ApiSuccess<{ zoneInterface: ZoneInterface }>;
+          dispatch(
+            zoneInterfacesSliceReducers.editZoneInterface(data.zoneInterface),
+          );
+          setIsZoneInterfaceFormOpen(false);
+        }
+      } catch (error) {}
+    },
+    [dispatch, editZoneInterface],
+  );
+
   return (
     <>
       <div className="min-h-screen bg-[#0c0c0c] flex flex-col text-[#f5f5f5]">
@@ -270,6 +331,7 @@ export default function Zones() {
               activeTab={activeTab}
               zones={zonesState.zones}
               zonePairs={zonePairsState.zonePairs}
+              zoneInterfaces={zoneInterfacesState.zoneInterfaces}
             />
             <div className="bg-[#161616] border border-[#262626] mb-6">
               <ZonesTabs activeTab={activeTab} onTabChange={setActiveTab} />
@@ -297,6 +359,17 @@ export default function Zones() {
                     onDeleteCancel={handlePairDeleteCancel}
                   />
                 )}
+                {activeTab === "zone-interfaces" && (
+                  <ZoneInterfacesView
+                    zoneInterfaces={zoneInterfacesState.zoneInterfaces}
+                    zones={zonesState.zones}
+                    isRefreshing={isFetchingZoneInterfaces}
+                    onRefresh={() => {
+                      void refetchZoneInterfaces();
+                    }}
+                    onEdit={handleEditZoneInterfaceClick}
+                  />
+                )}
               </div>
             </div>
             <ZonesFooter />
@@ -316,6 +389,13 @@ export default function Zones() {
         zones={zonesState.zones}
         onClose={handleCloseZonePairForm}
         onSuccess={handleZonePairSuccess}
+      />
+      <ZoneInterfaceForm
+        zoneInterface={editingZoneInterface}
+        isOpen={isZoneInterfaceFormOpen}
+        zones={zonesState.zones}
+        onClose={handleCloseZoneInterfaceForm}
+        onSuccess={handleZoneInterfaceSuccess}
       />
     </>
   );

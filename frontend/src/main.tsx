@@ -17,6 +17,7 @@ import Zones from "./pages/Zones.tsx";
 import NatRules from "./pages/NatRules.tsx";
 import Users from "./pages/Users.tsx";
 import ConfigControl from "./pages/ConfigControl.tsx";
+import ConfigDiff from "./pages/ConfigDiff.tsx";
 import { Layout } from "./components/layout/layout.tsx";
 import { Metrics } from "./components/metrics/Metrics.tsx";
 import { ProtectedRoute } from "./components/protectedRoute/protectedRoute.tsx";
@@ -87,6 +88,10 @@ const router = createBrowserRouter([
           {
             path: "config-control",
             element: <ConfigControl />,
+          },
+          {
+            path: "config-diff",
+            element: <ConfigDiff />,
           },
           {
             path: "settings",

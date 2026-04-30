@@ -8,6 +8,8 @@ export class ZoneInterfaceJsonMapper {
       record.zoneId,
       record.interfaceName,
       record.vlanId,
+      record.status,
+      record.addresses,
       new Date(record.createdAt),
     );
   }
@@ -18,6 +20,8 @@ export class ZoneInterfaceJsonMapper {
       zoneId: zoneInterface.getZoneId(),
       interfaceName: zoneInterface.getInterfaceName(),
       vlanId: zoneInterface.getVlanId(),
+      status: zoneInterface.getStatus(),
+      addresses: zoneInterface.getAddresses(),
       createdAt: zoneInterface.getCreatedAt().toISOString(),
     };
   }

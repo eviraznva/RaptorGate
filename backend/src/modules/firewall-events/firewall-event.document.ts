@@ -9,7 +9,7 @@ export type FirewallEventDecision =
 export interface FirewallEventDocument {
   timestamp: string;
   event_type: string;
-  source: 'TLS' | 'DNS' | 'TCP';
+  source: 'TLS' | 'DNS' | 'TCP' | 'ML';
   decision: FirewallEventDecision;
   src_ip?: string;
   src_port?: number;
@@ -34,4 +34,7 @@ export interface FirewallEventDocument {
   common_name?: string;
   ech_origin?: string;
   ech_action?: string;
+  ml_score?: number;
+  ml_threshold?: number;
+  model_checksum?: string;
 }

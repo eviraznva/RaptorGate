@@ -4,7 +4,16 @@ use anyhow::Error;
 use anyhow::Result;
 use uuid::Uuid;
 
-use crate::{config::{AppConfig, ConfigObserver}, disk_store::ListDiskStore, swapper::Swapper, zones::{DefaultPolicy, Zone, ZoneId, ZonePair, ZonePairId, ZoneInterface, ZoneInterfaceId}};
+use crate::{
+    config::{AppConfig, ConfigObserver},
+    disk_store::{ListDiskStore, SavedProperty},
+    interfaces::{InterfaceMonitor, OperState},
+    swapper::Swapper,
+    zones::{
+        DefaultPolicy, InterfaceStatus, Zone, ZoneId, ZoneInterface, ZoneInterfaceId, ZonePair,
+        ZonePairId,
+    },
+};
 
 pub struct ZonePairProvider {
     swapper: Swapper<ZonePairId, ZonePair>,
@@ -127,18 +136,68 @@ pub struct ZoneInterfaceProvider {
 }
 
 impl ZoneInterfaceProvider {
-    pub async fn from_disk(config: &AppConfig) -> Self {
-        let store: ListDiskStore<ZoneInterface> = ListDiskStore::new("zone_interfaces", config.data_dir.clone());
-        if let Ok(loaded) = store.load().await {
-            #[allow(clippy::from_iter_instead_of_collect)]
-            let items: HashMap<ZoneInterfaceId, ZoneInterface> = HashMap::from_iter(
-                loaded.into_iter().map(|prop| (prop.id.into(), prop.contents))
-            );
-            return Self { swapper: Swapper::new(items, store) };
+    pub async fn collect<M: InterfaceMonitor>(config: &AppConfig, monitor: &M) -> Self {
+        let store: ListDiskStore<ZoneInterface> =
+            ListDiskStore::new("zone_interfaces", config.data_dir.clone());
+
+        let mut loaded_items: HashMap<ZoneInterfaceId, ZoneInterface> =
+            if let Ok(loaded) = store.load().await {
+                #[allow(clippy::from_iter_instead_of_collect)]
+                HashMap::from_iter(loaded.into_iter().map(|prop| (prop.id.into(), prop.contents)))
+            } else {
+                tracing::info!("no zone interfaces found on disk, initializing empty");
+                HashMap::new()
+            };
+
+        let system_interfaces = monitor.snapshot();
+        let mut changes_made = false;
+
+        for (name, sys_iface) in system_interfaces {
+            let exists = loaded_items.values().any(|z| z.interface_name == name);
+            if !exists {
+                let id = ZoneInterfaceId(Uuid::now_v7());
+                let new_zone_interface = ZoneInterface {
+                    zone_id: Uuid::nil().into(),
+                    interface_name: name.clone(),
+                    vlan_id: sys_iface.vlan_id.map(Into::into),
+                    status: match sys_iface.oper_state {
+                        OperState::Up => InterfaceStatus::Active,
+                        OperState::Down => InterfaceStatus::Inactive,
+                        OperState::Unknown => InterfaceStatus::Unknown,
+                    },
+                    addresses: sys_iface
+                        .addresses
+                        .into_iter()
+                        .map(|a| a.to_string())
+                        .collect(),
+                };
+
+                tracing::info!(
+                    interface = %name,
+                    "Discovered new system interface, adding to zone interfaces"
+                );
+                loaded_items.insert(id, new_zone_interface);
+                changes_made = true;
+            }
         }
 
-        tracing::info!("no zone interfaces found on disk, initializing empty");
-        Self { swapper: Swapper::new(HashMap::new(), store) }
+        if changes_made {
+            let items_to_save: Vec<SavedProperty<ZoneInterface>> = loaded_items
+                .iter()
+                .map(|(id, contents)| SavedProperty {
+                    id: id.clone().into(),
+                    contents: contents.clone(),
+                })
+                .collect();
+
+            if let Err(e) = store.save(items_to_save).await {
+                tracing::error!("Failed to save collected zone interfaces: {}", e);
+            }
+        }
+
+        Self {
+            swapper: Swapper::new(loaded_items, store),
+        }
     }
 
     pub async fn swap_zone_interfaces(&self, new: Vec<(ZoneInterfaceId, ZoneInterface)>) -> Result<(), Error> {
@@ -161,6 +220,40 @@ impl ZoneInterfaceProvider {
                 ListDiskStore::new("zone_interfaces", std::env::temp_dir()),
             ),
         }
+    }
+
+    pub fn get_live_zone_interfaces<M>(&self, monitor: &M) -> HashMap<ZoneInterfaceId, ZoneInterface>
+    where
+        M: InterfaceMonitor,
+    {
+        self.swapper
+            .get_all()
+            .iter()
+            .map(|(id, zone_interface)| {
+                let mut enriched = zone_interface.clone();
+
+                match monitor.get(&zone_interface.interface_name) {
+                    Some(system_interface) => {
+                        enriched.status = match system_interface.oper_state {
+                            OperState::Up => InterfaceStatus::Active,
+                            OperState::Down => InterfaceStatus::Inactive,
+                            OperState::Unknown => InterfaceStatus::Unknown,
+                        };
+                        enriched.addresses = system_interface
+                            .addresses
+                            .into_iter()
+                            .map(|address| address.to_string())
+                            .collect();
+                    }
+                    None => {
+                        enriched.status = InterfaceStatus::Missing;
+                        enriched.addresses = Vec::new();
+                    }
+                }
+
+                (id.clone(), enriched)
+            })
+            .collect()
     }
 }
 

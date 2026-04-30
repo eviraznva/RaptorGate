@@ -264,6 +264,229 @@
         ]
       }
     },
+    "/config/diff": {
+      "get": {
+        "description": "Compares two configuration snapshots and returns a domain-aware configuration diff.",
+        "operationId": "ConfigController_getConfigDiff",
+        "parameters": [
+          {
+            "name": "baseId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "example": "cb5e59f3-0e31-44ce-963b-adeccf99dd45",
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "example": "be4de244-4c43-4924-ac8c-16df53be90f1",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 200
+                        },
+                        "message": {
+                          "example": "Configuration snapshot diff retrieved"
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/GetConfigDiffResponseDto"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 400
+                        },
+                        "message": {
+                          "example": "Validation failed or invalid snapshot ID"
+                        },
+                        "error": {
+                          "example": "Bad Request"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 401
+                        },
+                        "message": {
+                          "example": "Access token is missing, invalid, or expired"
+                        },
+                        "error": {
+                          "example": "Unauthorized"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 403
+                        },
+                        "message": {
+                          "example": "Insufficient permissions to view configuration snapshot diff"
+                        },
+                        "error": {
+                          "example": "Forbidden"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 404
+                        },
+                        "message": {
+                          "example": "Configuration snapshot not found"
+                        },
+                        "error": {
+                          "example": "Not Found"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 429
+                        },
+                        "message": {
+                          "example": "Too many requests to retrieve configuration snapshot diff"
+                        },
+                        "error": {
+                          "example": "Too Many Requests"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 500
+                        },
+                        "message": {
+                          "example": "Internal server error while retrieving configuration snapshot diff"
+                        },
+                        "error": {
+                          "example": "Internal Server Error"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Diff configuration snapshots",
+        "tags": [
+          "Config"
+        ]
+      }
+    },
     "/config/history": {
       "get": {
         "description": "Gets the history of all configuration snapshots, including active and inactive ones.",
@@ -5366,6 +5589,348 @@
         ]
       }
     },
+    "/zone-interface": {
+      "get": {
+        "description": "Gets live zone interfaces from firewall gRPC query service",
+        "operationId": "ZoneInterfaceController_getLiveZoneInterfaces",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 200
+                        },
+                        "message": {
+                          "example": "Live zone interfaces retrieved"
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/GetLiveZoneInterfacesResponseDto"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 401
+                        },
+                        "message": {
+                          "example": "Access token is missing, invalid, or expired"
+                        },
+                        "error": {
+                          "example": "Unauthorized"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 403
+                        },
+                        "message": {
+                          "example": "Insufficient permissions to view zone interfaces"
+                        },
+                        "error": {
+                          "example": "Forbidden"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 429
+                        },
+                        "message": {
+                          "example": "Too many requests"
+                        },
+                        "error": {
+                          "example": "Too Many Requests"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 500
+                        },
+                        "message": {
+                          "example": "Internal server error while retrieving zone interfaces"
+                        },
+                        "error": {
+                          "example": "Internal Server Error"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get live zone interfaces",
+        "tags": [
+          "ZoneInterface"
+        ]
+      }
+    },
+    "/zone-interface/{id}": {
+      "put": {
+        "description": "Updates zone interface configuration and forwards supported properties to firewall gRPC service",
+        "operationId": "ZoneInterfaceController_editZoneInterface",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditZoneInterfaceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 200
+                        },
+                        "message": {
+                          "example": "Zone interface updated"
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/EditZoneInterfaceResponseDto"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 400
+                        },
+                        "message": {
+                          "example": "Validation failed"
+                        },
+                        "error": {
+                          "example": "Bad Request"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 401
+                        },
+                        "message": {
+                          "example": "Access token is missing, invalid, or expired"
+                        },
+                        "error": {
+                          "example": "Unauthorized"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 403
+                        },
+                        "message": {
+                          "example": "Insufficient permissions to edit zone interfaces"
+                        },
+                        "error": {
+                          "example": "Forbidden"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 429
+                        },
+                        "message": {
+                          "example": "Too many requests"
+                        },
+                        "error": {
+                          "example": "Too Many Requests"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 500
+                        },
+                        "message": {
+                          "example": "Internal server error while editing zone interface"
+                        },
+                        "error": {
+                          "example": "Internal Server Error"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Edit zone interface configuration",
+        "tags": [
+          "ZoneInterface"
+        ]
+      }
+    },
     "/nat": {
       "post": {
         "description": "Creates a new NAT rule with the specified parameters. Requires Operator role and NAT_RULES_CREATE permission.",
@@ -6460,6 +7025,154 @@
         ]
       }
     },
+    "/tcp-sessions": {
+      "get": {
+        "description": "Gets TCP tracked sessions from firewall gRPC query service",
+        "operationId": "TcpSessionsController_getTcpSessions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 200
+                        },
+                        "message": {
+                          "example": "TCP sessions retrieved"
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/GetTcpSessionsResponseDto"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 401
+                        },
+                        "message": {
+                          "example": "Access token is missing, invalid, or expired"
+                        },
+                        "error": {
+                          "example": "Unauthorized"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 403
+                        },
+                        "message": {
+                          "example": "Insufficient permissions to view TCP sessions"
+                        },
+                        "error": {
+                          "example": "Forbidden"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 429
+                        },
+                        "message": {
+                          "example": "Too many requests"
+                        },
+                        "error": {
+                          "example": "Too Many Requests"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 500
+                        },
+                        "message": {
+                          "example": "Internal server error while retrieving TCP sessions"
+                        },
+                        "error": {
+                          "example": "Internal Server Error"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get TCP tracked sessions",
+        "tags": [
+          "TcpSessions"
+        ]
+      }
+    },
     "/ssl/ca": {
       "get": {
         "description": "Returns the CA certificate PEM, SHA-256 fingerprint and expiration date.",
@@ -7145,6 +7858,127 @@
         "required": [
           "snapshotType",
           "isActive"
+        ]
+      },
+      "ConfigDiffSnapshotDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "versionNumber": {
+            "type": "number"
+          },
+          "checksum": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "versionNumber",
+          "checksum",
+          "createdAt"
+        ]
+      },
+      "ConfigDiffSummaryDto": {
+        "type": "object",
+        "properties": {
+          "added": {
+            "type": "number"
+          },
+          "removed": {
+            "type": "number"
+          },
+          "modified": {
+            "type": "number"
+          },
+          "bySection": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "added": {
+                  "type": "number"
+                },
+                "removed": {
+                  "type": "number"
+                },
+                "modified": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "added",
+          "removed",
+          "modified",
+          "bySection"
+        ]
+      },
+      "ConfigDiffChangeDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "added",
+              "removed",
+              "modified"
+            ]
+          },
+          "section": {
+            "type": "string",
+            "example": "rules"
+          },
+          "path": {
+            "type": "string",
+            "example": "bundle.rules.items.a1c6151b-e916-456d-b4f9-2d57d2075aff.priority"
+          },
+          "entityId": {
+            "type": "string"
+          },
+          "before": {
+            "type": "object"
+          },
+          "after": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "type",
+          "section",
+          "path"
+        ]
+      },
+      "GetConfigDiffResponseDto": {
+        "type": "object",
+        "properties": {
+          "baseSnapshot": {
+            "$ref": "#/components/schemas/ConfigDiffSnapshotDto"
+          },
+          "targetSnapshot": {
+            "$ref": "#/components/schemas/ConfigDiffSnapshotDto"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ConfigDiffSummaryDto"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigDiffChangeDto"
+            }
+          }
+        },
+        "required": [
+          "baseSnapshot",
+          "targetSnapshot",
+          "summary",
+          "changes"
         ]
       },
       "GetConfigHistoryResponseDto": {
@@ -7847,6 +8681,32 @@
             "description": "Wzorzec dopasowania sygnatury (np. Regex)",
             "example": "(?i)(UNION.*SELECT)"
           },
+          "matchType": {
+            "type": "string",
+            "enum": [
+              "literal",
+              "regex"
+            ],
+            "description": "Typ dopasowania wzorca",
+            "example": "regex",
+            "default": "regex"
+          },
+          "patternEncoding": {
+            "type": "string",
+            "enum": [
+              "text",
+              "hex"
+            ],
+            "description": "Kodowanie wzorca",
+            "example": "text",
+            "default": "text"
+          },
+          "caseInsensitive": {
+            "type": "boolean",
+            "description": "Czy dopasowanie tekstowe ma ignorować wielkość liter",
+            "example": false,
+            "default": false
+          },
           "severity": {
             "type": "string",
             "enum": [
@@ -7924,6 +8784,9 @@
           "enabled",
           "category",
           "pattern",
+          "matchType",
+          "patternEncoding",
+          "caseInsensitive",
           "severity",
           "action",
           "appProtocols",
@@ -8695,6 +9558,125 @@
           "isActive"
         ]
       },
+      "ZoneInterfaceItemResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "123e4567-e89b-12d3-a456-426614174000"
+          },
+          "zoneId": {
+            "type": "string",
+            "example": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4"
+          },
+          "interfaceName": {
+            "type": "string",
+            "example": "eth0"
+          },
+          "vlanId": {
+            "type": "object",
+            "example": 20,
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "example": "active",
+            "enum": [
+              "unspecified",
+              "active",
+              "inactive",
+              "missing",
+              "unknown"
+            ]
+          },
+          "addresses": {
+            "example": [
+              "192.168.50.10/24"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string",
+            "example": "2024-06-01T12:00:00Z"
+          }
+        },
+        "required": [
+          "id",
+          "zoneId",
+          "interfaceName",
+          "vlanId",
+          "status",
+          "addresses",
+          "createdAt"
+        ]
+      },
+      "GetLiveZoneInterfacesResponseDto": {
+        "type": "object",
+        "properties": {
+          "zoneInterfaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ZoneInterfaceItemResponseDto"
+            }
+          }
+        },
+        "required": [
+          "zoneInterfaces"
+        ]
+      },
+      "EditZoneInterfaceResponseDto": {
+        "type": "object",
+        "properties": {
+          "zoneInterface": {
+            "$ref": "#/components/schemas/ZoneInterfaceItemResponseDto"
+          }
+        },
+        "required": [
+          "zoneInterface"
+        ]
+      },
+      "EditZoneInterfaceDto": {
+        "type": "object",
+        "properties": {
+          "zoneId": {
+            "type": "string",
+            "example": "00000000-0000-0000-0000-000000000000"
+          },
+          "vlanId": {
+            "type": "object",
+            "example": 20,
+            "nullable": true
+          },
+          "ipv4Address": {
+            "type": "object",
+            "example": "192.168.20.1",
+            "nullable": true
+          },
+          "ipv4Mask": {
+            "type": "object",
+            "example": 24,
+            "nullable": true
+          },
+          "ipv6Address": {
+            "type": "object",
+            "example": "fd00:20::1",
+            "nullable": true
+          },
+          "ipv6Mask": {
+            "type": "object",
+            "example": 64,
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
       "NatRuleItemResponseDto": {
         "type": "object",
         "properties": {
@@ -9039,6 +10021,69 @@
           "found",
           "reason",
           "failureCount"
+        ]
+      },
+      "TcpSessionEndpointResponseDto": {
+        "type": "object",
+        "properties": {
+          "ip": {
+            "type": "string",
+            "example": "192.168.1.10"
+          },
+          "port": {
+            "type": "number",
+            "example": 443
+          }
+        },
+        "required": [
+          "ip",
+          "port"
+        ]
+      },
+      "TcpTrackedSessionItemResponseDto": {
+        "type": "object",
+        "properties": {
+          "endpointA": {
+            "$ref": "#/components/schemas/TcpSessionEndpointResponseDto"
+          },
+          "endpointB": {
+            "$ref": "#/components/schemas/TcpSessionEndpointResponseDto"
+          },
+          "state": {
+            "type": "string",
+            "example": "established",
+            "enum": [
+              "unspecified",
+              "syn_sent",
+              "syn_ack_received",
+              "established",
+              "fin_sent",
+              "ack_sent",
+              "ack_fin_sent",
+              "time_wait",
+              "closed",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "endpointA",
+          "endpointB",
+          "state"
+        ]
+      },
+      "GetTcpSessionsResponseDto": {
+        "type": "object",
+        "properties": {
+          "tcpSessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TcpTrackedSessionItemResponseDto"
+            }
+          }
+        },
+        "required": [
+          "tcpSessions"
         ]
       },
       "GetCaCertificateResponseDto": {

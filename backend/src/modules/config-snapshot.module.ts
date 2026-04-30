@@ -6,8 +6,10 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
 import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from '../application/ports/config-snapshot-push-service.interface.js';
 import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../application/ports/raptor-lang-validation-service.interface.js';
 import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
+import { ConfigSnapshotDiffService } from '../application/services/config-snapshot-diff.service.js';
 import { ApplyConfigSnapshotUseCase } from '../application/use-cases/apply-config-snapshot.use-case.js';
 import { ExportConfigUseCase } from '../application/use-cases/export-config.use-case.js';
+import { GetConfigDiffUseCase } from '../application/use-cases/get-config-diff.use-case.js';
 import { GetConfigHistoryUseCase } from '../application/use-cases/get-config-history.use-case.js';
 import { ImportConfigUseCase } from '../application/use-cases/import-config.use-case.js';
 import { RollbackConfigUseCase } from '../application/use-cases/rollback-config.use-case.js';
@@ -45,8 +47,8 @@ import { JsonRolePermissionsRepository } from '../infrastructure/persistence/rep
 import { JsonRuleRepository } from '../infrastructure/persistence/repositories/json-rule.repository.js';
 import { JsonUserRepository } from '../infrastructure/persistence/repositories/json-user.repository.js';
 import { JsonUserRoleRepository } from '../infrastructure/persistence/repositories/json-user-role.repository.js';
-import { JsonZoneRepository } from '../infrastructure/persistence/repositories/json-zone.repository.js';
 import { JsonZoneInterfaceRepository } from '../infrastructure/persistence/repositories/json-zone-interface.repository.js';
+import { JsonZoneRepository } from '../infrastructure/persistence/repositories/json-zone.repository.js';
 import { JsonZonePairRepository } from '../infrastructure/persistence/repositories/json-zone-pair.repository.js';
 import { ConfigController } from '../presentation/controllers/config.controller.js';
 import { Env } from '../shared/config/env.validation.js';
@@ -143,10 +145,12 @@ import { Env } from '../shared/config/env.validation.js';
   controllers: [ConfigController],
   providers: [
     ApplyConfigSnapshotUseCase,
+    GetConfigDiffUseCase,
     GetConfigHistoryUseCase,
     RollbackConfigUseCase,
     ExportConfigUseCase,
     ImportConfigUseCase,
+    ConfigSnapshotDiffService,
     GrpcConfigSnapshotPushService,
     FileStore,
     Mutex,

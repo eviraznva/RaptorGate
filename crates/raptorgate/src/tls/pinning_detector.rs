@@ -167,6 +167,18 @@ impl PinningDetector {
         tracing::info!("Pinning detection config reloaded");
     }
 
+    /// Liczba aktywnych failure'ów dla (source_ip, domain) w bieżącym oknie.
+    /// Read-only accessor używany przez ML feature vector — nie mutuje stanu.
+    pub fn failure_count_for(&self, source_ip: IpAddr, domain: &str) -> u32 {
+        let config = self.config.load();
+        let key = PinningKey::new(source_ip, domain);
+        let cutoff = Instant::now() - config.failure_window;
+        self.failures
+            .get(&key)
+            .map(|entry| entry.timestamps.iter().filter(|t| **t >= cutoff).count() as u32)
+            .unwrap_or(0)
+    }
+
     pub fn stats(&self) -> PinningStats {
         PinningStats {
             active_bypasses: self.bypassed.len(),

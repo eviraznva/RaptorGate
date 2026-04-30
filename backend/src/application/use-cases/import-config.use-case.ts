@@ -186,6 +186,8 @@ export class ImportConfigUseCase {
           zi.zoneId,
           zi.interfaceName,
           zi.vlanId ?? null,
+          zi.status ?? 'unspecified',
+          zi.addresses ?? [],
           new Date(zi.createdAt),
         ),
     );

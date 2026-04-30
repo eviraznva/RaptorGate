@@ -3,6 +3,7 @@ use std::env;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use ipnet::IpNet;
 use ngfw::config::provider::AppConfigProvider;
 use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use ngfw::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -12,18 +13,21 @@ use ngfw::data_plane::nat::{NatConfigProvider, NatEngine};
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::identity::IdentitySessionStore;
 use ngfw::policy::provider::DiskPolicyProvider;
-use ngfw::proto::config::{Rule, Zone, ZonePair};
+use ngfw::proto::config::{InterfaceStatus, Rule, Zone, ZoneInterface, ZonePair};
 use ngfw::proto::services::firewall_config_snapshot_service_client::FirewallConfigSnapshotServiceClient;
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::proto::services::{
     ActiveConfigSnapshot, ConfigBundle, GetConfigRequest, GetIpsConfigRequest,
-    GetNatConfigRequest, GetPinningBypassRequest, GetPinningStatsRequest, GetPoliciesRequest,
-    GetZonePairsRequest, GetZonesRequest, PushActiveConfigSnapshotRequest, SwapConfigRequest,
-    SwapIpsConfigRequest, SwapNatConfigRequest,
+    GetLiveZoneInterfacesRequest, GetNatConfigRequest, GetPinningBypassRequest,
+    GetPinningStatsRequest, GetPoliciesRequest, GetZoneInterfaceRequest,
+    GetZoneInterfacesRequest, GetZonePairsRequest, GetZonesRequest,
+    GetTcpSessionsRequest, PushActiveConfigSnapshotRequest, SwapConfigRequest, SwapIpsConfigRequest,
+    SwapNatConfigRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::tls::pinning_detector::PinningConfig;
 use ngfw::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
+use ngfw::interfaces::{InterfaceController, InterfaceMonitor, OperState, SystemInterface};
 use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
@@ -34,6 +38,63 @@ use uuid::Uuid;
 
 struct SharedServer {
     socket: String,
+}
+
+#[derive(Clone)]
+struct StaticInterfaceMonitor {
+    interfaces: HashMap<String, SystemInterface>,
+}
+
+impl StaticInterfaceMonitor {
+    fn new() -> Self {
+        Self {
+            interfaces: HashMap::from([
+                (
+                    "eth-live-up".to_string(),
+                    SystemInterface {
+                        index: 10,
+                        name: "eth-live-up".to_string(),
+                        oper_state: OperState::Up,
+                        addresses: vec![
+                            "192.168.50.10/24".parse::<IpNet>().expect("valid CIDR"),
+                            "fe80::10/64".parse::<IpNet>().expect("valid CIDR"),
+                        ],
+                        vlan_id: None,
+                    },
+                ),
+                (
+                    "eth-live-down".to_string(),
+                    SystemInterface {
+                        index: 11,
+                        name: "eth-live-down".to_string(),
+                        oper_state: OperState::Down,
+                        addresses: vec!["10.20.30.40/24".parse::<IpNet>().expect("valid CIDR")],
+                        vlan_id: None,
+                    },
+                ),
+                (
+                    "eth-live-unknown".to_string(),
+                    SystemInterface {
+                        index: 12,
+                        name: "eth-live-unknown".to_string(),
+                        oper_state: OperState::Unknown,
+                        addresses: vec!["172.16.0.10/16".parse::<IpNet>().expect("valid CIDR")],
+                        vlan_id: None,
+                    },
+                ),
+            ]),
+        }
+    }
+}
+
+impl InterfaceMonitor for StaticInterfaceMonitor {
+    fn get(&self, name: &str) -> Option<SystemInterface> {
+        self.interfaces.get(name).cloned()
+    }
+
+    fn snapshot(&self) -> HashMap<String, SystemInterface> {
+        self.interfaces.clone()
+    }
 }
 
 static SHARED_SERVER: OnceLock<SharedServer> = OnceLock::new();
@@ -62,7 +123,8 @@ fn shared_server() -> &'static SharedServer {
                     .expect("failed to load policy provider");
                 let zones = ZoneProvider::from_disk(&config).await;
                 let zone_pairs = ZonePairProvider::from_disk(&config).await;
-                let zone_interfaces = ZoneInterfaceProvider::from_disk(&config).await;
+                let interface_monitor = Arc::new(StaticInterfaceMonitor::new());
+                let zone_interfaces = ZoneInterfaceProvider::collect(&config, &*interface_monitor).await;
                 let dns_inspection_store =
                     Arc::new(DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await);
                 let dns_initial_config = dns_inspection_store.get_config().clone();
@@ -81,6 +143,9 @@ fn shared_server() -> &'static SharedServer {
                     EchTlsPolicy::default(),
                     PinningConfig::default(),
                 ));
+                let interface_controller = Arc::new(
+                    InterfaceController::new().expect("failed to init interface controller"),
+                );
 
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
@@ -98,6 +163,8 @@ fn shared_server() -> &'static SharedServer {
                     decision_engine: Arc::clone(&decision_engine),
                     server_key_store,
                     pinning_detector: decision_engine.pinning_detector_arc(),
+                    interface_monitor,
+                    interface_controller,
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();
@@ -201,6 +268,36 @@ fn create_valid_bundle(rule_name: &str, content: &str) -> ValidBundle {
     }
 }
 
+fn create_valid_bundle_with_zone_interfaces(
+    rule_name: &str,
+    content: &str,
+    zone_interfaces: Vec<ZoneInterface>,
+) -> ValidBundle {
+    let mut valid = create_valid_bundle(rule_name, content);
+    let mut interface_ids_by_zone: HashMap<String, Vec<String>> = zone_interfaces.iter().fold(
+        HashMap::new(),
+        |mut acc, zone_interface| {
+            acc.entry(zone_interface.zone_id.clone())
+                .or_default()
+                .push(zone_interface.id.clone());
+            acc
+        },
+    );
+    valid.bundle.zones = valid
+        .bundle
+        .zones
+        .into_iter()
+        .map(|mut zone| {
+            zone.interface_ids = interface_ids_by_zone
+                .remove(&zone.id)
+                .unwrap_or_default();
+            zone
+        })
+        .collect();
+    valid.bundle.zone_interfaces = zone_interfaces;
+    valid
+}
+
 fn create_snapshot_request(
     bundle: ConfigBundle,
 ) -> (PushActiveConfigSnapshotRequest, String, String) {
@@ -294,6 +391,19 @@ async fn push_active_config_snapshot_raptorlang_error() {
 }
 
 #[tokio::test]
+async fn get_tcp_sessions_returns_empty_tracker_sessions() {
+    let mut query_client = connect(&shared_server().socket).await;
+
+    let resp = query_client
+        .get_tcp_sessions(GetTcpSessionsRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(resp.sessions.is_empty());
+}
+
+#[tokio::test]
 #[serial(snapshot_bundle, nat_config)]
 async fn fetch_policies_returns_ok() {
     let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
@@ -356,6 +466,156 @@ async fn fetch_zones_returns_ok() {
             inner.zones.iter().map(|z| &z.name).collect::<Vec<_>>()
         );
     }
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle, nat_config)]
+async fn fetch_zone_interfaces_and_live_zone_interfaces_return_expected_contract() {
+    let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
+    let mut query_client = connect(&shared_server().socket).await;
+    let mut valid = create_valid_bundle_with_zone_interfaces(
+        "fetch_zone_interfaces_returns_ok",
+        "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }",
+        vec![],
+    );
+
+    let zone_interfaces = vec![
+        ZoneInterface {
+            id: Uuid::now_v7().to_string(),
+            zone_id: valid.src_zone.id.clone(),
+            interface_name: "eth-live-up".to_string(),
+            vlan_id: None,
+            status: InterfaceStatus::Unspecified as i32,
+            addresses: vec![],
+        },
+        ZoneInterface {
+            id: Uuid::now_v7().to_string(),
+            zone_id: valid.src_zone.id.clone(),
+            interface_name: "eth-live-down".to_string(),
+            vlan_id: Some(100),
+            status: InterfaceStatus::Unspecified as i32,
+            addresses: vec![],
+        },
+        ZoneInterface {
+            id: Uuid::now_v7().to_string(),
+            zone_id: valid.dst_zone.id.clone(),
+            interface_name: "eth-live-unknown".to_string(),
+            vlan_id: None,
+            status: InterfaceStatus::Unspecified as i32,
+            addresses: vec![],
+        },
+        ZoneInterface {
+            id: Uuid::now_v7().to_string(),
+            zone_id: valid.dst_zone.id.clone(),
+            interface_name: "eth-live-missing".to_string(),
+            vlan_id: None,
+            status: InterfaceStatus::Unspecified as i32,
+            addresses: vec![],
+        },
+    ];
+    let expected_by_name: HashMap<String, ZoneInterface> = zone_interfaces
+        .iter()
+        .cloned()
+        .map(|zone_interface| (zone_interface.interface_name.clone(), zone_interface))
+        .collect();
+    let expected_zone_interface_id = zone_interfaces[0].id.clone();
+    valid.bundle.zone_interfaces = zone_interfaces;
+
+    let (request, _, _) = create_snapshot_request(valid.bundle);
+    let push_response = snapshot_client
+        .push_active_config_snapshot(request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(push_response.accepted);
+
+    let raw_response = query_client
+        .get_zone_interfaces(GetZoneInterfacesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(raw_response.zone_interfaces.len(), expected_by_name.len());
+
+    for zone_interface in &raw_response.zone_interfaces {
+        let expected = expected_by_name
+            .get(&zone_interface.interface_name)
+            .expect("raw interface present in expected map");
+        assert_eq!(zone_interface.id, expected.id);
+        assert_eq!(zone_interface.zone_id, expected.zone_id);
+        assert_eq!(zone_interface.vlan_id, expected.vlan_id);
+        assert_eq!(zone_interface.status, InterfaceStatus::Unspecified as i32);
+        assert!(zone_interface.addresses.is_empty());
+    }
+
+    let single_response = query_client
+        .get_zone_interface(GetZoneInterfaceRequest {
+            id: expected_zone_interface_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let single = single_response
+        .zone_interface
+        .expect("zone interface should be returned");
+    assert_eq!(single.id, expected_zone_interface_id);
+    assert_eq!(single.interface_name, "eth-live-up");
+    assert_eq!(single.status, InterfaceStatus::Unspecified as i32);
+    assert!(single.addresses.is_empty());
+
+    let live_response = query_client
+        .get_live_zone_interfaces(GetLiveZoneInterfacesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    let live_by_name: HashMap<String, ZoneInterface> = live_response
+        .zone_interfaces
+        .into_iter()
+        .map(|zone_interface| (zone_interface.interface_name.clone(), zone_interface))
+        .collect();
+
+    assert_eq!(
+        live_by_name
+            .get("eth-live-up")
+            .expect("live up interface present")
+            .status,
+        InterfaceStatus::Active as i32
+    );
+    assert_eq!(
+        live_by_name
+            .get("eth-live-up")
+            .expect("live up interface present")
+            .addresses,
+        vec!["192.168.50.10/24".to_string(), "fe80::10/64".to_string()]
+    );
+
+    assert_eq!(
+        live_by_name
+            .get("eth-live-down")
+            .expect("live down interface present")
+            .status,
+        InterfaceStatus::Inactive as i32
+    );
+    assert_eq!(
+        live_by_name
+            .get("eth-live-unknown")
+            .expect("live unknown interface present")
+            .status,
+        InterfaceStatus::Unknown as i32
+    );
+    assert_eq!(
+        live_by_name
+            .get("eth-live-missing")
+            .expect("missing interface present")
+            .status,
+        InterfaceStatus::Missing as i32
+    );
+    assert!(
+        live_by_name
+            .get("eth-live-missing")
+            .expect("missing interface present")
+            .addresses
+            .is_empty()
+    );
 }
 
 #[tokio::test]
