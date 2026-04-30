@@ -18,6 +18,10 @@ import type { IUserRepository } from '../../domain/repositories/user.repository.
 import { USER_REPOSITORY_TOKEN } from '../../domain/repositories/user.repository.js';
 import type { IUserRolesRepository } from '../../domain/repositories/user-roles.repository.js';
 import { USER_ROLES_REPOSITORY_TOKEN } from '../../domain/repositories/user-roles.repository.js';
+import {
+  IDENTITY_CONFIG_REPOSITORY_TOKEN,
+  type IIdentityConfigRepository,
+} from '../../domain/repositories/identity-config.repository.js';
 import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
 import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
 import type { IZoneInterfaceRepository } from '../../domain/repositories/zone-interface.repository.js';
@@ -34,6 +38,7 @@ import {
 } from '../../domain/value-objects/config-snapshot-payload.interface.js';
 import { Checksum } from '../../domain/value-objects/checksum.vo.js';
 import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
+import { IdentityConfigJsonMapper } from '../../infrastructure/persistence/mappers/identity-config-json.mapper.js';
 import type { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.js';
 import type { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 import type { IConfigSnapshotPushService } from '../ports/config-snapshot-push-service.interface.js';
@@ -75,6 +80,8 @@ export class ApplyConfigSnapshotUseCase {
     private readonly firewallCertificateRepository: IFirewallCertificateRepository,
     @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
     private readonly sslBypassRepository: ISslBypassRepository,
+    @Inject(IDENTITY_CONFIG_REPOSITORY_TOKEN)
+    private readonly identityConfigRepository: IIdentityConfigRepository,
   ) {}
 
   async execute(
@@ -96,6 +103,7 @@ export class ApplyConfigSnapshotUseCase {
       cert.getCertType() === 'TLS_SERVER' ? true : cert.getIsActive(),
     );
     const activeBypass = await this.sslBypassRepository.findActive();
+    const identityConfig = await this.identityConfigRepository.find();
     const allConfigSnapshots =
       await this.configSnapshotRepository.findAllSnapshots();
     const currentActiveSnapshot = allConfigSnapshots.find((snapshot) =>
@@ -139,6 +147,7 @@ export class ApplyConfigSnapshotUseCase {
           items: [...snapshotCerts],
         },
         tls_inspection_policy: tlsInspectionPolicy,
+        identity_config: IdentityConfigJsonMapper.toPayload(identityConfig),
         users: {
           items: [...allUsers],
         },

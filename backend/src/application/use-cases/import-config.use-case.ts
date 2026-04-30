@@ -24,6 +24,10 @@ import {
   type IFirewallCertificateRepository,
 } from "../../domain/repositories/firewall-certificate.repository.js";
 import {
+  IDENTITY_CONFIG_REPOSITORY_TOKEN,
+  type IIdentityConfigRepository,
+} from "../../domain/repositories/identity-config.repository.js";
+import {
   type INatRulesRepository,
   NAT_RULES_REPOSITORY_TOKEN,
 } from "../../domain/repositories/nat-rules.repository.js";
@@ -57,6 +61,7 @@ import { NatType } from "../../domain/value-objects/nat-type.vo.js";
 import { Port } from "../../domain/value-objects/port.vo.js";
 import { Priority } from "../../domain/value-objects/priority.vo.js";
 import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
+import { IdentityConfigJsonMapper } from "../../infrastructure/persistence/mappers/identity-config-json.mapper.js";
 import { ImportConfigDto } from "../dtos/import-config.dto";
 import { ImportConfigResponseDto } from "../dtos/import-config-response.dto";
 import {
@@ -99,6 +104,8 @@ export class ImportConfigUseCase {
     private readonly firewallCertificateRepository: IFirewallCertificateRepository,
     @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
     private readonly sslBypassRepository: ISslBypassRepository,
+    @Inject(IDENTITY_CONFIG_REPOSITORY_TOKEN)
+    private readonly identityConfigRepository: IIdentityConfigRepository,
   ) {}
 
   async execute(dto: ImportConfigDto): Promise<ImportConfigResponseDto> {
@@ -259,6 +266,9 @@ export class ImportConfigUseCase {
         [],
       ),
     );
+    const importedIdentityConfig = IdentityConfigJsonMapper.toDomain(
+      payload.bundle.identity_config ?? IdentityConfigJsonMapper.emptyRecord(),
+    );
 
     const domainPayload: ConfigSnapshotPayload = {
       bundle: {
@@ -274,6 +284,9 @@ export class ImportConfigUseCase {
         firewall_certificates: { items: importedCerts },
         tls_inspection_policy: normalizeTlsInspectionPolicy(
           payload.bundle.tls_inspection_policy,
+        ),
+        identity_config: IdentityConfigJsonMapper.toPayload(
+          importedIdentityConfig,
         ),
         users: { items: importedUsers },
       },
@@ -295,6 +308,7 @@ export class ImportConfigUseCase {
       await this.natRulesRepository.overwriteAll(importedNatRules);
       await this.firewallCertificateRepository.overwriteAll(importedCerts);
       await this.sslBypassRepository.overwriteAll(importedBypass);
+      await this.identityConfigRepository.overwrite(importedIdentityConfig);
 
       const currentActiveSnapshot = allConfigSnapshots.find((s) =>
         s.getIsActive(),

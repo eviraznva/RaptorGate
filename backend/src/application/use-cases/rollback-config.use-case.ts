@@ -13,6 +13,10 @@ import {
   NAT_RULES_REPOSITORY_TOKEN,
 } from '../../domain/repositories/nat-rules.repository.js';
 import {
+  IDENTITY_CONFIG_REPOSITORY_TOKEN,
+  type IIdentityConfigRepository,
+} from '../../domain/repositories/identity-config.repository.js';
+import {
   type IRulesRepository,
   RULES_REPOSITORY_TOKEN,
 } from '../../domain/repositories/rules-repository.js';
@@ -38,6 +42,7 @@ import {
   CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN,
   type IConfigSnapshotPushService,
 } from '../ports/config-snapshot-push-service.interface.js';
+import { IdentityConfigJsonMapper } from '../../infrastructure/persistence/mappers/identity-config-json.mapper.js';
 
 @Injectable()
 export class RollbackConfigUseCase {
@@ -60,6 +65,8 @@ export class RollbackConfigUseCase {
     private readonly firewallCertificateRepository: IFirewallCertificateRepository,
     @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
     private readonly sslBypassRepository: ISslBypassRepository,
+    @Inject(IDENTITY_CONFIG_REPOSITORY_TOKEN)
+    private readonly identityConfigRepository: IIdentityConfigRepository,
     @Inject(CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN)
     private readonly configSnapshotPushService: IConfigSnapshotPushService,
   ) {}
@@ -89,6 +96,14 @@ export class RollbackConfigUseCase {
     );
     await this.sslBypassRepository.overwriteAll(
       configBundle.bundle.ssl_bypass_list.items,
+    );
+    await this.identityConfigRepository.overwrite(
+      IdentityConfigJsonMapper.payloadToDomain(
+        configBundle.bundle.identity_config ??
+          IdentityConfigJsonMapper.recordToPayload(
+            IdentityConfigJsonMapper.emptyRecord(),
+          ),
+      ),
     );
     await this.configSnapshotPushService.pushActiveConfigSnapshot(
       configSnapshot,

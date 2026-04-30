@@ -15,6 +15,7 @@ import { ImportConfigUseCase } from '../application/use-cases/import-config.use-
 import { RollbackConfigUseCase } from '../application/use-cases/rollback-config.use-case.js';
 import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../domain/repositories/config-snapshot.repository.js';
 import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../domain/repositories/firewall-certificate.repository.js';
+import { IDENTITY_CONFIG_REPOSITORY_TOKEN } from '../domain/repositories/identity-config.repository.js';
 import { NAT_RULES_REPOSITORY_TOKEN } from '../domain/repositories/nat-rules.repository.js';
 import { SSL_BYPASS_REPOSITORY_TOKEN } from '../domain/repositories/ssl-bypass.repository.js';
 import { PERMISSION_REPOSITORY_TOKEN } from '../domain/repositories/permission.repository.js';
@@ -35,10 +36,12 @@ import {
   RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
 } from '../infrastructure/adapters/grpc-raptor-lang-validation.service.js';
 import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
+import { IdentityBootstrapSeedService } from '../infrastructure/identity/identity-bootstrap-seed.service.js';
 import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
 import { FileStore } from '../infrastructure/persistence/json/file-store.js';
 import { JsonConfigSnapshotRepository } from '../infrastructure/persistence/repositories/json-config-snapshot.repository.js';
 import { JsonFirewallCertificateRepository } from '../infrastructure/persistence/repositories/json-firewall-certificate.repository.js';
+import { JsonIdentityConfigRepository } from '../infrastructure/persistence/repositories/json-identity-config.repository.js';
 import { JsonNatRuleRepository } from '../infrastructure/persistence/repositories/json-nat-rule.repository.js';
 import { JsonSslBypassRepository } from '../infrastructure/persistence/repositories/json-ssl-bypass.repository.js';
 import { JsonPermissionRepository } from '../infrastructure/persistence/repositories/json-permission.repository.js';
@@ -151,6 +154,7 @@ import { Env } from '../shared/config/env.validation.js';
     ExportConfigUseCase,
     ImportConfigUseCase,
     ConfigSnapshotDiffService,
+    IdentityBootstrapSeedService,
     GrpcConfigSnapshotPushService,
     FileStore,
     Mutex,
@@ -197,6 +201,10 @@ import { Env } from '../shared/config/env.validation.js';
     {
       provide: FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
       useClass: JsonFirewallCertificateRepository,
+    },
+    {
+      provide: IDENTITY_CONFIG_REPOSITORY_TOKEN,
+      useClass: JsonIdentityConfigRepository,
     },
     {
       provide: SSL_BYPASS_REPOSITORY_TOKEN,

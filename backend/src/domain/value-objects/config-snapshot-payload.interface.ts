@@ -1,5 +1,9 @@
 import { FirewallCertificate } from '../entities/firewall-certificate.entity.js';
 import { DnsBlacklistEntry } from '../entities/dns-blacklist-entry.entity.js';
+import { IdentityAuthenticationProfile } from '../entities/identity-authentication-profile.entity.js';
+import { IdentitySettings } from '../entities/identity-settings.entity.js';
+import { LdapServerProfile } from '../entities/ldap-server-profile.entity.js';
+import { RadiusServerProfile } from '../entities/radius-server-profile.entity.js';
 import { SslBypassEntry } from '../entities/ssl-bypass-entry.entity.js';
 import { ZoneInterface } from '../entities/zone-interface.entity.js';
 import { FirewallRule } from '../entities/firewall-rule.entity.js';
@@ -37,6 +41,22 @@ export function normalizeTlsInspectionPolicy(
   };
 }
 
+export interface IdentityConfigBundlePayload {
+  radius_server_profiles: { items: RadiusServerProfile[] };
+  ldap_server_profiles: { items: LdapServerProfile[] };
+  authentication_profiles: { items: IdentityAuthenticationProfile[] };
+  settings: IdentitySettings;
+}
+
+export function emptyIdentityConfigPayload(): IdentityConfigBundlePayload {
+  return {
+    radius_server_profiles: { items: [] },
+    ldap_server_profiles: { items: [] },
+    authentication_profiles: { items: [] },
+    settings: IdentitySettings.create(null, null, null, null),
+  };
+}
+
 export interface ConfigBundlePayload {
   rules: { items: FirewallRule[] };
   zones: { items: Zone[] };
@@ -49,6 +69,7 @@ export interface ConfigBundlePayload {
   ml_model: MlModel | null;
   firewall_certificates: { items: FirewallCertificate[] };
   tls_inspection_policy?: TlsInspectionPolicyPayload | null;
+  identity_config: IdentityConfigBundlePayload;
   users: { items: User[] };
   // roles: { items: Role[] };
   // permissions: { items: Permission[] };

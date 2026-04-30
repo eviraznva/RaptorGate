@@ -11,6 +11,10 @@ export type ConfigDiffSection =
   | 'ips_signatures'
   | 'firewall_certificates'
   | 'users'
+  | 'radius_server_profiles'
+  | 'ldap_server_profiles'
+  | 'authentication_profiles'
+  | 'identity_settings'
   | 'tls_inspection_policy'
   | 'ml_model';
 

@@ -6,6 +6,7 @@ import {
 } from '../../../domain/value-objects/config-snapshot-payload.interface.js';
 import { DnsBlacklistFile } from '../schemas/dns-blacklist.schema';
 import { FirewallCertificatesFile } from '../schemas/firewall-certificates.schema';
+import { IdentityConfigurationRecord } from '../schemas/identity-config.schema';
 import { IpsSignaturesFile } from '../schemas/ips-signatures.schema';
 import { NatRulesFile } from '../schemas/nat-rules.schema';
 import { RulesFile } from '../schemas/rules.schema';
@@ -15,6 +16,7 @@ import { ZoneInterfacesFile } from '../schemas/zone-interfaces.schema';
 import { ZonePairsFile } from '../schemas/zone-pairs.schema';
 import { ZonesFile } from '../schemas/zones.schema';
 import { FirewallCertificateJsonMapper } from './firewall-certificate-json.mapper';
+import { IdentityConfigJsonMapper } from './identity-config-json.mapper';
 import { NatRuleJsonMapper } from './nat-rule-json.mapper';
 import { RuleJsonMapper } from './rule-json.mapper';
 import { SslBypassJsonMapper } from './ssl-bypass-json.mapper';
@@ -35,6 +37,7 @@ export interface ConfigBundlePayloadSchema {
   ml_model: null;
   firewall_certificates: FirewallCertificatesFile;
   tls_inspection_policy?: TlsInspectionPolicyPayload;
+  identity_config?: IdentityConfigurationRecord;
   users: UsersFile;
   // roles: RolesFile;
   // permissions: PermissionsFile;
@@ -116,6 +119,9 @@ export function mapConfigSnapshotToPayloadRecord(
       tls_inspection_policy: normalizeTlsInspectionPolicy(
         payload.bundle.tls_inspection_policy,
       ),
+      identity_config: IdentityConfigJsonMapper.payloadToRecord(
+        payload.bundle.identity_config,
+      ),
       users: {
         items: toUsersFile,
       },
@@ -195,6 +201,9 @@ export function mapConfigBundlePayloadToDomain(
       },
       tls_inspection_policy: normalizeTlsInspectionPolicy(
         payload.bundle.tls_inspection_policy,
+      ),
+      identity_config: IdentityConfigJsonMapper.recordToPayload(
+        payload.bundle.identity_config,
       ),
       users: {
         items: toUsersDomain,

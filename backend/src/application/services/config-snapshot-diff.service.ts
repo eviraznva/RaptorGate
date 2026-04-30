@@ -26,6 +26,10 @@ const SENSITIVE_KEYS = new Set([
   'recoveryToken',
   'certificatePem',
   'privateKeyRef',
+  'sharedSecret',
+  'sharedSecretRef',
+  'bindPassword',
+  'bindPasswordRef',
 ]);
 
 const COLLECTION_SECTIONS: {
@@ -44,6 +48,18 @@ const COLLECTION_SECTIONS: {
     section: 'firewall_certificates',
     path: ['bundle', 'firewall_certificates', 'items'],
   },
+  {
+    section: 'radius_server_profiles',
+    path: ['bundle', 'identity_config', 'radius_server_profiles', 'items'],
+  },
+  {
+    section: 'ldap_server_profiles',
+    path: ['bundle', 'identity_config', 'ldap_server_profiles', 'items'],
+  },
+  {
+    section: 'authentication_profiles',
+    path: ['bundle', 'identity_config', 'authentication_profiles', 'items'],
+  },
   { section: 'users', path: ['bundle', 'users', 'items'] },
 ];
 
@@ -54,6 +70,10 @@ const OBJECT_SECTIONS: {
   {
     section: 'tls_inspection_policy',
     path: ['bundle', 'tls_inspection_policy'],
+  },
+  {
+    section: 'identity_settings',
+    path: ['bundle', 'identity_config', 'settings'],
   },
   { section: 'ml_model', path: ['bundle', 'ml_model'] },
 ];
