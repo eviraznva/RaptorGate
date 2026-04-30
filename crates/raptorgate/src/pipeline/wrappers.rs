@@ -636,7 +636,8 @@ impl Stage for PolicyEvalStage {
                     "allow_warn",
                     &msg,
                 );
-                ctx.with_warnings_mut(|w| w.push(msg));
+                ctx.with_warnings_mut(|w| w.push(msg.clone()));
+                events::emit(Event::new(EventKind::PolicyWarning { message: msg, verdict: "allow" }));
                 StageOutcome::Continue
             }
             Some(Verdict::DropWarn(msg)) => {
@@ -647,7 +648,8 @@ impl Stage for PolicyEvalStage {
                     "drop_warn",
                     &msg,
                 );
-                ctx.with_warnings_mut(|w| w.push(msg));
+                ctx.with_warnings_mut(|w| w.push(msg.clone()));
+                events::emit(Event::new(EventKind::PolicyWarning { message: msg, verdict: "drop" }));
                 StageOutcome::Halt
             }
             None => {

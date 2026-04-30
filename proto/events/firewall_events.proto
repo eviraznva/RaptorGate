@@ -68,6 +68,7 @@ message EventKind {
     RouteAddedEvent    route_added    = 28;
     RouteModifiedEvent route_modified = 29;
     RouteDeletedEvent  route_deleted  = 30;
+    PolicyWarningEvent policy_warning = 31;
   }
 }
 
@@ -301,4 +302,9 @@ message InterfaceRenamedEvent {
   string new_interface_name = 3;
   string status = 4;
   repeated string addresses = 5;
+}
+
+message PolicyWarningEvent {
+  string message = 1;
+  string verdict = 2;
 }

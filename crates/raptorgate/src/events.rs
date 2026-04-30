@@ -375,6 +375,7 @@ pub enum EventKind {
     RouteAdded { route: RouteInfo },
     RouteModified { old_route: RouteInfo, new_route: RouteInfo },
     RouteDeleted { route: RouteInfo },
+    PolicyWarning { message: String, verdict: &'static str },
     EventBusConnectedEvent {}
 }
 
@@ -411,6 +412,7 @@ impl EventKind {
             | E::RouteAdded { .. }
             | E::RouteModified { .. }
             | E::RouteDeleted { .. }
+            | E::PolicyWarning { .. }
             | E::EventBusConnectedEvent { .. } => true,
         }
     }
@@ -730,6 +732,11 @@ impl From<EventKind> for proto::EventKind {
                             out_interface_index: route.out_interface_index,
                             priority: route.priority,
                         }),
+                    }),
+                EventKind::PolicyWarning { message, verdict } =>
+                    Item::PolicyWarning(proto::PolicyWarningEvent {
+                        message,
+                        verdict: verdict.to_string(),
                     }),
                 EventKind::EventBusConnectedEvent { .. } => Item::EventBusConnected(proto::EventBusConnectedEvent {})
             }),
