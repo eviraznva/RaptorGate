@@ -120,9 +120,9 @@ impl ZoneInterface {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZonePair {
-    src_zone_id: ZoneId,
-    dst_zone_id: ZoneId,
-    default_policy: DefaultPolicy,
+    pub src_zone_id: ZoneId,
+    pub dst_zone_id: ZoneId,
+    pub default_policy: DefaultPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
