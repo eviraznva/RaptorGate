@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -23,6 +24,7 @@ import {
 import {
   ApiError400,
   ApiError401,
+  ApiError403,
   ApiError429,
   ApiError500,
 } from '../decorators/api-error-response.decorator.js';
@@ -31,6 +33,8 @@ import { IdentityLoginDto } from '../dtos/identity-login.dto.js';
 import { IdentityLoginResponseDto } from '../dtos/identity-login-response.dto.js';
 import { IdentityLogoutResponseDto } from '../dtos/identity-logout-response.dto.js';
 import { IdentitySessionResponseDto } from '../dtos/identity-session-response.dto.js';
+
+const PORTAL_INGRESS_HEADER = 'x-raptorgate-portal-ingress';
 
 // Endpointy identity dla portalu/captive sa publiczne, bo uzytkownik nie ma JWT admina.
 // sourceIp pochodzi z TCP peer albo z XFF od lokalnego proxy.
@@ -59,6 +63,7 @@ export class IdentityController {
   @ApiCreatedEnvelope(IdentityLoginResponseDto, 'Identity session created')
   @ApiError400('Validation failed or invalid source IP')
   @ApiError401('RADIUS rejected credentials')
+  @ApiError403('Identity portal is only available on client-facing ingress')
   @ApiError429('Too many login attempts')
   @ApiError500()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -66,6 +71,7 @@ export class IdentityController {
     @Body() dto: IdentityLoginDto,
     @Req() req: Request,
   ): Promise<IdentityLoginResponseDto> {
+    this.assertPortalIngress(req);
     const sourceIp = this.resolveSourceIp(req);
     const result = await this.authenticateIdentityUseCase.execute({
       username: dto.username,
@@ -93,10 +99,12 @@ export class IdentityController {
   @ResponseMessage('Identity session revoked')
   @ApiOkEnvelope(IdentityLogoutResponseDto, 'Identity session revoked')
   @ApiError400('Invalid source IP')
+  @ApiError403('Identity portal is only available on client-facing ingress')
   @ApiError429('Too many logout attempts')
   @ApiError500()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async logout(@Req() req: Request): Promise<IdentityLogoutResponseDto> {
+    this.assertPortalIngress(req);
     const sourceIp = this.resolveSourceIp(req);
     return this.logoutIdentityUseCase.execute({ sourceIp });
   }
@@ -114,10 +122,12 @@ export class IdentityController {
   @ResponseMessage('Identity session status')
   @ApiOkEnvelope(IdentitySessionResponseDto, 'Identity session status')
   @ApiError400('Invalid source IP')
+  @ApiError403('Identity portal is only available on client-facing ingress')
   @ApiError429('Too many session lookups')
   @ApiError500()
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async session(@Req() req: Request): Promise<IdentitySessionResponseDto> {
+    this.assertPortalIngress(req);
     const sourceIp = this.resolveSourceIp(req);
     const result = await this.getIdentitySessionUseCase.execute({ sourceIp });
 
@@ -144,6 +154,23 @@ export class IdentityController {
     }
 
     return peerIp;
+  }
+
+  private assertPortalIngress(req: Request): void {
+    const peerIp = this.normalizeIp(req.socket?.remoteAddress ?? '');
+    if (!this.isTrustedProxyPeer(peerIp)) {
+      throw new ForbiddenException(
+        'Identity portal is only available on client-facing ingress',
+      );
+    }
+
+    const raw = req.headers[PORTAL_INGRESS_HEADER];
+    const marker = Array.isArray(raw) ? raw[raw.length - 1] : raw;
+    if (marker?.trim() !== '1') {
+      throw new ForbiddenException(
+        'Identity portal is only available on client-facing ingress',
+      );
+    }
   }
 
   private resolveForwardedFor(header: string | string[] | undefined): string | null {
