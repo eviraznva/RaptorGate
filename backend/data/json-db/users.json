@@ -4,13 +4,13 @@
       "id": "00000000-0000-4000-8000-000000000001",
       "username": "admin",
       "passwordHash": "$2b$12$IvZ.EXRyRNI9y7iQFoV.8emVe9hYXwK8lF.lkj.aPLmnFVUaD5KjW",
-      "refreshToken": "ddfc5907-0d4e-455f-828d-17efdd184b8d",
-      "refreshTokenExpiry": "2026-04-26T17:48:33.538Z",
+      "refreshToken": "a6353194-cbcf-4de7-b34a-f14413bb4c36",
+      "refreshTokenExpiry": "2026-05-01T13:26:28.079Z",
       "recoveryToken": "$2b$12$EBKZ.2QHgdezJcSes0418OLzPquOobeA9KwG7YbTdZLMfmtnBnCZG",
       "isFirstLogin": false,
       "showRecoveryToken": false,
       "createdAt": "2026-03-18T21:30:42.644Z",
-      "updatedAt": "2026-04-26T16:48:33.539Z"
+      "updatedAt": "2026-05-01T12:26:28.080Z"
     },
     {
       "id": "d57e7252-90af-4c8f-9b3e-8ca453657c66",

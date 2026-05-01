@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import {
   formatSnapshotDate,
   shortenChecksum,
@@ -8,7 +9,20 @@ import type { ConfigSnapshot, SnapshotType } from "./types";
 type ConfigControlHistoryPanelProps = {
   snapshots: ConfigSnapshot[];
   selectedSnapshotId: string;
+  activeSnapshotId: string;
+  isLoading: boolean;
+  errorMessage: string | null;
+  onSelectSnapshot: (id: string) => void;
 };
+
+type SnapshotFilter = SnapshotType | "all";
+
+const SNAPSHOT_FILTERS: SnapshotFilter[] = [
+  "all",
+  "manual_import",
+  "rollback_point",
+  "auto_save",
+];
 
 const typeBadgeClassName: Record<SnapshotType, string> = {
   manual_import:
@@ -21,7 +35,39 @@ const typeBadgeClassName: Record<SnapshotType, string> = {
 export default function ConfigControlHistoryPanel({
   snapshots,
   selectedSnapshotId,
+  activeSnapshotId,
+  isLoading,
+  errorMessage,
+  onSelectSnapshot,
 }: ConfigControlHistoryPanelProps) {
+  const [typeFilter, setTypeFilter] = useState<SnapshotFilter>("all");
+  const [search, setSearch] = useState("");
+
+  const filteredSnapshots = useMemo(() => {
+    const searchTerm = search.trim().toLowerCase();
+
+    return snapshots.filter((snapshot) => {
+      if (typeFilter !== "all" && snapshot.snapshotType !== typeFilter) {
+        return false;
+      }
+
+      if (!searchTerm) {
+        return true;
+      }
+
+      return [
+        snapshot.id,
+        snapshot.checksum,
+        snapshot.createdBy,
+        snapshot.snapshotType,
+        snapshot.changeSummary ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(searchTerm);
+    });
+  }, [snapshots, typeFilter, search]);
+
   return (
     <section className="bg-[#161616] border border-[#262626] min-w-0">
       <div className="flex items-center justify-between px-5 py-4 border-b border-[#262626]">
@@ -35,36 +81,29 @@ export default function ConfigControlHistoryPanel({
 
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-[#262626]">
         <div className="flex overflow-x-auto">
-          <button
-            type="button"
-            className="text-[10px] uppercase tracking-[0.14em] px-3 py-1.5 border border-[#06b6d450] bg-[#06b6d410] text-[#06b6d4]"
-          >
-            All
-          </button>
-          <button
-            type="button"
-            className="text-[10px] uppercase tracking-[0.14em] px-3 py-1.5 border-y border-r border-[#262626] text-[#8a8a8a]"
-          >
-            manual_import
-          </button>
-          <button
-            type="button"
-            className="text-[10px] uppercase tracking-[0.14em] px-3 py-1.5 border-y border-r border-[#262626] text-[#8a8a8a]"
-          >
-            rollback_point
-          </button>
-          <button
-            type="button"
-            className="text-[10px] uppercase tracking-[0.14em] px-3 py-1.5 border-y border-r border-[#262626] text-[#8a8a8a]"
-          >
-            auto_save
-          </button>
+          {SNAPSHOT_FILTERS.map((filter, index) => (
+            <button
+              key={filter}
+              type="button"
+              onClick={() => setTypeFilter(filter)}
+              className={`text-[10px] uppercase tracking-[0.14em] px-3 py-1.5 ${
+                index === 0 ? "border" : "border-y border-r"
+              } ${
+                typeFilter === filter
+                  ? "border-[#06b6d450] bg-[#06b6d410] text-[#06b6d4]"
+                  : "border-[#262626] text-[#8a8a8a] hover:text-[#f5f5f5]"
+              }`}
+            >
+              {filter === "all" ? "All" : filter}
+            </button>
+          ))}
         </div>
 
         <input
           className="bg-[#0c0c0c] border border-[#262626] px-3 py-2 text-base text-[#f5f5f5] min-w-[240px]"
           placeholder="Search by id, checksum, actor"
-          readOnly
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
         />
       </div>
 
@@ -93,52 +132,86 @@ export default function ConfigControlHistoryPanel({
             </tr>
           </thead>
           <tbody>
-            {snapshots.map((snapshot) => (
-              <tr
-                key={snapshot.id}
-                className={`border-b border-[#262626] transition-colors ${
-                  snapshot.id === selectedSnapshotId
-                    ? "bg-[#06b6d410]"
-                    : "hover:bg-[#1b1b1b]"
-                }`}
-              >
-                <td className="p-3 text-base font-mono text-[#f5f5f5]">
-                  v{snapshot.versionNumber}
-                </td>
-                <td className="p-3">
-                  <span
-                    className={`inline-block text-[10px] tracking-[0.14em] uppercase ${typeBadgeClassName[snapshot.snapshotType]}`}
-                  >
-                    {snapshot.snapshotType}
-                  </span>
-                </td>
-                <td className="p-3 text-[12px] font-mono text-[#8a8a8a]" title={snapshot.checksum}>
-                  {shortenChecksum(snapshot.checksum)}
-                </td>
-                <td className="p-3 text-[11px] uppercase tracking-[0.13em]">
-                  <span
-                    className={`inline-flex items-center gap-2 ${
-                      snapshot.isActive ? "text-[#10b981]" : "text-[#4a4a4a]"
-                    }`}
-                  >
-                    <span
-                      className={`h-2 w-2 rounded-full ${
-                        snapshot.isActive
-                          ? "bg-[#10b981] shadow-[0_0_6px_rgba(16,185,129,0.7)]"
-                          : "bg-[#4a4a4a]"
-                      }`}
-                    />
-                    {snapshot.isActive ? "active" : "inactive"}
-                  </span>
-                </td>
-                <td className="p-3 text-[12px] font-mono text-[#8a8a8a]">
-                  {formatSnapshotDate(snapshot.createdAt)}
-                </td>
-                <td className="p-3 text-[12px] font-mono text-[#8a8a8a]" title={snapshot.createdBy}>
-                  {shortenId(snapshot.createdBy)}
+            {isLoading ? (
+              <tr>
+                <td className="p-5 text-[12px] text-[#8a8a8a]" colSpan={6}>
+                  Loading snapshot history...
                 </td>
               </tr>
-            ))}
+            ) : errorMessage ? (
+              <tr>
+                <td className="p-5 text-[12px] text-[#ef4444]" colSpan={6}>
+                  {errorMessage}
+                </td>
+              </tr>
+            ) : filteredSnapshots.length === 0 ? (
+              <tr>
+                <td className="p-5 text-[12px] text-[#8a8a8a]" colSpan={6}>
+                  No snapshots match current filters.
+                </td>
+              </tr>
+            ) : (
+              filteredSnapshots.map((snapshot) => (
+                (() => {
+                  const isActive =
+                    snapshot.isActive || snapshot.id === activeSnapshotId;
+
+                  return (
+                    <tr
+                      key={snapshot.id}
+                      onClick={() => onSelectSnapshot(snapshot.id)}
+                      className={`border-b border-[#262626] transition-colors ${
+                        snapshot.id === selectedSnapshotId
+                          ? "bg-[#06b6d410]"
+                          : "hover:bg-[#1b1b1b] cursor-pointer"
+                      }`}
+                    >
+                      <td className="p-3 text-base font-mono text-[#f5f5f5]">
+                        v{snapshot.versionNumber}
+                      </td>
+                      <td className="p-3">
+                        <span
+                          className={`inline-block text-[10px] tracking-[0.14em] uppercase ${typeBadgeClassName[snapshot.snapshotType]}`}
+                        >
+                          {snapshot.snapshotType}
+                        </span>
+                      </td>
+                      <td
+                        className="p-3 text-[12px] font-mono text-[#8a8a8a]"
+                        title={snapshot.checksum}
+                      >
+                        {shortenChecksum(snapshot.checksum)}
+                      </td>
+                      <td className="p-3 text-[11px] uppercase tracking-[0.13em]">
+                        <span
+                          className={`inline-flex items-center gap-2 ${
+                            isActive ? "text-[#10b981]" : "text-[#4a4a4a]"
+                          }`}
+                        >
+                          <span
+                            className={`h-2 w-2 rounded-full ${
+                              isActive
+                                ? "bg-[#10b981] shadow-[0_0_6px_rgba(16,185,129,0.7)]"
+                                : "bg-[#4a4a4a]"
+                            }`}
+                          />
+                          {isActive ? "active" : "inactive"}
+                        </span>
+                      </td>
+                      <td className="p-3 text-[12px] font-mono text-[#8a8a8a]">
+                        {formatSnapshotDate(snapshot.createdAt)}
+                      </td>
+                      <td
+                        className="p-3 text-[12px] font-mono text-[#8a8a8a]"
+                        title={snapshot.createdBy}
+                      >
+                        {shortenId(snapshot.createdBy)}
+                      </td>
+                    </tr>
+                  );
+                })()
+              ))
+            )}
           </tbody>
         </table>
       </div>

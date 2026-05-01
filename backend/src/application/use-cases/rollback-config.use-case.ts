@@ -81,6 +81,20 @@ export class RollbackConfigUseCase {
     await this.sslBypassRepository.overwriteAll(
       configBundle.bundle.ssl_bypass_list.items,
     );
+
+    const currentActiveSnapshot =
+      await this.configSnapshotRepository.findActiveSnapshot();
+    if (
+      currentActiveSnapshot &&
+      currentActiveSnapshot.getId() !== configSnapshot.getId()
+    ) {
+      currentActiveSnapshot.setIsActive(false);
+      await this.configSnapshotRepository.save(currentActiveSnapshot);
+    }
+
+    configSnapshot.setIsActive(true);
+    await this.configSnapshotRepository.save(configSnapshot);
+
     await this.configSnapshotPushService.pushActiveConfigSnapshot(
       configSnapshot,
       'rollback',
