@@ -25,7 +25,11 @@ export default function MetricsCharts({
           <span className="observability-panel-code">CHART-01</span>
         </div>
         <div className="traffic-chart">
-          <svg viewBox="0 0 720 270" role="img" aria-label="Traffic pressure chart">
+          <svg
+            viewBox="0 0 720 270"
+            role="img"
+            aria-label="Traffic pressure chart"
+          >
             <path
               d={`${sparkPath(trafficValues, 680, 190)} L 680 220 L 0 220 Z`}
               transform="translate(20 22)"
@@ -50,8 +54,14 @@ export default function MetricsCharts({
             />
           </svg>
           <div className="chart-legend">
-            <span><i className="legend-cyan" />Throughput</span>
-            <span><i className="legend-red" />Drops</span>
+            <span>
+              <i className="legend-cyan" />
+              Throughput
+            </span>
+            <span>
+              <i className="legend-red" />
+              Drops
+            </span>
           </div>
         </div>
       </article>
@@ -75,9 +85,18 @@ export default function MetricsCharts({
             <small>events</small>
           </div>
           <div className="decision-list">
-            <span><i className="legend-green" />Observe/decrypt {decisionMix.allow}%</span>
-            <span><i className="legend-amber" />Alert/bypass {decisionMix.alert}%</span>
-            <span><i className="legend-red" />Block/error {decisionMix.block}%</span>
+            <span>
+              <i className="legend-green" />
+              Observe/decrypt {decisionMix.allow}%
+            </span>
+            <span>
+              <i className="legend-amber" />
+              Alert/bypass {decisionMix.alert}%
+            </span>
+            <span>
+              <i className="legend-red" />
+              Block/error {decisionMix.block}%
+            </span>
           </div>
         </div>
       </article>

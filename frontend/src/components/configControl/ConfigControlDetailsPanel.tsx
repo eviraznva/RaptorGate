@@ -7,8 +7,6 @@ type ConfigControlDetailsPanelProps = {
 export default function ConfigControlDetailsPanel({
   snapshot,
 }: ConfigControlDetailsPanelProps) {
-  console.log(snapshot);
-
   return (
     <section className="bg-[#161616] border border-[#262626] mt-4">
       <div className="flex items-center justify-between px-5 py-4 border-b border-[#262626]">
