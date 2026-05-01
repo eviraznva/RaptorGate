@@ -10,7 +10,8 @@ import {
   IDENTITY_SESSION_SYNC_SERVICE_TOKEN,
   type IIdentitySessionSyncService,
 } from '../../application/ports/identity-session-sync-service.interface.js';
-import { IdentityGroupResolverService } from '../../application/services/identity-group-resolver.service.js';
+import { AuthenticationGroupResolverService } from '../../application/services/authentication-group-resolver.service.js';
+import { AuthenticationProfileResolverService } from '../../application/services/authentication-profile-resolver.service.js';
 import type { IdentitySession } from '../../domain/entities/identity-session.entity.js';
 import {
   IDENTITY_SESSION_STORE_TOKEN,
@@ -36,8 +37,10 @@ export class IdentityGroupRefresherService
     private readonly store: IIdentitySessionStore,
     @Inject(IDENTITY_SESSION_SYNC_SERVICE_TOKEN)
     private readonly sync: IIdentitySessionSyncService,
-    @Inject(IdentityGroupResolverService)
-    private readonly resolver: IdentityGroupResolverService,
+    @Inject(AuthenticationProfileResolverService)
+    private readonly profileResolver: AuthenticationProfileResolverService,
+    @Inject(AuthenticationGroupResolverService)
+    private readonly groupResolver: AuthenticationGroupResolverService,
   ) {}
 
   onModuleInit(): void {
@@ -76,14 +79,17 @@ export class IdentityGroupRefresherService
     const username = session.getUsername();
     const ip = session.getSourceIp().getValue;
 
-    const resolution = await this.resolver.resolve({
+    const profile = await this.profileResolver.resolve('portal');
+    if (profile.kind !== 'resolved') return;
+
+    const resolution = await this.groupResolver.resolve(
+      profile,
       username,
-      vsaGroups: [],
-      forceRefresh: true,
-    });
+      [],
+    );
     if (
-      resolution.ldapDiagnostic === 'disabled' ||
-      resolution.ldapDiagnostic === 'skipped' ||
+      resolution.diagnostic === 'disabled' ||
+      resolution.diagnostic === 'skipped' ||
       resolution.source === 'none'
     ) {
       return;
@@ -98,10 +104,6 @@ export class IdentityGroupRefresherService
       if (!live || live.getId() !== session.getId()) return;
       if (sameGroups(live.getGroups(), resolution.groups)) return;
 
-      const nasIp = this.config.get('RADIUS_NAS_IP', { infer: true });
-      const nasIdentifier = this.config.get('RADIUS_NAS_IDENTIFIER', {
-        infer: true,
-      });
       try {
         await this.sync.upsertIdentitySession({
           id: live.getId(),
@@ -109,8 +111,8 @@ export class IdentityGroupRefresherService
           radiusUsername: username,
           macAddress: PLACEHOLDER_MAC,
           ipAddress: ip,
-          nasIp,
-          calledStationId: nasIdentifier,
+          nasIp: live.getNasIp(),
+          calledStationId: live.getCalledStationId(),
           authenticatedAt: live.getCreatedAt(),
           expiresAt: live.getExpiresAt(),
           groups: resolution.groups,

@@ -26,7 +26,6 @@ export class IdentitySecretReferenceValidatorService {
       refs.add(profile.getBindPasswordRef());
     }
 
-    // TODO(Issue D): include auth profile secret refs if admin auth adds them.
     for (const ref of refs) {
       await this.validateRef(ref);
     }
@@ -34,6 +33,7 @@ export class IdentitySecretReferenceValidatorService {
 
   private async validateRef(ref: string): Promise<void> {
     if (ref.startsWith('env:')) {
+      // env: refs sa swiadomym escape hatchem tylko dla wartosci sekretow.
       this.logger.warn({
         event: 'identity.secret_reference.env_allowed',
         message: 'identity config uses environment secret reference',

@@ -1,13 +1,10 @@
 import { createSocket, type Socket } from 'node:dgram';
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, Logger } from '@nestjs/common';
 import type {
   IRadiusAuthenticator,
   RadiusAuthRequest,
   RadiusAuthResult,
-  RadiusServerOptions,
 } from '../../application/ports/radius-authenticator.interface.js';
-import type { Env } from '../../shared/config/env.validation.js';
 import {
   buildAccessRequest,
   extractGroupsFromAttributes,
@@ -24,13 +21,8 @@ import {
 export class UdpRadiusAuthenticator implements IRadiusAuthenticator {
   private readonly logger = new Logger(UdpRadiusAuthenticator.name);
 
-  constructor(
-    @Inject(ConfigService)
-    private readonly configService: ConfigService<Env, true>,
-  ) {}
-
   async authenticate(request: RadiusAuthRequest): Promise<RadiusAuthResult> {
-    const server = request.server ?? this.serverFromEnv();
+    const server = request.server;
 
     let built;
     try {
@@ -113,22 +105,6 @@ export class UdpRadiusAuthenticator implements IRadiusAuthenticator {
     }
 
     return { kind: 'error', message: lastError ?? 'RADIUS attempts exhausted' };
-  }
-
-  // TODO(Issue D): remove env fallback after auth flow resolves active profiles.
-  private serverFromEnv(): RadiusServerOptions {
-    return {
-      host: this.configService.get('RADIUS_HOST', { infer: true }),
-      port: this.configService.get('RADIUS_PORT', { infer: true }),
-      secret: this.configService.get('RADIUS_SECRET', { infer: true }),
-      timeoutMs: this.configService.get('RADIUS_TIMEOUT_MS', { infer: true }),
-      retries: this.configService.get('RADIUS_RETRIES', { infer: true }),
-      nasIp: this.configService.get('RADIUS_NAS_IP', { infer: true }),
-      nasIdentifier: this.configService.get('RADIUS_NAS_IDENTIFIER', {
-        infer: true,
-      }),
-      calledStationId: null,
-    };
   }
 
   private sendOnce(

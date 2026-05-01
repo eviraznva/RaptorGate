@@ -12,6 +12,8 @@ export class IdentitySession {
     private readonly createdAt: Date,
     private expiresAt: Date,
     private groups: string[],
+    private readonly nasIp: string,
+    private readonly calledStationId: string,
   ) {}
 
   public static create(
@@ -21,8 +23,19 @@ export class IdentitySession {
     createdAt: Date,
     expiresAt: Date,
     groups: string[] = [],
+    nasIp = '127.0.0.1',
+    calledStationId = 'raptorgate',
   ): IdentitySession {
-    return new IdentitySession(id, username, sourceIp, createdAt, expiresAt, normalizeGroups(groups));
+    return new IdentitySession(
+      id,
+      username,
+      sourceIp,
+      createdAt,
+      expiresAt,
+      normalizeGroups(groups),
+      nasIp,
+      calledStationId,
+    );
   }
 
   public getId(): string {
@@ -47,6 +60,14 @@ export class IdentitySession {
 
   public getGroups(): string[] {
     return [...this.groups];
+  }
+
+  public getNasIp(): string {
+    return this.nasIp;
+  }
+
+  public getCalledStationId(): string {
+    return this.calledStationId;
   }
 
   public renew(newExpiresAt: Date): void {

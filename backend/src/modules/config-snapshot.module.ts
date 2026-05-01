@@ -32,7 +32,6 @@ import { UpdateLdapProfileUseCase } from '../application/use-cases/update-ldap-p
 import { UpdateRadiusProfileUseCase } from '../application/use-cases/update-radius-profile.use-case.js';
 import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../domain/repositories/config-snapshot.repository.js';
 import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../domain/repositories/firewall-certificate.repository.js';
-import { IDENTITY_CONFIG_REPOSITORY_TOKEN } from '../domain/repositories/identity-config.repository.js';
 import { NAT_RULES_REPOSITORY_TOKEN } from '../domain/repositories/nat-rules.repository.js';
 import { SSL_BYPASS_REPOSITORY_TOKEN } from '../domain/repositories/ssl-bypass.repository.js';
 import { PERMISSION_REPOSITORY_TOKEN } from '../domain/repositories/permission.repository.js';
@@ -60,7 +59,6 @@ import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
 import { FileStore } from '../infrastructure/persistence/json/file-store.js';
 import { JsonConfigSnapshotRepository } from '../infrastructure/persistence/repositories/json-config-snapshot.repository.js';
 import { JsonFirewallCertificateRepository } from '../infrastructure/persistence/repositories/json-firewall-certificate.repository.js';
-import { JsonIdentityConfigRepository } from '../infrastructure/persistence/repositories/json-identity-config.repository.js';
 import { JsonNatRuleRepository } from '../infrastructure/persistence/repositories/json-nat-rule.repository.js';
 import { JsonSslBypassRepository } from '../infrastructure/persistence/repositories/json-ssl-bypass.repository.js';
 import { JsonPermissionRepository } from '../infrastructure/persistence/repositories/json-permission.repository.js';
@@ -75,11 +73,13 @@ import { JsonZonePairRepository } from '../infrastructure/persistence/repositori
 import { ConfigController } from '../presentation/controllers/config.controller.js';
 import { IdentityConfigController } from '../presentation/controllers/identity-config.controller.js';
 import { Env } from '../shared/config/env.validation.js';
+import { IdentityConfigStoreModule } from './identity-config-store.module.js';
 import { SecretModule } from './secret.module.js';
 
 @Module({
   imports: [
     SecretModule,
+    IdentityConfigStoreModule,
     ClientsModule.registerAsync([
       {
         name: CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN,
@@ -246,10 +246,6 @@ import { SecretModule } from './secret.module.js';
     {
       provide: FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
       useClass: JsonFirewallCertificateRepository,
-    },
-    {
-      provide: IDENTITY_CONFIG_REPOSITORY_TOKEN,
-      useClass: JsonIdentityConfigRepository,
     },
     {
       provide: SSL_BYPASS_REPOSITORY_TOKEN,

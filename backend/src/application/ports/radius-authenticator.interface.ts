@@ -24,7 +24,7 @@ export interface RadiusAuthRequest {
   password: string;
   // sourceIp klienta — wedruje jako Calling-Station-Id (attr 31).
   callingStationId: string;
-  server?: RadiusServerOptions;
+  server: RadiusServerOptions;
 }
 
 export interface IRadiusAuthenticator {

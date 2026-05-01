@@ -1,7 +1,8 @@
 import { jest } from '@jest/globals';
 import { ConfigService } from '@nestjs/config';
 import type { IIdentitySessionSyncService } from '../../application/ports/identity-session-sync-service.interface.js';
-import type { IdentityGroupResolverService } from '../../application/services/identity-group-resolver.service.js';
+import type { AuthenticationGroupResolverService } from '../../application/services/authentication-group-resolver.service.js';
+import type { AuthenticationProfileResolverService } from '../../application/services/authentication-profile-resolver.service.js';
 import { IdentitySession } from '../../domain/entities/identity-session.entity.js';
 import { IpAddress } from '../../domain/value-objects/ip-address.vo.js';
 import { IdentityGroupRefresherService } from './identity-group-refresher.service.js';
@@ -10,18 +11,23 @@ import { InMemoryIdentitySessionStore } from './in-memory-identity-session.store
 function makeConfig(): ConfigService {
   const map = new Map<string, unknown>([
     ['IDENTITY_GROUP_REFRESH_INTERVAL_MS', 0],
-    ['RADIUS_NAS_IP', '192.168.20.254'],
-    ['RADIUS_NAS_IDENTIFIER', 'raptorgate-backend'],
   ]);
   return { get: (key: string) => map.get(key) } as unknown as ConfigService;
 }
 
+const resolvedPortalProfile = {
+  kind: 'resolved',
+  flow: 'portal',
+  authenticationProfile: { getId: () => 'auth-1' },
+  radiusProfile: null,
+  ldapProfile: { getId: () => 'ldap-1' },
+};
+
 describe('IdentityGroupRefresherService', () => {
   let store: InMemoryIdentitySessionStore;
   let sync: jest.Mocked<IIdentitySessionSyncService>;
-  let resolver: jest.Mocked<
-    Pick<IdentityGroupResolverService, 'resolve' | 'invalidate'>
-  >;
+  let profileResolver: jest.Mocked<Pick<AuthenticationProfileResolverService, 'resolve'>>;
+  let groupResolver: jest.Mocked<Pick<AuthenticationGroupResolverService, 'resolve'>>;
   let refresher: IdentityGroupRefresherService;
 
   beforeEach(() => {
@@ -30,19 +36,20 @@ describe('IdentityGroupRefresherService', () => {
       upsertIdentitySession: jest.fn<() => Promise<void>>(),
       revokeIdentitySession: jest.fn<() => Promise<boolean>>(),
     };
-    resolver = {
+    profileResolver = {
+      resolve: jest.fn(async () => resolvedPortalProfile),
+    } as unknown as jest.Mocked<Pick<AuthenticationProfileResolverService, 'resolve'>>;
+    groupResolver = {
       resolve: jest.fn(),
-      invalidate: jest.fn(),
-    } as unknown as jest.Mocked<
-      Pick<IdentityGroupResolverService, 'resolve' | 'invalidate'>
-    >;
+    } as unknown as jest.Mocked<Pick<AuthenticationGroupResolverService, 'resolve'>>;
     refresher = new IdentityGroupRefresherService(
       makeConfig() as unknown as ConstructorParameters<
         typeof IdentityGroupRefresherService
       >[0],
       store,
       sync,
-      resolver as unknown as IdentityGroupResolverService,
+      profileResolver as unknown as AuthenticationProfileResolverService,
+      groupResolver as unknown as AuthenticationGroupResolverService,
     );
   });
 
@@ -62,11 +69,11 @@ describe('IdentityGroupRefresherService', () => {
         ['users'],
       ),
     );
-    resolver.resolve.mockResolvedValue({
+    groupResolver.resolve.mockResolvedValue({
       groups: [],
       source: 'none',
       externalId: 'user',
-      ldapDiagnostic: 'disabled',
+      diagnostic: 'disabled',
     });
 
     await refresher.refreshOnce();
@@ -86,11 +93,11 @@ describe('IdentityGroupRefresherService', () => {
         ['admins'],
       ),
     );
-    resolver.resolve.mockResolvedValue({
+    groupResolver.resolve.mockResolvedValue({
       groups: ['admins'],
       source: 'ldap',
       externalId: 'uid=admin,ou=users,dc=raptorgate,dc=local',
-      ldapDiagnostic: 'ok',
+      diagnostic: 'ok',
     });
 
     await refresher.refreshOnce();
@@ -108,27 +115,32 @@ describe('IdentityGroupRefresherService', () => {
         t0,
         new Date(t0.getTime() + 60_000),
         ['admins'],
+        '198.51.100.10',
+        'profile-nas',
       ),
     );
-    resolver.resolve.mockResolvedValue({
+    groupResolver.resolve.mockResolvedValue({
       groups: ['admins', 'auditors'],
       source: 'ldap',
       externalId: 'uid=admin,ou=users,dc=raptorgate,dc=local',
-      ldapDiagnostic: 'ok',
+      diagnostic: 'ok',
     });
     sync.upsertIdentitySession.mockResolvedValue(undefined);
 
     await refresher.refreshOnce();
 
-    expect(resolver.resolve).toHaveBeenCalledWith({
-      username: 'admin',
-      vsaGroups: [],
-      forceRefresh: true,
-    });
+    expect(profileResolver.resolve).toHaveBeenCalledWith('portal');
+    expect(groupResolver.resolve).toHaveBeenCalledWith(
+      resolvedPortalProfile,
+      'admin',
+      [],
+    );
     expect(sync.upsertIdentitySession).toHaveBeenCalledTimes(1);
     const payload = sync.upsertIdentitySession.mock.calls[0][0];
     expect(payload.id).toBe('sess-1');
     expect(payload.groups).toEqual(['admins', 'auditors']);
+    expect(payload.nasIp).toBe('198.51.100.10');
+    expect(payload.calledStationId).toBe('profile-nas');
     expect(payload.identityUserId).toBe(
       'uid=admin,ou=users,dc=raptorgate,dc=local',
     );
@@ -150,11 +162,11 @@ describe('IdentityGroupRefresherService', () => {
         ['admins'],
       ),
     );
-    resolver.resolve.mockResolvedValue({
+    groupResolver.resolve.mockResolvedValue({
       groups: ['admins', 'auditors'],
       source: 'ldap',
       externalId: 'uid=admin,ou=users,dc=raptorgate,dc=local',
-      ldapDiagnostic: 'ok',
+      diagnostic: 'ok',
     });
     sync.upsertIdentitySession.mockRejectedValue(new Error('firewall down'));
 

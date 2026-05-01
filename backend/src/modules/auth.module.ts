@@ -20,9 +20,10 @@ import { JsonPermissionRepository } from '../infrastructure/persistence/reposito
 import { JsonRoleRepository } from '../infrastructure/persistence/repositories/json-role.repository.js';
 import { JsonUserRepository } from '../infrastructure/persistence/repositories/json-user.repository.js';
 import { AuthController } from '../presentation/controllers/auth.controller.js';
+import { AuthenticationEngineModule } from './authentication-engine.module.js';
 
 @Module({
-  imports: [],
+  imports: [AuthenticationEngineModule],
   controllers: [AuthController],
   providers: [
     LoginUserUseCase,

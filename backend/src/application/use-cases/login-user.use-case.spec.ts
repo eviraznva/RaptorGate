@@ -1,0 +1,178 @@
+import { InvalidCredentialsException } from '../../domain/exceptions/invalid-credentials.exception.js';
+import { AuthenticationMisconfiguredException } from '../../domain/exceptions/authentication-misconfigured.exception.js';
+import { AuthenticationUnavailableException } from '../../domain/exceptions/authentication-unavailable.exception.js';
+import { User } from '../../domain/entities/user.entity.js';
+import type { IUserRepository } from '../../domain/repositories/user.repository.js';
+import type { IPasswordHasher } from '../ports/passowrd-hasher.interface.js';
+import type { IRecoveryTokenService } from '../ports/recovery-token-service.interface.js';
+import type { ITokenService } from '../ports/token-service.interface.js';
+import type { AuthenticationEngineService } from '../services/authentication-engine.service.js';
+import { LoginUserUseCase } from './login-user.use-case.js';
+
+describe('LoginUserUseCase external admin authentication', () => {
+  const now = new Date('2026-01-01T00:00:00.000Z');
+
+  function user(): User {
+    return User.create(
+      'user-1',
+      'admin',
+      'hash',
+      null,
+      null,
+      null,
+      false,
+      false,
+      now,
+      now,
+      [],
+    );
+  }
+
+  function makeUseCase(input: {
+    foundUser: User | null;
+    passwordValid: boolean;
+    engineResult: Awaited<ReturnType<AuthenticationEngineService['authenticate']>>;
+  }): LoginUserUseCase {
+    const userRepository = {
+      findByUsername: jest.fn(async () => input.foundUser),
+      setRefreshToken: jest.fn(),
+      save: jest.fn(),
+    } as unknown as jest.Mocked<IUserRepository>;
+    const passwordHasher = {
+      compare: jest.fn(async () => input.passwordValid),
+      hash: jest.fn(),
+    } as unknown as jest.Mocked<IPasswordHasher>;
+    const tokenService = {
+      generateTokenPair: jest.fn(async () => ({
+        accessToken: 'access',
+        refreshToken: 'refresh',
+      })),
+    } as unknown as jest.Mocked<ITokenService>;
+    const recoveryTokenService = {
+      createRecoveryToken: jest.fn(),
+    } as unknown as jest.Mocked<IRecoveryTokenService>;
+    const authenticationEngine = {
+      authenticate: jest.fn(async () => input.engineResult),
+    } as unknown as jest.Mocked<AuthenticationEngineService>;
+
+    return new LoginUserUseCase(
+      userRepository,
+      passwordHasher,
+      tokenService,
+      recoveryTokenService,
+      authenticationEngine,
+    );
+  }
+
+  it('keeps local break-glass login working when external authentication is unavailable', async () => {
+    const useCase = makeUseCase({
+      foundUser: user(),
+      passwordValid: true,
+      engineResult: {
+        kind: 'unavailable',
+        provider: 'radius',
+        message: 'RADIUS timeout',
+        profileId: 'auth-1',
+      },
+    });
+
+    const result = await useCase.execute({ username: 'admin', password: 'local' });
+
+    expect(result.accessToken).toBe('access');
+    expect(result.refreshToken).toBe('refresh');
+  });
+
+  it('allows an existing local admin after external RADIUS accept', async () => {
+    const useCase = makeUseCase({
+      foundUser: user(),
+      passwordValid: false,
+      engineResult: {
+        kind: 'accept',
+        provider: 'radius',
+        username: 'admin',
+        groups: [],
+        externalId: 'admin',
+        sessionTtlSeconds: 1800,
+        nasIp: '192.0.2.1',
+        calledStationId: 'raptorgate',
+        profileId: 'auth-1',
+      },
+    });
+
+    const result = await useCase.execute({ username: 'admin', password: 'radius' });
+
+    expect(result.accessToken).toBe('access');
+  });
+
+  it('rejects external admin accept when no matching local user exists yet', async () => {
+    const useCase = makeUseCase({
+      foundUser: null,
+      passwordValid: false,
+      engineResult: {
+        kind: 'accept',
+        provider: 'radius',
+        username: 'admin',
+        groups: [],
+        externalId: 'admin',
+        sessionTtlSeconds: 1800,
+        nasIp: '192.0.2.1',
+        calledStationId: 'raptorgate',
+        profileId: 'auth-1',
+      },
+    });
+
+    await expect(
+      useCase.execute({ username: 'admin', password: 'radius' }),
+    ).rejects.toBeInstanceOf(InvalidCredentialsException);
+  });
+
+  it('keeps anti-enumeration when external provider is unavailable for an unknown local user', async () => {
+    const useCase = makeUseCase({
+      foundUser: null,
+      passwordValid: false,
+      engineResult: {
+        kind: 'unavailable',
+        provider: 'radius',
+        message: 'RADIUS timeout',
+        profileId: 'auth-1',
+      },
+    });
+
+    await expect(
+      useCase.execute({ username: 'missing', password: 'radius' }),
+    ).rejects.toBeInstanceOf(InvalidCredentialsException);
+  });
+
+  it('surfaces provider unavailability when the local user exists but local password failed', async () => {
+    const useCase = makeUseCase({
+      foundUser: user(),
+      passwordValid: false,
+      engineResult: {
+        kind: 'timeout',
+        provider: 'radius',
+        message: 'RADIUS timeout',
+        profileId: 'auth-1',
+      },
+    });
+
+    await expect(
+      useCase.execute({ username: 'admin', password: 'radius' }),
+    ).rejects.toBeInstanceOf(AuthenticationUnavailableException);
+  });
+
+  it('surfaces authentication misconfiguration for an existing local user', async () => {
+    const useCase = makeUseCase({
+      foundUser: user(),
+      passwordValid: false,
+      engineResult: {
+        kind: 'misconfigured',
+        message: 'admin authentication profile is inactive',
+        profileId: 'auth-1',
+      },
+    });
+
+    await expect(
+      useCase.execute({ username: 'admin', password: 'radius' }),
+    ).rejects.toBeInstanceOf(AuthenticationMisconfiguredException);
+  });
+});

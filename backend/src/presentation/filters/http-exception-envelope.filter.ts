@@ -6,6 +6,7 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
@@ -20,6 +21,9 @@ import { IpsSignatureConfigIsInvalidException } from "src/domain/exceptions/ips-
 import { SignatureSeverityIsInvalidException } from "src/domain/exceptions/signature-severity-is-invalid.exception.js";
 import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
 import { AtLeastOneFieldRequiredException } from "../../domain/exceptions/at-least-one-field-required.exception.js";
+import { AuthenticationMisconfiguredException } from "../../domain/exceptions/authentication-misconfigured.exception.js";
+import { AuthenticationRejectedException } from "../../domain/exceptions/authentication-rejected.exception.js";
+import { AuthenticationUnavailableException } from "../../domain/exceptions/authentication-unavailable.exception.js";
 import { ChecksumIsInvalidException } from "../../domain/exceptions/checksum-is-invalid.exception.js";
 import { DomainNameIsInvalidException } from "../../domain/exceptions/domain-name-is-invalid.exception.js";
 import { EmailIsInvalidException } from "../../domain/exceptions/email-is-invalid.exception.js";
@@ -91,13 +95,21 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
     if (
       exception instanceof RefreshTokenIsInvalidException ||
       exception instanceof AccessTokenIsInvalidException ||
-      exception instanceof RadiusAccessRejectedException
+      exception instanceof RadiusAccessRejectedException ||
+      exception instanceof AuthenticationRejectedException
     ) {
       return new UnauthorizedException(exception.message);
     }
 
-    if (exception instanceof RadiusUnavailableException) {
+    if (
+      exception instanceof RadiusUnavailableException ||
+      exception instanceof AuthenticationUnavailableException
+    ) {
       return new ServiceUnavailableException(exception.message);
+    }
+
+    if (exception instanceof AuthenticationMisconfiguredException) {
+      return new InternalServerErrorException(exception.message);
     }
 
     if (

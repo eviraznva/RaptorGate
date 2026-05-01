@@ -131,7 +131,7 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
     }
   }
 
-  // TODO(Issue D): remove env fallback after auth flow resolves active profiles.
+  // TODO(Issue G): remove env fallback after sessions carry auth profile context.
   private optionsFromEnv(): LdapDirectoryOptions {
     return {
       enabled: this.config.get('IDENTITY_LDAP_ENABLED', { infer: true }),
