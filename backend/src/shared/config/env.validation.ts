@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+function isValidSecretStoreKey(value: string): boolean {
+  return Buffer.from(value, 'base64').length === 32;
+}
+
 const envSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
@@ -27,6 +31,7 @@ const envSchema = z.object({
   COOKIE_SECRET: z
     .string()
     .min(32, 'COOKIE_SECRET must be at least 32 characters'),
+  SECRET_STORE_KEY: z.string().min(1),
   RAPTORGATE_PKI_DIR: z.string().default('/var/lib/raptorgate/pki'),
   CORS_ORIGIN: z
     .string()
@@ -41,7 +46,7 @@ const envSchema = z.object({
   // RADIUS provider (Issue 3). Backend laczy sie do FreeRADIUS w labie (192.168.20.30).
   RADIUS_HOST: z.string().min(1).default('192.168.20.30'),
   RADIUS_PORT: z.coerce.number().int().positive().max(65535).default(1812),
-  RADIUS_SECRET: z.string().min(1).default('radiussecret'),
+  RADIUS_SECRET: z.string().min(1),
   RADIUS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
   RADIUS_RETRIES: z.coerce.number().int().min(0).max(5).default(1),
   // NAS-IP-Address (RFC 2865 attr 4). Domyslnie adres r1 w sieci 192.168.20.0/24.
@@ -63,7 +68,7 @@ const envSchema = z.object({
   IDENTITY_LDAP_HOST: z.string().min(1).default('192.168.20.40'),
   IDENTITY_LDAP_PORT: z.coerce.number().int().positive().max(65535).default(389),
   IDENTITY_LDAP_BIND_DN: z.string().min(1).default('cn=admin,dc=raptorgate,dc=local'),
-  IDENTITY_LDAP_BIND_PASSWORD: z.string().min(1).default('admin'),
+  IDENTITY_LDAP_BIND_PASSWORD: z.string().min(1),
   IDENTITY_LDAP_USER_BASE_DN: z
     .string()
     .min(1)
@@ -90,6 +95,14 @@ const envSchema = z.object({
     .int()
     .min(0)
     .default(60_000),
+}).superRefine((data, ctx) => {
+  if (!isValidSecretStoreKey(data.SECRET_STORE_KEY)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['SECRET_STORE_KEY'],
+      message: 'SECRET_STORE_KEY must be a base64 encoded 32 byte key',
+    });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;

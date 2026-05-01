@@ -5,11 +5,24 @@ import { IdentityConfiguration } from '../../domain/entities/identity-configurat
 import { IdentitySettings } from '../../domain/entities/identity-settings.entity.js';
 import { LdapServerProfile } from '../../domain/entities/ldap-server-profile.entity.js';
 import { RadiusServerProfile } from '../../domain/entities/radius-server-profile.entity.js';
+import { SecretRecord } from '../../domain/entities/secret-record.entity.js';
 import {
   IDENTITY_CONFIG_REPOSITORY_TOKEN,
   type IIdentityConfigRepository,
 } from '../../domain/repositories/identity-config.repository.js';
+import {
+  SECRET_STORE_REPOSITORY_TOKEN,
+  type ISecretStoreRepository,
+} from '../../domain/repositories/secret-store.repository.js';
+import { SecretValue } from '../../domain/value-objects/secret-value.vo.js';
+import {
+  SECRET_CRYPTO_SERVICE_TOKEN,
+  type ISecretCryptoService,
+} from '../../application/ports/secret-crypto.service.js';
 import type { Env } from '../../shared/config/env.validation.js';
+
+const DEFAULT_RADIUS_SECRET_REF = 'secret://identity/radius/default';
+const DEFAULT_LDAP_BIND_PASSWORD_REF = 'secret://identity/ldap/default';
 
 @Injectable()
 export class IdentityBootstrapSeedService implements OnModuleInit {
@@ -17,17 +30,43 @@ export class IdentityBootstrapSeedService implements OnModuleInit {
     @Inject(IDENTITY_CONFIG_REPOSITORY_TOKEN)
     private readonly identityConfigRepository: IIdentityConfigRepository,
     private readonly configService: ConfigService<Env, true>,
+    @Inject(SECRET_STORE_REPOSITORY_TOKEN)
+    private readonly secretStoreRepository: ISecretStoreRepository,
+    @Inject(SECRET_CRYPTO_SERVICE_TOKEN)
+    private readonly secretCryptoService: ISecretCryptoService,
   ) {}
 
   async onModuleInit(): Promise<void> {
     if (await this.identityConfigRepository.exists()) return;
 
-    await this.identityConfigRepository.overwrite(this.defaultFromEnv());
+    const createdAt = new Date();
+    const createdBy = 'system';
+    const ldapEnabled = this.configService.get('IDENTITY_LDAP_ENABLED', {
+      infer: true,
+    });
+
+    await this.seedSecret(
+      DEFAULT_RADIUS_SECRET_REF,
+      'RADIUS_SECRET',
+      createdAt,
+      createdBy,
+    );
+
+    if (ldapEnabled) {
+      await this.seedSecret(
+        DEFAULT_LDAP_BIND_PASSWORD_REF,
+        'IDENTITY_LDAP_BIND_PASSWORD',
+        createdAt,
+        createdBy,
+      );
+    }
+
+    await this.identityConfigRepository.overwrite(
+      this.defaultFromEnv(createdAt, createdBy),
+    );
   }
 
-  private defaultFromEnv(): IdentityConfiguration {
-    const createdAt = new Date('1970-01-01T00:00:00.000Z');
-    const createdBy = 'system';
+  private defaultFromEnv(createdAt: Date, createdBy: string): IdentityConfiguration {
     const ldapEnabled = this.configService.get('IDENTITY_LDAP_ENABLED', {
       infer: true,
     });
@@ -46,7 +85,7 @@ export class IdentityBootstrapSeedService implements OnModuleInit {
       true,
       this.configService.get('RADIUS_HOST', { infer: true }),
       this.configService.get('RADIUS_PORT', { infer: true }),
-      'env:RADIUS_SECRET',
+      DEFAULT_RADIUS_SECRET_REF,
       this.configService.get('RADIUS_TIMEOUT_MS', { infer: true }),
       this.configService.get('RADIUS_RETRIES', { infer: true }),
       this.configService.get('RADIUS_NAS_IP', { infer: true }),
@@ -68,7 +107,7 @@ export class IdentityBootstrapSeedService implements OnModuleInit {
             this.configService.get('IDENTITY_LDAP_PORT', { infer: true }),
             'disabled',
             this.configService.get('IDENTITY_LDAP_BIND_DN', { infer: true }),
-            'env:IDENTITY_LDAP_BIND_PASSWORD',
+            DEFAULT_LDAP_BIND_PASSWORD_REF,
             this.configService.get('IDENTITY_LDAP_USER_BASE_DN', { infer: true }),
             this.configService.get('IDENTITY_LDAP_USER_FILTER_ATTRIBUTE', {
               infer: true,
@@ -111,6 +150,31 @@ export class IdentityBootstrapSeedService implements OnModuleInit {
       ldapProfiles,
       [authProfile],
       IdentitySettings.create('default-portal-radius', null, createdAt, createdBy),
+    );
+  }
+
+  private async seedSecret(
+    ref: string,
+    envKey: 'RADIUS_SECRET' | 'IDENTITY_LDAP_BIND_PASSWORD',
+    createdAt: Date,
+    createdBy: string,
+  ): Promise<void> {
+    if (await this.secretStoreRepository.exists(ref)) return;
+
+    const encrypted = this.secretCryptoService.encrypt(
+      SecretValue.create(this.configService.get(envKey, { infer: true })),
+    );
+
+    await this.secretStoreRepository.save(
+      SecretRecord.create(
+        ref,
+        encrypted.ciphertext,
+        encrypted.iv,
+        encrypted.authTag,
+        createdAt,
+        createdAt,
+        createdBy,
+      ),
     );
   }
 }

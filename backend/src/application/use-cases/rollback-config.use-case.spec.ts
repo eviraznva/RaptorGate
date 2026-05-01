@@ -35,6 +35,9 @@ describe('RollbackConfigUseCase identity config compatibility', () => {
     const identityConfigRepository = {
       overwrite: jest.fn(async () => undefined),
     };
+    const identitySecretReferenceValidator = {
+      validateActiveConfig: jest.fn(async () => undefined),
+    };
     const useCase = new RollbackConfigUseCase(
       { findById: jest.fn(async () => snapshot) } as any,
       { overwriteAll: jest.fn(async () => undefined) } as any,
@@ -45,6 +48,7 @@ describe('RollbackConfigUseCase identity config compatibility', () => {
       { overwriteAll: jest.fn(async () => undefined) } as any,
       { overwriteAll: jest.fn(async () => undefined) } as any,
       identityConfigRepository as any,
+      identitySecretReferenceValidator as any,
       { pushActiveConfigSnapshot: jest.fn(async () => undefined) } as any,
     );
 
@@ -54,5 +58,6 @@ describe('RollbackConfigUseCase identity config compatibility', () => {
     const config = (identityConfigRepository.overwrite as any).mock.calls[0][0];
     expect(config.getRadiusServerProfiles()).toEqual([]);
     expect(config.getSettings().getPortalAuthenticationProfileId()).toBeNull();
+    expect(identitySecretReferenceValidator.validateActiveConfig).toHaveBeenCalledWith(config);
   });
 });

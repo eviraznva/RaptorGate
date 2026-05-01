@@ -21,6 +21,7 @@ import { NatModule } from "./modules/nat.module.js";
 import { PinningModule } from "./modules/pinning.module.js";
 import { RealtimeModule } from "./modules/realtime.module.js";
 import { RulesModule } from "./modules/rules.module.js";
+import { SecretModule } from "./modules/secret.module.js";
 import { SslModule } from "./modules/ssl.module.js";
 import { TcpSessionsModule } from "./modules/tcp-sessions.module.js";
 import { UserModule } from "./modules/user.module.js";
@@ -62,6 +63,7 @@ import { validate } from "./shared/config/env.validation.js";
     PinningModule,
     TcpSessionsModule,
     SslModule,
+    SecretModule,
   ],
   controllers: [AppController],
   providers: [

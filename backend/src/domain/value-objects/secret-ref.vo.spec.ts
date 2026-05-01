@@ -16,4 +16,15 @@ describe('SecretRef', () => {
   it('rejects plaintext secret values', () => {
     expect(() => SecretRef.create('radiussecret')).toThrow();
   });
+
+  it('rejects invalid environment variable references', () => {
+    expect(() => SecretRef.create('env:lowercase')).toThrow();
+    expect(() => SecretRef.create('env:')).toThrow();
+  });
+
+  it('rejects invalid managed secret references', () => {
+    expect(() => SecretRef.create('secret://identity/radius')).toThrow();
+    expect(() => SecretRef.create('secret://identity/radius/default/extra')).toThrow();
+    expect(() => SecretRef.create('   ')).toThrow();
+  });
 });

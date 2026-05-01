@@ -43,6 +43,7 @@ import {
   type IConfigSnapshotPushService,
 } from '../ports/config-snapshot-push-service.interface.js';
 import { IdentityConfigJsonMapper } from '../../infrastructure/persistence/mappers/identity-config-json.mapper.js';
+import { IdentitySecretReferenceValidatorService } from '../services/identity-secret-reference-validator.service.js';
 
 @Injectable()
 export class RollbackConfigUseCase {
@@ -67,6 +68,7 @@ export class RollbackConfigUseCase {
     private readonly sslBypassRepository: ISslBypassRepository,
     @Inject(IDENTITY_CONFIG_REPOSITORY_TOKEN)
     private readonly identityConfigRepository: IIdentityConfigRepository,
+    private readonly identitySecretReferenceValidator: IdentitySecretReferenceValidatorService,
     @Inject(CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN)
     private readonly configSnapshotPushService: IConfigSnapshotPushService,
   ) {}
@@ -97,14 +99,16 @@ export class RollbackConfigUseCase {
     await this.sslBypassRepository.overwriteAll(
       configBundle.bundle.ssl_bypass_list.items,
     );
-    await this.identityConfigRepository.overwrite(
-      IdentityConfigJsonMapper.payloadToDomain(
-        configBundle.bundle.identity_config ??
-          IdentityConfigJsonMapper.recordToPayload(
-            IdentityConfigJsonMapper.emptyRecord(),
-          ),
-      ),
+    const identityConfig = IdentityConfigJsonMapper.payloadToDomain(
+      configBundle.bundle.identity_config ??
+        IdentityConfigJsonMapper.recordToPayload(
+          IdentityConfigJsonMapper.emptyRecord(),
+        ),
     );
+    await this.identitySecretReferenceValidator.validateActiveConfig(
+      identityConfig,
+    );
+    await this.identityConfigRepository.overwrite(identityConfig);
     await this.configSnapshotPushService.pushActiveConfigSnapshot(
       configSnapshot,
       'rollback',

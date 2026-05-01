@@ -39,6 +39,7 @@ import {
 import { Checksum } from '../../domain/value-objects/checksum.vo.js';
 import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
 import { IdentityConfigJsonMapper } from '../../infrastructure/persistence/mappers/identity-config-json.mapper.js';
+import { IdentitySecretReferenceValidatorService } from '../services/identity-secret-reference-validator.service.js';
 import type { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.js';
 import type { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 import type { IConfigSnapshotPushService } from '../ports/config-snapshot-push-service.interface.js';
@@ -82,6 +83,7 @@ export class ApplyConfigSnapshotUseCase {
     private readonly sslBypassRepository: ISslBypassRepository,
     @Inject(IDENTITY_CONFIG_REPOSITORY_TOKEN)
     private readonly identityConfigRepository: IIdentityConfigRepository,
+    private readonly identitySecretReferenceValidator: IdentitySecretReferenceValidatorService,
   ) {}
 
   async execute(
@@ -104,6 +106,11 @@ export class ApplyConfigSnapshotUseCase {
     );
     const activeBypass = await this.sslBypassRepository.findActive();
     const identityConfig = await this.identityConfigRepository.find();
+    if (dto.isActive) {
+      await this.identitySecretReferenceValidator.validateActiveConfig(
+        identityConfig,
+      );
+    }
     const allConfigSnapshots =
       await this.configSnapshotRepository.findAllSnapshots();
     const currentActiveSnapshot = allConfigSnapshots.find((snapshot) =>

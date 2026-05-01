@@ -62,6 +62,7 @@ import { Port } from "../../domain/value-objects/port.vo.js";
 import { Priority } from "../../domain/value-objects/priority.vo.js";
 import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
 import { IdentityConfigJsonMapper } from "../../infrastructure/persistence/mappers/identity-config-json.mapper.js";
+import { IdentitySecretReferenceValidatorService } from "../services/identity-secret-reference-validator.service.js";
 import { ImportConfigDto } from "../dtos/import-config.dto";
 import { ImportConfigResponseDto } from "../dtos/import-config-response.dto";
 import {
@@ -106,6 +107,7 @@ export class ImportConfigUseCase {
     private readonly sslBypassRepository: ISslBypassRepository,
     @Inject(IDENTITY_CONFIG_REPOSITORY_TOKEN)
     private readonly identityConfigRepository: IIdentityConfigRepository,
+    private readonly identitySecretReferenceValidator: IdentitySecretReferenceValidatorService,
   ) {}
 
   async execute(dto: ImportConfigDto): Promise<ImportConfigResponseDto> {
@@ -301,6 +303,9 @@ export class ImportConfigUseCase {
     );
 
     if (dto.snapshotData.isActive) {
+      await this.identitySecretReferenceValidator.validateActiveConfig(
+        importedIdentityConfig,
+      );
       await this.zoneRepository.overwriteAll(importedZones);
       await this.zoneInterfaceRepository.overwriteAll(importedZoneInterfaces);
       await this.zonePairRepository.overwriteAll(importedZonePairs);

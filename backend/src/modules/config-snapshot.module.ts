@@ -7,6 +7,7 @@ import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from '../application/ports/config-
 import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../application/ports/raptor-lang-validation-service.interface.js';
 import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
 import { ConfigSnapshotDiffService } from '../application/services/config-snapshot-diff.service.js';
+import { IdentitySecretReferenceValidatorService } from '../application/services/identity-secret-reference-validator.service.js';
 import { ApplyConfigSnapshotUseCase } from '../application/use-cases/apply-config-snapshot.use-case.js';
 import { ExportConfigUseCase } from '../application/use-cases/export-config.use-case.js';
 import { GetConfigDiffUseCase } from '../application/use-cases/get-config-diff.use-case.js';
@@ -55,9 +56,11 @@ import { JsonZoneRepository } from '../infrastructure/persistence/repositories/j
 import { JsonZonePairRepository } from '../infrastructure/persistence/repositories/json-zone-pair.repository.js';
 import { ConfigController } from '../presentation/controllers/config.controller.js';
 import { Env } from '../shared/config/env.validation.js';
+import { SecretModule } from './secret.module.js';
 
 @Module({
   imports: [
+    SecretModule,
     ClientsModule.registerAsync([
       {
         name: CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN,
@@ -154,6 +157,7 @@ import { Env } from '../shared/config/env.validation.js';
     ExportConfigUseCase,
     ImportConfigUseCase,
     ConfigSnapshotDiffService,
+    IdentitySecretReferenceValidatorService,
     IdentityBootstrapSeedService,
     GrpcConfigSnapshotPushService,
     FileStore,
