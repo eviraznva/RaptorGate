@@ -14,7 +14,7 @@ import {
   type ZoneInterface,
   type Zone,
 } from '../generated/config/config_models';
-import { createDefaultSnapshotBundle, DEFAULT_ZONE_INTERFACES } from '../harness/fixtures';
+import { createDefaultSnapshotBundle, DEFAULT_ZONE_INTERFACES, DEFAULT_ZONES } from '../harness/fixtures';
 
 type RuntimeZoneInterface = {
   id?: unknown;
@@ -122,7 +122,7 @@ async function pushZoneInterfaceConfig(zoneInterface: ZoneInterface): Promise<vo
           changesSummary: 'push zone interface config for test',
           createdAt: new Date(),
           createdBy: 'test-env-interface-controller',
-          bundle: createDefaultSnapshotBundle({ zones: [zone], zoneInterfaces: [zoneInterface], zonePairs: [], rules: [] }),
+          bundle: createDefaultSnapshotBundle({ zones: [...DEFAULT_ZONES, zone], zoneInterfaces: [...DEFAULT_ZONE_INTERFACES, zoneInterface], zonePairs: [], rules: [] }),
         },
       },
       (err: Error | null, resp: any) => {
