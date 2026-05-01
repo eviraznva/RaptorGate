@@ -177,6 +177,7 @@ describe('mapEventToDocument', () => {
             appProtocol: 'http',
             interface: 'eth2',
             payloadLength: 128,
+            attackType: 'DDoS',
           },
         },
       }),
@@ -190,6 +191,7 @@ describe('mapEventToDocument', () => {
     expect(doc!.ml_score).toBe(0.91);
     expect(doc!.ml_threshold).toBe(0.2);
     expect(doc!.model_checksum).toBe('abc123');
+    expect(doc!.attack_type).toBe('DDoS');
   });
 
   it('returns null for empty kind', () => {

@@ -40,4 +40,5 @@ export interface FirewallEvent {
   ml_score?: number;
   ml_threshold?: number;
   model_checksum?: string;
+  attack_type?: string;
 }
