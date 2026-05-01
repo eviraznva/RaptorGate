@@ -561,6 +561,7 @@ fn emit_ml_threat_detected(ctx: &PacketContext, prediction: &MlPrediction) {
         score: prediction.malicious_score,
         threshold: prediction.threshold,
         model_checksum: prediction.model_checksum.clone(),
+        attack_type: prediction.attack_type.clone(),
         src_ip,
         src_port,
         dst_ip,
@@ -842,8 +843,8 @@ impl Stage for MlAlertStage {
 
 fn ml_alert_message(prediction: &MlPrediction) -> String {
     format!(
-        "ML threat score {:.4} exceeded threshold {:.4}",
-        prediction.malicious_score, prediction.threshold
+        "ML threat {} score {:.4} exceeded threshold {:.4}",
+        prediction.attack_type, prediction.malicious_score, prediction.threshold
     )
 }
 
@@ -1233,6 +1234,7 @@ mod tests {
                 malicious_score: 0.91,
                 threshold: 0.2,
                 model_checksum: "test".to_string(),
+                attack_type: "DDoS".to_string(),
             }))
         }
 
@@ -1251,7 +1253,8 @@ mod tests {
 
         assert!(matches!(outcome, StageOutcome::Continue));
         assert_eq!(ctx.borrow_warnings().len(), 1);
-        assert!(ctx.borrow_warnings()[0].contains("ML threat score"));
+        assert!(ctx.borrow_warnings()[0].contains("ML threat DDoS score"));
+        assert!(ctx.borrow_warnings()[0].contains("DDoS"));
     }
 
     #[tokio::test]

@@ -8,6 +8,8 @@ use serde_json::Value;
 use tract_onnx::prelude::*;
 
 const DEFAULT_THRESHOLD: f32 = 0.5;
+const DEFAULT_ATTACK_CONFIDENCE_THRESHOLD: f32 = 0.5;
+const UNKNOWN_ATTACK_TYPE: &str = "unknown";
 
 type InferenceModel = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
 
@@ -16,6 +18,7 @@ pub struct MlPrediction {
     pub malicious_score: f32,
     pub threshold: f32,
     pub model_checksum: String,
+    pub attack_type: String,
 }
 
 pub trait MlPacketInspector: Send + Sync {
@@ -30,7 +33,11 @@ pub struct MlDetector {
 struct MlRuntime {
     model: Mutex<InferenceModel>,
     threshold: f32,
+    attack_confidence_threshold: f32,
     model_checksum: String,
+    labels: Vec<String>,
+    benign_index: usize,
+    supports_attack_labels: bool,
 }
 
 impl MlDetector {
@@ -62,6 +69,7 @@ impl MlDetector {
         let metadata_path = env::var("ML_MODEL_METADATA_PATH").ok();
         let metadata = metadata_path.as_deref().map(read_metadata).transpose()?;
         let threshold = resolve_threshold(metadata.as_ref())?;
+        let attack_confidence_threshold = resolve_attack_confidence_threshold(metadata.as_ref())?;
         let model_checksum = metadata
             .as_ref()
             .and_then(metadata_checksum)
@@ -72,6 +80,17 @@ impl MlDetector {
                     .unwrap_or("unknown")
                     .to_string()
             });
+        let labels = metadata
+            .as_ref()
+            .and_then(metadata_labels)
+            .unwrap_or_else(|| vec!["benign".to_string(), "malicious".to_string()]);
+        let benign_index = labels
+            .iter()
+            .position(|label| label.eq_ignore_ascii_case("BENIGN"))
+            .unwrap_or(0);
+        let supports_attack_labels = metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.get("attack_labels").is_some() || labels.len() > 2);
 
         let model = load_model(&PathBuf::from(&model_path))?;
 
@@ -79,7 +98,9 @@ impl MlDetector {
             event = "ml.detector.enabled",
             model_path,
             threshold,
+            attack_confidence_threshold,
             model_checksum,
+            labels = ?labels,
             "ML detector enabled"
         );
 
@@ -87,7 +108,11 @@ impl MlDetector {
             runtime: Some(MlRuntime {
                 model: Mutex::new(model),
                 threshold,
+                attack_confidence_threshold,
                 model_checksum,
+                labels,
+                benign_index,
+                supports_attack_labels,
             }),
         })
     }
@@ -122,15 +147,29 @@ impl MlPacketInspector for MlDetector {
             );
         }
 
-        let malicious_score = softmax_second(logits[0], logits[1]);
+        let probs = softmax(logits);
+        let malicious_score =
+            if runtime.labels.len() == probs.len() && runtime.supports_attack_labels {
+                malicious_score_from_probs(&probs, runtime.benign_index)
+            } else {
+                softmax_second(logits[0], logits[1])
+            };
         if malicious_score < runtime.threshold {
             return Ok(None);
         }
+        let attack_type = attack_type_from_probs(
+            &probs,
+            &runtime.labels,
+            runtime.benign_index,
+            runtime.attack_confidence_threshold,
+            runtime.supports_attack_labels,
+        );
 
         Ok(Some(MlPrediction {
             malicious_score,
             threshold: runtime.threshold,
             model_checksum: runtime.model_checksum.clone(),
+            attack_type,
         }))
     }
 
@@ -165,6 +204,23 @@ fn metadata_checksum(metadata: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn metadata_labels(metadata: &Value) -> Option<Vec<String>> {
+    let values = metadata
+        .get("attack_labels")
+        .or_else(|| metadata.get("labels"))?
+        .as_array()?;
+    let labels = values
+        .iter()
+        .filter_map(Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if labels.len() >= 2 {
+        Some(labels)
+    } else {
+        None
+    }
+}
+
 fn resolve_threshold(metadata: Option<&Value>) -> Result<f32> {
     match env::var("ML_ALERT_THRESHOLD") {
         Ok(raw) => raw
@@ -174,6 +230,25 @@ fn resolve_threshold(metadata: Option<&Value>) -> Result<f32> {
             .and_then(metadata_threshold)
             .unwrap_or(DEFAULT_THRESHOLD)),
         Err(err) => Err(err).context("failed to read ML_ALERT_THRESHOLD"),
+    }
+}
+
+fn metadata_attack_confidence_threshold(metadata: &Value) -> Option<f32> {
+    metadata
+        .get("attack_confidence_threshold")
+        .and_then(Value::as_f64)
+        .map(|value| value as f32)
+}
+
+fn resolve_attack_confidence_threshold(metadata: Option<&Value>) -> Result<f32> {
+    match env::var("ML_ATTACK_CONFIDENCE_THRESHOLD") {
+        Ok(raw) => raw.parse::<f32>().with_context(|| {
+            format!("ML_ATTACK_CONFIDENCE_THRESHOLD must be a float, got `{raw}`")
+        }),
+        Err(env::VarError::NotPresent) => Ok(metadata
+            .and_then(metadata_attack_confidence_threshold)
+            .unwrap_or(DEFAULT_ATTACK_CONFIDENCE_THRESHOLD)),
+        Err(err) => Err(err).context("failed to read ML_ATTACK_CONFIDENCE_THRESHOLD"),
     }
 }
 
@@ -187,11 +262,62 @@ fn load_model(path: &Path) -> Result<InferenceModel> {
         .context("failed to prepare ML model runtime")
 }
 
+fn softmax(logits: &[f32]) -> Vec<f32> {
+    let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let mut exp = logits
+        .iter()
+        .map(|value| (value - max).exp())
+        .collect::<Vec<_>>();
+    let sum = exp.iter().sum::<f32>();
+    if sum > 0.0 {
+        for value in &mut exp {
+            *value /= sum;
+        }
+    }
+    exp
+}
+
 fn softmax_second(first: f32, second: f32) -> f32 {
     let max = first.max(second);
     let first = (first - max).exp();
     let second = (second - max).exp();
     second / (first + second)
+}
+
+fn malicious_score_from_probs(probs: &[f32], benign_index: usize) -> f32 {
+    probs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, prob)| (i != benign_index).then_some(*prob))
+        .sum()
+}
+
+fn attack_type_from_probs(
+    probs: &[f32],
+    labels: &[String],
+    benign_index: usize,
+    attack_confidence_threshold: f32,
+    supports_attack_labels: bool,
+) -> String {
+    if !supports_attack_labels || labels.len() != probs.len() {
+        return UNKNOWN_ATTACK_TYPE.to_string();
+    }
+    let Some((best_index, best_score)) = probs
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(i, _)| *i != benign_index)
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+    else {
+        return UNKNOWN_ATTACK_TYPE.to_string();
+    };
+    if best_score < attack_confidence_threshold {
+        return UNKNOWN_ATTACK_TYPE.to_string();
+    }
+    labels
+        .get(best_index)
+        .cloned()
+        .unwrap_or_else(|| UNKNOWN_ATTACK_TYPE.to_string())
 }
 
 #[cfg(test)]
@@ -220,9 +346,69 @@ mod tests {
     }
 
     #[test]
-    fn checked_in_v4_model_loads_and_scores_zero_vector_when_available() {
+    fn metadata_labels_prefers_attack_labels() {
+        let metadata = serde_json::json!({
+            "labels": ["benign", "malicious"],
+            "attack_labels": ["BENIGN", "DDoS", "PortScan"]
+        });
+
+        assert_eq!(
+            metadata_labels(&metadata),
+            Some(vec![
+                "BENIGN".to_string(),
+                "DDoS".to_string(),
+                "PortScan".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn multiclass_scores_sum_non_benign_probabilities() {
+        let labels = vec![
+            "BENIGN".to_string(),
+            "DDoS".to_string(),
+            "PortScan".to_string(),
+        ];
+        let probs = softmax(&[3.0, 2.0, 1.0]);
+        let score = malicious_score_from_probs(&probs, 0);
+
+        assert!((score - (probs[1] + probs[2])).abs() < 1e-6);
+        assert_eq!(
+            attack_type_from_probs(&probs, &labels, 0, 0.2, true),
+            "DDoS"
+        );
+    }
+
+    #[test]
+    fn low_attack_confidence_returns_unknown() {
+        let labels = vec![
+            "BENIGN".to_string(),
+            "DDoS".to_string(),
+            "PortScan".to_string(),
+        ];
+        let probs = softmax(&[3.0, 2.0, 1.0]);
+
+        assert_eq!(
+            attack_type_from_probs(&probs, &labels, 0, 0.9, true),
+            UNKNOWN_ATTACK_TYPE
+        );
+    }
+
+    #[test]
+    fn binary_model_attack_type_returns_unknown() {
+        let labels = vec!["benign".to_string(), "malicious".to_string()];
+        let probs = softmax(&[0.0, 3.0]);
+
+        assert_eq!(
+            attack_type_from_probs(&probs, &labels, 0, 0.5, false),
+            UNKNOWN_ATTACK_TYPE
+        );
+    }
+
+    #[test]
+    fn checked_in_v5_model_loads_and_scores_zero_vector_when_available() {
         let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../ml_pipeline/data/models/raptorgate-cicids2017-v4-focal.onnx");
+            .join("../../ml_pipeline/data/models/raptorgate-cicids2017-v5-attacks.onnx");
         if !model_path.exists() {
             return;
         }
@@ -234,6 +420,6 @@ mod tests {
         let output = model.run(tvec!(input.into())).unwrap();
         let logits = output[0].to_array_view::<f32>().unwrap();
 
-        assert_eq!(logits.len(), 2);
+        assert_eq!(logits.len(), 14);
     }
 }

@@ -44,7 +44,7 @@ ensure_iptables_rule INPUT -i virbr1 -p tcp --dport 53 -j ACCEPT
 cd "$SCRIPT_DIR/.."
 
 # project name (can be overridden from environment)
-MODEL_NAME="${MODEL_NAME:-raptorgate-cicids2017-v4-focal}"
+MODEL_NAME="${MODEL_NAME:-raptorgate-cicids2017-v5-attacks}"
 MODEL_SRC="${MODEL_SRC:-ml_pipeline/data/models}"
 
 # cd "$SCRIPT_DIR/../backend" && bun run proto:generate || exit 1

@@ -20,8 +20,11 @@ from torch.export import Dim
 
 from raptorgate_ml.feature_vector import FIELD_NAMES
 
-LABELS: tuple[str, str] = ("benign", "malicious")
-LABEL_TO_ID = {label: i for i, label in enumerate(LABELS)}
+BINARY_LABELS: tuple[str, str] = ("benign", "malicious")
+DEFAULT_ATTACK_LABELS: tuple[str, str] = ("BENIGN", "malicious")
+BENIGN_ATTACK_LABEL = "BENIGN"
+UNKNOWN_ATTACK_LABEL = "unknown"
+DEFAULT_ATTACK_CONFIDENCE_THRESHOLD = 0.5
 INPUT_SIZE = len(FIELD_NAMES)
 LossName = Literal["weighted_ce", "focal"]
 
@@ -43,6 +46,7 @@ class TrainConfig:
     loss: LossName = "weighted_ce"
     focal_gamma: float = 2.0
     amp: bool = True
+    attack_confidence_threshold: float = DEFAULT_ATTACK_CONFIDENCE_THRESHOLD
 
 
 @dataclass
@@ -80,12 +84,15 @@ class RaptorGateNet(nn.Module):
         dropout: float = 0.15,
         width: int = 256,
         residual_blocks: int = 4,
+        num_labels: int = len(DEFAULT_ATTACK_LABELS),
     ) -> None:
         super().__init__()
         if width < 16:
             raise ValueError("width must be at least 16")
         if residual_blocks < 0:
             raise ValueError("residual_blocks must be greater than or equal to 0")
+        if num_labels < 2:
+            raise ValueError("num_labels must be at least 2")
         self.register_buffer(
             "feature_mean",
             torch.zeros(INPUT_SIZE, dtype=torch.float32) if mean is None else mean.float(),
@@ -108,7 +115,7 @@ class RaptorGateNet(nn.Module):
             nn.Linear(width, head_width),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(head_width, len(LABELS)),
+            nn.Linear(head_width, num_labels),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -136,25 +143,72 @@ class FocalLoss(nn.Module):
 def _validate_schema(path: Path) -> None:
     schema = pq.ParquetFile(path).schema_arrow
     columns = set(schema.names)
-    missing = [name for name in [*FIELD_NAMES, "label"] if name not in columns]
+    missing = [name for name in [*FIELD_NAMES, "label", "attack_label"] if name not in columns]
     if missing:
         raise ValueError(f"{path} is missing required columns: {', '.join(missing)}")
 
 
-def _encode_labels(values: np.ndarray) -> np.ndarray:
-    encoded = np.empty(len(values), dtype=np.int64)
-    for i, raw in enumerate(values):
-        label = str(raw)
-        if label not in LABEL_TO_ID:
+def _effective_attack_label(raw_label: object, raw_attack_label: object) -> str:
+    label = str(raw_label).strip().lower()
+    if label == "benign":
+        return BENIGN_ATTACK_LABEL
+    attack_label = str(raw_attack_label).strip()
+    if not attack_label or attack_label.lower() in {"none", "nan", "null", "unmatched"}:
+        return UNKNOWN_ATTACK_LABEL
+    return attack_label
+
+
+def _scan_attack_labels(path: Path, batch_size: int) -> tuple[list[str], dict[str, int]]:
+    _validate_schema(path)
+    counts: dict[str, int] = {}
+    parquet = pq.ParquetFile(path)
+    for batch in parquet.iter_batches(batch_size=batch_size, columns=["label", "attack_label"]):
+        labels = batch.column(batch.schema.get_field_index("label")).to_pylist()
+        attack_labels = batch.column(batch.schema.get_field_index("attack_label")).to_pylist()
+        for raw_label, raw_attack_label in zip(labels, attack_labels, strict=True):
+            label = _effective_attack_label(raw_label, raw_attack_label)
+            counts[label] = counts.get(label, 0) + 1
+
+    if not counts:
+        raise ValueError(f"{path} does not contain training rows")
+    if counts.get(BENIGN_ATTACK_LABEL, 0) == 0:
+        raise ValueError(f"{path} must contain {BENIGN_ATTACK_LABEL} rows")
+    if counts.get(UNKNOWN_ATTACK_LABEL, 0) > 0:
+        raise ValueError(f"{path} contains malicious rows without attack labels")
+    attack_labels = sorted(label for label in counts if label != BENIGN_ATTACK_LABEL)
+    if not attack_labels:
+        raise ValueError(f"{path} must contain at least one attack label")
+    labels = [BENIGN_ATTACK_LABEL, *attack_labels]
+    return labels, {label: counts[label] for label in labels}
+
+
+def _encode_labels(
+    raw_labels: np.ndarray,
+    raw_attack_labels: np.ndarray,
+    label_to_id: dict[str, int],
+) -> np.ndarray:
+    encoded = np.empty(len(raw_labels), dtype=np.int64)
+    for i, (raw_label, raw_attack_label) in enumerate(
+        zip(raw_labels, raw_attack_labels, strict=True)
+    ):
+        label = _effective_attack_label(raw_label, raw_attack_label)
+        if label not in label_to_id:
             raise ValueError(f"unsupported label: {label}")
-        encoded[i] = LABEL_TO_ID[label]
+        encoded[i] = label_to_id[label]
     return encoded
 
 
-def _iter_batches(path: Path, batch_size: int) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+def _iter_batches(
+    path: Path,
+    batch_size: int,
+    label_to_id: dict[str, int],
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
     _validate_schema(path)
     parquet = pq.ParquetFile(path)
-    for batch in parquet.iter_batches(batch_size=batch_size, columns=[*FIELD_NAMES, "label"]):
+    for batch in parquet.iter_batches(
+        batch_size=batch_size,
+        columns=[*FIELD_NAMES, "label", "attack_label"],
+    ):
         columns = [
             batch.column(batch.schema.get_field_index(name)).to_numpy(zero_copy_only=False)
             for name in FIELD_NAMES
@@ -164,31 +218,37 @@ def _iter_batches(path: Path, batch_size: int) -> Iterator[tuple[np.ndarray, np.
             batch.column(batch.schema.get_field_index("label")).to_pylist(),
             dtype=object,
         )
-        yield x, _encode_labels(labels)
+        attack_labels = np.array(
+            batch.column(batch.schema.get_field_index("attack_label")).to_pylist(),
+            dtype=object,
+        )
+        yield x, _encode_labels(labels, attack_labels, label_to_id)
 
 
 def _scan_training_stats(
     path: Path,
     batch_size: int,
+    attack_labels: list[str],
+    label_to_id: dict[str, int],
     log: Callable[[str], None],
 ) -> tuple[np.ndarray, np.ndarray, int, dict[str, int]]:
     rows = 0
     sums = np.zeros(INPUT_SIZE, dtype=np.float64)
     sumsq = np.zeros(INPUT_SIZE, dtype=np.float64)
-    counts = {label: 0 for label in LABELS}
+    counts = {label: 0 for label in attack_labels}
 
-    for batch_no, (x, y) in enumerate(_iter_batches(path, batch_size), start=1):
+    for batch_no, (x, y) in enumerate(_iter_batches(path, batch_size, label_to_id), start=1):
         rows += len(x)
         sums += x.sum(axis=0, dtype=np.float64)
         sumsq += np.square(x, dtype=np.float64).sum(axis=0, dtype=np.float64)
-        for label, label_id in LABEL_TO_ID.items():
+        for label, label_id in label_to_id.items():
             counts[label] += int(np.count_nonzero(y == label_id))
         log(f"stats batch={batch_no} rows={rows}")
 
     if rows == 0:
         raise ValueError(f"{path} does not contain training rows")
-    if any(counts[label] == 0 for label in LABELS):
-        raise ValueError(f"{path} must contain both labels: {', '.join(LABELS)}")
+    if any(counts[label] == 0 for label in attack_labels):
+        raise ValueError(f"{path} must contain all labels: {', '.join(attack_labels)}")
 
     mean = sums / rows
     variance = np.maximum((sumsq / rows) - np.square(mean), 1e-12)
@@ -196,13 +256,13 @@ def _scan_training_stats(
     return mean.astype(np.float32), std.astype(np.float32), rows, counts
 
 
-def _metrics_from_confusion(matrix: np.ndarray) -> dict[str, object]:
+def _metrics_from_confusion(matrix: np.ndarray, labels: list[str]) -> dict[str, object]:
     total = int(matrix.sum())
     correct = int(np.trace(matrix))
     precision: dict[str, float] = {}
     recall: dict[str, float] = {}
     f1: dict[str, float] = {}
-    for i, label in enumerate(LABELS):
+    for i, label in enumerate(labels):
         tp = float(matrix[i, i])
         fp = float(matrix[:, i].sum() - matrix[i, i])
         fn = float(matrix[i, :].sum() - matrix[i, i])
@@ -223,9 +283,9 @@ def _metrics_from_confusion(matrix: np.ndarray) -> dict[str, object]:
     }
 
 
-def _confusion_from_arrays(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
-    encoded = y_true.astype(np.int64) * len(LABELS) + y_pred.astype(np.int64)
-    return np.bincount(encoded, minlength=len(LABELS) ** 2).reshape(len(LABELS), len(LABELS))
+def _confusion_from_arrays(y_true: np.ndarray, y_pred: np.ndarray, label_count: int) -> np.ndarray:
+    encoded = y_true.astype(np.int64) * label_count + y_pred.astype(np.int64)
+    return np.bincount(encoded, minlength=label_count ** 2).reshape(label_count, label_count)
 
 
 def _to_device(array: np.ndarray, device: torch.device, pin_memory: bool = True) -> torch.Tensor:
@@ -249,7 +309,7 @@ def _calibrate_thresholds(
 
     for threshold in thresholds:
         pred = (malicious_prob >= threshold).astype(np.int64)
-        metrics = _metrics_from_confusion(_confusion_from_arrays(y_true, pred))
+        metrics = _metrics_from_confusion(_confusion_from_arrays(y_true, pred, 2), list(BINARY_LABELS))
         item = {
             "threshold": float(threshold),
             "accuracy": metrics["accuracy"],
@@ -276,6 +336,8 @@ def _evaluate_model(
     model: RaptorGateNet,
     path: Path,
     batch_size: int,
+    attack_labels: list[str],
+    label_to_id: dict[str, int],
     device: torch.device,
     config: TrainConfig,
 ) -> dict[str, object]:
@@ -285,25 +347,32 @@ def _evaluate_model(
     prob_parts: list[np.ndarray] = []
     use_amp = _amp_enabled(config, device)
     with torch.no_grad():
-        for x, y in _iter_batches(path, batch_size):
+        for x, y in _iter_batches(path, batch_size, label_to_id):
             x_tensor = _to_device(x, device)
             with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp):
                 logits = model(x_tensor)
             probs = torch.softmax(logits.float(), dim=1)
             y_parts.append(y.astype(np.int64, copy=False))
             pred_parts.append(torch.argmax(probs, dim=1).cpu().numpy())
-            prob_parts.append(probs[:, LABEL_TO_ID["malicious"]].cpu().numpy().astype(np.float32))
+            prob_parts.append(probs[:, 1:].sum(dim=1).cpu().numpy().astype(np.float32))
     if not y_parts:
         raise ValueError(f"{path} does not contain evaluation rows")
     y_true = np.concatenate(y_parts)
     pred = np.concatenate(pred_parts)
     malicious_prob = np.concatenate(prob_parts)
-    matrix = _confusion_from_arrays(y_true, pred)
+    matrix = _confusion_from_arrays(y_true, pred, len(attack_labels))
     if matrix.sum() == 0:
         raise ValueError(f"{path} does not contain evaluation rows")
-    metrics = _metrics_from_confusion(matrix)
+    metrics = _metrics_from_confusion(matrix, attack_labels)
+    binary_y_true = (y_true != label_to_id[BENIGN_ATTACK_LABEL]).astype(np.int64)
+    binary_pred = (pred != label_to_id[BENIGN_ATTACK_LABEL]).astype(np.int64)
+    binary_metrics = _metrics_from_confusion(
+        _confusion_from_arrays(binary_y_true, binary_pred, 2),
+        list(BINARY_LABELS),
+    )
     metrics["decision"] = "argmax"
-    metrics["calibration"] = _calibrate_thresholds(y_true, malicious_prob)
+    metrics["binary"] = binary_metrics
+    metrics["calibration"] = _calibrate_thresholds(binary_y_true, malicious_prob)
     return metrics
 
 
@@ -371,14 +440,23 @@ def train_model(
         f"lr={config.learning_rate} weight_decay={config.weight_decay} "
         f"dropout={config.dropout} width={config.width} "
         f"residual_blocks={config.residual_blocks} loss={config.loss} "
-        f"amp={config.amp} seed={config.seed}"
+        f"amp={config.amp} seed={config.seed} "
+        f"attack_confidence_threshold={config.attack_confidence_threshold}"
     )
+
+    attack_labels, discovered_class_counts = _scan_attack_labels(config.train_path, config.batch_size)
+    label_to_id = {label: i for i, label in enumerate(attack_labels)}
+    logger(f"attack_labels={attack_labels}")
 
     mean, std, train_rows, train_class_counts = _scan_training_stats(
         config.train_path,
         config.batch_size,
+        attack_labels,
+        label_to_id,
         logger,
     )
+    if train_class_counts != discovered_class_counts:
+        raise ValueError("training label scan changed between passes")
     logger(f"train rows={train_rows} class_counts={train_class_counts}")
 
     model = RaptorGateNet(
@@ -387,11 +465,12 @@ def train_model(
         dropout=config.dropout,
         width=config.width,
         residual_blocks=config.residual_blocks,
+        num_labels=len(attack_labels),
     ).to(device)
     class_weights = torch.tensor(
         [
-            train_rows / (len(LABELS) * train_class_counts[label])
-            for label in LABELS
+            train_rows / (len(attack_labels) * train_class_counts[label])
+            for label in attack_labels
         ],
         dtype=torch.float32,
         device=device,
@@ -412,7 +491,7 @@ def train_model(
         correct = 0
         batches = 0
         loss_sum = 0.0
-        for x, y in _iter_batches(config.train_path, config.batch_size):
+        for x, y in _iter_batches(config.train_path, config.batch_size, label_to_id):
             if len(y) < 2:
                 continue
             x_tensor = _to_device(x, device)
@@ -442,12 +521,20 @@ def train_model(
 
     test_metrics = None
     if config.test_path is not None:
-        test_metrics = _evaluate_model(model, config.test_path, config.batch_size, device, config)
+        test_metrics = _evaluate_model(
+            model,
+            config.test_path,
+            config.batch_size,
+            attack_labels,
+            label_to_id,
+            device,
+            config,
+        )
         logger(
             "test "
             f"rows={test_metrics['rows']} "
             f"accuracy={test_metrics['accuracy']:.4f} "
-            f"f1_malicious={test_metrics['f1']['malicious']:.4f} "
+            f"f1_malicious={test_metrics['binary']['f1']['malicious']:.4f} "
             f"confusion_matrix={test_metrics['confusion_matrix']}"
         )
         best = test_metrics["calibration"]["best_f1_malicious"]
@@ -480,17 +567,22 @@ def train_model(
         "artifact": str(config.out_path),
         "checksum_sha256": checksum,
         "architecture": "RaptorGateNet",
-        "architecture_version": 2,
+        "architecture_version": 3,
         "architecture_config": {
             "width": config.width,
             "residual_blocks": config.residual_blocks,
+            "num_labels": len(attack_labels),
         },
         "feature_names": FIELD_NAMES,
         "normalization": {
             "mean": mean.astype(float).tolist(),
             "std": std.astype(float).tolist(),
         },
-        "labels": list(LABELS),
+        "labels": attack_labels,
+        "attack_labels": attack_labels,
+        "benign_label": BENIGN_ATTACK_LABEL,
+        "unknown_attack_label": UNKNOWN_ATTACK_LABEL,
+        "attack_confidence_threshold": config.attack_confidence_threshold,
         "train_rows": train_rows,
         "train_class_counts": train_class_counts,
         "epochs": config.epochs,

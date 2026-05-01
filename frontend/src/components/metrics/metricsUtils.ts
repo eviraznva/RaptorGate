@@ -200,6 +200,7 @@ export function alertDetails(event: FirewallEvent, tone: AlertTone): AlertDetail
   appendDetail(rows, "ML score", event.ml_score);
   appendDetail(rows, "ML threshold", event.ml_threshold);
   appendDetail(rows, "Model checksum", event.model_checksum);
+  appendDetail(rows, "Attack type", event.attack_type);
 
   return rows;
 }

@@ -341,6 +341,7 @@ describe('mapFirewallEventFromProto', () => {
           appProtocol: 'tls',
           interface: 'eth0',
           payloadLength: 512,
+          attackType: 'PortScan',
         },
       },
     } as unknown as Event;
@@ -358,6 +359,7 @@ describe('mapFirewallEventFromProto', () => {
       ml_score: 0.94,
       ml_threshold: 0.8,
       model_checksum: 'sha256:abc',
+      attack_type: 'PortScan',
     });
   });
 
