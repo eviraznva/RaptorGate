@@ -164,6 +164,7 @@ fn shared_server() -> &'static SharedServer {
                     pinning_detector: decision_engine.pinning_detector_arc(),
                     interface_monitor,
                     interface_controller,
+                    metrics_collector: Arc::new(ngfw::metrics::MetricsCollector::new()),
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();
