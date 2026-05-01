@@ -18,20 +18,19 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   pkiDir: '/resources/ngfw/pki',
 };
 
-const OUTSIDE_ZONE_ID = crypto.randomUUID();
-const INSIDE_ZONE_ID = crypto.randomUUID();
+const DEFAULT_ZONE_ID = '00000000-0000-0000-0000-000000000000';
 
 export const DEFAULT_ZONE_INTERFACES: ZoneInterface[] = [
   {
     id: crypto.randomUUID(),
-    zoneId: OUTSIDE_ZONE_ID,
+    zoneId: DEFAULT_ZONE_ID,
     interfaceName: 'eth1',
     status: 0,
     addresses: [],
   },
   {
     id: crypto.randomUUID(),
-    zoneId: INSIDE_ZONE_ID,
+    zoneId: DEFAULT_ZONE_ID,
     interfaceName: 'eth2',
     status: 0,
     addresses: [],
@@ -40,27 +39,17 @@ export const DEFAULT_ZONE_INTERFACES: ZoneInterface[] = [
 
 export const DEFAULT_ZONES: Zone[] = [
   {
-    id: '00000000-0000-0000-0000-000000000000',
+    id: DEFAULT_ZONE_ID,
     name: 'default',
-    interfaceIds: [],
-  },
-  {
-    id: OUTSIDE_ZONE_ID,
-    name: 'outside',
-    interfaceIds: [DEFAULT_ZONE_INTERFACES[0]!.id],
-  },
-  {
-    id: INSIDE_ZONE_ID,
-    name: 'inside',
-    interfaceIds: [DEFAULT_ZONE_INTERFACES[1]!.id],
+    interfaceIds: [DEFAULT_ZONE_INTERFACES[0]!.id, DEFAULT_ZONE_INTERFACES[1]!.id],
   },
 ];
 
 export const DEFAULT_ZONE_PAIRS: ZonePair[] = [
   {
-    id: crypto.randomUUID(),
-    srcZoneId: OUTSIDE_ZONE_ID,
-    dstZoneId: INSIDE_ZONE_ID,
+    id: '00000000-0000-0000-0000-000000000000',
+    srcZoneId: DEFAULT_ZONE_ID,
+    dstZoneId: DEFAULT_ZONE_ID,
     defaultPolicy: DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED,
   },
 ];

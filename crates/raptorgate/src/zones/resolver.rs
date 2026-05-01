@@ -43,8 +43,7 @@ impl<M: InterfaceMonitor> ZoneResolver for RoutingZoneResolver<M> {
         let src_zone_id = self
             .interface_provider
             .get_zone_interface_by_name(src_interface_name)
-            .map(|(_, zi)| zi.zone_id)
-            .unwrap_or_else(|| crate::zones::DEFAULT_ZONE_ID);
+            .map_or_else(|| crate::zones::DEFAULT_ZONE_ID, |(_, zi)| zi.zone_id);
 
         let dst_zone_id = self
             .routing_table
@@ -54,8 +53,7 @@ impl<M: InterfaceMonitor> ZoneResolver for RoutingZoneResolver<M> {
                 self.interface_provider
                     .get_zone_interface_by_name(&sys_iface.name)
             })
-            .map(|(_, zi)| zi.zone_id)
-            .unwrap_or_else(|| crate::zones::DEFAULT_ZONE_ID);
+        .map_or_else(|| crate::zones::DEFAULT_ZONE_ID, |(_, zi)| zi.zone_id);
 
         self.pair_provider
             .get_zone_pair_by_zones(&src_zone_id, &dst_zone_id)

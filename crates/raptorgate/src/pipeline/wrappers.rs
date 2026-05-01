@@ -574,15 +574,12 @@ impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneRes
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let arrival = ArrivalInfo::from_time(ctx.borrow_arrival_time());
 
-        // Resolve egress IP for routing table lookup.
-        // DNAT has already happened, so dst_ip is the final destination.
         let dst_ip = match &ctx.borrow_sliced_packet().net {
             Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
             Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
             _ => return StageOutcome::Continue,
         };
 
-        // Resolve the zone pair dynamically based on src interface and dst ip.
         let pair = self.zone_resolver.resolve(ctx.borrow_src_interface(), dst_ip);
         
         let pair_id = match pair {
@@ -593,18 +590,18 @@ impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneRes
                     "policy.packet.dropped",
                     "policy_eval",
                     "drop",
-                    "no matching zone pair found",
+                    "no matching zone pair found, zones: ",
+
                 );
                 return StageOutcome::Halt;
             }
         };
 
-        // Wyznacz status DNSSEC dla pakietów DNS (leniwie, przez spawn_blocking).
         let dnssec_status = if let Some(provider) = &self.dnssec {
             let is_dns = ctx
                 .borrow_dpi_ctx()
                 .as_ref()
-                .map_or(false, |d| d.app_proto == Some(AppProto::Dns));
+                .is_some_and(|d| d.app_proto == Some(AppProto::Dns));
 
             if is_dns {
                 let domain = ctx
@@ -618,8 +615,6 @@ impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneRes
                     tokio::task::spawn_blocking(move || p.check_domain(&domain, qtype).status)
                         .await
                         .ok()
-                        .map(Some)
-                        .unwrap_or(None)
                 } else {
                     None
                 }
