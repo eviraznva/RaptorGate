@@ -1,0 +1,201 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
+
+export class CreateRadiusServerProfileDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  name: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  description?: string | null;
+
+  @ApiProperty()
+  @IsBoolean()
+  isActive: boolean;
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  host: string;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  port: number;
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  sharedSecretRef: string;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  timeoutMs: number;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(0)
+  retries: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  nasIp?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  nasIdentifier?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  calledStationId?: string | null;
+}
+
+export class UpdateRadiusServerProfileDto extends CreateRadiusServerProfileDto {}
+
+export class CreateLdapServerProfileDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  name: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  description?: string | null;
+
+  @ApiProperty()
+  @IsBoolean()
+  isActive: boolean;
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  host: string;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  port: number;
+
+  @ApiProperty({ enum: ['disabled', 'starttls', 'ldaps'] })
+  @IsIn(['disabled', 'starttls', 'ldaps'])
+  tlsMode: 'disabled' | 'starttls' | 'ldaps';
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  bindDn: string;
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  bindPasswordRef: string;
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  userBaseDn: string;
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  userFilterAttribute: string;
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  groupBaseDn: string;
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  groupMemberAttribute: string;
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  groupNameAttribute: string;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  timeoutMs: number;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  cacheTtlSeconds: number;
+}
+
+export class UpdateLdapServerProfileDto extends CreateLdapServerProfileDto {}
+
+export class CreateIdentityAuthenticationProfileDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  name: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  description?: string | null;
+
+  @ApiProperty()
+  @IsBoolean()
+  isActive: boolean;
+
+  @ApiProperty({ enum: ['radius', 'ldap', 'local'] })
+  @IsIn(['radius', 'ldap', 'local'])
+  provider: 'radius' | 'ldap' | 'local';
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  radiusProfileId?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  ldapProfileId?: string | null;
+
+  @ApiProperty({ enum: ['none', 'ldap', 'radius_vsa'] })
+  @IsIn(['none', 'ldap', 'radius_vsa'])
+  groupSource: 'none' | 'ldap' | 'radius_vsa';
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  sessionTtlSeconds: number;
+}
+
+export class UpdateIdentityAuthenticationProfileDto extends CreateIdentityAuthenticationProfileDto {}
+
+export class UpdateIdentitySettingsDto {
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  portalAuthenticationProfileId?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  adminAuthenticationProfileId?: string | null;
+}

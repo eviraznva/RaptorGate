@@ -30,6 +30,7 @@ export interface RadiusAccessRequestInput {
   secret: string;
   nasIp: string;
   nasIdentifier: string;
+  calledStationId?: string | null;
   callingStationId: string;
 }
 
@@ -80,7 +81,7 @@ export function buildAccessRequest(
   );
   const calledStationAttr = encodeAttribute(
     RADIUS_ATTR_CALLED_STATION_ID,
-    Buffer.from(input.nasIdentifier, 'utf8'),
+    Buffer.from(input.calledStationId ?? input.nasIdentifier, 'utf8'),
   );
   const callingStationAttr = encodeAttribute(
     RADIUS_ATTR_CALLING_STATION_ID,

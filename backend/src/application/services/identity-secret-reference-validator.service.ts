@@ -26,7 +26,7 @@ export class IdentitySecretReferenceValidatorService {
       refs.add(profile.getBindPasswordRef());
     }
 
-    // TODO(Issue C): include auth profile secret refs if CRUD adds them.
+    // TODO(Issue D): include auth profile secret refs if admin auth adds them.
     for (const ref of refs) {
       await this.validateRef(ref);
     }

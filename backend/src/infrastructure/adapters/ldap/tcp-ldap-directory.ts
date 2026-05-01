@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type {
   ILdapDirectory,
+  LdapDirectoryOptions,
   LdapGroupLookupResult,
 } from '../../../application/ports/ldap-directory.interface.js';
 import type { Env } from '../../../shared/config/env.validation.js';
@@ -22,9 +23,20 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
     return this.config.get('IDENTITY_LDAP_ENABLED', { infer: true });
   }
 
-  async resolveGroups(username: string): Promise<LdapGroupLookupResult> {
-    if (!this.isEnabled()) {
+  async resolveGroups(
+    username: string,
+    options?: LdapDirectoryOptions,
+  ): Promise<LdapGroupLookupResult> {
+    const directory = options ?? this.optionsFromEnv();
+
+    if (!directory.enabled) {
       return { kind: 'disabled' };
+    }
+    if (directory.tlsMode !== 'disabled') {
+      return {
+        kind: 'error',
+        message: `LDAP tlsMode ${directory.tlsMode} is not supported by the TCP adapter`,
+      };
     }
     if (!isSafeFilterValue(username)) {
       return {
@@ -33,38 +45,18 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
       };
     }
 
-    const host = this.config.get('IDENTITY_LDAP_HOST', { infer: true });
-    const port = this.config.get('IDENTITY_LDAP_PORT', { infer: true });
-    const timeoutMs = this.config.get('IDENTITY_LDAP_TIMEOUT_MS', {
-      infer: true,
+    const client = new TcpLdapClient({
+      host: directory.host,
+      port: directory.port,
+      timeoutMs: directory.timeoutMs,
     });
-    const bindDn = this.config.get('IDENTITY_LDAP_BIND_DN', { infer: true });
-    const bindPassword = this.config.get('IDENTITY_LDAP_BIND_PASSWORD', {
-      infer: true,
-    });
-    const userBaseDn = this.config.get('IDENTITY_LDAP_USER_BASE_DN', {
-      infer: true,
-    });
-    const userFilterAttr = this.config.get('IDENTITY_LDAP_USER_FILTER_ATTRIBUTE', {
-      infer: true,
-    });
-    const groupBaseDn = this.config.get('IDENTITY_LDAP_GROUP_BASE_DN', {
-      infer: true,
-    });
-    const groupMemberAttr = this.config.get(
-      'IDENTITY_LDAP_GROUP_MEMBER_ATTRIBUTE',
-      { infer: true },
-    );
-    const groupNameAttr = this.config.get(
-      'IDENTITY_LDAP_GROUP_NAME_ATTRIBUTE',
-      { infer: true },
-    );
-
-    const client = new TcpLdapClient({ host, port, timeoutMs });
     try {
       await client.connect();
 
-      const bindResult = await client.bind(bindDn, bindPassword);
+      const bindResult = await client.bind(
+        directory.bindDn,
+        directory.bindPassword,
+      );
       if (!TcpLdapClient.isResultSuccess(bindResult)) {
         return {
           kind: 'error',
@@ -73,12 +65,12 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
       }
 
       const userSearch = await client.searchEqualityMatch({
-        baseDn: userBaseDn,
-        filterAttribute: userFilterAttr,
+        baseDn: directory.userBaseDn,
+        filterAttribute: directory.userFilterAttribute,
         filterValue: username,
         attributes: ['1.1'],
         sizeLimit: 1,
-        timeLimitSeconds: Math.max(1, Math.floor(timeoutMs / 1000)),
+        timeLimitSeconds: Math.max(1, Math.floor(directory.timeoutMs / 1000)),
       });
       if (TcpLdapClient.isNoSuchObject(userSearch.result)) {
         return { kind: 'not-found' };
@@ -95,12 +87,12 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
       const userDn = userSearch.entries[0].dn;
 
       const groupSearch = await client.searchEqualityMatch({
-        baseDn: groupBaseDn,
-        filterAttribute: groupMemberAttr,
+        baseDn: directory.groupBaseDn,
+        filterAttribute: directory.groupMemberAttribute,
         filterValue: username,
-        attributes: [groupNameAttr],
+        attributes: [directory.groupNameAttribute],
         sizeLimit: 0,
-        timeLimitSeconds: Math.max(1, Math.floor(timeoutMs / 1000)),
+        timeLimitSeconds: Math.max(1, Math.floor(directory.timeoutMs / 1000)),
       });
       if (TcpLdapClient.isNoSuchObject(groupSearch.result)) {
         return { kind: 'ok', userDn, groups: [] };
@@ -112,7 +104,10 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
         };
       }
 
-      const groups = collectGroups(groupSearch.entries, groupNameAttr);
+      const groups = collectGroups(
+        groupSearch.entries,
+        directory.groupNameAttribute,
+      );
 
       this.logger.log({
         event: 'identity.ldap.lookup',
@@ -134,6 +129,38 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
     } finally {
       await client.unbindAndClose();
     }
+  }
+
+  // TODO(Issue D): remove env fallback after auth flow resolves active profiles.
+  private optionsFromEnv(): LdapDirectoryOptions {
+    return {
+      enabled: this.config.get('IDENTITY_LDAP_ENABLED', { infer: true }),
+      host: this.config.get('IDENTITY_LDAP_HOST', { infer: true }),
+      port: this.config.get('IDENTITY_LDAP_PORT', { infer: true }),
+      tlsMode: 'disabled',
+      bindDn: this.config.get('IDENTITY_LDAP_BIND_DN', { infer: true }),
+      bindPassword: this.config.get('IDENTITY_LDAP_BIND_PASSWORD', {
+        infer: true,
+      }),
+      userBaseDn: this.config.get('IDENTITY_LDAP_USER_BASE_DN', {
+        infer: true,
+      }),
+      userFilterAttribute: this.config.get(
+        'IDENTITY_LDAP_USER_FILTER_ATTRIBUTE',
+        { infer: true },
+      ),
+      groupBaseDn: this.config.get('IDENTITY_LDAP_GROUP_BASE_DN', {
+        infer: true,
+      }),
+      groupMemberAttribute: this.config.get(
+        'IDENTITY_LDAP_GROUP_MEMBER_ATTRIBUTE',
+        { infer: true },
+      ),
+      groupNameAttribute: this.config.get('IDENTITY_LDAP_GROUP_NAME_ATTRIBUTE', {
+        infer: true,
+      }),
+      timeoutMs: this.config.get('IDENTITY_LDAP_TIMEOUT_MS', { infer: true }),
+    };
   }
 }
 

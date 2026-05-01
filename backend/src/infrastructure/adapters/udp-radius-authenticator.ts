@@ -5,6 +5,7 @@ import type {
   IRadiusAuthenticator,
   RadiusAuthRequest,
   RadiusAuthResult,
+  RadiusServerOptions,
 } from '../../application/ports/radius-authenticator.interface.js';
 import type { Env } from '../../shared/config/env.validation.js';
 import {
@@ -29,26 +30,17 @@ export class UdpRadiusAuthenticator implements IRadiusAuthenticator {
   ) {}
 
   async authenticate(request: RadiusAuthRequest): Promise<RadiusAuthResult> {
-    const host = this.configService.get('RADIUS_HOST', { infer: true });
-    const port = this.configService.get('RADIUS_PORT', { infer: true });
-    const secret = this.configService.get('RADIUS_SECRET', { infer: true });
-    const timeoutMs = this.configService.get('RADIUS_TIMEOUT_MS', {
-      infer: true,
-    });
-    const retries = this.configService.get('RADIUS_RETRIES', { infer: true });
-    const nasIp = this.configService.get('RADIUS_NAS_IP', { infer: true });
-    const nasIdentifier = this.configService.get('RADIUS_NAS_IDENTIFIER', {
-      infer: true,
-    });
+    const server = request.server ?? this.serverFromEnv();
 
     let built;
     try {
       built = buildAccessRequest({
         username: request.username,
         password: request.password,
-        secret,
-        nasIp,
-        nasIdentifier,
+        secret: server.secret,
+        nasIp: server.nasIp,
+        nasIdentifier: server.nasIdentifier,
+        calledStationId: server.calledStationId,
         callingStationId: request.callingStationId,
       });
     } catch (error) {
@@ -62,22 +54,22 @@ export class UdpRadiusAuthenticator implements IRadiusAuthenticator {
       username: request.username,
       callingStationId: request.callingStationId,
       identifier: built.identifier,
-      host,
-      port,
+      host: server.host,
+      port: server.port,
     });
 
-    const totalAttempts = retries + 1;
+    const totalAttempts = server.retries + 1;
     let lastError: string | null = null;
 
     for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
       const result = await this.sendOnce(
-        host,
-        port,
+        server.host,
+        server.port,
         built.packet,
         built.identifier,
         built.requestAuthenticator,
-        secret,
-        timeoutMs,
+        server.secret,
+        server.timeoutMs,
       );
 
       if (result.kind === 'accept' || result.kind === 'reject') {
@@ -99,7 +91,7 @@ export class UdpRadiusAuthenticator implements IRadiusAuthenticator {
           message: 'RADIUS timeout',
           username: request.username,
           attempt,
-          timeoutMs,
+          timeoutMs: server.timeoutMs,
         });
         if (attempt === totalAttempts) {
           return { kind: 'timeout' };
@@ -121,6 +113,22 @@ export class UdpRadiusAuthenticator implements IRadiusAuthenticator {
     }
 
     return { kind: 'error', message: lastError ?? 'RADIUS attempts exhausted' };
+  }
+
+  // TODO(Issue D): remove env fallback after auth flow resolves active profiles.
+  private serverFromEnv(): RadiusServerOptions {
+    return {
+      host: this.configService.get('RADIUS_HOST', { infer: true }),
+      port: this.configService.get('RADIUS_PORT', { infer: true }),
+      secret: this.configService.get('RADIUS_SECRET', { infer: true }),
+      timeoutMs: this.configService.get('RADIUS_TIMEOUT_MS', { infer: true }),
+      retries: this.configService.get('RADIUS_RETRIES', { infer: true }),
+      nasIp: this.configService.get('RADIUS_NAS_IP', { infer: true }),
+      nasIdentifier: this.configService.get('RADIUS_NAS_IDENTIFIER', {
+        infer: true,
+      }),
+      calledStationId: null,
+    };
   }
 
   private sendOnce(

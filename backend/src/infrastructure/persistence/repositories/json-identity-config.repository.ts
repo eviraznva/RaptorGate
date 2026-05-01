@@ -57,4 +57,27 @@ export class JsonIdentityConfigRepository implements IIdentityConfigRepository {
       await this.fileStore.writeJsonAtomic(this.filePath, record);
     });
   }
+
+  async mutate(
+    transform: (
+      config: IdentityConfiguration,
+    ) => IdentityConfiguration | Promise<IdentityConfiguration>,
+  ): Promise<IdentityConfiguration> {
+    return this.mutex.runExclusive(async () => {
+      const raw = await this.fileStore.readJsonOrDefault<unknown>(
+        this.filePath,
+        IdentityConfigJsonMapper.emptyRecord(),
+      );
+      const record = IdentityConfigurationRecordSchema.parse(raw);
+      const current = IdentityConfigJsonMapper.toDomain(record);
+      const next = await transform(current);
+
+      await this.fileStore.writeJsonAtomic(
+        this.filePath,
+        IdentityConfigJsonMapper.toRecord(next),
+      );
+
+      return next;
+    });
+  }
 }

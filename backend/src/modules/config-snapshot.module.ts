@@ -4,16 +4,32 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from '../application/ports/config-snapshot-push-service.interface.js';
+import { LDAP_DIRECTORY_TOKEN } from '../application/ports/ldap-directory.interface.js';
 import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../application/ports/raptor-lang-validation-service.interface.js';
+import { RADIUS_AUTHENTICATOR_TOKEN } from '../application/ports/radius-authenticator.interface.js';
 import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
 import { ConfigSnapshotDiffService } from '../application/services/config-snapshot-diff.service.js';
+import { IdentityConfigMutationService } from '../application/services/identity-config-mutation.service.js';
 import { IdentitySecretReferenceValidatorService } from '../application/services/identity-secret-reference-validator.service.js';
 import { ApplyConfigSnapshotUseCase } from '../application/use-cases/apply-config-snapshot.use-case.js';
+import { CreateAuthenticationProfileUseCase } from '../application/use-cases/create-authentication-profile.use-case.js';
+import { CreateLdapProfileUseCase } from '../application/use-cases/create-ldap-profile.use-case.js';
+import { CreateRadiusProfileUseCase } from '../application/use-cases/create-radius-profile.use-case.js';
+import { DeleteAuthenticationProfileUseCase } from '../application/use-cases/delete-authentication-profile.use-case.js';
+import { DeleteLdapProfileUseCase } from '../application/use-cases/delete-ldap-profile.use-case.js';
+import { DeleteRadiusProfileUseCase } from '../application/use-cases/delete-radius-profile.use-case.js';
 import { ExportConfigUseCase } from '../application/use-cases/export-config.use-case.js';
 import { GetConfigDiffUseCase } from '../application/use-cases/get-config-diff.use-case.js';
 import { GetConfigHistoryUseCase } from '../application/use-cases/get-config-history.use-case.js';
+import { GetIdentityConfigUseCase } from '../application/use-cases/get-identity-config.use-case.js';
 import { ImportConfigUseCase } from '../application/use-cases/import-config.use-case.js';
 import { RollbackConfigUseCase } from '../application/use-cases/rollback-config.use-case.js';
+import { TestLdapProfileUseCase } from '../application/use-cases/test-ldap-profile.use-case.js';
+import { TestRadiusProfileUseCase } from '../application/use-cases/test-radius-profile.use-case.js';
+import { UpdateAuthenticationProfileUseCase } from '../application/use-cases/update-authentication-profile.use-case.js';
+import { UpdateIdentitySettingsUseCase } from '../application/use-cases/update-identity-settings.use-case.js';
+import { UpdateLdapProfileUseCase } from '../application/use-cases/update-ldap-profile.use-case.js';
+import { UpdateRadiusProfileUseCase } from '../application/use-cases/update-radius-profile.use-case.js';
 import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../domain/repositories/config-snapshot.repository.js';
 import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../domain/repositories/firewall-certificate.repository.js';
 import { IDENTITY_CONFIG_REPOSITORY_TOKEN } from '../domain/repositories/identity-config.repository.js';
@@ -36,7 +52,9 @@ import {
   GrpcRaptorLangValidationService,
   RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
 } from '../infrastructure/adapters/grpc-raptor-lang-validation.service.js';
+import { TcpLdapDirectoryAdapter } from '../infrastructure/adapters/ldap/tcp-ldap-directory.js';
 import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
+import { UdpRadiusAuthenticator } from '../infrastructure/adapters/udp-radius-authenticator.js';
 import { IdentityBootstrapSeedService } from '../infrastructure/identity/identity-bootstrap-seed.service.js';
 import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
 import { FileStore } from '../infrastructure/persistence/json/file-store.js';
@@ -55,6 +73,7 @@ import { JsonZoneInterfaceRepository } from '../infrastructure/persistence/repos
 import { JsonZoneRepository } from '../infrastructure/persistence/repositories/json-zone.repository.js';
 import { JsonZonePairRepository } from '../infrastructure/persistence/repositories/json-zone-pair.repository.js';
 import { ConfigController } from '../presentation/controllers/config.controller.js';
+import { IdentityConfigController } from '../presentation/controllers/identity-config.controller.js';
 import { Env } from '../shared/config/env.validation.js';
 import { SecretModule } from './secret.module.js';
 
@@ -148,15 +167,29 @@ import { SecretModule } from './secret.module.js';
       },
     ]),
   ],
-  controllers: [ConfigController],
+  controllers: [ConfigController, IdentityConfigController],
   providers: [
     ApplyConfigSnapshotUseCase,
+    CreateAuthenticationProfileUseCase,
+    CreateLdapProfileUseCase,
+    CreateRadiusProfileUseCase,
+    DeleteAuthenticationProfileUseCase,
+    DeleteLdapProfileUseCase,
+    DeleteRadiusProfileUseCase,
     GetConfigDiffUseCase,
     GetConfigHistoryUseCase,
+    GetIdentityConfigUseCase,
     RollbackConfigUseCase,
     ExportConfigUseCase,
     ImportConfigUseCase,
+    TestLdapProfileUseCase,
+    TestRadiusProfileUseCase,
+    UpdateAuthenticationProfileUseCase,
+    UpdateIdentitySettingsUseCase,
+    UpdateLdapProfileUseCase,
+    UpdateRadiusProfileUseCase,
     ConfigSnapshotDiffService,
+    IdentityConfigMutationService,
     IdentitySecretReferenceValidatorService,
     IdentityBootstrapSeedService,
     GrpcConfigSnapshotPushService,
@@ -165,6 +198,14 @@ import { SecretModule } from './secret.module.js';
     {
       provide: TOKEN_SERVICE_TOKEN,
       useClass: TokenService,
+    },
+    {
+      provide: RADIUS_AUTHENTICATOR_TOKEN,
+      useClass: UdpRadiusAuthenticator,
+    },
+    {
+      provide: LDAP_DIRECTORY_TOKEN,
+      useClass: TcpLdapDirectoryAdapter,
     },
     {
       provide: CONFIG_SNAPSHOT_REPOSITORY_TOKEN,

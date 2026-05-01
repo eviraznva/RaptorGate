@@ -77,6 +77,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     Permission.ZONE_PAIRINGS_DELETE,
     Permission.FIREWALL_STATUS,
     Permission.IDENTITY_READ,
+    Permission.IDENTITY_UPDATE,
   ],
   [Role.SuperAdmin]: [
     Permission.RULES_READ,
@@ -123,5 +124,6 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     Permission.ZONE_PAIRINGS_DELETE,
     Permission.FIREWALL_STATUS,
     Permission.IDENTITY_READ,
+    Permission.IDENTITY_UPDATE,
   ],
 };

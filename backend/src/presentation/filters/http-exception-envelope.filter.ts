@@ -25,6 +25,8 @@ import { DomainNameIsInvalidException } from "../../domain/exceptions/domain-nam
 import { EmailIsInvalidException } from "../../domain/exceptions/email-is-invalid.exception.js";
 import { EntityAlreadyExistsException } from "../../domain/exceptions/entity-already-exists-exception.js";
 import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
+import { IdentityConfigIsInvalidException } from "../../domain/exceptions/identity-config-is-invalid.exception.js";
+import { IdentityProfileInUseException } from "../../domain/exceptions/identity-profile-in-use.exception.js";
 import { InvalidCredentialsException } from "../../domain/exceptions/invalid-credentials.exception.js";
 import { IpAddressIsInvalidException } from "../../domain/exceptions/ip-address-is-invalid.exception.js";
 import { IpsSignatureCategoryIsInvalidException } from "../../domain/exceptions/ips-signature-category-is-invalid.exception.js";
@@ -80,7 +82,8 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
   private mapDomainToHttpException(exception: unknown): HttpException | null {
     if (
       exception instanceof UserAlreadyExistsException ||
-      exception instanceof EntityAlreadyExistsException
+      exception instanceof EntityAlreadyExistsException ||
+      exception instanceof IdentityProfileInUseException
     ) {
       return new ConflictException(exception.message);
     }
@@ -129,7 +132,8 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
       exception instanceof IpsSignatureConfigIsInvalidException ||
       exception instanceof SignatureSeverityIsInvalidException ||
       exception instanceof SecretIsInvalidException ||
-      exception instanceof SecretReferenceMissingException
+      exception instanceof SecretReferenceMissingException ||
+      exception instanceof IdentityConfigIsInvalidException
     ) {
       return new BadRequestException(exception.message);
     }

@@ -45,4 +45,5 @@ export enum Permission {
   AUDIT_READ = "audit:read",
   FIREWALL_STATUS = "firewall:status",
   IDENTITY_READ = "identity:read",
+  IDENTITY_UPDATE = "identity:update",
 }

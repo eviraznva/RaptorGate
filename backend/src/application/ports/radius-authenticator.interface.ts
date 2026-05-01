@@ -8,11 +8,23 @@ export type RadiusAuthResult =
   | { kind: 'timeout' }
   | { kind: 'error'; message: string };
 
+export interface RadiusServerOptions {
+  host: string;
+  port: number;
+  secret: string;
+  timeoutMs: number;
+  retries: number;
+  nasIp: string;
+  nasIdentifier: string;
+  calledStationId: string | null;
+}
+
 export interface RadiusAuthRequest {
   username: string;
   password: string;
   // sourceIp klienta — wedruje jako Calling-Station-Id (attr 31).
   callingStationId: string;
+  server?: RadiusServerOptions;
 }
 
 export interface IRadiusAuthenticator {

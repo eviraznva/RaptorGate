@@ -1,4 +1,5 @@
 export class IdentitySettings {
+  // TODO(Issue VPN): add vpnAuthenticationProfileId when VPN auth flow exists.
   private constructor(
     private portalAuthenticationProfileId: string | null,
     private adminAuthenticationProfileId: string | null,
