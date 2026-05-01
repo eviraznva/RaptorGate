@@ -4,6 +4,7 @@ const ALL_PROTO_FILES: &[&str] = &[
     "../../proto/events/firewall_events.proto",
     "../../proto/services/event_service.proto",
     "../../proto/services/query_service.proto",
+    "../../proto/services/metrics_service.proto",
     "../../proto/common/common.proto",
     "../../proto/config/config_models.proto",
     "../../proto/control/validation_service.proto",

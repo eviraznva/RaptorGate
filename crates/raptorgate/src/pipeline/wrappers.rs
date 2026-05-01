@@ -18,6 +18,7 @@ use crate::{
     },
     dpi::{DpiClassifier, FlowKey, InspectResult},
     events::{self, Event, EventKind},
+    metrics::MetricsCollector,
     ml::{MlPacketInspector, MlPrediction},
     packet_validator::validate,
     pipeline::{Stage, StageOutcome},
@@ -55,6 +56,18 @@ impl Stage for ValidationStage {
                 StageOutcome::Halt
             }
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct MetricsStage {
+    pub collector: Arc<MetricsCollector>,
+}
+
+impl Stage for MetricsStage {
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        self.collector.observe_packet(ctx.borrow_raw().len());
+        StageOutcome::Continue
     }
 }
 

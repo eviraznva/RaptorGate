@@ -25,6 +25,7 @@ use crate::data_plane::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::{
     EndpointIdentifier, TcpClosingState, TcpHandshakeState, TcpSessionState, TcpSessionTracker,
 };
+use crate::metrics::{MetricsCollector, MetricsService};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::provider::PolicyManager;
 use crate::policy::{Policy, PolicyId};
@@ -35,6 +36,7 @@ use crate::proto::services::firewall_query_service_server::{
 use crate::proto::services::firewall_config_snapshot_service_server::{
     FirewallConfigSnapshotService, FirewallConfigSnapshotServiceServer,
 };
+use crate::proto::services::firewall_metrics_service_server::FirewallMetricsServiceServer;
 use crate::proto::services::{
     GetConfigRequest, GetConfigResponse, GetDnsInspectionConfigRequest,
     GetDnsInspectionConfigResponse, GetIpsConfigRequest, GetIpsConfigResponse,
@@ -109,6 +111,9 @@ where
 
         if let Err(e) = tonic::transport::Server::builder()
             .add_service(FirewallQueryServiceServer::new(self.handler.clone()))
+            .add_service(FirewallMetricsServiceServer::new(MetricsService::new(
+                Arc::clone(&self.handler.metrics_collector),
+            )))
             .add_service(FirewallConfigSnapshotServiceServer::new(self.handler))
             .serve_with_incoming_shutdown(incoming, self.shutdown.cancelled())
             .await
@@ -145,6 +150,7 @@ where
     pub pinning_detector: Arc<PinningDetector>,
     pub interface_monitor: Arc<Monitor>,
     pub interface_controller: Arc<InterfaceController>,
+    pub metrics_collector: Arc<MetricsCollector>,
 }
 
 impl<PolicySwap, Monitor> Clone for QueryHandler<PolicySwap, Monitor>
@@ -171,6 +177,7 @@ where
             pinning_detector: Arc::clone(&self.pinning_detector),
             interface_monitor: Arc::clone(&self.interface_monitor),
             interface_controller: Arc::clone(&self.interface_controller),
+            metrics_collector: Arc::clone(&self.metrics_collector),
         }
     }
 }
