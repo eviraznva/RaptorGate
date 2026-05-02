@@ -93,12 +93,23 @@ export class IdentityAuthenticationProfileResponseDto {
   groupSource: string;
   @ApiProperty()
   sessionTtlSeconds: number;
+  @ApiProperty({ type: () => [AdminRoleMappingResponseDto] })
+  adminRoleMappings: AdminRoleMappingResponseDto[];
   @ApiProperty()
   createdAt: Date;
   @ApiProperty()
   updatedAt: Date;
   @ApiProperty()
   createdBy: string;
+}
+
+export class AdminRoleMappingResponseDto {
+  @ApiProperty()
+  matchType: string;
+  @ApiProperty()
+  matchValue: string;
+  @ApiProperty()
+  role: string;
 }
 
 export class IdentitySettingsResponseDto {

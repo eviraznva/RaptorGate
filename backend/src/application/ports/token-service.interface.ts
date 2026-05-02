@@ -1,6 +1,11 @@
 export type TokenPayload = {
   sub: string;
   username: string;
+  principalType?: 'local_user' | 'external_admin';
+  roles?: string[];
+  authProvider?: 'local' | 'radius' | 'ldap';
+  authProfileId?: string;
+  externalId?: string;
 };
 
 export type TokenPair = {

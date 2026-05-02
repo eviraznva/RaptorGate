@@ -3,6 +3,7 @@ import { IdentityAuthenticationProfile } from '../../domain/entities/identity-au
 import { IdentityConfiguration } from '../../domain/entities/identity-configuration.entity.js';
 import { IdentitySettings } from '../../domain/entities/identity-settings.entity.js';
 import { RadiusServerProfile } from '../../domain/entities/radius-server-profile.entity.js';
+import { IdentityConfigIsInvalidException } from '../../domain/exceptions/identity-config-is-invalid.exception.js';
 import { IdentityProfileNotFoundException } from '../../domain/exceptions/identity-profile-not-found.exception.js';
 import type { IIdentityConfigRepository } from '../../domain/repositories/identity-config.repository.js';
 import type { ITokenService } from '../ports/token-service.interface.js';
@@ -210,5 +211,53 @@ describe('UpdateIdentitySettingsUseCase', () => {
         adminAuthenticationProfileId: 'missing-auth',
       }),
     ).rejects.toThrow(IdentityProfileNotFoundException);
+  });
+
+  it('rejects local authentication profiles for admin login settings', async () => {
+    const now = new Date('2026-05-01T10:00:00.000Z');
+    const localAuth = IdentityAuthenticationProfile.create(
+      'local-auth',
+      'Local Auth',
+      null,
+      true,
+      'local',
+      null,
+      null,
+      'none',
+      1800,
+      now,
+      now,
+      'creator',
+    );
+    const repository = {
+      mutate: jest.fn(async (transform: (config: IdentityConfiguration) => IdentityConfiguration | Promise<IdentityConfiguration>) =>
+        transform(
+          IdentityConfiguration.create(
+            [],
+            [],
+            [localAuth],
+            IdentitySettings.create(null, null, now, 'creator'),
+          ),
+        ),
+      ),
+    } as unknown as jest.Mocked<IIdentityConfigRepository>;
+    const validator = {
+      validateActiveConfig: jest.fn(async () => undefined),
+    } as unknown as jest.Mocked<IdentitySecretReferenceValidatorService>;
+    const useCase = new UpdateIdentitySettingsUseCase(
+      repository,
+      new IdentityConfigMutationService(),
+      validator,
+      {
+        decodeAccessToken: jest.fn(() => ({ sub: 'user-1', username: 'admin' })),
+      } as unknown as ITokenService,
+    );
+
+    await expect(
+      useCase.execute({
+        accessToken: 'token',
+        adminAuthenticationProfileId: 'local-auth',
+      }),
+    ).rejects.toThrow(IdentityConfigIsInvalidException);
   });
 });

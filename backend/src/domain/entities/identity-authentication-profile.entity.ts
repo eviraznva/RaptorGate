@@ -1,7 +1,16 @@
 import { IdentityConfigIsInvalidException } from '../exceptions/identity-config-is-invalid.exception.js';
+import { Role } from '../enums/role.enum.js';
 
 export type IdentityAuthenticationProvider = 'radius' | 'ldap' | 'local';
 export type IdentityGroupSource = 'none' | 'ldap' | 'radius_vsa';
+export type AdminRoleMappingMatchType = 'username' | 'ldap_group' | 'radius_vsa';
+export type AdminRoleMappingRole = 'super_admin' | 'admin' | 'operator' | 'viewer';
+
+export interface AdminRoleMapping {
+  matchType: AdminRoleMappingMatchType;
+  matchValue: string;
+  role: AdminRoleMappingRole;
+}
 
 export class IdentityAuthenticationProfile {
   private constructor(
@@ -17,6 +26,7 @@ export class IdentityAuthenticationProfile {
     private readonly createdAt: Date,
     private updatedAt: Date,
     private readonly createdBy: string,
+    private readonly adminRoleMappings: AdminRoleMapping[],
   ) {}
 
   public static create(
@@ -32,6 +42,7 @@ export class IdentityAuthenticationProfile {
     createdAt: Date,
     updatedAt: Date,
     createdBy: string,
+    adminRoleMappings: AdminRoleMapping[] = [],
   ): IdentityAuthenticationProfile {
     requireText(id, 'authentication profile id');
     requireText(name, 'authentication profile name');
@@ -73,6 +84,7 @@ export class IdentityAuthenticationProfile {
       createdAt,
       updatedAt,
       createdBy,
+      normalizeAdminRoleMappings(adminRoleMappings),
     );
   }
 
@@ -123,6 +135,10 @@ export class IdentityAuthenticationProfile {
   public getCreatedBy(): string {
     return this.createdBy;
   }
+
+  public getAdminRoleMappings(): AdminRoleMapping[] {
+    return this.adminRoleMappings.map((mapping) => ({ ...mapping }));
+  }
 }
 
 function requireText(value: string, field: string): void {
@@ -140,4 +156,31 @@ function requirePositive(value: number, field: string): void {
 function normalizeNullable(value: string | null): string | null {
   const normalized = value?.trim() ?? '';
   return normalized ? normalized : null;
+}
+
+function normalizeAdminRoleMappings(
+  mappings: AdminRoleMapping[],
+): AdminRoleMapping[] {
+  return mappings.map((mapping) => {
+    requireMappingType(mapping.matchType);
+    requireText(mapping.matchValue, 'admin role mapping matchValue');
+    requireRole(mapping.role);
+    return {
+      matchType: mapping.matchType,
+      matchValue: mapping.matchValue.trim(),
+      role: mapping.role,
+    };
+  });
+}
+
+function requireMappingType(matchType: string): void {
+  if (!['username', 'ldap_group', 'radius_vsa'].includes(matchType)) {
+    throw new IdentityConfigIsInvalidException('admin role mapping matchType is invalid');
+  }
+}
+
+function requireRole(role: string): void {
+  if (![Role.SuperAdmin, Role.Admin, Role.Operator, Role.Viewer].includes(role as Role)) {
+    throw new IdentityConfigIsInvalidException('admin role mapping role is invalid');
+  }
 }

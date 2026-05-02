@@ -25,18 +25,21 @@ export type AuthenticationProfileResolution =
   | { kind: 'disabled'; message: string }
   | { kind: 'misconfigured'; message: string; profileId?: string };
 
+export type AuthenticationEngineAcceptResult = {
+  kind: 'accept';
+  provider: IdentityAuthenticationProvider;
+  username: string;
+  groups: string[];
+  groupSource: IdentityGroupSource;
+  externalId: string;
+  sessionTtlSeconds: number;
+  nasIp: string;
+  calledStationId: string;
+  profileId: string;
+};
+
 export type AuthenticationEngineResult =
-  | {
-      kind: 'accept';
-      provider: IdentityAuthenticationProvider;
-      username: string;
-      groups: string[];
-      externalId: string;
-      sessionTtlSeconds: number;
-      nasIp: string;
-      calledStationId: string;
-      profileId: string;
-    }
+  | AuthenticationEngineAcceptResult
   | {
       kind: 'reject';
       provider?: IdentityAuthenticationProvider;

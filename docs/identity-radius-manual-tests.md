@@ -587,6 +587,53 @@ Oczekiwane:
 - `grep` nie znajduje `192.168.10.10` ani `sessionId` w config snapshotach
 - logi backend/firewall pokazuja runtime events `identity.session.created`, `identity.session.upsert`, `identity.session.revoked`, `identity.session.revoke`
 
+## ID-15 - Admin login przez RADIUS z mapowaniem roli
+
+Cel: admin zewnetrzny dostaje role tylko przez jawne `adminRoleMappings`.
+
+Warunek: aktywny `adminAuthenticationProfileId` wskazuje profil RADIUS, a profil ma mapping:
+
+```json
+{
+  "matchType": "ldap_group",
+  "matchValue": "admins",
+  "role": "admin"
+}
+```
+
+Na `r1`:
+
+```bash
+curl -k -sS -i -X POST https://127.0.0.1:3000/auth/login -H 'content-type: application/json' -d '{"username":"admin","password":"admin123"}'
+```
+
+Oczekiwane:
+
+- HTTP `201`
+- odpowiedz zawiera `roles:["admin"]`, `authProvider:"radius"` i access token
+- refresh token jest ustawiony jako cookie
+
+Sprawdz endpoint wymagajacy uprawnienia do odczytu konfiguracji identity:
+
+```bash
+TOKEN='<access token z odpowiedzi>'
+curl -k -sS -i https://127.0.0.1:3000/identity-config -H "authorization: Bearer $TOKEN"
+```
+
+Oczekiwane: endpoint przepuszcza zgodnie z rola `admin` i jej permisjami.
+
+Usun lub zmien mapping tak, zeby grupa `admins` nie pasowala, i powtorz login:
+
+```bash
+curl -k -sS -i -X POST https://127.0.0.1:3000/auth/login -H 'content-type: application/json' -d '{"username":"admin","password":"admin123"}'
+```
+
+Oczekiwane:
+
+- login zewnetrzny jest odrzucony
+- backend loguje `auth.admin.authorization_denied`
+- lokalny break-glass admin nadal moze zalogowac sie lokalnym haslem, nawet gdy RADIUS jest niedostepny
+
 ## Kryterium koncowe flow demo
 
 Minimalny zielony scenariusz Issue 1-7:
@@ -599,3 +646,4 @@ Minimalny zielony scenariusz Issue 1-7:
 6. `ID-10`: po `expiresAt` nowy ruch jest blokowany bez restartu firewalla.
 7. `ID-13`: po restarcie firewalla aktywna sesja wraca po cyklu refresh bez reloginu.
 8. `ID-14`: login/logout nie dotyka config snapshotow.
+9. `ID-15`: admin login przez RADIUS dziala tylko z jawnie zmapowana rola.

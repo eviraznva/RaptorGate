@@ -52,6 +52,7 @@ export class IdentityConfigResponseMapper {
         ldapProfileId: profile.getLdapProfileId(),
         groupSource: profile.getGroupSource(),
         sessionTtlSeconds: profile.getSessionTtlSeconds(),
+        adminRoleMappings: profile.getAdminRoleMappings(),
         createdAt: profile.getCreatedAt(),
         updatedAt: profile.getUpdatedAt(),
         createdBy: profile.getCreatedBy(),

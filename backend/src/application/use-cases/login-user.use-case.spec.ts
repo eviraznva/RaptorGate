@@ -2,15 +2,19 @@ import { InvalidCredentialsException } from '../../domain/exceptions/invalid-cre
 import { AuthenticationMisconfiguredException } from '../../domain/exceptions/authentication-misconfigured.exception.js';
 import { AuthenticationUnavailableException } from '../../domain/exceptions/authentication-unavailable.exception.js';
 import { User } from '../../domain/entities/user.entity.js';
+import { Role } from '../../domain/enums/role.enum.js';
+import type { IAdminAuthSessionRepository } from '../../domain/repositories/admin-auth-session.repository.js';
 import type { IUserRepository } from '../../domain/repositories/user.repository.js';
 import type { IPasswordHasher } from '../ports/passowrd-hasher.interface.js';
 import type { IRecoveryTokenService } from '../ports/recovery-token-service.interface.js';
 import type { ITokenService } from '../ports/token-service.interface.js';
+import type { AdminAuthorizationService } from '../services/admin-authorization.service.js';
 import type { AuthenticationEngineService } from '../services/authentication-engine.service.js';
 import { LoginUserUseCase } from './login-user.use-case.js';
 
 describe('LoginUserUseCase external admin authentication', () => {
   const now = new Date('2026-01-01T00:00:00.000Z');
+  let adminAuthSessionRepository: jest.Mocked<IAdminAuthSessionRepository>;
 
   function user(): User {
     return User.create(
@@ -32,6 +36,7 @@ describe('LoginUserUseCase external admin authentication', () => {
     foundUser: User | null;
     passwordValid: boolean;
     engineResult: Awaited<ReturnType<AuthenticationEngineService['authenticate']>>;
+    authorizationResult?: Awaited<ReturnType<AdminAuthorizationService['authorize']>>;
   }): LoginUserUseCase {
     const userRepository = {
       findByUsername: jest.fn(async () => input.foundUser),
@@ -40,7 +45,7 @@ describe('LoginUserUseCase external admin authentication', () => {
     } as unknown as jest.Mocked<IUserRepository>;
     const passwordHasher = {
       compare: jest.fn(async () => input.passwordValid),
-      hash: jest.fn(),
+      hash: jest.fn(async () => 'refresh-hash'),
     } as unknown as jest.Mocked<IPasswordHasher>;
     const tokenService = {
       generateTokenPair: jest.fn(async () => ({
@@ -54,6 +59,19 @@ describe('LoginUserUseCase external admin authentication', () => {
     const authenticationEngine = {
       authenticate: jest.fn(async () => input.engineResult),
     } as unknown as jest.Mocked<AuthenticationEngineService>;
+    const adminAuthorization = {
+      authorize: jest.fn(async () =>
+        input.authorizationResult ?? {
+          kind: 'authorized',
+          role: Role.Admin,
+          matchedBy: 'ldap_group',
+          matchedValue: 'admins',
+        },
+      ),
+    } as unknown as jest.Mocked<AdminAuthorizationService>;
+    adminAuthSessionRepository = {
+      save: jest.fn(),
+    } as unknown as jest.Mocked<IAdminAuthSessionRepository>;
 
     return new LoginUserUseCase(
       userRepository,
@@ -61,6 +79,8 @@ describe('LoginUserUseCase external admin authentication', () => {
       tokenService,
       recoveryTokenService,
       authenticationEngine,
+      adminAuthorization,
+      adminAuthSessionRepository,
     );
   }
 
@@ -91,6 +111,7 @@ describe('LoginUserUseCase external admin authentication', () => {
         provider: 'radius',
         username: 'admin',
         groups: [],
+        groupSource: 'ldap',
         externalId: 'admin',
         sessionTtlSeconds: 1800,
         nasIp: '192.0.2.1',
@@ -104,7 +125,7 @@ describe('LoginUserUseCase external admin authentication', () => {
     expect(result.accessToken).toBe('access');
   });
 
-  it('rejects external admin accept when no matching local user exists yet', async () => {
+  it('allows mapped external admin without a local user', async () => {
     const useCase = makeUseCase({
       foundUser: null,
       passwordValid: false,
@@ -112,13 +133,41 @@ describe('LoginUserUseCase external admin authentication', () => {
         kind: 'accept',
         provider: 'radius',
         username: 'admin',
-        groups: [],
+        groups: ['admins'],
+        groupSource: 'ldap',
         externalId: 'admin',
         sessionTtlSeconds: 1800,
         nasIp: '192.0.2.1',
         calledStationId: 'raptorgate',
         profileId: 'auth-1',
       },
+    });
+
+    const result = await useCase.execute({ username: 'admin', password: 'radius' });
+
+    expect(result.accessToken).toBe('access');
+    expect(adminAuthSessionRepository.save).toHaveBeenCalled();
+    const session = adminAuthSessionRepository.save.mock.calls[0][0];
+    expect(session.getRefreshTokenHash()).toBe('refresh-hash');
+  });
+
+  it('rejects external admin accept without a role mapping', async () => {
+    const useCase = makeUseCase({
+      foundUser: null,
+      passwordValid: false,
+      engineResult: {
+        kind: 'accept',
+        provider: 'radius',
+        username: 'admin',
+        groups: ['users'],
+        groupSource: 'ldap',
+        externalId: 'admin',
+        sessionTtlSeconds: 1800,
+        nasIp: '192.0.2.1',
+        calledStationId: 'raptorgate',
+        profileId: 'auth-1',
+      },
+      authorizationResult: { kind: 'denied', reason: 'admin role mapping not found' },
     });
 
     await expect(

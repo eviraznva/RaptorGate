@@ -18,6 +18,7 @@ describe('AuthenticationEngineService', () => {
         provider: 'radius',
         username: 'user',
         groups: ['users'],
+        groupSource: 'radius_vsa',
         externalId: 'user',
         sessionTtlSeconds: 1800,
         nasIp: '192.0.2.1',

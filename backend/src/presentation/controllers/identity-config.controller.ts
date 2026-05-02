@@ -26,6 +26,7 @@ import { UpdateAuthenticationProfileUseCase } from '../../application/use-cases/
 import { UpdateIdentitySettingsUseCase } from '../../application/use-cases/update-identity-settings.use-case.js';
 import { UpdateLdapProfileUseCase } from '../../application/use-cases/update-ldap-profile.use-case.js';
 import { UpdateRadiusProfileUseCase } from '../../application/use-cases/update-radius-profile.use-case.js';
+import type { AdminRoleMapping } from '../../domain/entities/identity-authentication-profile.entity.js';
 import { Permission } from '../../domain/enums/permissions.enum.js';
 import { Role } from '../../domain/enums/role.enum.js';
 import {
@@ -398,6 +399,7 @@ export class IdentityConfigController {
       description: dto.description ?? null,
       radiusProfileId: dto.radiusProfileId ?? null,
       ldapProfileId: dto.ldapProfileId ?? null,
+      adminRoleMappings: dto.adminRoleMappings as AdminRoleMapping[] | undefined,
       accessToken,
     });
     return IdentityConfigResponseMapper.toResponse(config);
@@ -436,6 +438,7 @@ export class IdentityConfigController {
       description: dto.description ?? null,
       radiusProfileId: dto.radiusProfileId ?? null,
       ldapProfileId: dto.ldapProfileId ?? null,
+      adminRoleMappings: dto.adminRoleMappings as AdminRoleMapping[] | undefined,
       accessToken,
     });
     return IdentityConfigResponseMapper.toResponse(config);

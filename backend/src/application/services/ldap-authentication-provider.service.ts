@@ -66,6 +66,7 @@ export class LdapAuthenticationProviderService implements AuthenticationProvider
         provider: 'ldap',
         username: request.username,
         groups,
+        groupSource: profile.getGroupSource() === 'ldap' ? 'ldap' : 'none',
         externalId: result.userDn,
         sessionTtlSeconds: profile.getSessionTtlSeconds(),
         nasIp: '127.0.0.1',

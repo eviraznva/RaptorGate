@@ -1,4 +1,5 @@
 import type {
+  AdminRoleMapping,
   IdentityAuthenticationProvider,
   IdentityGroupSource,
 } from '../../domain/entities/identity-authentication-profile.entity.js';
@@ -45,6 +46,7 @@ export interface AuthenticationProfileInputDto {
   ldapProfileId: string | null;
   groupSource: IdentityGroupSource;
   sessionTtlSeconds: number;
+  adminRoleMappings?: AdminRoleMapping[];
 }
 
 export interface IdentitySettingsInputDto {

@@ -47,6 +47,7 @@ export class CreateAuthenticationProfileUseCase {
       now,
       now,
       claims.sub,
+      command.adminRoleMappings ?? [],
     );
     return this.identityConfigRepository.mutate(async (config) => {
       const next = this.mutationService.addAuthenticationProfile(config, profile);

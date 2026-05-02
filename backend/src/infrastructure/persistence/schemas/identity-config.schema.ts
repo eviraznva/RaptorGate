@@ -60,6 +60,13 @@ export const IdentityAuthenticationProfileRecordSchema = z
     ldapProfileId: idSchema.nullable(),
     groupSource: z.enum(['none', 'ldap', 'radius_vsa']),
     sessionTtlSeconds: z.number().int().positive(),
+    adminRoleMappings: z.array(
+      z.object({
+        matchType: z.enum(['username', 'ldap_group', 'radius_vsa']),
+        matchValue: z.string().min(1).max(256),
+        role: z.enum(['super_admin', 'admin', 'operator', 'viewer']),
+      }).strict(),
+    ).default([]),
     createdAt: isoDateTimeSchema,
     updatedAt: isoDateTimeSchema,
     createdBy: z.string().min(1).max(128),

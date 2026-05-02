@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsArray,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -8,7 +9,9 @@ import {
   IsString,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateRadiusServerProfileDto {
   @ApiProperty()
@@ -184,9 +187,31 @@ export class CreateIdentityAuthenticationProfileDto {
   @IsInt()
   @Min(1)
   sessionTtlSeconds: number;
+
+  @ApiPropertyOptional({ type: () => [AdminRoleMappingDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AdminRoleMappingDto)
+  adminRoleMappings?: AdminRoleMappingDto[];
 }
 
 export class UpdateIdentityAuthenticationProfileDto extends CreateIdentityAuthenticationProfileDto {}
+
+export class AdminRoleMappingDto {
+  @ApiProperty({ enum: ['username', 'ldap_group', 'radius_vsa'] })
+  @IsIn(['username', 'ldap_group', 'radius_vsa'])
+  matchType: 'username' | 'ldap_group' | 'radius_vsa';
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  matchValue: string;
+
+  @ApiProperty({ enum: ['super_admin', 'admin', 'operator', 'viewer'] })
+  @IsIn(['super_admin', 'admin', 'operator', 'viewer'])
+  role: 'super_admin' | 'admin' | 'operator' | 'viewer';
+}
 
 export class UpdateIdentitySettingsDto {
   @ApiPropertyOptional({ nullable: true })

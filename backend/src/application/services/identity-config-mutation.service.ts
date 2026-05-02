@@ -4,6 +4,7 @@ import { IdentityConfiguration } from '../../domain/entities/identity-configurat
 import { IdentitySettings } from '../../domain/entities/identity-settings.entity.js';
 import { LdapServerProfile } from '../../domain/entities/ldap-server-profile.entity.js';
 import { RadiusServerProfile } from '../../domain/entities/radius-server-profile.entity.js';
+import { IdentityConfigIsInvalidException } from '../../domain/exceptions/identity-config-is-invalid.exception.js';
 import { IdentityProfileInUseException } from '../../domain/exceptions/identity-profile-in-use.exception.js';
 import { IdentityProfileNotFoundException } from '../../domain/exceptions/identity-profile-not-found.exception.js';
 
@@ -206,6 +207,10 @@ export class IdentityConfigMutationService {
       config,
       settings.getAdminAuthenticationProfileId(),
     );
+    this.assertAdminAuthenticationProfileIsExternal(
+      config,
+      settings.getAdminAuthenticationProfileId(),
+    );
 
     return IdentityConfiguration.create(
       config.getRadiusServerProfiles(),
@@ -250,6 +255,20 @@ export class IdentityConfigMutationService {
         .some((profile) => profile.getId() === profileId)
     ) {
       throw new IdentityProfileNotFoundException('authentication', profileId);
+    }
+  }
+
+  private assertAdminAuthenticationProfileIsExternal(
+    config: IdentityConfiguration,
+    profileId: string | null,
+  ): void {
+    if (!profileId) return;
+
+    const profile = config
+      .getAuthenticationProfiles()
+      .find((item) => item.getId() === profileId);
+    if (profile?.getProvider() === 'local') {
+      throw new IdentityConfigIsInvalidException('admin authentication profile cannot use local provider');
     }
   }
 }

@@ -97,6 +97,7 @@ export class RadiusAuthenticationProviderService implements AuthenticationProvid
       provider: 'radius',
       username: request.username,
       groups: groups.groups,
+      groupSource: groups.source,
       externalId: groups.externalId,
       sessionTtlSeconds: profile.getSessionTtlSeconds(),
       nasIp: server.nasIp,

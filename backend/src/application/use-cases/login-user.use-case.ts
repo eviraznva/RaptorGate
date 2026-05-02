@@ -1,7 +1,12 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import { AdminAuthSession } from "../../domain/entities/admin-auth-session.entity.js";
 import { AuthenticationMisconfiguredException } from "../../domain/exceptions/authentication-misconfigured.exception.js";
 import { AuthenticationUnavailableException } from "../../domain/exceptions/authentication-unavailable.exception.js";
 import { InvalidCredentialsException } from "../../domain/exceptions/invalid-credentials.exception.js";
+import {
+  ADMIN_AUTH_SESSION_REPOSITORY_TOKEN,
+  type IAdminAuthSessionRepository,
+} from "../../domain/repositories/admin-auth-session.repository.js";
 import type { IUserRepository } from "../../domain/repositories/user.repository.js";
 import { USER_REPOSITORY_TOKEN } from "../../domain/repositories/user.repository.js";
 import { LoginDto } from "../dtos/login.dto.js";
@@ -12,6 +17,7 @@ import type { IRecoveryTokenService } from "../ports/recovery-token-service.inte
 import { RECOVERY_TOKEN_SERVICE_TOKEN } from "../ports/recovery-token-service.interface.js";
 import type { ITokenService } from "../ports/token-service.interface.js";
 import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
+import { AdminAuthorizationService } from "../services/admin-authorization.service.js";
 import { AuthenticationEngineService } from "../services/authentication-engine.service.js";
 import { User } from "../../domain/entities/user.entity.js";
 
@@ -29,6 +35,10 @@ export class LoginUserUseCase {
     private readonly recoveryTokenService: IRecoveryTokenService,
     @Inject(AuthenticationEngineService)
     private readonly authenticationEngine: AuthenticationEngineService,
+    @Inject(AdminAuthorizationService)
+    private readonly adminAuthorization: AdminAuthorizationService,
+    @Inject(ADMIN_AUTH_SESSION_REPOSITORY_TOKEN)
+    private readonly adminAuthSessionRepository: IAdminAuthSessionRepository,
   ) {}
 
   async execute(dto: LoginDto): Promise<LoginResponseDto> {
@@ -109,17 +119,19 @@ export class LoginUserUseCase {
       throw new InvalidCredentialsException();
     }
 
-    if (!user) {
-      this.logger.warn({
-        event: "auth.admin.external_unmapped",
-        message: "external admin authentication accepted but no local user mapping exists",
-        username: dto.username,
-        provider: externalResult.provider,
-      });
+    if (externalResult.provider === "local") {
       throw new InvalidCredentialsException();
     }
 
-    return this.completeLogin(user, externalResult.provider);
+    const authorization = await this.adminAuthorization.authorize(externalResult);
+    if (authorization.kind === "misconfigured") {
+      throw new AuthenticationMisconfiguredException(authorization.reason);
+    }
+    if (authorization.kind === "denied") {
+      throw new InvalidCredentialsException();
+    }
+
+    return this.completeExternalLogin(externalResult, authorization.role);
   }
 
   private async completeLogin(
@@ -181,5 +193,71 @@ export class LoginUserUseCase {
     });
 
     return loggedInUser;
+  }
+
+  private async completeExternalLogin(
+    result: Extract<
+      Awaited<ReturnType<AuthenticationEngineService["authenticate"]>>,
+      { kind: "accept" }
+    >,
+    role: "super_admin" | "admin" | "operator" | "viewer",
+  ): Promise<LoginResponseDto> {
+    if (result.provider !== "radius" && result.provider !== "ldap") {
+      throw new InvalidCredentialsException();
+    }
+    const provider = result.provider;
+    const now = new Date();
+    const sessionId = crypto.randomUUID();
+    const refreshTokenExpiry = new Date(now.getTime() + 60 * 60 * 1000);
+    const tokenPair = await this.tokenService.generateTokenPair({
+      sub: sessionId,
+      username: result.username,
+      principalType: "external_admin",
+      roles: [role],
+      authProvider: provider,
+      authProfileId: result.profileId,
+      externalId: result.externalId,
+    });
+    const refreshTokenHash = await this.passwordHasher.hash(tokenPair.refreshToken);
+
+    const session = AdminAuthSession.create(
+      sessionId,
+      result.username,
+      provider,
+      result.profileId,
+      result.externalId,
+      [role],
+      refreshTokenHash,
+      refreshTokenExpiry,
+      now,
+      now,
+      null,
+    );
+
+    await this.adminAuthSessionRepository.save(session);
+
+    this.logger.log({
+      event: "auth.admin.external_login.succeeded",
+      message: "external admin logged in with mapped role",
+      sessionId,
+      username: result.username,
+      provider,
+      profileId: result.profileId,
+      role,
+    });
+
+    return {
+      id: sessionId,
+      username: result.username,
+      createdAt: now,
+      accessToken: tokenPair.accessToken,
+      refreshToken: tokenPair.refreshToken,
+      recoveryToken: null,
+      isFirstLogin: false,
+      showRecoveryToken: false,
+      roles: [role],
+      authProvider: provider,
+      authProfileId: result.profileId,
+    };
   }
 }

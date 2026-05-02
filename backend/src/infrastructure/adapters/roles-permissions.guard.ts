@@ -12,6 +12,10 @@ import type { ITokenService } from "../../application/ports/token-service.interf
 import { TOKEN_SERVICE_TOKEN } from "../../application/ports/token-service.interface.js";
 import { Permission } from "../../domain/enums/permissions.enum.js";
 import { Role } from "../../domain/enums/role.enum.js";
+import {
+  ADMIN_AUTH_SESSION_REPOSITORY_TOKEN,
+  type IAdminAuthSessionRepository,
+} from "../../domain/repositories/admin-auth-session.repository.js";
 import type { IRoleRepository } from "../../domain/repositories/role.repository.js";
 import { ROLE_REPOSITORY_TOKEN } from "../../domain/repositories/role.repository.js";
 import { REQUIRE_PERMISSIONS_KEY } from "../../presentation/decorators/auth/require-permissions.decorator.js";
@@ -24,6 +28,8 @@ export class RolesPermissionsGuard implements CanActivate {
     @Inject(TOKEN_SERVICE_TOKEN) private readonly tokenService: ITokenService,
     @Inject(ROLE_REPOSITORY_TOKEN)
     private readonly roleRepository: IRoleRepository,
+    @Inject(ADMIN_AUTH_SESSION_REPOSITORY_TOKEN)
+    private readonly adminAuthSessionRepository: IAdminAuthSessionRepository,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -49,7 +55,10 @@ export class RolesPermissionsGuard implements CanActivate {
     const payload = await this.tokenService.verifyAccessToken(token);
 
     if (!payload) throw new UnauthorizedException("Invalid or expired token");
-    const userRoles = await this.roleRepository.findByUserId(payload.sub);
+    const userRoles =
+      payload.principalType === "external_admin"
+        ? await this.resolveExternalAdminRoles(payload.sub, payload.roles ?? [])
+        : await this.roleRepository.findByUserId(payload.sub);
 
     // Sprawdzenie roli
     if (requiredRoles && requiredRoles.length > 0) {
@@ -81,5 +90,22 @@ export class RolesPermissionsGuard implements CanActivate {
     const [type, token] = request.headers.authorization?.split(" ") ?? [];
 
     return type === "Bearer" ? token : undefined;
+  }
+
+  private async resolveExternalAdminRoles(
+    sessionId: string,
+    roleNames: string[],
+  ) {
+    const session = await this.adminAuthSessionRepository.findById(sessionId);
+    if (!session || session.isRevoked()) {
+      throw new UnauthorizedException("Invalid or expired token");
+    }
+
+    const names = roleNames.length > 0 ? roleNames : session.getRoles();
+    const roles = await Promise.all(
+      names.map((name) => this.roleRepository.findByName(name)),
+    );
+
+    return roles.filter((role): role is NonNullable<typeof role> => role !== null);
   }
 }

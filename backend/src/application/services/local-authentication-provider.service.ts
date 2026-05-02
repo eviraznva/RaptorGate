@@ -67,6 +67,7 @@ export class LocalAuthenticationProviderService implements AuthenticationProvide
       provider: 'local',
       username: user.getUsername(),
       groups: groups.groups,
+      groupSource: groups.source,
       externalId: groups.externalId,
       sessionTtlSeconds: resolved.authenticationProfile.getSessionTtlSeconds(),
       nasIp: LOCAL_NAS_IP,

@@ -56,6 +56,7 @@ export class UpdateAuthenticationProfileUseCase {
         existing.getCreatedAt(),
         new Date(),
         existing.getCreatedBy(),
+        command.adminRoleMappings ?? [],
       );
       const next = this.mutationService.replaceAuthenticationProfile(
         config,

@@ -1,4 +1,4 @@
-import { IdentityAuthenticationProfile } from '../../../domain/entities/identity-authentication-profile.entity.js';
+import { type AdminRoleMapping, IdentityAuthenticationProfile } from '../../../domain/entities/identity-authentication-profile.entity.js';
 import { IdentityConfiguration } from '../../../domain/entities/identity-configuration.entity.js';
 import { IdentitySettings } from '../../../domain/entities/identity-settings.entity.js';
 import { LdapServerProfile } from '../../../domain/entities/ldap-server-profile.entity.js';
@@ -209,6 +209,7 @@ export class IdentityConfigJsonMapper {
       ldapProfileId: profile.getLdapProfileId(),
       groupSource: profile.getGroupSource(),
       sessionTtlSeconds: profile.getSessionTtlSeconds(),
+      adminRoleMappings: profile.getAdminRoleMappings(),
       createdAt: profile.getCreatedAt().toISOString(),
       updatedAt: profile.getUpdatedAt().toISOString(),
       createdBy: profile.getCreatedBy(),
@@ -231,6 +232,7 @@ export class IdentityConfigJsonMapper {
       new Date(record.createdAt),
       new Date(record.updatedAt),
       record.createdBy,
+      record.adminRoleMappings as AdminRoleMapping[],
     );
   }
 

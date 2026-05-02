@@ -67,6 +67,7 @@ function config(): IdentityConfiguration {
         now,
         now,
         createdBy,
+        [{ matchType: 'ldap_group', matchValue: 'admins', role: 'admin' }],
       ),
     ],
     IdentitySettings.create('auth-1', null, now, null),
@@ -87,6 +88,9 @@ describe('IdentityConfigJsonMapper', () => {
     expect(roundtrip.getSettings().getPortalAuthenticationProfileId()).toBe(
       'auth-1',
     );
+    expect(roundtrip.getAuthenticationProfiles()[0].getAdminRoleMappings()).toEqual([
+      { matchType: 'ldap_group', matchValue: 'admins', role: 'admin' },
+    ]);
   });
 
   it('rejects plaintext secret fields in persisted records', () => {

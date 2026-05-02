@@ -7,4 +7,7 @@ export class LoginResponseDto {
   recoveryToken: string | null;
   isFirstLogin: boolean;
   showRecoveryToken: boolean;
+  roles?: string[];
+  authProvider?: string;
+  authProfileId?: string | null;
 }
