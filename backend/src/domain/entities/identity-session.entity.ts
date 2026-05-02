@@ -1,9 +1,9 @@
 import { IpAddress } from '../value-objects/ip-address.vo.js';
 
-// Runtime sesja identity (ADR 0002). Trzymana w pamieci backendu i syncowana
-// do firewalla (Issue 2). Nie wchodzi w config snapshot ani persistence.
+// Runtime sesja identity. Nie wchodzi w config snapshot.
+// Issue G utrwala aktywne sesje poza configiem dla replayu do firewalla.
 // Minimum z Issue 3: sourceIp, username, createdAt, expiresAt.
-// TODO(Issue 7): macAddress moze pochodzic z portalu/DHCP snoopingu.
+// TODO(Issue H): macAddress moze pochodzic z portalu/DHCP snoopingu.
 export class IdentitySession {
   private constructor(
     private readonly id: string,
@@ -14,6 +14,8 @@ export class IdentitySession {
     private groups: string[],
     private readonly nasIp: string,
     private readonly calledStationId: string,
+    private readonly identityUserId: string,
+    private readonly macAddress: string,
   ) {}
 
   public static create(
@@ -25,6 +27,8 @@ export class IdentitySession {
     groups: string[] = [],
     nasIp = '127.0.0.1',
     calledStationId = 'raptorgate',
+    identityUserId = username,
+    macAddress = '00:00:00:00:00:00',
   ): IdentitySession {
     return new IdentitySession(
       id,
@@ -35,6 +39,8 @@ export class IdentitySession {
       normalizeGroups(groups),
       nasIp,
       calledStationId,
+      identityUserId,
+      macAddress,
     );
   }
 
@@ -44,6 +50,10 @@ export class IdentitySession {
 
   public getUsername(): string {
     return this.username;
+  }
+
+  public getIdentityUserId(): string {
+    return this.identityUserId;
   }
 
   public getSourceIp(): IpAddress {
@@ -68,6 +78,10 @@ export class IdentitySession {
 
   public getCalledStationId(): string {
     return this.calledStationId;
+  }
+
+  public getMacAddress(): string {
+    return this.macAddress;
   }
 
   public renew(newExpiresAt: Date): void {

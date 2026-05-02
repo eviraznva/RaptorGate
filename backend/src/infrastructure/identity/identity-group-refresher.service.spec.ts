@@ -117,6 +117,7 @@ describe('IdentityGroupRefresherService', () => {
         ['admins'],
         '198.51.100.10',
         'profile-nas',
+        'uid=admin,ou=users,dc=raptorgate,dc=local',
       ),
     );
     groupResolver.resolve.mockResolvedValue({
@@ -126,6 +127,7 @@ describe('IdentityGroupRefresherService', () => {
       diagnostic: 'ok',
     });
     sync.upsertIdentitySession.mockResolvedValue(undefined);
+    const persistSpy = jest.spyOn(store, 'upsert');
 
     await refresher.refreshOnce();
 
@@ -148,6 +150,7 @@ describe('IdentityGroupRefresherService', () => {
     const live = await store.findBySourceIp('10.0.0.1');
     expect(live?.getGroups()).toEqual(['admins', 'auditors']);
     expect(live?.getId()).toBe('sess-1');
+    expect(persistSpy).toHaveBeenCalledWith(live);
   });
 
   it('nie podmienia grup w sesji gdy upsert do firewalla zawiedzie', async () => {

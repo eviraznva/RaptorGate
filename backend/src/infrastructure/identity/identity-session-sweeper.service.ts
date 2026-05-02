@@ -41,7 +41,8 @@ export class IdentitySessionSweeperService
     const intervalMs = this.configService.get(
       'IDENTITY_SESSION_SWEEP_INTERVAL_MS',
       { infer: true },
-    );
+    )
+    void this.sweepOnce();
     this.timer = setInterval(() => {
       void this.sweepOnce();
     }, intervalMs);

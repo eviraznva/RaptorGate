@@ -18,7 +18,7 @@ import { AuthenticateIdentityDto } from '../dtos/authenticate-identity.dto.js';
 import { AuthenticateIdentityResponseDto } from '../dtos/authenticate-identity-response.dto.js';
 
 // Stale technicze dla pol IdentitySessionSyncPayload, ktore Issue 3 nie wypelnia.
-// MAC: na MVP brak; Issue 7 moze go dolozyc z portalu/DHCP snoopingu.
+// MAC: na MVP brak; Issue H moze go dolozyc z portalu/DHCP snoopingu.
 // nas-ip / called-station-id: bierzemy z konfigu RADIUS, zeby firewall mial ten sam
 // kontekst NAS co RADIUS provider.
 const PLACEHOLDER_MAC = '00:00:00:00:00:00';
@@ -89,6 +89,8 @@ export class AuthenticateIdentityUseCase {
       result.groups,
       result.nasIp,
       result.calledStationId,
+      result.externalId,
+      PLACEHOLDER_MAC,
     );
 
     await this.store.runExclusiveBySourceIp(sourceIp.getValue, async () => {

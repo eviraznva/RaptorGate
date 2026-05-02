@@ -7,8 +7,11 @@ import { LogoutIdentityUseCase } from '../application/use-cases/logout-identity.
 import { RevokeIdentitySessionUseCase } from '../application/use-cases/revoke-identity-session.use-case.js';
 import { IDENTITY_SESSION_STORE_TOKEN } from '../domain/repositories/identity-session-store.js';
 import { IdentityGroupRefresherService } from '../infrastructure/identity/identity-group-refresher.service.js';
+import { IdentitySessionReplayService } from '../infrastructure/identity/identity-session-replay.service.js';
 import { IdentitySessionSweeperService } from '../infrastructure/identity/identity-session-sweeper.service.js';
-import { InMemoryIdentitySessionStore } from '../infrastructure/identity/in-memory-identity-session.store.js';
+import { FileStore } from '../infrastructure/persistence/json/file-store.js';
+import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
+import { JsonIdentitySessionStore } from '../infrastructure/persistence/repositories/json-identity-session.store.js';
 import { IdentityController } from '../presentation/controllers/identity.controller.js';
 import { IdentitySessionsController } from '../presentation/controllers/identity-sessions.controller.js';
 import { AuthenticationEngineModule } from './authentication-engine.module.js';
@@ -28,9 +31,13 @@ import { IdentitySessionModule } from './identity-session.module.js';
     RevokeIdentitySessionUseCase,
     IdentitySessionSweeperService,
     IdentityGroupRefresherService,
+    IdentitySessionReplayService,
+    FileStore,
+    Mutex,
+    JsonIdentitySessionStore,
     {
       provide: IDENTITY_SESSION_STORE_TOKEN,
-      useClass: InMemoryIdentitySessionStore,
+      useExisting: JsonIdentitySessionStore,
     },
   ],
   exports: [IDENTITY_SESSION_STORE_TOKEN],

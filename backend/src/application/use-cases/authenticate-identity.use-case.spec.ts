@@ -63,6 +63,10 @@ describe('AuthenticateIdentityUseCase', () => {
 
     const stored = await store.findBySourceIp('192.168.10.10');
     expect(stored?.getGroups()).toEqual(['admins']);
+    expect(stored?.getIdentityUserId()).toBe(
+      'uid=admin,ou=users,dc=raptorgate,dc=local',
+    );
+    expect(stored?.getMacAddress()).toBe('00:00:00:00:00:00');
 
     const payload = sync.upsertIdentitySession.mock.calls[0][0];
     expect(payload.groups).toEqual(['admins']);

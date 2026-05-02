@@ -60,6 +60,11 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(30_000),
+  IDENTITY_SESSION_REPLAY_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .default(30_000),
   // LDAP provider (Issue 4, ADR 0005). Backend laczy sie do slapd w labie (192.168.20.40).
   IDENTITY_LDAP_ENABLED: z
     .union([z.boolean(), z.string()])

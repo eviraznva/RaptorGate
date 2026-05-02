@@ -2,8 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { IdentitySession } from '../../domain/entities/identity-session.entity.js';
 import type { IIdentitySessionStore } from '../../domain/repositories/identity-session-store.js';
 
-// In-memory store sesji identity. Per ADR 0002 sesje sa runtime state,
-// nie persystujemy ich na dysk; restart backendu czysci store.
+// Testowy store sesji identity. Produkcja uzywa JsonIdentitySessionStore.
 @Injectable()
 export class InMemoryIdentitySessionStore implements IIdentitySessionStore {
   private readonly byIp = new Map<string, IdentitySession>();

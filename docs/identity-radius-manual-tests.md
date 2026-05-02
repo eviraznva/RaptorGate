@@ -378,6 +378,7 @@ Wklej override:
 [Service]
 Environment=IDENTITY_SESSION_TTL_SECONDS=20
 Environment=IDENTITY_SESSION_SWEEP_INTERVAL_MS=5000
+Environment=IDENTITY_SESSION_REPLAY_INTERVAL_MS=5000
 ```
 
 Potem:
@@ -520,11 +521,11 @@ Na `radius` przywroc usluge:
 sudo systemctl start freeradius
 ```
 
-## ID-13 - Replay sesji po restarcie firewalla
+## ID-13 - Replay sesji po restarcie backendu i firewalla
 
-Cel: aktywna sesja backendu wraca do firewalla bez ponownego logowania uzytkownika.
+Cel: backend odtwarza aktywne sesje z runtime store i replayuje je do firewalla bez ponownego logowania uzytkownika.
 
-Warunek: aktywna sesja `user` z ID-06 i `IDENTITY_GROUP_REFRESH_INTERVAL_MS` jest wieksze niz `0` (domyslnie `60000`).
+Warunek: aktywna sesja `user` z ID-06 i `IDENTITY_SESSION_REPLAY_INTERVAL_MS` jest wieksze niz `0` (domyslnie `30000`).
 
 1. Na `h1` potwierdz aktywna sesje i dostep do h2:
 
@@ -535,27 +536,49 @@ curl -fsS http://192.168.20.10:8080/api/ping
 
 Oczekiwane: `data.authenticated:true` i ping zwraca `{"status":"ok"}`.
 
-2. Na `r1` zrestartuj firewall:
+2. Na `r1` sprawdz, ze backendowy runtime store zawiera sesje:
+
+```bash
+sudo grep -R "192.168.10.10" /resources/backend/data/json-db/identity_sessions.json
+```
+
+Oczekiwane: wpis sesji dla `192.168.10.10`.
+
+3. Na `r1` zrestartuj backend:
+
+```bash
+sudo systemctl restart backend
+```
+
+4. Na `h1` bez ponownego logowania:
+
+```bash
+curl -k -sS https://192.168.10.254/api/identity/session
+```
+
+Oczekiwane: `data.authenticated:true`, bo backend odtworzyl sesje z `identity_sessions.json`.
+
+5. Na `r1` zrestartuj firewall:
 
 ```bash
 sudo systemctl restart ngfw
 ```
 
-3. Odczekaj ponad `IDENTITY_GROUP_REFRESH_INTERVAL_MS` i sprawdz logi na `r1`:
+6. Odczekaj ponad `IDENTITY_SESSION_REPLAY_INTERVAL_MS` i sprawdz logi na `r1`:
 
 ```bash
-sudo grep -E 'identity.session.replayed|identity.session.upsert' /var/log/raptorgate/backend/$(date +%F).log /var/log/raptorgate/firewall/$(date +%F).log
+sudo grep -E 'firewall.identity_session.replay.succeeded|identity.session.upsert' /var/log/raptorgate/backend/$(date +%F).log /var/log/raptorgate/firewall/$(date +%F).log
 ```
 
-Oczekiwane: backend loguje `identity.session.replayed`, a firewall dostaje swiezy `identity.session.upsert` dla `client_ip=192.168.10.10`.
+Oczekiwane: backend loguje `firewall.identity_session.replay.succeeded`, a firewall dostaje swiezy `identity.session.upsert` dla `client_ip=192.168.10.10`.
 
-4. Na `h1` bez ponownego logowania:
+7. Na `h1` bez ponownego logowania:
 
 ```bash
 curl -fsS http://192.168.20.10:8080/api/ping
 ```
 
-Oczekiwane: po cyklu refresh ruch znow przechodzi. To nie jest replay natychmiast po restarcie, tylko przy najblizszym refreshu grup.
+Oczekiwane: po cyklu replay ruch znow przechodzi. To nie jest zalezne od refreshu grup.
 
 ## ID-14 - Login/logout nie zmienia config snapshotow
 
@@ -585,6 +608,7 @@ Oczekiwane:
 
 - timestampy configow i snapshotow nie zmieniaja sie przez login/logout
 - `grep` nie znajduje `192.168.10.10` ani `sessionId` w config snapshotach
+- `data/json-db/identity_sessions.json` moze sie zmienic, bo to runtime store aktywnych sesji, nie config snapshot
 - logi backend/firewall pokazuja runtime events `identity.session.created`, `identity.session.upsert`, `identity.session.revoked`, `identity.session.revoke`
 
 ## ID-15 - Admin login przez RADIUS z mapowaniem roli
@@ -644,6 +668,6 @@ Minimalny zielony scenariusz Issue 1-7:
 4. `ID-08`: logout usuwa sesje, firewall dostaje revoke, h1 -> h2 znow jest blokowane.
 5. `ID-09`: `guest/guest123` loguje sie poprawnie, ale grupa `guests` jest blokowana przez polityke.
 6. `ID-10`: po `expiresAt` nowy ruch jest blokowany bez restartu firewalla.
-7. `ID-13`: po restarcie firewalla aktywna sesja wraca po cyklu refresh bez reloginu.
+7. `ID-13`: po restarcie backendu sesja zostaje aktywna, a po restarcie firewalla wraca po cyklu replay bez reloginu.
 8. `ID-14`: login/logout nie dotyka config snapshotow.
 9. `ID-15`: admin login przez RADIUS dziala tylko z jawnie zmapowana rola.
