@@ -10,7 +10,6 @@ use crate::proto::{common, config};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Zone {
     name: String,
-    interface_ids: Vec<String>,
 }
 
 impl Zone {
@@ -20,7 +19,6 @@ impl Zone {
             id,
             Self {
                 name: value.name,
-                interface_ids: value.interface_ids,
             },
         ))
     }
@@ -29,12 +27,7 @@ impl Zone {
         config::Zone {
             id: Uuid::from(id).into(),
             name: self.name.clone(),
-            interface_ids: self.interface_ids.clone(),
         }
-    }
-
-    pub fn interface_ids(&self) -> &[String] {
-        &self.interface_ids
     }
 }
 
@@ -186,19 +179,6 @@ pub const DEFAULT_ZONE_ID: ZoneId = ZoneId(Uuid::nil());
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct ZoneInterfaceId(Uuid);
 
-use crate::validation::{fk, foreign_keys, ForeignKey, ForeignKeys};
-impl ForeignKeys for Zone {
-    fn foreign_keys(&self) -> Vec<ForeignKey> {
-        self.interface_ids
-            .iter()
-            .filter_map(|interface_id| {
-                Uuid::parse_str(interface_id)
-                    .ok()
-                    .map(ZoneInterfaceId::from)
-            })
-            .map(|interface_id| fk::<ZoneInterfaceId>("interface_ids", &interface_id))
-            .collect()
-    }
-}
+use crate::validation::foreign_keys;
 foreign_keys!(ZonePair { src_zone_id: ZoneId, dst_zone_id: ZoneId });
 foreign_keys!(ZoneInterface { zone_id: ZoneId });

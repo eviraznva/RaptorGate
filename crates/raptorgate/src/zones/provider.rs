@@ -107,7 +107,6 @@ impl ZoneProvider {
         tracing::info!("no zones found on disk, initializing with default zone");
         let default_zone = Zone {
             name: "Default zone".into(),
-            interface_ids: vec![],
         };
 
         let zones = HashMap::from([(Uuid::nil().into(), default_zone)]);

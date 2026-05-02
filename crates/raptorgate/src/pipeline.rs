@@ -1,5 +1,7 @@
 pub mod wrappers;
 
+use std::any::Any;
+
 use crate::data_plane::packet_context::PacketContext;
 
 pub trait Stage: Send + Sync {
@@ -14,6 +16,9 @@ pub enum StageOutcome { Continue, Halt }
 pub struct Chain<A: Stage + Clone, B: Stage + Clone> { pub head: A, pub tail: B }
 impl<A, B> Stage for Chain<A, B> where A: Stage + Clone, B: Stage + Clone {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        tracing::debug!(intf = %ctx.borrow_src_interface(), protocol = ?ctx.borrow_sliced_packet().transport, "iface for policy");
+        
+
         let outcome = if self.head.is_applicable(ctx) {
             self.head.process(ctx).await
         } else {

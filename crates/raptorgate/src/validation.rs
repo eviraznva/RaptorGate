@@ -91,10 +91,8 @@ pub fn validate_bundle<S: BuildHasher>(
     let mut errors = Vec::new();
 
     check_default_zone_present(zones, &mut errors);
-    check_zone_interface_id_format(zones, &mut errors);
     check_duplicate_zone_interface_names(zone_interfaces, &mut errors);
     check_collection(short_type_name::<Policy>(), policies, &known, &mut errors);
-    check_collection(short_type_name::<Zone>(), zones, &known, &mut errors);
     check_collection(
         short_type_name::<ZonePair>(),
         zone_pairs,
@@ -183,25 +181,6 @@ fn check_collection<Id, V, S>(
     }
 }
 
-fn check_zone_interface_id_format<S: BuildHasher>(
-    zones: &HashMap<ZoneId, Zone, S>,
-    errors: &mut Vec<CheckError>,
-) {
-    for (zone_id, zone) in zones {
-        for interface_id in zone.interface_ids() {
-            if Uuid::parse_str(interface_id).is_err() {
-                errors.push(CheckError::BrokenReference(IntegrityError {
-                    source_entity: short_type_name::<Zone>(),
-                    source_id: zone_id.clone().into(),
-                    field: "interface_ids",
-                    target_type: std::any::type_name::<ZoneInterfaceId>(),
-                    missing_id: Uuid::nil(),
-                }));
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,11 +206,10 @@ mod tests {
         (policy_id, policy)
     }
 
-    fn create_test_zone(id: Uuid, interface_ids: Vec<String>) -> (ZoneId, Zone) {
+    fn create_test_zone(id: Uuid) -> (ZoneId, Zone) {
         let proto = config::Zone {
             id: id.to_string(),
             name: "test zone".to_string(),
-            interface_ids,
         };
         Zone::try_from_proto(proto).unwrap()
     }
@@ -266,7 +244,7 @@ mod tests {
         let zi_id = Uuid::now_v7();
 
         let mut zones = HashMap::new();
-        let (zid, z) = create_test_zone(z_id, vec![zi_id.to_string()]);
+        let (zid, z) = create_test_zone(z_id);
         zones.insert(zid, z);
 
         let mut zone_pairs = HashMap::new();
@@ -293,7 +271,7 @@ mod tests {
         let zi_id = Uuid::now_v7();
 
         let mut zones = HashMap::new();
-        let (zid, z) = create_test_zone(z_id, vec![zi_id.to_string()]);
+        let (zid, z) = create_test_zone(z_id);
         zones.insert(zid, z);
 
         let mut zone_pairs = HashMap::new();
@@ -323,7 +301,7 @@ mod tests {
         let zi2_id = Uuid::now_v7();
 
         let mut zones = HashMap::new();
-        let (zid, z) = create_test_zone(z_id, vec![zi_id.to_string(), zi2_id.to_string()]);
+        let (zid, z) = create_test_zone(z_id);
         zones.insert(zid, z);
 
         let mut zone_pairs = HashMap::new();
@@ -356,7 +334,7 @@ mod tests {
         let (pid, p) = create_test_policy(p_id, zp_id);
         policies.insert(pid, p);
 
-        let default_zone = create_test_zone(Uuid::nil(), vec![]);
+        let default_zone = create_test_zone(Uuid::nil());
         let mut zones = HashMap::new();
         zones.insert(default_zone.0, default_zone.1);
 
@@ -376,51 +354,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_zone_interface_ref_detected() {
-        let z_id = Uuid::nil();
-        let mut zones = HashMap::new();
-        let (zid, zone) = create_test_zone(z_id, vec![Uuid::now_v7().to_string()]);
-        zones.insert(zid, zone);
-
-        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &HashMap::new());
-
-        assert_eq!(errors.len(), 1);
-        assert!(errors.iter().any(|err| {
-            matches!(
-                err,
-                CheckError::BrokenReference(IntegrityError {
-                    source_entity: "Zone",
-                    field: "interface_ids",
-                    target_type,
-                    ..
-                }) if *target_type == std::any::type_name::<ZoneInterfaceId>()
-            )
-        }));
-    }
-
-    #[test]
-    fn non_uuid_zone_interface_ref_detected() {
-        let z_id = Uuid::nil();
-        let mut zones = HashMap::new();
-        let (zid, zone) = create_test_zone(z_id, vec!["eth1".to_string()]);
-        zones.insert(zid, zone);
-
-        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &HashMap::new());
-
-        assert_eq!(errors.len(), 1);
-        assert!(errors.iter().any(|err| {
-            matches!(
-                err,
-                CheckError::BrokenReference(IntegrityError {
-                    source_entity: "Zone",
-                    field: "interface_ids",
-                    ..
-                })
-            )
-        }));
-    }
-
-    #[test]
     fn missing_zone_ref_detected() {
         let z_id = Uuid::now_v7();
         let zp_id = Uuid::now_v7();
@@ -429,7 +362,7 @@ mod tests {
         let (zpid, zp) = create_test_zone_pair(zp_id, z_id, z_id);
         zone_pairs.insert(zpid, zp);
 
-        let default_zone = create_test_zone(Uuid::nil(), vec![]);
+        let default_zone = create_test_zone(Uuid::nil());
         let mut zones = HashMap::new();
         zones.insert(default_zone.0, default_zone.1);
 
@@ -452,7 +385,7 @@ mod tests {
         let (ziid, zi) = create_test_zone_interface(zi_id, z_id);
         zone_interfaces.insert(ziid, zi);
 
-        let default_zone = create_test_zone(Uuid::nil(), vec![]);
+        let default_zone = create_test_zone(Uuid::nil());
         let mut zones = HashMap::new();
         zones.insert(default_zone.0, default_zone.1);
 
