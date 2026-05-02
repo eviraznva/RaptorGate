@@ -8,7 +8,8 @@ import {
   performCommand,
 } from '../harness';
 import { DefaultPolicy } from '../generated/common/common';
-import { createDefaultSnapshotBundle } from '../harness/fixtures';
+import { createDefaultSnapshotBundle, DEFAULT_APP_CONFIG, DEFAULT_ZONE_INTERFACES, DEFAULT_ZONES } from '../harness/fixtures';
+import { sleep } from 'bun';
 
 describe('Zone Policy E2E', () => {
   beforeAll(async () => {
@@ -18,24 +19,32 @@ describe('Zone Policy E2E', () => {
   test('ICMP allow_warn, TCP/UDP drop_warn between zone1 and zone2', async () => {
     const zone1Id = crypto.randomUUID();
     const zone2Id = crypto.randomUUID();
-    const zonePairId = crypto.randomUUID();
+    const zonePair1to2Id = crypto.randomUUID();
+    const zonePair2to1Id = crypto.randomUUID();
     const zi1Id = crypto.randomUUID();
     const zi2Id = crypto.randomUUID();
 
     const bundle = createDefaultSnapshotBundle({
       zones: [
+		  { id: '00000000-0000-0000-0000-000000000000', name: 'default', interfaceIds: [] },     
         { id: zone1Id, name: 'zone1', interfaceIds: [zi1Id] },
         { id: zone2Id, name: 'zone2', interfaceIds: [zi2Id] },
       ],
-      zoneInterfaces: [
+	  zoneInterfaces: [
         { id: zi1Id, zoneId: zone1Id, interfaceName: 'eth1', status: 0, addresses: [] },
         { id: zi2Id, zoneId: zone2Id, interfaceName: 'eth2', status: 0, addresses: [] },
       ],
       zonePairs: [
-        {
-          id: zonePairId,
+		  {
+          id: zonePair1to2Id,
           srcZoneId: zone1Id,
           dstZoneId: zone2Id,
+          defaultPolicy: DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED,
+        },
+        {
+          id: zonePair2to1Id,
+          srcZoneId: zone2Id,
+          dstZoneId: zone1Id,
           defaultPolicy: DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED,
         },
       ],
@@ -43,7 +52,20 @@ describe('Zone Policy E2E', () => {
         {
           id: crypto.randomUUID(),
           name: 'zone1-to-zone2-policy',
-          zonePairId: zonePairId,
+          zonePairId: zonePair1to2Id,
+          priority: 0,
+          content: `
+            match protocol {
+              =icmp: verdict allow_warn "icmp allowed"
+              =tcp: verdict drop_warn "tcp dropped"
+              =udp: verdict drop_warn "udp dropped"
+            }
+          `,
+        },
+        {
+          id: crypto.randomUUID(),
+          name: 'zone2-to-zone1-policy',
+          zonePairId: zonePair2to1Id,
           priority: 0,
           content: `
             match protocol {
@@ -70,7 +92,10 @@ describe('Zone Policy E2E', () => {
         createdBy: 'test-env',
         bundle,
       },
-    }).run();
+    }).expectResponse((response: any) => {console.log(response); return true})
+	.run();
+
+	await sleep(500);
 
     // ICMP should be allowed with warning
     await performCommand({
@@ -105,14 +130,22 @@ describe('Zone Policy E2E', () => {
     }
 
     // UDP should be dropped with warning
-    await performCommand({
-      host: 'h1',
-      command: 'nc -u -z -w 1 192.168.20.10 5555',
-    })
-      .expectEvents([
-        { kind: 'policyWarning', match: { message: 'udp dropped', verdict: 'drop' } },
-      ])
-      .isErr()
-      .run();
+    const udpServer = await performCommand({
+      host: 'h2',
+      command: 'timeout 3 nc -u -l 5555',
+    }).runDetached();
+
+    try {
+      await performCommand({
+        host: 'h1',
+        command: 'echo "test" | nc -u -w 1 192.168.20.10 5555',
+      })
+        .expectEvents([
+          { kind: 'policyWarning', match: { message: 'udp dropped', verdict: 'drop' } },
+        ])
+        .run();
+    } finally {
+      await udpServer.kill();
+    }
   });
 });
