@@ -321,6 +321,8 @@ pub enum EventKind {
     TcpSessionEnteredTimeWait { src: EndpointIdentifier, dst: EndpointIdentifier },
     TunDeviceSwapped { old_device: String, new_device: String, old_address: String, new_address: String },
     SnifferConfigChanged { old_interfaces: Vec<String>, new_interfaces: Vec<String>, old_timeout: Duration, new_timeout: Duration },
+    SnifferReconnecting { iface: String, attempt: u32, next_retry_ms: u64 },
+    SnifferReconnected { iface: String, total_attempts: u32, total_downtime_ms: u64 },
     TlsInterceptStarted { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, tls_version: Option<String> },
     TlsHandshakeComplete { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, alpn: Option<String>, tls_version: Option<String> },
     TlsSessionClosed { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, bytes_up: u64, bytes_down: u64 },
@@ -390,6 +392,8 @@ impl EventKind {
             | E::TcpSessionEnteredTimeWait { .. }
             | E::TunDeviceSwapped { .. }
             | E::SnifferConfigChanged { .. }
+            | E::SnifferReconnecting { .. }
+            | E::SnifferReconnected { .. }
             | E::TlsInterceptStarted { .. }
             | E::TlsHandshakeComplete { .. }
             | E::TlsSessionClosed { .. }
@@ -481,6 +485,16 @@ impl From<EventKind> for proto::EventKind {
                         new_interfaces,
                         old_timeout: Some(duration_to_proto(old_timeout)),
                         new_timeout: Some(duration_to_proto(new_timeout)),
+                    }),
+                EventKind::SnifferReconnecting { iface, attempt, next_retry_ms } =>
+                    Item::PolicyWarning(proto::PolicyWarningEvent {
+                        message: format!("sniffer reconnecting: iface={iface}, attempt={attempt}, next_retry_ms={next_retry_ms}"),
+                        verdict: "sniffer_reconnecting".to_string(),
+                    }),
+                EventKind::SnifferReconnected { iface, total_attempts, total_downtime_ms } =>
+                    Item::PolicyWarning(proto::PolicyWarningEvent {
+                        message: format!("sniffer reconnected: iface={iface}, total_attempts={total_attempts}, total_downtime_ms={total_downtime_ms}"),
+                        verdict: "sniffer_reconnected".to_string(),
                     }),
                 EventKind::TlsInterceptStarted { peer, dst, sni, tls_version } =>
                     Item::TlsInterceptStarted(proto::TlsInterceptStartedEvent {

@@ -12,6 +12,14 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{AppConfig, ConfigObserver};
 use crate::events::{emit, Event, EventKind};
 
+fn calculate_retry_delay(attempt: u32) -> Duration {
+    if attempt <= 5 {
+        Duration::from_millis(50)
+    } else {
+        Duration::from_millis(5000)
+    }
+}
+
 /// Raw packet data as captured from the NIC, before parsing or reassembly.
 pub struct RawPacket {
     pub raw: Vec<u8>,
@@ -83,43 +91,109 @@ impl InterfaceSniffer {
 
         tokio::task::spawn_blocking(move || {
             let iface_arc: Arc<str> = Arc::from(name.as_str());
+            let mut attempt = 0u32;
+            let mut total_downtime_ms = 0u64;
 
-            loop {
-                if child.is_cancelled() {
-                    tracing::info!(
-                        event = "sniffer.capture.cancelled",
-                        iface = %name,
-                        "capture cancelled"
-                    );
-                    break;
-                }
+            'reconnect: loop {
+                loop {
+                    if child.is_cancelled() {
+                        tracing::info!(
+                            event = "sniffer.capture.cancelled",
+                            iface = %name,
+                            "capture cancelled"
+                        );
+                        break 'reconnect;
+                    }
 
-                match cap.next_packet() {
-                    Ok(pkt) => {
-                        let packet = RawPacket {
-                            raw: pkt.data.to_vec(),
-                            iface: Arc::clone(&iface_arc),
-                        };
-                        if tx.blocking_send(packet).is_err() {
-                            tracing::info!(
-                                event = "sniffer.capture.stopped",
+                    match cap.next_packet() {
+                        Ok(pkt) => {
+                            let packet = RawPacket {
+                                raw: pkt.data.to_vec(),
+                                iface: Arc::clone(&iface_arc),
+                            };
+
+                            if tx.blocking_send(packet).is_err() {
+                                tracing::info!(
+                                    event = "sniffer.capture.stopped",
+                                    iface = %name,
+                                    reason = "channel_closed",
+                                    "channel closed, stopping capture"
+                                );
+                                break 'reconnect;
+                            }
+                        }
+                        Err(pcap::Error::TimeoutExpired) => {}
+                        Err(e) => {
+                            tracing::error!(
+                                event = "sniffer.capture.failed",
                                 iface = %name,
-                                reason = "channel_closed",
-                                "channel closed, stopping capture"
+                                error = %e,
+                                "capture error, entering retry mode"
                             );
                             break;
                         }
                     }
-                    // TODO: check if there's a way to cancel immediately without waiting for timeout
-                    Err(pcap::Error::TimeoutExpired) => {}
-                    Err(e) => {
-                        tracing::error!(
-                            event = "sniffer.capture.failed",
+                }
+
+                loop {
+                    attempt += 1;
+                    let delay = calculate_retry_delay(attempt);
+                    let delay_ms = delay.as_millis() as u64;
+
+                    emit(Event::new(EventKind::SnifferReconnecting {
+                        iface: name.clone(),
+                        attempt,
+                        next_retry_ms: delay_ms,
+                    }));
+
+                    tracing::info!(
+                        event = "sniffer.reconnect.attempt",
+                        iface = %name,
+                        attempt,
+                        delay_ms,
+                        "attempting reconnection"
+                    );
+
+                    std::thread::sleep(delay);
+                    total_downtime_ms += delay_ms;
+
+                    if child.is_cancelled() {
+                        tracing::info!(
+                            event = "sniffer.capture.cancelled",
                             iface = %name,
-                            error = %e,
-                            "capture error, stopping"
+                            "capture cancelled during reconnect"
                         );
-                        break;
+                        break 'reconnect;
+                    }
+
+                    match Self::open_capture(&name, timeout) {
+                        Ok(new_cap) => {
+                            cap = new_cap;
+                            emit(Event::new(EventKind::SnifferReconnected {
+                                iface: name.clone(),
+                                total_attempts: attempt,
+                                total_downtime_ms,
+                            }));
+                            tracing::info!(
+                                event = "sniffer.reconnect.success",
+                                iface = %name,
+                                total_attempts = attempt,
+                                total_downtime_ms,
+                                "reconnected successfully"
+                            );
+                            attempt = 0;
+                            total_downtime_ms = 0;
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                event = "sniffer.reconnect.failed",
+                                iface = %name,
+                                attempt,
+                                error = %e,
+                                "reconnection attempt failed"
+                            );
+                        }
                     }
                 }
             }
@@ -235,5 +309,18 @@ impl ConfigObserver for InterfaceSniffer {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_retry_delay() {
+        assert_eq!(calculate_retry_delay(1), Duration::from_millis(50));
+        assert_eq!(calculate_retry_delay(5), Duration::from_millis(50));
+        assert_eq!(calculate_retry_delay(6), Duration::from_millis(5000));
+        assert_eq!(calculate_retry_delay(10), Duration::from_millis(5000));
     }
 }
