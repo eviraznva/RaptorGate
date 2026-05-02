@@ -25,6 +25,9 @@ import UsersManagementSlice from "../features/usersManagementSlice";
 import { configApi } from "../services/config";
 import SessionsReducer from "../features/sessionsSlice";
 import { sessionsApi } from "../services/sessions";
+import { identityConfigApi } from "../services/identityConfig";
+import { identitySessionsApi } from "../services/identitySessions";
+import { secretsApi } from "../services/secrets";
 
 export const store = configureStore({
   reducer: {
@@ -50,6 +53,9 @@ export const store = configureStore({
     [configApi.reducerPath]: configApi.reducer,
     [usersApi.reducerPath]: usersApi.reducer,
     [sessionsApi.reducerPath]: sessionsApi.reducer,
+    [identityConfigApi.reducerPath]: identityConfigApi.reducer,
+    [identitySessionsApi.reducerPath]: identitySessionsApi.reducer,
+    [secretsApi.reducerPath]: secretsApi.reducer,
     [rulesApi.reducerPath]: rulesApi.reducer,
     [zonesApi.reducerPath]: zonesApi.reducer,
     [authApi.reducerPath]: authApi.reducer,
@@ -65,6 +71,9 @@ export const store = configureStore({
       configApi.middleware,
       usersApi.middleware,
       sessionsApi.middleware,
+      identityConfigApi.middleware,
+      identitySessionsApi.middleware,
+      secretsApi.middleware,
       zonesApi.middleware,
       rulesApi.middleware,
       authApi.middleware,

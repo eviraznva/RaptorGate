@@ -13,6 +13,7 @@ import Ips from "./pages/Ips.tsx";
 import ConnectionTracking from "./pages/ConnectionTracking.tsx";
 import PolicyEngine from "./pages/PolicyEngine.tsx";
 import Settings from "./pages/Settings.tsx";
+import Identity from "./pages/Identity.tsx";
 import Zones from "./pages/Zones.tsx";
 import NatRules from "./pages/NatRules.tsx";
 import Users from "./pages/Users.tsx";
@@ -96,6 +97,10 @@ const router = createBrowserRouter([
           {
             path: "settings",
             element: <Settings />,
+          },
+          {
+            path: "identity",
+            element: <Identity />,
           },
         ],
       },

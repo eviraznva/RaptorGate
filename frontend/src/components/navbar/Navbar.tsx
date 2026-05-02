@@ -14,6 +14,7 @@ const navItems = [
   { name: "NAT Rules", path: "/dashboard/nat-rules" },
   { name: "Connections", path: "/dashboard/connections" },
   { name: "Users", path: "/dashboard/users" },
+  { name: "Identity", path: "/dashboard/identity", adminOnly: true },
   { name: "Config", path: "/dashboard/config-control" },
   { name: "Config Diff", path: "/dashboard/config-diff" },
   { name: "Settings", path: "/dashboard/settings" },
@@ -25,13 +26,20 @@ export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [logout, { isSuccess }] = useLogoutMutation();
+  const visibleNavItems = navItems.filter(
+    (item) =>
+      !item.adminOnly ||
+      user.roles?.some((role) => role === "admin" || role === "super_admin"),
+  );
 
   const handleLogout = async function () {
     try {
       await logout({
         accessToken: user.accessToken,
       });
-    } catch (err) {}
+    } catch {
+      return;
+    }
   };
 
   useEffect(() => {
@@ -45,7 +53,7 @@ export default function Navbar() {
     <nav className="bg-[#161616] border-b border-[#262626] px-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
-          {navItems.map((item, i) => (
+          {visibleNavItems.map((item, i) => (
             <div key={item.name} className="flex items-center">
               <button
                 type="button"
@@ -60,7 +68,7 @@ export default function Navbar() {
               >
                 {item.name}
               </button>
-              {i < navItems.length - 1 && (
+              {i < visibleNavItems.length - 1 && (
                 <span className="text-[#262626] mx-1">│</span>
               )}
             </div>

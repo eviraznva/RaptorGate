@@ -11,6 +11,9 @@ const storedUser =
         isFirstLogin: false,
         showRecoveryToken: false,
         accessToken: "",
+        roles: [],
+        authProvider: undefined,
+        authProfileId: undefined,
       }
     : (JSON.parse(localStorage.getItem("user") as string) as LoginResponse);
 
@@ -29,6 +32,9 @@ const userSlice = createSlice({
       state.isFirstLogin = action.payload.isFirstLogin;
       state.showRecoveryToken = action.payload.showRecoveryToken;
       state.accessToken = action.payload.accessToken;
+      state.roles = action.payload.roles ?? [];
+      state.authProvider = action.payload.authProvider;
+      state.authProfileId = action.payload.authProfileId;
     },
 
     clearUser: (state) => {
@@ -39,6 +45,9 @@ const userSlice = createSlice({
       state.isFirstLogin = false;
       state.showRecoveryToken = false;
       state.accessToken = "";
+      state.roles = [];
+      state.authProvider = undefined;
+      state.authProfileId = undefined;
       localStorage.removeItem("user");
     },
 

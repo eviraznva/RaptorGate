@@ -6,4 +6,7 @@ export type LoginResponse = {
   isFirstLogin: boolean;
   showRecoveryToken: boolean;
   accessToken: string;
+  roles?: string[];
+  authProvider?: string;
+  authProfileId?: string | null;
 };
