@@ -62,6 +62,18 @@ impl StaticInterfaceMonitor {
                     },
                 ),
                 (
+                    "eth-live-up.100".to_string(),
+                    SystemInterface {
+                        index: 100.into(),
+                        name: "eth-live-up.100".to_string(),
+                        oper_state: OperState::Up,
+                        addresses: vec![
+                            "192.168.100.10/24".parse::<IpNet>().expect("valid CIDR"),
+                        ],
+                        vlan_id: Some(100),
+                    },
+                ),
+                (
                     "eth-live-down".to_string(),
                     SystemInterface {
                         index: 11.into(),
@@ -458,47 +470,94 @@ async fn fetch_zone_interfaces_and_live_zone_interfaces_return_expected_contract
         vec![],
     );
 
+    let eth_live_up_id = Uuid::now_v7().to_string();
+
     let zone_interfaces = vec![
         ZoneInterface {
-            id: Uuid::now_v7().to_string(),
+            id: eth_live_up_id.clone(),
             zone_id: valid.src_zone.id.clone(),
-            interface_name: "eth-live-up".to_string(),
-            vlan_id: None,
             status: InterfaceStatus::Unspecified as i32,
             addresses: vec![],
+            kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+                ngfw::proto::config::PhysicalInterface {
+                    interface_name: "eth-live-up".to_string(),
+                },
+            )),
+            sniffed: false,
         },
         ZoneInterface {
             id: Uuid::now_v7().to_string(),
             zone_id: valid.src_zone.id.clone(),
-            interface_name: "eth-live-down".to_string(),
-            vlan_id: Some(100),
             status: InterfaceStatus::Unspecified as i32,
             addresses: vec![],
+            kind: Some(ngfw::proto::config::zone_interface::Kind::Vlan(
+                ngfw::proto::config::VlanSubinterface {
+                    parent_interface_id: eth_live_up_id.clone(),
+                    vlan_id: 100,
+                },
+            )),
+            sniffed: false,
         },
         ZoneInterface {
             id: Uuid::now_v7().to_string(),
             zone_id: valid.dst_zone.id.clone(),
-            interface_name: "eth-live-unknown".to_string(),
-            vlan_id: None,
             status: InterfaceStatus::Unspecified as i32,
             addresses: vec![],
+            kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+                ngfw::proto::config::PhysicalInterface {
+                    interface_name: "eth-live-unknown".to_string(),
+                },
+            )),
+            sniffed: false,
         },
         ZoneInterface {
             id: Uuid::now_v7().to_string(),
             zone_id: valid.dst_zone.id.clone(),
-            interface_name: "eth-live-missing".to_string(),
-            vlan_id: None,
             status: InterfaceStatus::Unspecified as i32,
             addresses: vec![],
+            kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+                ngfw::proto::config::PhysicalInterface {
+                    interface_name: "eth-live-down".to_string(),
+                },
+            )),
+            sniffed: false,
+        },
+        ZoneInterface {
+            id: Uuid::now_v7().to_string(),
+            zone_id: valid.dst_zone.id.clone(),
+            status: InterfaceStatus::Unspecified as i32,
+            addresses: vec![],
+            kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+                ngfw::proto::config::PhysicalInterface {
+                    interface_name: "eth-live-missing".to_string(),
+                },
+            )),
+            sniffed: false,
         },
     ];
+    
+    // Helper to extract interface name from proto ZoneInterface
+    let eth_live_up_id_clone = eth_live_up_id.clone();
+    let get_interface_name = move |zi: &ZoneInterface| -> Option<String> {
+        zi.kind.as_ref().and_then(|k| match k {
+            ngfw::proto::config::zone_interface::Kind::Physical(p) => Some(p.interface_name.clone()),
+            ngfw::proto::config::zone_interface::Kind::Vlan(v) => {
+                if v.parent_interface_id == eth_live_up_id_clone {
+                    Some(format!("eth-live-up.{}", v.vlan_id))
+                } else {
+                    None
+                }
+            }
+        })
+    };
+    
     let expected_by_name: HashMap<String, ZoneInterface> = zone_interfaces
         .iter()
-        .cloned()
-        .map(|zone_interface| (zone_interface.interface_name.clone(), zone_interface))
+        .filter_map(|zi| get_interface_name(zi).map(|name| (name, zi.clone())))
         .collect();
+    
     let expected_zone_interface_id = zone_interfaces[0].id.clone();
-    valid.bundle.zone_interfaces = zone_interfaces;
+    valid.bundle.zone_interfaces = zone_interfaces.clone();
 
     let (request, _, _) = create_snapshot_request(valid.bundle);
     let push_response = snapshot_client
@@ -506,24 +565,25 @@ async fn fetch_zone_interfaces_and_live_zone_interfaces_return_expected_contract
         .await
         .unwrap()
         .into_inner();
-    assert!(push_response.accepted);
+    assert!(push_response.accepted, "snapshot rejected: {}", push_response.message);
 
     let raw_response = query_client
         .get_zone_interfaces(GetZoneInterfacesRequest {})
         .await
         .unwrap()
         .into_inner();
-    assert_eq!(raw_response.zone_interfaces.len(), expected_by_name.len());
+    assert_eq!(raw_response.zone_interfaces.len(), zone_interfaces.len());
 
     for zone_interface in &raw_response.zone_interfaces {
-        let expected = expected_by_name
-            .get(&zone_interface.interface_name)
-            .expect("raw interface present in expected map");
-        assert_eq!(zone_interface.id, expected.id);
-        assert_eq!(zone_interface.zone_id, expected.zone_id);
-        assert_eq!(zone_interface.vlan_id, expected.vlan_id);
-        assert_eq!(zone_interface.status, InterfaceStatus::Unspecified as i32);
-        assert!(zone_interface.addresses.is_empty());
+        if let Some(name) = get_interface_name(zone_interface) {
+            let expected = expected_by_name
+                .get(&name)
+                .expect("raw interface present in expected map");
+            assert_eq!(zone_interface.id, expected.id);
+            assert_eq!(zone_interface.zone_id, expected.zone_id);
+            assert_eq!(zone_interface.status, InterfaceStatus::Unspecified as i32);
+            assert!(zone_interface.addresses.is_empty());
+        }
     }
 
     let single_response = query_client
@@ -537,7 +597,7 @@ async fn fetch_zone_interfaces_and_live_zone_interfaces_return_expected_contract
         .zone_interface
         .expect("zone interface should be returned");
     assert_eq!(single.id, expected_zone_interface_id);
-    assert_eq!(single.interface_name, "eth-live-up");
+    assert_eq!(get_interface_name(&single).unwrap(), "eth-live-up");
     assert_eq!(single.status, InterfaceStatus::Unspecified as i32);
     assert!(single.addresses.is_empty());
 
@@ -549,7 +609,9 @@ async fn fetch_zone_interfaces_and_live_zone_interfaces_return_expected_contract
     let live_by_name: HashMap<String, ZoneInterface> = live_response
         .zone_interfaces
         .into_iter()
-        .map(|zone_interface| (zone_interface.interface_name.clone(), zone_interface))
+        .filter_map(|zone_interface| {
+            get_interface_name(&zone_interface).map(|name| (name, zone_interface))
+        })
         .collect();
 
     assert_eq!(
@@ -565,6 +627,14 @@ async fn fetch_zone_interfaces_and_live_zone_interfaces_return_expected_contract
             .expect("live up interface present")
             .addresses,
         vec!["192.168.50.10/24".to_string(), "fe80::10/64".to_string()]
+    );
+
+    assert_eq!(
+        live_by_name
+            .get("eth-live-up.100")
+            .expect("live up vlan interface present")
+            .status,
+        InterfaceStatus::Active as i32
     );
 
     assert_eq!(
@@ -637,7 +707,6 @@ async fn swap_config_happy_path_returns_no_error() {
     client
         .swap_config(SwapConfigRequest {
             config: Some(ngfw::proto::config::AppConfig {
-                capture_interfaces: vec!["eth0".into(), "eth1".into()],
                 pcap_timeout_ms: 3000,
                 tun_device_name: "tun99".into(),
                 tun_address: "10.254.254.1".into(),
@@ -665,7 +734,6 @@ async fn get_config_returns_ok() {
     let mut client = connect(&shared_server().socket).await;
 
     let swapped = ngfw::proto::config::AppConfig {
-        capture_interfaces: vec!["eth3".into()],
         pcap_timeout_ms: 7000,
         tun_device_name: "tun42".into(),
         tun_address: "192.168.1.1".into(),
@@ -694,7 +762,6 @@ async fn get_config_returns_ok() {
     let inner = resp.into_inner();
     let config = inner.config.expect("get_config returned no config");
 
-    assert_eq!(config.capture_interfaces, vec!["eth3"]);
     assert_eq!(config.pcap_timeout_ms, 7000);
     assert_eq!(config.tun_device_name, "tun42");
     assert_eq!(config.tun_address, "192.168.1.1");
