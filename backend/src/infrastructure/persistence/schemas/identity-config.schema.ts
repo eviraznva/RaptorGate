@@ -1,9 +1,13 @@
 import { isoDateTimeSchema } from './_common.js';
 import { z } from 'zod';
 import { SECRET_REF_PATTERN } from '../../../domain/value-objects/secret-ref.vo.js';
+import { isIP } from 'node:net';
 
 const idSchema = z.string().min(1).max(128);
 const nullableTextSchema = z.string().min(1).max(512).nullable();
+const interfaceNameSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/).nullable();
+const zoneIdSchema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).nullable();
+const bindAddressSchema = z.string().refine((value) => isIP(value) !== 0).nullable();
 
 export const RadiusServerProfileRecordSchema = z
   .object({
@@ -79,9 +83,9 @@ export const IdentitySettingsRecordSchema = z
     adminAuthenticationProfileId: idSchema.nullable(),
     portalListener: z.object({
       enabled: z.boolean(),
-      interfaceName: nullableTextSchema,
-      zoneId: nullableTextSchema,
-      bindAddress: nullableTextSchema,
+      interfaceName: interfaceNameSchema,
+      zoneId: zoneIdSchema,
+      bindAddress: bindAddressSchema,
       bindPort: z.number().int().min(1).max(65535),
     }).strict().default({
       enabled: false,

@@ -59,3 +59,54 @@ impl Policy {
 
 use crate::integrity::foreign_keys;
 foreign_keys!(Policy { zone_pair_id: ZonePairId });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXPECTED_IDENTITY_RULES: [&str; 4] = [
+        "Identity pre-auth portal gate",
+        "Identity guest sensitive deny",
+        "Identity admin management access",
+        "Identity authenticated app access",
+    ];
+
+    #[derive(Deserialize)]
+    struct VagrantPolicyFile {
+        items: Vec<crate::disk_store::SavedProperty<Policy>>,
+    }
+
+    #[test]
+    fn vagrant_identity_seed_policies_parse() {
+        let raw = include_str!("../../../vagrant/configs/policies.json");
+        let parsed: VagrantPolicyFile = serde_json::from_str(raw).unwrap();
+        let names = parsed
+            .items
+            .iter()
+            .map(|item| item.contents.name.as_str())
+            .collect::<Vec<_>>();
+
+        for expected in EXPECTED_IDENTITY_RULES {
+            assert!(names.contains(&expected));
+        }
+    }
+
+    #[test]
+    fn backend_identity_seed_rules_parse() {
+        let raw = include_str!("../../../backend/data/json-db/rules.json");
+        let parsed: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let items = parsed["items"].as_array().unwrap();
+        let names = items
+            .iter()
+            .map(|item| item["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        for expected in EXPECTED_IDENTITY_RULES {
+            assert!(names.contains(&expected));
+        }
+
+        for item in items {
+            parse_rule_tree(item["content"].as_str().unwrap()).unwrap();
+        }
+    }
+}

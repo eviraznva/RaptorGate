@@ -19,6 +19,8 @@ COPY proto ./proto
 # RUN rm -rf src
 
 COPY ./crates ./crates
+COPY ./vagrant/configs ./vagrant/configs
+COPY ./backend/data/json-db ./backend/data/json-db
 
 RUN cargo test -- --skip tls::
 RUN cargo build

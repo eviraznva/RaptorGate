@@ -2,11 +2,38 @@
   "items": [
     {
       "id": "77777777-7777-4777-8777-777777777777",
-      "name": "Identity gate h1-to-h2",
+      "name": "Identity pre-auth portal gate",
       "zone_pair_id": "33333333-3333-4333-8333-333333333333",
       "priority": 0,
       "rule_tree": {
-        "head": "match auth_state {\n\t= authenticated:\n\t\tmatch identity_group {\n\t\t\t= \"guests\": verdict drop\n\t\t\t_:\n\t\t\t\tmatch protocol {\n\t\t\t\t\t= tcp:\n\t\t\t\t\t\tmatch dst_port {\n\t\t\t\t\t\t\t= 8080: verdict allow\n\t\t\t\t\t\t\t_: verdict drop\n\t\t\t\t\t\t}\n\t\t\t\t\t= icmp: verdict allow\n\t\t\t\t\t_: verdict drop\n\t\t\t\t}\n\t\t}\n\t_: verdict drop\n}\n"
+        "head": "match auth_state {\n\t= unknown: verdict drop\n}\n"
+      }
+    },
+    {
+      "id": "88888888-8888-4888-8888-888888888888",
+      "name": "Identity guest sensitive deny",
+      "zone_pair_id": "33333333-3333-4333-8333-333333333333",
+      "priority": 10,
+      "rule_tree": {
+        "head": "match auth_state {\n\t= authenticated:\n\t\tmatch identity_group {\n\t\t\t= \"guests\":\n\t\t\t\tmatch protocol {\n\t\t\t\t\t= tcp:\n\t\t\t\t\t\tmatch dst_port {\n\t\t\t\t\t\t\t|(= 22 = 3389 = 445): verdict drop\n\t\t\t\t\t\t}\n\t\t\t\t}\n\t\t}\n}\n"
+      }
+    },
+    {
+      "id": "99999999-9999-4999-8999-999999999999",
+      "name": "Identity admin management access",
+      "zone_pair_id": "33333333-3333-4333-8333-333333333333",
+      "priority": 20,
+      "rule_tree": {
+        "head": "match auth_state {\n\t= authenticated:\n\t\tmatch identity_group {\n\t\t\t= \"admins\":\n\t\t\t\tmatch protocol {\n\t\t\t\t\t= tcp:\n\t\t\t\t\t\tmatch dst_port {\n\t\t\t\t\t\t\t|(= 443 = 8443): verdict allow\n\t\t\t\t\t\t}\n\t\t\t\t}\n\t\t}\n}\n"
+      }
+    },
+    {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "name": "Identity authenticated app access",
+      "zone_pair_id": "33333333-3333-4333-8333-333333333333",
+      "priority": 30,
+      "rule_tree": {
+        "head": "match auth_state {\n\t= authenticated:\n\t\tmatch protocol {\n\t\t\t= tcp:\n\t\t\t\tmatch dst_port {\n\t\t\t\t\t|(= 80 = 443 = 8080): verdict allow\n\t\t\t\t}\n\t\t\t= icmp: verdict allow\n\t\t}\n}\n"
       }
     }
   ]

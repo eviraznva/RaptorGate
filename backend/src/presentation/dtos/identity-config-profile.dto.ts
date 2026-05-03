@@ -4,12 +4,16 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsIP,
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -213,6 +217,39 @@ export class AdminRoleMappingDto {
   role: 'super_admin' | 'admin' | 'operator' | 'viewer';
 }
 
+export class PortalListenerSettingsDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @MaxLength(64)
+  @Matches(/^[A-Za-z0-9_.:-]+$/)
+  interfaceName?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+  zoneId?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsIP()
+  bindAddress?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  bindPort?: number;
+}
+
 export class UpdateIdentitySettingsDto {
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
@@ -229,33 +266,4 @@ export class UpdateIdentitySettingsDto {
   @ValidateNested()
   @Type(() => PortalListenerSettingsDto)
   portalListener?: PortalListenerSettingsDto;
-}
-
-export class PortalListenerSettingsDto {
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsBoolean()
-  enabled?: boolean;
-
-  @ApiPropertyOptional({ nullable: true })
-  @IsOptional()
-  @IsString()
-  interfaceName?: string | null;
-
-  @ApiPropertyOptional({ nullable: true })
-  @IsOptional()
-  @IsString()
-  zoneId?: string | null;
-
-  @ApiPropertyOptional({ nullable: true })
-  @IsOptional()
-  @IsString()
-  bindAddress?: string | null;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(65535)
-  bindPort?: number;
 }

@@ -1,4 +1,8 @@
 import { IdentityConfigIsInvalidException } from '../exceptions/identity-config-is-invalid.exception.js';
+import { isIP } from 'node:net';
+
+const ZONE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INTERFACE_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 export interface PortalListenerSettingsInput {
   enabled: boolean;
@@ -32,11 +36,27 @@ export class PortalListenerSettings {
       throw new IdentityConfigIsInvalidException('portal listener bindPort must be between 1 and 65535');
     }
 
+    const interfaceName = normalizeNullable(input.interfaceName);
+    const zoneId = normalizeNullable(input.zoneId);
+    const bindAddress = normalizeNullable(input.bindAddress);
+
+    if (interfaceName && !INTERFACE_NAME_PATTERN.test(interfaceName)) {
+      throw new IdentityConfigIsInvalidException('portal listener interfaceName is invalid');
+    }
+
+    if (zoneId && !ZONE_ID_PATTERN.test(zoneId)) {
+      throw new IdentityConfigIsInvalidException('portal listener zoneId must be a UUID');
+    }
+
+    if (bindAddress && isIP(bindAddress) === 0) {
+      throw new IdentityConfigIsInvalidException('portal listener bindAddress must be an IP address');
+    }
+
     return new PortalListenerSettings(
       input.enabled,
-      normalizeNullable(input.interfaceName),
-      normalizeNullable(input.zoneId),
-      normalizeNullable(input.bindAddress),
+      interfaceName,
+      zoneId,
+      bindAddress,
       input.bindPort,
     );
   }
