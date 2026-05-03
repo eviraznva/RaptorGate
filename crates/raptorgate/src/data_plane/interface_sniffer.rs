@@ -43,12 +43,13 @@ impl InterfaceSniffer {
             pcap_timeout_ms: AtomicI32::new(config.pcap_timeout_ms),
         };
 
+        // TODO: Part 2/3 - get sniffed interfaces from ZoneInterface.sniffed field
         let mut errs = Vec::<SnifferError>::new();
-        for iface in &config.capture_interfaces {
-            if let Err(err) = sniffer.sniff_new(iface.clone()) {
-                errs.push(err);
-            }
-        }
+        // for iface in &config.capture_interfaces {
+        //     if let Err(err) = sniffer.sniff_new(iface.clone()) {
+        //         errs.push(err);
+        //     }
+        // }
 
         (sniffer, rx, errs)
     }
@@ -269,8 +270,9 @@ pub enum SnifferError {
 #[tonic::async_trait]
 impl ConfigObserver for InterfaceSniffer {
     async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
+        // TODO: Part 2/3 - get sniffed interfaces from ZoneInterface.sniffed field
         let old_interfaces: Vec<String> = self.handles.iter().map(|e| e.key().clone()).collect();
-        let new_interfaces = &new_config.capture_interfaces;
+        let new_interfaces: Vec<String> = vec![]; // &new_config.capture_interfaces;
 
         let old_timeout = Duration::from_millis(self.pcap_timeout_ms.load(Ordering::Relaxed) as u64);
 
@@ -280,7 +282,7 @@ impl ConfigObserver for InterfaceSniffer {
             }
         }
 
-        for iface in new_interfaces {
+        for iface in &new_interfaces {
             if self.handles.contains_key(iface) {
                 continue;
             }

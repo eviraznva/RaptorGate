@@ -47,7 +47,6 @@ use crate::proto::services::{
     SwapIpsConfigRequest, SwapIpsConfigResponse, SwapNatConfigRequest, SwapNatConfigResponse,
     GetSystemTimeRequest, GetSystemTimeResponse, PushActiveConfigSnapshotRequest,
     PushActiveConfigSnapshotResponse, SetInterfaceStateRequest, SetInterfaceStateResponse,
-    UpdateZoneInterfacePropertiesRequest, UpdateZoneInterfacePropertiesResponse,
 };
 use crate::tls::pinning_detector::PinningDetector;
 use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
@@ -411,7 +410,6 @@ where
 
         tracing::info!(
             event = "config.swap.started",
-            capture_interfaces = ?new_config.capture_interfaces,
             query_socket_path = %new_config.query_socket_path,
             event_socket_path = %new_config.event_socket_path,
             "received AppConfig swap request"
@@ -595,9 +593,9 @@ where
         let zone_interface = self.zone_interface_store.get_zone_interface(&id)
             .ok_or_else(|| Status::not_found(format!("zone interface with id {id} not found")))?;
 
-        let _system_interface = self.interface_monitor.get(&zone_interface.interface_name)
+        let _system_interface = self.interface_monitor.get(zone_interface.interface_name())
             .ok_or_else(|| Status::not_found(format!(
-                "system interface '{}' not found", zone_interface.interface_name
+                "system interface '{}' not found", zone_interface.interface_name()
             )))?;
 
         let state = crate::proto::config::InterfaceAdministrativeState::try_from(req.state)
@@ -606,13 +604,15 @@ where
         let up = matches!(state, crate::proto::config::InterfaceAdministrativeState::Up);
 
         self.interface_controller
-            .set_interface_state(&zone_interface.interface_name, up)
+            .set_interface_state(zone_interface.interface_name(), up)
             .await
             .map_err(|e| Status::internal(format!("failed to set interface state: {e}")))?;
 
         Ok(Response::new(crate::proto::services::SetInterfaceStateResponse {}))
     }
 
+    // TODO: UpdateZoneInterfaceProperties removed - will be replaced in Part 2/3
+    /*
     async fn update_zone_interface_properties(
         &self,
         request: Request<UpdateZoneInterfacePropertiesRequest>,
@@ -628,17 +628,17 @@ where
         let effective_name = self
             .interface_controller
             .set_interface_properties(
-                &zone_interface.interface_name,
+                zone_interface.interface_name(),
                 req.interface_name.as_deref(),
                 req.address.as_deref(),
             )
             .await
             .map_err(|e| Status::internal(format!("failed to set interface properties: {e}")))?;
 
-        zone_interface.interface_name = effective_name;
+        // zone_interface.interface_name = effective_name;
 
         if let Some(vlan_id) = req.vlan_id {
-            zone_interface.vlan_id = Some(vlan_id);
+            // zone_interface.vlan_id = Some(vlan_id);
         }
         if let Some(address) = req.address {
             zone_interface.addresses = vec![address];
@@ -660,7 +660,9 @@ where
             .map_err(|e| Status::internal(format!("failed to update zone interface: {e}")))?;
 
         Ok(Response::new(UpdateZoneInterfacePropertiesResponse {}))
-    }}
+    }
+    */
+}
 
 #[tonic::async_trait]
 impl<Swapper, Monitor> FirewallConfigSnapshotService for QueryHandler<Swapper, Monitor>

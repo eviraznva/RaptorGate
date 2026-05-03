@@ -127,7 +127,7 @@ fn check_duplicate_zone_interface_names<S: BuildHasher>(
 ) {
     let mut seen: HashMap<&str, Uuid> = HashMap::new();
     for (id, zone_interface) in zone_interfaces {
-        let name = zone_interface.interface_name.as_str();
+        let name = zone_interface.interface_name();
         let id_uuid = Uuid::from(id.clone());
         if let Some(existing) = seen.insert(name, id_uuid) {
             errors.push(CheckError::DuplicateZoneInterfaceName {
@@ -228,10 +228,12 @@ mod tests {
         let proto = config::ZoneInterface {
             id: id.to_string(),
             zone_id: zone_id.to_string(),
-            interface_name: "eth0".to_string(),
-            vlan_id: None,
             status: config::InterfaceStatus::Unspecified as i32,
             addresses: vec![],
+            kind: Some(config::zone_interface::Kind::Physical(config::PhysicalInterface {
+                interface_name: "eth0".to_string(),
+            })),
+            sniffed: false,
         };
         ZoneInterface::try_from_proto(proto).unwrap()
     }
@@ -315,7 +317,11 @@ mod tests {
         let mut zone_interfaces = HashMap::new();
         let (ziid, zi) = create_test_zone_interface(zi_id, z_id);
         let (zi2id, mut zi2) = create_test_zone_interface(zi2_id, z_id);
-        zi2.interface_name = zi.interface_name.clone();
+        if let crate::zones::ZoneInterfaceKind::Physical(ref p) = zi.kind {
+            zi2.kind = crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: p.interface_name.clone(),
+            });
+        }
         zone_interfaces.insert(ziid, zi);
         zone_interfaces.insert(zi2id, zi2);
 

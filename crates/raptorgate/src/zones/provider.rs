@@ -193,7 +193,7 @@ impl ZoneInterfaceProvider {
             .map(|(id, zone_interface)| {
                 let mut enriched = zone_interface.clone();
 
-                match monitor.get(&zone_interface.interface_name) {
+                match monitor.get(zone_interface.interface_name()) {
                     Some(system_interface) => {
                         enriched.status = match system_interface.oper_state {
                             OperState::Up => InterfaceStatus::Active,
@@ -224,7 +224,7 @@ where
 {
     entries
         .into_iter()
-        .map(|(id, zone_interface)| (zone_interface.interface_name.clone(), id.clone()))
+        .map(|(id, zone_interface)| (zone_interface.interface_name().to_string(), id.clone()))
         .collect()
 }
 

@@ -67,13 +67,6 @@ impl AppConfigProvider {
             policy_override: dev_policy,
         });
 
-        let capture_interfaces = std::env::var("CAPTURE_INTERFACES")
-            .unwrap_or_else(|_| "eth1,eth2".into())
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
         let pcap_timeout_ms: i32 = std::env::var("PCAP_TIMEOUT_MS")
             .unwrap_or_else(|_| "5000".into())
             .parse()
@@ -132,7 +125,6 @@ impl AppConfigProvider {
             .eq_ignore_ascii_case("true");
 
         let config = AppConfig {
-            capture_interfaces,
             pcap_timeout_ms,
             tun_device_name,
             tun_address,
