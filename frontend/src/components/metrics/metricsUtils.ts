@@ -52,7 +52,7 @@ export function formatEndpoint(event: FirewallEvent, side: "src" | "dst"): strin
 }
 
 export function formatMetric(metric: RealtimeMetric | undefined, fallback: string): string {
-  if (!metric) return fallback;
+  if (!metric || !Number.isFinite(metric.value)) return fallback;
 
   const value = metric.value >= 100 ? Math.round(metric.value).toLocaleString() : metric.value.toFixed(1);
   return `${value} ${metric.unit}`;
@@ -211,7 +211,7 @@ export function metricSeries(
   fallback: number[],
 ): number[] {
   const values = metrics
-    .filter((metric) => metric.name === name)
+    .filter((metric) => metric.name === name && Number.isFinite(metric.value))
     .slice(0, 18)
     .reverse()
     .map((metric) => metric.value);
