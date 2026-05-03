@@ -8,42 +8,74 @@ const MAX_EVENTS = 160;
 const MAX_ALERTS = 80;
 const MAX_METRICS = 120;
 
-function getRealtimeUrl(): string {
-  const apiUrl = import.meta.env.RAPTOR_GATE_API_URL ?? window.location.origin;
-  const normalizedApiUrl = apiUrl.replace(/\/$/, "");
+function isRealtimeMetric(value: unknown): value is RealtimeMetric {
+  if (!value || typeof value !== "object") return false;
+  const metric = value as Partial<RealtimeMetric>;
+  return (
+    typeof metric.name === "string" &&
+    typeof metric.value === "number" &&
+    Number.isFinite(metric.value) &&
+    typeof metric.unit === "string" &&
+    typeof metric.timestamp === "string"
+  );
+}
 
-  if (normalizedApiUrl === "/api") {
-    return `${window.location.origin}/realtime`;
+function resolveMetricsUrl(): { url: string; path: string } {
+  const envUrl = import.meta.env.RAPTOR_GATE_METRICS_WS_URL;
+  if (envUrl) {
+    const u = new URL(envUrl);
+    return { url: `${u.origin}/metrics`, path: `${u.pathname}/socket.io`.replace(/\/+/g, "/") };
   }
+  return { url: `${window.location.origin}/metrics`, path: "/metrics/socket.io" };
+}
 
-  if (normalizedApiUrl.endsWith("/api")) {
-    return `${normalizedApiUrl.slice(0, -4)}/realtime`;
+function resolveAlertsUrl(): { url: string; path: string } {
+  const envUrl = import.meta.env.RAPTOR_GATE_ALERTS_WS_URL;
+  if (envUrl) {
+    const u = new URL(envUrl);
+    return { url: `${u.origin}/alerts`, path: `${u.pathname}/socket.io`.replace(/\/+/g, "/") };
   }
-
-  return `${normalizedApiUrl}/realtime`;
+  return { url: `${window.location.origin}/alerts`, path: "/alerts/socket.io" };
 }
 
 export function useRealtimeObservability() {
   const [events, setEvents] = useState<FirewallEvent[]>([]);
   const [alerts, setAlerts] = useState<FirewallEvent[]>([]);
   const [metrics, setMetrics] = useState<RealtimeMetric[]>([]);
-  const [isConnected, setIsConnected] = useState(false);
+  const [metricsConnected, setMetricsConnected] = useState(false);
+  const [alertsConnected, setAlertsConnected] = useState(false);
 
   useEffect(() => {
-    const socket = io(getRealtimeUrl(), {
+    const { url, path } = resolveMetricsUrl();
+    const metricsSocket = io(url, {
+      path,
       withCredentials: true,
       transports: ["websocket"],
     });
 
-    socket.on("connect", () => {
-      setIsConnected(true);
+    metricsSocket.on("connect", () => setMetricsConnected(true));
+    metricsSocket.on("disconnect", () => setMetricsConnected(false));
+    metricsSocket.on("metrics", (metric: unknown) => {
+      if (!isRealtimeMetric(metric)) return;
+      setMetrics((current) => [metric, ...current].slice(0, MAX_METRICS));
     });
 
-    socket.on("disconnect", () => {
-      setIsConnected(false);
+    return () => {
+      metricsSocket.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const { url, path } = resolveAlertsUrl();
+    const alertsSocket = io(url, {
+      path,
+      withCredentials: true,
+      transports: ["websocket"],
     });
 
-    socket.on("firewall-events", (event: FirewallEvent) => {
+    alertsSocket.on("connect", () => setAlertsConnected(true));
+    alertsSocket.on("disconnect", () => setAlertsConnected(false));
+    alertsSocket.on("firewall-events", (event: FirewallEvent) => {
       setEvents((current) => [event, ...current].slice(0, MAX_EVENTS));
       if (isFirewallAlert(event)) {
         setAlerts((current) =>
@@ -55,14 +87,10 @@ export function useRealtimeObservability() {
       }
     });
 
-    socket.on("metrics", (metric: RealtimeMetric) => {
-      setMetrics((current) => [metric, ...current].slice(0, MAX_METRICS));
-    });
-
     return () => {
-      socket.disconnect();
+      alertsSocket.disconnect();
     };
   }, []);
 
-  return { alerts, events, isConnected, metrics };
+  return { alerts, events, isConnected: metricsConnected && alertsConnected, metrics };
 }
