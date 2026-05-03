@@ -223,4 +223,39 @@ export class UpdateIdentitySettingsDto {
   @IsOptional()
   @IsString()
   adminAuthenticationProfileId?: string | null;
+
+  @ApiPropertyOptional({ type: () => PortalListenerSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PortalListenerSettingsDto)
+  portalListener?: PortalListenerSettingsDto;
+}
+
+export class PortalListenerSettingsDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  interfaceName?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  zoneId?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  bindAddress?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  bindPort?: number;
 }

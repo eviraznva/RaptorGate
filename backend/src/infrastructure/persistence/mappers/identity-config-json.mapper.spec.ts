@@ -70,7 +70,13 @@ function config(): IdentityConfiguration {
         [{ matchType: 'ldap_group', matchValue: 'admins', role: 'admin' }],
       ),
     ],
-    IdentitySettings.create('auth-1', null, now, null),
+    IdentitySettings.create('auth-1', null, now, null, {
+      enabled: true,
+      interfaceName: 'client9',
+      zoneId: 'zone-client',
+      bindAddress: '10.77.10.1',
+      bindPort: 443,
+    }),
   );
 }
 
@@ -88,6 +94,10 @@ describe('IdentityConfigJsonMapper', () => {
     expect(roundtrip.getSettings().getPortalAuthenticationProfileId()).toBe(
       'auth-1',
     );
+    expect(roundtrip.getSettings().getPortalListener().getInterfaceName()).toBe(
+      'client9',
+    );
+    expect(roundtrip.getSettings().getPortalListener().getBindPort()).toBe(443);
     expect(roundtrip.getAuthenticationProfiles()[0].getAdminRoleMappings()).toEqual([
       { matchType: 'ldap_group', matchValue: 'admins', role: 'admin' },
     ]);

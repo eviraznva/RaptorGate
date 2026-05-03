@@ -19,10 +19,12 @@ use crate::{
     dpi::{DpiClassifier, FlowKey, InspectResult},
     events::{self, Event, EventKind},
     identity::{resolve_identity, IdentitySessionStore},
+    interfaces::InterfaceMonitor,
     ml::{MlPacketInspector, MlPrediction},
     packet_validator::validate,
     pipeline::{Stage, StageOutcome},
     policy::provider::DiskPolicyProvider,
+    routing::{resolve_egress_for_ip, resolve_zone_for_interface},
     rule_tree::{ArrivalInfo, Verdict},
     zones::{
         DefaultPolicy, ZoneId, ZonePairId,
@@ -180,6 +182,7 @@ fn packet_is_decrypted(ctx: &PacketContext) -> bool {
 #[derive(Clone)]
 pub struct NatPreroutingStage {
     pub engine: Arc<Mutex<NatEngine>>,
+    pub zone_interface_store: Arc<ZoneInterfaceProvider>,
 }
 
 impl Stage for NatPreroutingStage {
@@ -189,6 +192,9 @@ impl Stage for NatPreroutingStage {
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let iface = ctx.borrow_src_interface().to_string();
+        let zone_interfaces = current_zone_interfaces(&self.zone_interface_store);
+        let in_zone_id = resolve_zone_for_interface(&iface, &zone_interfaces);
+        let in_zone = in_zone_id.as_ref().map(ToString::to_string);
         let mut engine = self.engine.lock().await;
 
         // Safety: NatEngine rewrites packet header fields in-place without
@@ -199,7 +205,7 @@ impl Stage for NatPreroutingStage {
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        engine.process_prerouting(raw_mut, &iface, None);
+        engine.process_prerouting(raw_mut, &iface, in_zone.as_deref());
         StageOutcome::Continue
     }
 }
@@ -207,6 +213,8 @@ impl Stage for NatPreroutingStage {
 #[derive(Clone)]
 pub struct NatPostroutingStage {
     pub engine: Arc<Mutex<NatEngine>>,
+    pub interface_monitor: Arc<dyn InterfaceMonitor>,
+    pub zone_interface_store: Arc<ZoneInterfaceProvider>,
 }
 
 impl Stage for NatPostroutingStage {
@@ -221,9 +229,12 @@ impl Stage for NatPostroutingStage {
             _ => return StageOutcome::Continue,
         };
 
-        let Some(out_iface) = infer_interface_for_ip(dst_ip) else {
+        let zone_interfaces = current_zone_interfaces(&self.zone_interface_store);
+        let live_interfaces = self.interface_monitor.snapshot();
+        let Some(egress) = resolve_egress_for_ip(dst_ip, &live_interfaces, &zone_interfaces) else {
             return StageOutcome::Continue;
         };
+        let out_zone = egress.zone_id.to_string();
 
         let mut engine = self.engine.lock().await;
 
@@ -233,7 +244,7 @@ impl Stage for NatPostroutingStage {
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        engine.process_postrouting(raw_mut, out_iface, None);
+        engine.process_postrouting(raw_mut, &egress.interface_name, Some(out_zone.as_str()));
         StageOutcome::Continue
     }
 }
@@ -308,29 +319,20 @@ impl Stage for FtpAlgStage {
     }
 }
 
-// FIXME: no ale nie hardcodujemy tego pany, to czeba sie kernela pytac
-// Kiedyś się zaimplementuje
-pub(crate) fn infer_interface_for_ip(dst_ip: IpAddr) -> Option<&'static str> {
-    match dst_ip {
-        IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 10] => Some("eth1"),
-        IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 20] => Some("eth2"),
-        IpAddr::V6(ip) if ip.segments()[0] == 0xfd10 => Some("eth1"),
-        IpAddr::V6(ip) if ip.segments()[0] == 0xfd20 => Some("eth2"),
-        _ => None,
-    }
+fn current_zone_interfaces(zone_interface_store: &ZoneInterfaceProvider) -> Vec<crate::zones::ZoneInterface> {
+    zone_interface_store
+        .get_zone_interfaces()
+        .values()
+        .cloned()
+        .collect()
 }
 
 fn resolve_zone_id_for_interface(
     interface_name: &str,
     zone_store: &ZoneProvider,
-    zone_interface_store: &ZoneInterfaceProvider,
+    zone_interfaces: &[crate::zones::ZoneInterface],
 ) -> Option<ZoneId> {
-    let zone_interfaces = zone_interface_store.get_zone_interfaces();
-    if let Some(zone_id) = zone_interfaces
-        .values()
-        .find(|zone_interface| zone_interface.interface_name() == interface_name)
-        .map(|zone_interface| zone_interface.zone_id().clone())
-    {
+    if let Some(zone_id) = resolve_zone_for_interface(interface_name, zone_interfaces) {
         return Some(zone_id);
     }
 
@@ -658,6 +660,7 @@ pub struct PolicyEvalStage {
     pub zone_store: Arc<ZoneProvider>,
     pub zone_pair_store: Arc<ZonePairProvider>,
     pub zone_interface_store: Arc<ZoneInterfaceProvider>,
+    pub interface_monitor: Arc<dyn InterfaceMonitor>,
     /// Opcjonalny dostawca DNSSEC — wstrzykiwany z `DnsInspection`.
     pub dnssec: Option<Arc<dyn DnssecProvider>>,
 }
@@ -713,6 +716,7 @@ impl Stage for PolicyEvalStage {
             self.provider.evaluate_global(eval_ctx)
         } else {
             let src_interface = ctx.borrow_src_interface().to_string();
+            let zone_interfaces = current_zone_interfaces(&self.zone_interface_store);
             let Some(dst_ip) = packet_destination_ip(ctx) else {
                 log_packet_decision(
                     ctx,
@@ -723,7 +727,8 @@ impl Stage for PolicyEvalStage {
                 );
                 return StageOutcome::Halt;
             };
-            let Some(dst_interface) = infer_interface_for_ip(dst_ip) else {
+            let live_interfaces = self.interface_monitor.snapshot();
+            let Some(egress) = resolve_egress_for_ip(dst_ip, &live_interfaces, &zone_interfaces) else {
                 log_packet_decision(
                     ctx,
                     "policy.packet.dropped",
@@ -736,7 +741,7 @@ impl Stage for PolicyEvalStage {
             let Some(src_zone_id) = resolve_zone_id_for_interface(
                 &src_interface,
                 &self.zone_store,
-                &self.zone_interface_store,
+                &zone_interfaces,
             ) else {
                 log_packet_decision(
                     ctx,
@@ -747,20 +752,7 @@ impl Stage for PolicyEvalStage {
                 );
                 return StageOutcome::Halt;
             };
-            let Some(dst_zone_id) = resolve_zone_id_for_interface(
-                dst_interface,
-                &self.zone_store,
-                &self.zone_interface_store,
-            ) else {
-                log_packet_decision(
-                    ctx,
-                    "policy.packet.dropped",
-                    "policy_eval",
-                    "drop",
-                    &format!("no zone mapping for egress interface {}", dst_interface),
-                );
-                return StageOutcome::Halt;
-            };
+            let dst_zone_id = egress.zone_id;
             let Some((zone_pair_id, default_policy)) =
                 resolve_zone_pair(&src_zone_id, &dst_zone_id, &self.zone_pair_store)
             else {
@@ -771,7 +763,7 @@ impl Stage for PolicyEvalStage {
                     "drop",
                     &format!(
                         "no zone pair for interfaces {} -> {}",
-                        src_interface, dst_interface
+                        src_interface, egress.interface_name
                     ),
                 );
                 return StageOutcome::Halt;
@@ -1238,10 +1230,12 @@ fn packet_flow_key(ctx: &PacketContext) -> Option<FlowKey> {
 mod tests {
     use super::*;
     use etherparse::PacketBuilder;
+    use ipnet::IpNet;
     use std::collections::HashMap;
     use uuid::Uuid;
 
     use crate::disk_store::{ListDiskStore, SavedProperty};
+    use crate::interfaces::{OperState, SystemInterface};
     use crate::zones::{Zone, ZoneInterface, ZonePair};
     use crate::{policy::{Policy, PolicyId, parse_rule_tree}, rule_tree::RuleTree};
 
@@ -1276,6 +1270,62 @@ mod tests {
             Arc::new(ZonePairProvider::from_items(HashMap::new())),
             Arc::new(ZoneInterfaceProvider::from_items(HashMap::new())),
         )
+    }
+
+    #[derive(Clone)]
+    struct StaticInterfaceMonitor {
+        interfaces: HashMap<String, SystemInterface>,
+    }
+
+    impl InterfaceMonitor for StaticInterfaceMonitor {
+        fn get(&self, name: &str) -> Option<SystemInterface> {
+            self.interfaces.get(name).cloned()
+        }
+
+        fn snapshot(&self) -> HashMap<String, SystemInterface> {
+            self.interfaces.clone()
+        }
+    }
+
+    fn static_interface_monitor(items: Vec<(&str, Vec<&str>)>) -> Arc<dyn InterfaceMonitor> {
+        Arc::new(StaticInterfaceMonitor {
+            interfaces: items
+                .into_iter()
+                .map(|(name, addresses)| {
+                    (
+                        name.to_string(),
+                        SystemInterface {
+                            index: 1,
+                            name: name.to_string(),
+                            oper_state: OperState::Up,
+                            addresses: addresses
+                                .into_iter()
+                                .map(|address| address.parse::<IpNet>().unwrap())
+                                .collect(),
+                            vlan_id: None,
+                        },
+                    )
+                })
+                .collect(),
+        })
+    }
+
+    fn empty_interface_monitor() -> Arc<dyn InterfaceMonitor> {
+        static_interface_monitor(Vec::new())
+    }
+
+    fn lab_interface_monitor() -> Arc<dyn InterfaceMonitor> {
+        static_interface_monitor(vec![
+            ("eth1", vec!["192.168.10.1/24"]),
+            ("eth2", vec!["192.168.20.1/24"]),
+        ])
+    }
+
+    fn non_lab_interface_monitor() -> Arc<dyn InterfaceMonitor> {
+        static_interface_monitor(vec![
+            ("client9", vec!["10.77.10.1/24"]),
+            ("protected9", vec!["10.88.20.1/24"]),
+        ])
     }
 
     fn lab_zone_stores() -> (
@@ -1350,6 +1400,71 @@ mod tests {
             Arc::new(ZoneInterfaceProvider::from_items(HashMap::from([
                 (eth1_zone_interface_id, eth1_zone_interface),
                 (eth2_zone_interface_id, eth2_zone_interface),
+            ]))),
+            forward_pair_id,
+        )
+    }
+
+    fn non_lab_zone_stores() -> (
+        Arc<ZoneProvider>,
+        Arc<ZonePairProvider>,
+        Arc<ZoneInterfaceProvider>,
+        ZonePairId,
+    ) {
+        let clients_zone_id = Uuid::now_v7();
+        let servers_zone_id = Uuid::now_v7();
+        let forward_pair_id = Uuid::now_v7();
+
+        let (clients_zone_id, clients_zone) = Zone::try_from_proto(crate::proto::config::Zone {
+            id: clients_zone_id.to_string(),
+            name: "clients9".into(),
+            interface_ids: vec!["client9".into()],
+        })
+        .unwrap();
+        let (servers_zone_id, servers_zone) = Zone::try_from_proto(crate::proto::config::Zone {
+            id: servers_zone_id.to_string(),
+            name: "servers9".into(),
+            interface_ids: vec!["protected9".into()],
+        })
+        .unwrap();
+        let (forward_pair_id, forward_pair) =
+            ZonePair::try_from_proto(crate::proto::config::ZonePair {
+                id: forward_pair_id.to_string(),
+                src_zone_id: Uuid::from(clients_zone_id.clone()).to_string(),
+                dst_zone_id: Uuid::from(servers_zone_id.clone()).to_string(),
+                default_policy: crate::proto::common::DefaultPolicy::Drop as i32,
+            })
+            .unwrap();
+        let (client_interface_id, client_interface) =
+            ZoneInterface::try_from_proto(crate::proto::config::ZoneInterface {
+                id: Uuid::now_v7().to_string(),
+                zone_id: Uuid::from(clients_zone_id.clone()).to_string(),
+                interface_name: "client9".into(),
+                vlan_id: None,
+                status: crate::proto::config::InterfaceStatus::Unspecified as i32,
+                addresses: vec!["10.77.10.1/24".into()],
+            })
+            .unwrap();
+        let (server_interface_id, server_interface) =
+            ZoneInterface::try_from_proto(crate::proto::config::ZoneInterface {
+                id: Uuid::now_v7().to_string(),
+                zone_id: Uuid::from(servers_zone_id.clone()).to_string(),
+                interface_name: "protected9".into(),
+                vlan_id: None,
+                status: crate::proto::config::InterfaceStatus::Unspecified as i32,
+                addresses: vec!["10.88.20.1/24".into()],
+            })
+            .unwrap();
+
+        (
+            Arc::new(ZoneProvider::from_items(HashMap::from([
+                (clients_zone_id, clients_zone),
+                (servers_zone_id, servers_zone),
+            ]))),
+            Arc::new(ZonePairProvider::from_items(HashMap::from([(forward_pair_id.clone(), forward_pair)]))),
+            Arc::new(ZoneInterfaceProvider::from_items(HashMap::from([
+                (client_interface_id, client_interface),
+                (server_interface_id, server_interface),
             ]))),
             forward_pair_id,
         )
@@ -1499,6 +1614,10 @@ mod tests {
     use crate::identity::{AuthState, IdentityContext, IdentitySession, IdentitySessionStore};
 
     fn identity_packet(src: [u8; 4], dst: [u8; 4]) -> PacketContext {
+        identity_packet_on_interface(src, dst, "eth1")
+    }
+
+    fn identity_packet_on_interface(src: [u8; 4], dst: [u8; 4], iface: &str) -> PacketContext {
         let mut raw = Vec::new();
         PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
             .ipv4(src, dst, 64)
@@ -1506,7 +1625,7 @@ mod tests {
             .write(&mut raw, b"hello")
             .unwrap();
         let arrival = UNIX_EPOCH + Duration::from_secs(1_700_000_500);
-        PacketContext::from_raw_full(raw, Arc::from("eth1"), Vec::new(), arrival, None, None)
+        PacketContext::from_raw_full(raw, Arc::from(iface), Vec::new(), arrival, None, None)
             .unwrap()
     }
 
@@ -1624,6 +1743,7 @@ mod tests {
             zone_store,
             zone_pair_store,
             zone_interface_store,
+            interface_monitor: empty_interface_monitor(),
             dnssec: None,
         };
         let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
@@ -1648,6 +1768,7 @@ mod tests {
             zone_store,
             zone_pair_store,
             zone_interface_store,
+            interface_monitor: empty_interface_monitor(),
             dnssec: None,
         };
         let mut ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
@@ -1680,6 +1801,7 @@ mod tests {
             zone_store,
             zone_pair_store,
             zone_interface_store,
+            interface_monitor: empty_interface_monitor(),
             dnssec: None,
         };
 
@@ -1708,6 +1830,7 @@ mod tests {
             zone_store,
             zone_pair_store,
             zone_interface_store,
+            interface_monitor: empty_interface_monitor(),
             dnssec: None,
         };
 
@@ -1736,6 +1859,7 @@ mod tests {
             zone_store,
             zone_pair_store,
             zone_interface_store,
+            interface_monitor: empty_interface_monitor(),
             dnssec: None,
         };
 
@@ -1764,6 +1888,7 @@ mod tests {
             zone_store,
             zone_pair_store,
             zone_interface_store,
+            interface_monitor: lab_interface_monitor(),
             dnssec: None,
         };
         let mut unknown_ctx = identity_packet([192, 168, 10, 10], [192, 168, 20, 10]);
@@ -1785,6 +1910,41 @@ mod tests {
             stage.process(&mut authenticated_ctx).await,
             StageOutcome::Continue
         ));
+    }
+
+    #[tokio::test]
+    async fn policy_eval_uses_configured_non_lab_zone_interfaces() {
+        let config = sample_config();
+        let (zone_store, zone_pair_store, zone_interface_store, forward_pair_id) =
+            non_lab_zone_stores();
+        write_policies(
+            &config,
+            vec![policy(
+                forward_pair_id.clone(),
+                0,
+                "match auth_state { = authenticated : verdict allow _ : verdict drop }",
+            )],
+        )
+        .await;
+
+        let provider = Arc::new(DiskPolicyProvider::from_loaded(&config).await.unwrap());
+        let stage = PolicyEvalStage {
+            provider,
+            zone_store,
+            zone_pair_store,
+            zone_interface_store,
+            interface_monitor: non_lab_interface_monitor(),
+            dnssec: None,
+        };
+        let mut ctx = identity_packet_on_interface([10, 77, 10, 42], [10, 88, 20, 42], "client9");
+        ctx.with_identity_ctx_mut(|slot| {
+            *slot = Some(IdentityContext::authenticated(
+                "10.77.10.42".parse().unwrap(),
+                user_session("10.77.10.42", 1_700_003_600),
+            ));
+        });
+
+        assert!(matches!(stage.process(&mut ctx).await, StageOutcome::Continue));
     }
 
     struct StaticMlInspector;

@@ -13,6 +13,7 @@ import type {
   IdentityProviderTestResult,
   LdapServerProfile,
   LdapTlsMode,
+  PortalListenerSettings,
   RadiusServerProfile,
 } from "../types/identity/IdentityConfig";
 import {
@@ -30,6 +31,7 @@ import {
   useUpdateLdapProfileMutation,
   useUpdateRadiusProfileMutation,
   type AuthenticationProfileBody,
+  type IdentitySettingsPatch,
   type LdapProfileBody,
   type RadiusProfileBody,
 } from "../services/identityConfig";
@@ -184,10 +186,7 @@ export default function Identity() {
     }, "Authentication profile saved");
   };
 
-  const updateSettings = async (body: {
-    portalAuthenticationProfileId?: string | null;
-    adminAuthenticationProfileId?: string | null;
-  }) => {
+  const updateSettings = async (body: IdentitySettingsPatch) => {
     await runAction(async () => {
       await updateIdentitySettings(body).unwrap();
     }, "Identity settings updated");
@@ -329,12 +328,12 @@ export default function Identity() {
       )}
 
       {activeTab === "portal" && (
-        <SettingsPanel
-          key={config.settings.portalAuthenticationProfileId ?? "portal-disabled"}
-          title="Portal Settings"
+        <PortalSettingsPanel
+          key={`${config.settings.portalAuthenticationProfileId ?? "portal-disabled"}-${config.settings.portalListener.interfaceName ?? "no-iface"}`}
           value={config.settings.portalAuthenticationProfileId ?? ""}
           profiles={authProfiles}
-          onSave={(value) => updateSettings({ portalAuthenticationProfileId: value || null })}
+          listener={config.settings.portalListener}
+          onSave={(profileId, listener) => updateSettings({ portalAuthenticationProfileId: profileId || null, portalListener: listener })}
         />
       )}
 
@@ -711,6 +710,48 @@ function AuthProfileForm({
         </div>
       </div>
       <FormActions onSave={onSave} onCancel={onCancel} />
+    </Panel>
+  );
+}
+
+function PortalSettingsPanel({
+  value,
+  profiles,
+  listener,
+  onSave,
+}: {
+  value: string;
+  profiles: IdentityAuthenticationProfile[];
+  listener: PortalListenerSettings;
+  onSave: (value: string, listener: PortalListenerSettings) => Promise<void>;
+}) {
+  const [selected, setSelected] = useState(value);
+  const [listenerForm, setListenerForm] = useState<PortalListenerSettings>({ ...listener });
+  const updateListener = <K extends keyof PortalListenerSettings>(key: K, value: PortalListenerSettings[K]) => {
+    setListenerForm((current) => ({ ...current, [key]: value }));
+  };
+
+  return (
+    <Panel title="Portal Settings">
+      <div className="max-w-3xl">
+        <FormGrid>
+          <SelectField
+            label="Authentication profile"
+            value={selected}
+            options={["", ...profiles.map((profile) => profile.id)]}
+            labels={profileLabels(profiles, "Disabled")}
+            onChange={setSelected}
+          />
+          <CheckField label="Portal listener enabled" checked={listenerForm.enabled} onChange={(value) => updateListener("enabled", value)} />
+          <TextField label="Interface name" value={listenerForm.interfaceName ?? ""} onChange={(value) => updateListener("interfaceName", value || null)} />
+          <TextField label="Zone ID" value={listenerForm.zoneId ?? ""} onChange={(value) => updateListener("zoneId", value || null)} />
+          <TextField label="Bind address" value={listenerForm.bindAddress ?? ""} onChange={(value) => updateListener("bindAddress", value || null)} />
+          <NumberField label="Bind port" value={listenerForm.bindPort} onChange={(value) => updateListener("bindPort", value)} />
+        </FormGrid>
+        <div className="mt-4">
+          <IconButton icon="lucide:save" label="Save settings" onClick={() => void onSave(selected, listenerForm)} />
+        </div>
+      </div>
     </Panel>
   );
 }

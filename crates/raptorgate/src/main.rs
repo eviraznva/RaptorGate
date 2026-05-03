@@ -14,6 +14,7 @@ mod pipeline;
 mod policy;
 mod proto;
 mod query_server;
+mod routing;
 mod rule_tree;
 mod server_certificate_server;
 mod tls;
@@ -48,7 +49,7 @@ use crate::tls::{
     CaManager, DecryptedChainInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig,
     PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
-use crate::interfaces::{InterfaceController, NetworkInterfaceMonitor};
+use crate::interfaces::{InterfaceController, InterfaceMonitor, NetworkInterfaceMonitor};
 use etherparse::NetSlice;
 use pcap::Device;
 use std::collections::{HashMap, HashSet};
@@ -267,7 +268,7 @@ async fn main() {
             decision_engine: Arc::clone(&decision_engine),
             server_key_store: Arc::clone(&server_key_store),
             pinning_detector: decision_engine.pinning_detector_arc(),
-            interface_monitor,
+            interface_monitor: Arc::clone(&interface_monitor),
             interface_controller,
         },
         Arc::clone(&identity_sessions),
@@ -299,6 +300,7 @@ async fn main() {
     ));
     let ml_detector: Arc<dyn crate::ml::MlPacketInspector> =
         Arc::new(crate::ml::MlDetector::from_env());
+    let pipeline_interface_monitor: Arc<dyn InterfaceMonitor> = interface_monitor.clone();
 
     let pipeline = DataPipeline {
         head: ValidationStage,
@@ -340,6 +342,7 @@ async fn main() {
                                         tail: Chain {
                                             head: NatPreroutingStage {
                                                 engine: Arc::clone(&nat_engine),
+                                                zone_interface_store: Arc::clone(&zone_interfaces),
                                             },
                                             tail: Chain {
                                                 head: TcpClassificationStage {
@@ -354,11 +357,14 @@ async fn main() {
                                                             zone_store: Arc::clone(&zones),
                                                             zone_pair_store: Arc::clone(&zone_pairs),
                                                             zone_interface_store: Arc::clone(&zone_interfaces),
+                                                            interface_monitor: Arc::clone(&pipeline_interface_monitor),
                                                             dnssec: Some(dnssec_provider),
                                                         },
                                                         tail: Chain {
                                                             head: NatPostroutingStage {
                                                                 engine: Arc::clone(&nat_engine),
+                                                                interface_monitor: Arc::clone(&pipeline_interface_monitor),
+                                                                zone_interface_store: Arc::clone(&zone_interfaces),
                                                             },
                                                             tail: FtpAlgStage {
                                                                 engine: Arc::clone(&nat_engine),
@@ -407,10 +413,14 @@ async fn main() {
                     cert_forger: Arc::clone(forger),
                     untrust_forger: Arc::clone(untrust),
                     decision_engine: Arc::clone(&decision_engine),
-                    decrypted_inspector: Arc::new(DecryptedChainInspector::with_identity(
+                    decrypted_inspector: Arc::new(DecryptedChainInspector::with_identity_and_routing(
                         pipeline.clone(),
                         Arc::clone(&dpi_classifier),
                         Arc::clone(&identity_sessions),
+                        crate::tls::decrypted_chain::DecryptedRoutingContext {
+                            interface_monitor: Arc::clone(&pipeline_interface_monitor),
+                            zone_interface_store: Arc::clone(&zone_interfaces),
+                        },
                     )),
                     cancel: tls_runtime_cancel,
                 };

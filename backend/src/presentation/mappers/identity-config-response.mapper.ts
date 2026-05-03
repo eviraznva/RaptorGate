@@ -62,6 +62,13 @@ export class IdentityConfigResponseMapper {
           config.getSettings().getPortalAuthenticationProfileId(),
         adminAuthenticationProfileId:
           config.getSettings().getAdminAuthenticationProfileId(),
+        portalListener: {
+          enabled: config.getSettings().getPortalListener().getEnabled(),
+          interfaceName: config.getSettings().getPortalListener().getInterfaceName(),
+          zoneId: config.getSettings().getPortalListener().getZoneId(),
+          bindAddress: config.getSettings().getPortalListener().getBindAddress(),
+          bindPort: config.getSettings().getPortalListener().getBindPort(),
+        },
         updatedAt: config.getSettings().getUpdatedAt(),
         updatedBy: config.getSettings().getUpdatedBy(),
       },

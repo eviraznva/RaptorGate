@@ -69,8 +69,17 @@ export type IdentityAuthenticationProfile = {
 export type IdentitySettings = {
   portalAuthenticationProfileId: string | null;
   adminAuthenticationProfileId: string | null;
+  portalListener: PortalListenerSettings;
   updatedAt: string | null;
   updatedBy: string | null;
+};
+
+export type PortalListenerSettings = {
+  enabled: boolean;
+  interfaceName: string | null;
+  zoneId: string | null;
+  bindAddress: string | null;
+  bindPort: number;
 };
 
 export type IdentityConfig = {

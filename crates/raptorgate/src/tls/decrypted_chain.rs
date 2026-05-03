@@ -11,9 +11,11 @@ use crate::dpi::{DpiClassifier, DpiContext};
 use crate::identity::{
     resolve_identity, IdentityContext, IdentitySessionStore,
 };
+use crate::interfaces::InterfaceMonitor;
 use crate::pipeline::{Stage, StageOutcome};
-use crate::pipeline::wrappers::infer_interface_for_ip;
+use crate::routing::resolve_egress_for_ip;
 use crate::tls::inspection_relay::{Direction, SessionMeta};
+use crate::zones::provider::ZoneInterfaceProvider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectionDisposition {
@@ -63,6 +65,13 @@ pub struct DecryptedChainInspector<P> {
     pipeline: P,
     dpi_classifier: Arc<DpiClassifier>,
     identity_sessions: Arc<IdentitySessionStore>,
+    routing: Option<DecryptedRoutingContext>,
+}
+
+#[derive(Clone)]
+pub struct DecryptedRoutingContext {
+    pub interface_monitor: Arc<dyn InterfaceMonitor>,
+    pub zone_interface_store: Arc<ZoneInterfaceProvider>,
 }
 
 impl<P> DecryptedChainInspector<P> {
@@ -83,6 +92,21 @@ impl<P> DecryptedChainInspector<P> {
             pipeline,
             dpi_classifier,
             identity_sessions,
+            routing: None,
+        }
+    }
+
+    pub fn with_identity_and_routing(
+        pipeline: P,
+        dpi_classifier: Arc<DpiClassifier>,
+        identity_sessions: Arc<IdentitySessionStore>,
+        routing: DecryptedRoutingContext,
+    ) -> Self {
+        Self {
+            pipeline,
+            dpi_classifier,
+            identity_sessions,
+            routing: Some(routing),
         }
     }
 }
@@ -111,6 +135,7 @@ where
             endpoints.1,
             arrival_time,
             Some(identity),
+            self.routing.as_ref(),
         ) {
             Ok(ctx) => ctx,
             Err(err) => {
@@ -171,19 +196,37 @@ fn build_packet_context(
     dst: SocketAddr,
     arrival_time: SystemTime,
     identity_ctx: Option<IdentityContext>,
+    routing: Option<&DecryptedRoutingContext>,
 ) -> anyhow::Result<PacketContext> {
     let raw = build_tcp_packet(payload, src, dst)?;
-    let src_interface = infer_interface_for_ip(src.ip()).unwrap_or("tls-decrypted");
+    let src_interface = resolve_decrypted_source_interface(src.ip(), routing);
 
     PacketContext::from_raw_full(
         raw,
-        Arc::from(src_interface),
+        Arc::from(src_interface.as_str()),
         Vec::new(),
         arrival_time,
         Some(seed_ctx.clone()),
         identity_ctx,
     )
     .context("failed to parse synthetic decrypted packet")
+}
+
+fn resolve_decrypted_source_interface(src_ip: IpAddr, routing: Option<&DecryptedRoutingContext>) -> String {
+    let Some(routing) = routing else {
+        return "tls-decrypted".into();
+    };
+    let zone_interfaces = routing
+        .zone_interface_store
+        .get_zone_interfaces()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let live_interfaces = routing.interface_monitor.snapshot();
+
+    resolve_egress_for_ip(src_ip, &live_interfaces, &zone_interfaces)
+        .map(|resolved| resolved.interface_name)
+        .unwrap_or_else(|| "tls-decrypted".into())
 }
 
 fn build_tcp_packet(payload: &[u8], src: SocketAddr, dst: SocketAddr) -> anyhow::Result<Vec<u8>> {

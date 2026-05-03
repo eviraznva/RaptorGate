@@ -1,6 +1,6 @@
 # Manualne testy identity/RADIUS MVP
 
-Zakres: weryfikacja implementacji z Issue 1-7 bez uruchamiania skryptow testowych. Komendy sa celowo pojedynczymi krokami do wykonania recznie w VM-kach.
+Zakres: weryfikacja implementacji identity/RADIUS bez uruchamiania skryptow testowych. Komendy sa celowo pojedynczymi krokami do wykonania recznie w VM-kach.
 
 ## Topologia i dane testowe
 
@@ -611,7 +611,41 @@ Oczekiwane:
 - `data/json-db/identity_sessions.json` moze sie zmienic, bo to runtime store aktywnych sesji, nie config snapshot
 - logi backend/firewall pokazuja runtime events `identity.session.created`, `identity.session.upsert`, `identity.session.revoked`, `identity.session.revoke`
 
-## ID-15 - Admin login przez RADIUS z mapowaniem roli
+## ID-15 - Brak hardcoded h1/h2 w resolverze stref
+
+Cel: potwierdzic regresyjnie, ze data plane nie wybiera stref po `192.168.10.0/24`, `192.168.20.0/24`, `eth1`, `eth2` zaszytych w kodzie.
+
+Na hoście developerskim:
+
+```bash
+cargo test -p ngfw routing -- --nocapture
+cargo test -p ngfw policy_eval_uses_configured_non_lab_zone_interfaces -- --nocapture
+```
+
+Oczekiwane: przechodzi test routingu dla subnetow `10.77.10.0/24` i `10.88.20.0/24`. Jesli test pada komunikatem o braku egress interface albo zone pair, wrocil hardcoded labowy mapping.
+
+## ID-16 - Portal listener jako konfiguracja identity
+
+Cel: admin widzi i zapisuje intencje deploymentu portalu bez edycji env.
+
+W panelu admina:
+
+1. Otworz `Identity -> Portal Settings`.
+2. Ustaw authentication profile portalu.
+3. Wypelnij listener: interface, zone ID, bind address i bind port.
+4. Zapisz ustawienia.
+
+Na `r1` sprawdz persistent config backendu:
+
+```bash
+sudo jq '.settings.portalListener' /resources/backend/data/json-db/identity-config.json
+```
+
+Oczekiwane: `portalListener` ma zapisane pola `enabled`, `interfaceName`, `zoneId`, `bindAddress`, `bindPort`.
+
+Uwaga: ten test nie wymaga dynamicznego generowania nginx. MVP zapisuje konfiguracje portalu jako czesc identity configu, a labowy vhost nginx nadal jest zarzadzany deploymentem.
+
+## ID-17 - Admin login przez RADIUS z mapowaniem roli
 
 Cel: admin zewnetrzny dostaje role tylko przez jawne `adminRoleMappings`.
 
@@ -670,4 +704,6 @@ Minimalny zielony scenariusz Issue 1-7:
 6. `ID-10`: po `expiresAt` nowy ruch jest blokowany bez restartu firewalla.
 7. `ID-13`: po restarcie backendu sesja zostaje aktywna, a po restarcie firewalla wraca po cyklu replay bez reloginu.
 8. `ID-14`: login/logout nie dotyka config snapshotow.
-9. `ID-15`: admin login przez RADIUS dziala tylko z jawnie zmapowana rola.
+9. `ID-15`: resolver stref nie zalezy od labowych subnetow.
+10. `ID-16`: portal listener zapisuje sie w identity configu.
+11. `ID-17`: admin login przez RADIUS dziala tylko z jawnie zmapowana rola.

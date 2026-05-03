@@ -57,6 +57,13 @@ export type AuthenticationProfileBody = {
 export type IdentitySettingsPatch = {
   portalAuthenticationProfileId?: string | null;
   adminAuthenticationProfileId?: string | null;
+  portalListener?: {
+    enabled?: boolean;
+    interfaceName?: string | null;
+    zoneId?: string | null;
+    bindAddress?: string | null;
+    bindPort?: number;
+  };
 };
 
 export type TestRadiusProfileBody = {

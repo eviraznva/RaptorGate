@@ -502,6 +502,7 @@ export class IdentityConfigController {
     const config = await this.updateIdentitySettingsUseCase.execute({
       portalAuthenticationProfileId: dto.portalAuthenticationProfileId,
       adminAuthenticationProfileId: dto.adminAuthenticationProfileId,
+      portalListener: dto.portalListener,
       accessToken,
     });
     return IdentityConfigResponseMapper.toResponse(config);

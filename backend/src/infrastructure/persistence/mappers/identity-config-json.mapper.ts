@@ -22,6 +22,13 @@ export class IdentityConfigJsonMapper {
       settings: {
         portalAuthenticationProfileId: null,
         adminAuthenticationProfileId: null,
+        portalListener: {
+          enabled: false,
+          interfaceName: null,
+          zoneId: null,
+          bindAddress: null,
+          bindPort: 443,
+        },
         updatedAt: null,
         updatedBy: null,
       },
@@ -240,6 +247,13 @@ export class IdentityConfigJsonMapper {
     return {
       portalAuthenticationProfileId: settings.getPortalAuthenticationProfileId(),
       adminAuthenticationProfileId: settings.getAdminAuthenticationProfileId(),
+      portalListener: {
+        enabled: settings.getPortalListener().getEnabled(),
+        interfaceName: settings.getPortalListener().getInterfaceName(),
+        zoneId: settings.getPortalListener().getZoneId(),
+        bindAddress: settings.getPortalListener().getBindAddress(),
+        bindPort: settings.getPortalListener().getBindPort(),
+      },
       updatedAt: settings.getUpdatedAt()?.toISOString() ?? null,
       updatedBy: settings.getUpdatedBy(),
     };
@@ -251,6 +265,7 @@ export class IdentityConfigJsonMapper {
       record.adminAuthenticationProfileId,
       record.updatedAt ? new Date(record.updatedAt) : null,
       record.updatedBy,
+      record.portalListener,
     );
   }
 }

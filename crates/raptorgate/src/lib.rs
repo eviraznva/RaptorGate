@@ -12,6 +12,7 @@ pub mod pipeline;
 pub mod policy;
 pub mod proto;
 pub mod query_server;
+pub mod routing;
 pub mod rule_tree;
 pub mod tls;
 mod disk_store;

@@ -43,6 +43,21 @@ export class UpdateIdentitySettingsUseCase {
           : command.adminAuthenticationProfileId,
         new Date(),
         claims.sub,
+        command.portalListener === undefined
+          ? current.getPortalListener()
+          : {
+              enabled: command.portalListener.enabled ?? current.getPortalListener().getEnabled(),
+              interfaceName: command.portalListener.interfaceName === undefined
+                ? current.getPortalListener().getInterfaceName()
+                : command.portalListener.interfaceName,
+              zoneId: command.portalListener.zoneId === undefined
+                ? current.getPortalListener().getZoneId()
+                : command.portalListener.zoneId,
+              bindAddress: command.portalListener.bindAddress === undefined
+                ? current.getPortalListener().getBindAddress()
+                : command.portalListener.bindAddress,
+              bindPort: command.portalListener.bindPort ?? current.getPortalListener().getBindPort(),
+            },
       );
       const next = this.mutationService.replaceSettings(config, settings);
 

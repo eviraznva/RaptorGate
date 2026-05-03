@@ -117,10 +117,25 @@ export class IdentitySettingsResponseDto {
   portalAuthenticationProfileId: string | null;
   @ApiProperty({ nullable: true })
   adminAuthenticationProfileId: string | null;
+  @ApiProperty({ type: () => PortalListenerSettingsResponseDto })
+  portalListener: PortalListenerSettingsResponseDto;
   @ApiProperty({ nullable: true })
   updatedAt: Date | null;
   @ApiProperty({ nullable: true })
   updatedBy: string | null;
+}
+
+export class PortalListenerSettingsResponseDto {
+  @ApiProperty()
+  enabled: boolean;
+  @ApiProperty({ nullable: true })
+  interfaceName: string | null;
+  @ApiProperty({ nullable: true })
+  zoneId: string | null;
+  @ApiProperty({ nullable: true })
+  bindAddress: string | null;
+  @ApiProperty()
+  bindPort: number;
 }
 
 export class IdentityConfigResponseDto {

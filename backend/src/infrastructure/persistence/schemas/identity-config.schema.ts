@@ -77,6 +77,19 @@ export const IdentitySettingsRecordSchema = z
   .object({
     portalAuthenticationProfileId: idSchema.nullable(),
     adminAuthenticationProfileId: idSchema.nullable(),
+    portalListener: z.object({
+      enabled: z.boolean(),
+      interfaceName: nullableTextSchema,
+      zoneId: nullableTextSchema,
+      bindAddress: nullableTextSchema,
+      bindPort: z.number().int().min(1).max(65535),
+    }).strict().default({
+      enabled: false,
+      interfaceName: null,
+      zoneId: null,
+      bindAddress: null,
+      bindPort: 443,
+    }),
     updatedAt: isoDateTimeSchema.nullable(),
     updatedBy: z.string().min(1).max(128).nullable(),
   })
