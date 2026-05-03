@@ -1,5 +1,6 @@
 mod controller;
 mod monitor;
+pub mod vlan_reconciler;
 
 pub use controller::{InterfaceController, InterfaceControllerError, NetlinkInterfaceController};
 pub use monitor::{
