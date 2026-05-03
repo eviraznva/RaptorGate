@@ -9,6 +9,8 @@ import {
 } from "../../domain/repositories/admin-auth-session.repository.js";
 import type { IUserRepository } from "../../domain/repositories/user.repository.js";
 import { USER_REPOSITORY_TOKEN } from "../../domain/repositories/user.repository.js";
+import type { IRoleRepository } from "../../domain/repositories/role.repository.js";
+import { ROLE_REPOSITORY_TOKEN } from "../../domain/repositories/role.repository.js";
 import { LoginDto } from "../dtos/login.dto.js";
 import { LoginResponseDto } from "../dtos/login-response.dto.js";
 import type { IPasswordHasher } from "../ports/passowrd-hasher.interface.js";
@@ -39,6 +41,8 @@ export class LoginUserUseCase {
     private readonly adminAuthorization: AdminAuthorizationService,
     @Inject(ADMIN_AUTH_SESSION_REPOSITORY_TOKEN)
     private readonly adminAuthSessionRepository: IAdminAuthSessionRepository,
+    @Inject(ROLE_REPOSITORY_TOKEN)
+    private readonly roleRepository: IRoleRepository,
   ) {}
 
   async execute(dto: LoginDto): Promise<LoginResponseDto> {
@@ -165,6 +169,8 @@ export class LoginUserUseCase {
       await this.userRepository.save(user);
     }
 
+    const userRoles = await this.roleRepository.findByUserId(user.getId());
+
     const loggedInUser = {
       id: user.getId(),
       username: user.getUsername(),
@@ -174,6 +180,7 @@ export class LoginUserUseCase {
       recoveryToken: user.getShowRecoveryToken() ? recoveryToken : null,
       isFirstLogin: user.getIsFirstLogin(),
       showRecoveryToken: user.getShowRecoveryToken(),
+      roles: userRoles.map((role) => role.getName()),
     };
 
     user.setIsFirstLogin(false);

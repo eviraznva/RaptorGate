@@ -2,6 +2,60 @@
 
 Zakres: weryfikacja implementacji identity/RADIUS bez uruchamiania skryptow testowych. Komendy sa celowo pojedynczymi krokami do wykonania recznie w VM-kach.
 
+## Spis tresci
+
+Legenda: 🖥️ = ma wariant konsola+przegladarka.
+
+### Setup i topologia
+- [Topologia i dane testowe](#topologia-i-dane-testowe) — IP, konta labowe, endpointy.
+- [Przygotowanie](#przygotowanie) — status VM, logi, env, reset runtime, dostep do portalu z przegladarki (Firefox X11 lub SSH tunnel).
+
+### A. Sanity check provideroow (ID-01..02)
+- [ID-01](#id-01---ldap-i-radius-z-r1) — bezposredni `radtest` i `ldapsearch` z r1.
+- [ID-02](#id-02---serwis-chroniony-na-h2) — endpoint HTTP na h2 dziala.
+
+### B. Captive portal i sesje identity (ID-03..08)
+- [ID-03](#id-03---pre-auth-gate-blokuje-h1---h2) 🖥️ — pre-auth gate blokuje h1→h2 bez sesji.
+- [ID-04](#id-04---portal-jest-dostepny-a-status-sesji-jest-anonymous) 🖥️ — portal dostepny, sesja `authenticated:false`.
+- [ID-05](#id-05---zle-haslo-nie-tworzy-sesji) 🖥️ — Access-Reject nie tworzy sesji.
+- [ID-06](#id-06---poprawny-login-tworzy-sesje-i-pozwala-na-h1---h2) 🖥️ — login `user` tworzy sesje, firewall upsert, h1→h2 przechodzi.
+- [ID-07](#id-07---body-nie-moze-nadpisac-sourceip) — `sourceIp` z polaczenia, nie z body (tylko konsola — browser nie wysyla niestandardowych pol).
+- [ID-08](#id-08---logout-usuwa-sesje-i-znow-blokuje-h1---h2) 🖥️ — logout = revoke + blokada.
+
+### C. Polityka, expiry, replay (ID-09..14)
+- [ID-09](#id-09---guest-ma-sesje-ale-polityka-blokuje-grupe-guests) 🖥️ — `identity_group=guests` blokuje mimo udanego loginu.
+- [ID-10](#id-10---wygasniecie-sesji-blokuje-nowy-ruch) 🖥️ — `expiresAt` blokuje nowy ruch bez restartu firewalla.
+- [ID-11](#id-11---zmiana-grup-ldap-bez-reloginu) — refresher LDAP aktualizuje grupy bez reloginu.
+- [ID-12](#id-12---timeout-radius-daje-czytelny-blad) — RADIUS timeout = `503` z czytelnym message.
+- [ID-13](#id-13---replay-sesji-po-restarcie-backendu-i-firewalla) — replay sesji po restarcie backendu/firewalla.
+- [ID-14](#id-14---loginlogout-nie-zmienia-config-snapshotow) — login/logout nie tyka config snapshotow.
+
+### D. Regresja architektury (ID-15..16)
+- [ID-15](#id-15---brak-hardcoded-h1h2-w-resolverze-stref) — resolver stref nie zalezy od labowych subnetow.
+- [ID-16](#id-16---portal-listener-jako-konfiguracja-identity) — portal listener zapisuje sie w identity configu.
+
+### E. Admin login przez RADIUS/LDAP (ID-17)
+- [ID-17](#id-17---admin-login-przez-radius-z-mapowaniem-roli) — admin login + `adminRoleMappings`.
+
+### F. Zarzadzanie profilami przez API (ID-18..24)
+- [ID-18](#id-18---admin-token-z-lokalnego-loginu-helper-do-id-19) — helper: pobranie access tokenu.
+- [ID-19](#id-19---radius-server-profile-crud-przez-api) + [ID-19a](#id-19a---radius-profile-test-endpoint) — RADIUS profile CRUD + `/test`.
+- [ID-20](#id-20---ldap-server-profile-crud-i-test-endpoint) — LDAP profile CRUD + `/test`.
+- [ID-21](#id-21---auth-profile-providerldap-ldap-only-portal) — auth profile `provider=ldap` (LDAP-only).
+- [ID-22](#id-22---auth-profile-providerlocal-lokalny-user-przez-portal) — auth profile `provider=local` w portalu.
+- [ID-23](#id-23---inactive-auth-profile-odrzuca-login) — `isActive:false` = misconfigured.
+- [ID-24](#id-24---delete-profilu-w-uzyciu-zwraca-409) — delete in-use → `409`.
+
+### G. Identity sessions admin + edge cases (ID-25..29)
+- [ID-25](#id-25---identity-sessions-admin-api) — `/identity-sessions` list + revoke.
+- [ID-26](#id-26---group-source-radius_vsa) — `groupSource:"radius_vsa"` pomija LDAP.
+- [ID-27](#id-27---wiele-profili-admin-login--adminrolemappings) — switch `adminAuthenticationProfileId` zmienia role.
+- [ID-28](#id-28---brak-admin-profile--blokada-zewnetrznego-admin-loginu) — admin pointer null = tylko lokalny break-glass.
+- [ID-29](#id-29---sprzatanie-po-id-19id-28) — cleanup.
+
+### H. Kryterium koncowe
+- [Kryterium koncowe flow demo](#kryterium-koncowe-flow-demo) — checklist Issue 1-7 + rozszerzenie.
+
 ## Topologia i dane testowe
 
 Lab:
@@ -84,6 +138,15 @@ sudo systemctl restart backend
 
 Limit throttlingu loginu to 5 prob na 60 sekund dla jednego klienta. Jesli zobaczysz `429`, odczekaj minute albo zrestartuj backend przed dalszymi probami.
 
+6. Dostep do portalu z przegladarki:
+
+Portal frontend siedzi pod `https://192.168.10.254/portal/login` i wymaga klienta w sieci `192.168.10.0/24` (czyli h1). h1 jest headless. Dwie opcje, zeby kliknac portal recznie:
+
+- **Opcja A — Firefox na h1 przez SSH X11**: na hoscie deweloperskim `vagrant ssh h1 -- -X`, potem w sesji `sudo dnf install -y firefox || sudo apt-get install -y firefox-esr` (jednorazowo), `firefox https://192.168.10.254/portal/login &`. Cert self-signed — kliknij "Advanced" / "Accept Risk".
+- **Opcja B — przegladarka hosta przez tunnel**: na hoscie `vagrant ssh h1 -- -L 8443:192.168.10.254:443 -N &`, potem w przegladarce hosta `https://localhost:8443/portal/login`. UWAGA: Host header bedzie `localhost` — backend traktuje `sourceIp` po IP polaczenia, a polaczenie idzie z h1 (gdzie konczy sie tunnel), wiec `sourceIp` = `192.168.10.10`. Self-signed cert — accept.
+
+Komentarz `Przegladarka` w testach ponizej zaklada Opcje A albo B; wybierz raz na poczatku.
+
 ## ID-01 - LDAP i RADIUS z r1
 
 Cel: potwierdzic scenariusz `r1 -> RADIUS -> LDAP` i konta labowe.
@@ -144,6 +207,8 @@ sudo systemctl restart ngfw
 sudo systemctl restart backend
 ```
 
+### Konsola (curl)
+
 Na `h1`:
 
 ```bash
@@ -160,9 +225,17 @@ sudo grep -E 'policy.packet.dropped|policy_eval' /var/log/raptorgate/firewall/$(
 
 Oczekiwane: wpis drop z `src_ip=192.168.10.10`, `dst_ip=192.168.20.10`, `dst_port=8080`.
 
+### Przegladarka
+
+W Firefoxie (Opcja A albo B z Przygotowania) wpisz `http://192.168.20.10:8080/api/ping`.
+
+Oczekiwane: strona sie nie laduje, browser pokazuje timeout / "Unable to connect". Log firewalla na `r1` ma drop jak wyzej.
+
 ## ID-04 - Portal jest dostepny, a status sesji jest anonymous
 
 Cel: portal ma byc dostepny z h1 mimo pre-auth gate.
+
+### Konsola (curl)
 
 Na `h1`:
 
@@ -180,9 +253,22 @@ curl -k -sS https://192.168.10.254/api/identity/session
 
 Oczekiwane: envelope z `data.authenticated:false` i `data.sourceIp:"192.168.10.10"`.
 
+### Przegladarka
+
+W Firefoxie wejdz na `https://192.168.10.254/`. Zaakceptuj self-signed cert.
+
+Oczekiwane:
+
+- redirect do `/portal/login`
+- strona portalu ladnie sie renderuje (formularz username/password)
+- naglowek strony pokazuje stan `anonymous` lub komunikat typu "Please sign in"
+- DevTools (F12) → Network → request `/api/identity/session` zwraca `200` z `data.authenticated:false`
+
 ## ID-05 - Zle haslo nie tworzy sesji
 
 Cel: Access-Reject z RADIUS nie tworzy sesji backendu ani firewalla.
+
+### Konsola (curl)
 
 Na `h1`:
 
@@ -215,9 +301,25 @@ Oczekiwane:
 - jest `identity.session.rejected`
 - nie ma nowego `identity.session.created` dla tej proby
 
+### Przegladarka
+
+W Firefoxie na `https://192.168.10.254/portal/login`:
+
+1. Wpisz `user` / `wrong-password`.
+2. Kliknij "Sign in".
+
+Oczekiwane:
+
+- formularz pokazuje komunikat bledu (np. "Invalid username or password" / status `rejected`)
+- strona zostaje na `/portal/login`, nie ma przekierowania do "authenticated" widoku
+- DevTools → Network → POST `/api/identity/login` zwraca `401` z envelopem bledu
+- log backendu ma `auth.radius.access_reject` i `identity.session.rejected`
+
 ## ID-06 - Poprawny login tworzy sesje i pozwala na h1 -> h2
 
 Cel: backend wykonuje RADIUS auth, pobiera grupy z LDAP, tworzy sesje i synchronizuje firewall.
+
+### Konsola (curl)
 
 Na `h1`:
 
@@ -266,6 +368,25 @@ curl -fsS http://192.168.20.10:8080/api/ping
 
 Oczekiwane: `{"status":"ok"}`.
 
+### Przegladarka
+
+W Firefoxie na `https://192.168.10.254/portal/login`:
+
+1. Wpisz `user` / `user123`.
+2. Kliknij "Sign in".
+
+Oczekiwane:
+
+- portal przelacza sie w widok "authenticated" pokazujac `username:user`, grupy, `expiresAt`
+- DevTools → Network → POST `/api/identity/login` zwraca `201`
+- GET `/api/identity/session` (po refresh) zwraca `data.authenticated:true`, `groups` zawiera `users`
+
+Test ruchu do h2 z przegladarki:
+
+3. W nowej zakladce wejdz na `http://192.168.20.10:8080/api/ping`.
+
+Oczekiwane: strona pokazuje JSON `{"status":"ok"}`. Logi `r1` jak w wariancie konsolowym.
+
 ## ID-07 - Body nie moze nadpisac sourceIp
 
 Cel: `sourceIp` pochodzi z polaczenia/proxy, nie z request body.
@@ -283,6 +404,8 @@ Oczekiwane w obecnym DTO: HTTP `400` z envelope bledu walidacji dodatkowego pola
 Cel: logout usuwa sesje w backendzie i wysyla revoke do firewalla.
 
 Warunek startowy: aktywna sesja `user` z ID-06.
+
+### Konsola (curl)
 
 Na `h1`:
 
@@ -320,6 +443,22 @@ curl --connect-timeout 3 -m 5 -i http://192.168.20.10:8080/api/ping
 
 Oczekiwane: timeout albo brak HTTP 200.
 
+### Przegladarka
+
+Z aktywna sesja z ID-06 (browser):
+
+1. Na portalu kliknij "Sign out" / "Logout".
+
+Oczekiwane:
+
+- portal wraca do widoku anonymous, formularz login znow widoczny
+- DevTools → Network → POST `/api/identity/logout` zwraca `200`, `data.removed:true`
+- GET `/api/identity/session` zwraca `data.authenticated:false`
+
+2. W nowej zakladce wejdz `http://192.168.20.10:8080/api/ping`.
+
+Oczekiwane: timeout / connection failed. Logi `r1` maja revoke.
+
 ## ID-09 - Guest ma sesje, ale polityka blokuje grupe guests
 
 Cel: `identity_group` w RaptorLang blokuje `guests`, mimo poprawnego RADIUS loginu.
@@ -329,6 +468,8 @@ Najpierw wyloguj ewentualna sesje:
 ```bash
 curl -k -sS -X POST https://192.168.10.254/api/identity/logout
 ```
+
+### Konsola (curl)
 
 Na `h1`:
 
@@ -362,6 +503,21 @@ sudo grep -E 'policy.packet.dropped|policy_eval' /var/log/raptorgate/firewall/$(
 
 Oczekiwane: drop dla `src_ip=192.168.10.10`, `dst_port=8080`.
 
+### Przegladarka
+
+W Firefoxie na `https://192.168.10.254/portal/login`:
+
+1. Wpisz `guest` / `guest123`, kliknij "Sign in".
+
+Oczekiwane:
+
+- portal pokazuje widok authenticated z `username:guest`, `groups` zawiera `guests`
+- POST `/api/identity/login` zwrocil `201`
+
+2. W nowej zakladce wejdz `http://192.168.20.10:8080/api/ping`.
+
+Oczekiwane: strona sie nie laduje, browser pokazuje timeout / "Unable to connect" mimo aktywnej sesji. Logi firewalla na `r1` maja drop dla `dst_port=8080`. Polityka blokuje grupe `guests`.
+
 ## ID-10 - Wygasniecie sesji blokuje nowy ruch
 
 Cel: `expiresAt` dziala w backendzie i firewallu bez restartu firewalla.
@@ -388,6 +544,8 @@ sudo systemctl daemon-reload
 sudo systemctl restart ngfw
 sudo systemctl restart backend
 ```
+
+### Konsola (curl)
 
 Na `h1` zaloguj `user`:
 
@@ -417,6 +575,20 @@ sudo grep -E 'identity.session.expired|identity.session.revoke|policy.packet.dro
 ```
 
 Oczekiwane: backend loguje `identity.session.expired`, firewall dostaje revoke albo przynajmniej nowy pakiet po `expiresAt` jest dropowany.
+
+### Przegladarka
+
+W Firefoxie na `https://192.168.10.254/portal/login`:
+
+1. Zaloguj `user/user123`. W innej zakladce sprawdz `http://192.168.20.10:8080/api/ping` — zwraca `{"status":"ok"}`.
+2. Zostaw zakladke portalu otwarta. PortalPage ma timer ktory po `expiresAt` przelaczy widok na `anonymous` z reason `expired` (patrz `frontend/src/pages/PortalPage.tsx`).
+3. Odczekaj 25-30 sekund.
+
+Oczekiwane:
+
+- portal sam przeskakuje do widoku anonymous z banerem typu "Session expired"
+- refresh zakladki h2 (`http://192.168.20.10:8080/api/ping`) — timeout / connection failed
+- DevTools → Network → GET `/api/identity/session` po wygaśnięciu zwraca `data.authenticated:false`
 
 Po tescie usun override:
 
@@ -694,6 +866,606 @@ Oczekiwane:
 - backend loguje `auth.admin.authorization_denied`
 - lokalny break-glass admin nadal moze zalogowac sie lokalnym haslem, nawet gdy RADIUS jest niedostepny
 
+## ID-18 - Admin token z lokalnego loginu (helper do ID-19+)
+
+Cel: zdobyc access token dla endpointow `/identity-config` i `/identity-sessions`. Domyslny lokalny admin: `admin/admin`.
+
+Na `r1`:
+
+```bash
+ACCESS_TOKEN=$(curl -k -sS -X POST https://127.0.0.1:3000/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"admin","password":"admin"}' | jq -r '.data.accessToken')
+echo "$ACCESS_TOKEN" | head -c 20
+```
+
+Oczekiwane: token niepusty. Jezeli haslo lokalnego admina jest inne, podmien w body.
+
+Sprawdz, ze widzisz aktualny config:
+
+```bash
+curl -k -sS https://127.0.0.1:3000/identity-config -H "authorization: Bearer $ACCESS_TOKEN" | jq '.data | {radius:[.radiusServerProfiles[].id], ldap:[.ldapServerProfiles[].id], auth:[.authenticationProfiles[].id], settings:.settings}'
+```
+
+Oczekiwane: lista zawiera `default-radius`, `default-ldap` (jesli LDAP enabled), `default-portal-radius`, a `settings.portalAuthenticationProfileId` to `default-portal-radius`.
+
+## ID-19 - RADIUS server profile CRUD przez API
+
+Cel: admin moze tworzyc, aktualizowac i usuwac profile RADIUS, secrety idą przez `secret://` ref.
+
+Najpierw wgraj nowy secret (re-uzywamy istniejacego, jesli juz w secret store - inaczej upsert):
+
+```bash
+curl -k -sS -X PUT 'https://127.0.0.1:3000/secrets/identity/radius/lab-secondary' \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"value":"radiussecret"}'
+```
+
+Oczekiwane: `201`, body z metadata bez wartosci.
+
+Stworz drugi RADIUS server profile:
+
+```bash
+RADIUS_ID=$(curl -k -sS -X POST https://127.0.0.1:3000/identity-config/radius-profiles \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"Lab secondary RADIUS",
+    "description":"Test profile",
+    "isActive":true,
+    "host":"192.168.20.30",
+    "port":1812,
+    "sharedSecretRef":"secret://identity/radius/lab-secondary",
+    "timeoutMs":3000,
+    "retries":1,
+    "nasIp":"192.168.20.254",
+    "nasIdentifier":"raptorgate-r1",
+    "calledStationId":null
+  }' | jq -r '.data.radiusServerProfiles[] | select(.name=="Lab secondary RADIUS") | .id')
+echo "$RADIUS_ID"
+```
+
+Oczekiwane: niepuste UUID.
+
+Update profile (zmiana retries):
+
+```bash
+curl -k -sS -X PUT "https://127.0.0.1:3000/identity-config/radius-profiles/$RADIUS_ID" \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"Lab secondary RADIUS",
+    "description":"Updated",
+    "isActive":true,
+    "host":"192.168.20.30",
+    "port":1812,
+    "sharedSecretRef":"secret://identity/radius/lab-secondary",
+    "timeoutMs":3000,
+    "retries":2,
+    "nasIp":"192.168.20.254",
+    "nasIdentifier":"raptorgate-r1",
+    "calledStationId":null
+  }' | jq '.data.radiusServerProfiles[] | select(.id==env.RADIUS_ID) | .retries'
+```
+
+Oczekiwane: `2`.
+
+Delete dziala dopiero po teście ID-19a. Najpierw przejdz dalej.
+
+## ID-19a - RADIUS profile test endpoint
+
+Cel: `/identity-config/radius-profiles/:id/test` zwraca diagnostyke bez tworzenia sesji.
+
+Access-Accept:
+
+```bash
+curl -k -sS -X POST "https://127.0.0.1:3000/identity-config/radius-profiles/$RADIUS_ID/test" \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"username":"user","password":"user123"}' | jq
+```
+
+Oczekiwane: `data.outcome:"accept"`, brak `password` w odpowiedzi, brak nowej sesji w `/identity/session`.
+
+Access-Reject:
+
+```bash
+curl -k -sS -X POST "https://127.0.0.1:3000/identity-config/radius-profiles/$RADIUS_ID/test" \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"username":"user","password":"wrong"}' | jq
+```
+
+Oczekiwane: `data.outcome:"reject"`.
+
+Test wlacza throttle 5/60s — po 5 probach `429`.
+
+## ID-20 - LDAP server profile CRUD i test endpoint
+
+Cel: analogicznie do ID-19, ale dla LDAP. Endpoint test wykonuje bind + lookup.
+
+Stworz drugi profile LDAP (re-uzywa default ldap secret ref):
+
+```bash
+LDAP_ID=$(curl -k -sS -X POST https://127.0.0.1:3000/identity-config/ldap-profiles \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"Lab secondary LDAP",
+    "description":"Test profile",
+    "isActive":true,
+    "host":"192.168.20.40",
+    "port":389,
+    "tlsMode":"disabled",
+    "bindDn":"cn=admin,dc=raptorgate,dc=local",
+    "bindPasswordRef":"secret://identity/ldap/default",
+    "userBaseDn":"ou=users,dc=raptorgate,dc=local",
+    "userFilterAttribute":"uid",
+    "groupBaseDn":"ou=groups,dc=raptorgate,dc=local",
+    "groupMemberAttribute":"memberUid",
+    "groupNameAttribute":"cn",
+    "timeoutMs":3000,
+    "cacheTtlSeconds":60
+  }' | jq -r '.data.ldapServerProfiles[] | select(.name=="Lab secondary LDAP") | .id')
+echo "$LDAP_ID"
+```
+
+Test endpoint:
+
+```bash
+curl -k -sS -X POST "https://127.0.0.1:3000/identity-config/ldap-profiles/$LDAP_ID/test" \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"username":"user"}' | jq
+```
+
+Oczekiwane: `data.outcome:"accept"`, lista grup zawiera `users`. Bez hasla — bind to LDAP search uzywa bind DN profilu, nie hasla uzytkownika.
+
+## ID-21 - Auth profile provider=ldap (LDAP-only portal)
+
+Cel: provider `ldap` autentykuje wylacznie przez LDAP simple bind, bez RADIUS-a.
+
+Stworz auth profile `ldap`:
+
+```bash
+LDAP_AUTH_ID=$(curl -k -sS -X POST https://127.0.0.1:3000/identity-config/authentication-profiles \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{
+    \"name\":\"Portal LDAP only\",
+    \"description\":\"LDAP simple bind\",
+    \"isActive\":true,
+    \"provider\":\"ldap\",
+    \"radiusProfileId\":null,
+    \"ldapProfileId\":\"$LDAP_ID\",
+    \"groupSource\":\"ldap\",
+    \"sessionTtlSeconds\":1800
+  }" | jq -r '.data.authenticationProfiles[] | select(.name=="Portal LDAP only") | .id')
+echo "$LDAP_AUTH_ID"
+```
+
+Przepnij portal na nowy profile:
+
+```bash
+curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{\"portalAuthenticationProfileId\":\"$LDAP_AUTH_ID\"}" | jq '.data.settings'
+```
+
+Oczekiwane: `portalAuthenticationProfileId` ma nowe ID.
+
+Na `h1`:
+
+```bash
+curl -k -sS -X POST https://192.168.10.254/api/identity/logout
+curl -k -sS -i -X POST https://192.168.10.254/api/identity/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"user","password":"user123"}'
+```
+
+Oczekiwane: HTTP `201`, body envelope z `data.username:"user"`.
+
+Na `r1`:
+
+```bash
+sudo grep -E 'auth.engine.result|auth.ldap.bind' /var/log/raptorgate/backend/$(date +%F).log | tail -5
+```
+
+Oczekiwane: log pokazuje `provider:"ldap"`, brak `auth.radius.access_accept` dla tego loginu.
+
+Wroc portal do default-portal-radius:
+
+```bash
+curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"portalAuthenticationProfileId":"default-portal-radius"}'
+```
+
+## ID-22 - Auth profile provider=local (lokalny user przez portal)
+
+Cel: provider `local` autentykuje uzytkownikow z lokalnego user repo (panel admin), bez RADIUS-a/LDAP-a.
+
+Stworz lokalnego usera w panelu admin (jezeli nie ma - mozesz uzyc istniejacego):
+
+```bash
+curl -k -sS -X POST https://127.0.0.1:3000/users \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"username":"portal-local","password":"local-pass","roles":["viewer"]}' | jq
+```
+
+Oczekiwane: `201` z `data.user.username:"portal-local"`.
+
+Stworz auth profile `local`:
+
+```bash
+LOCAL_AUTH_ID=$(curl -k -sS -X POST https://127.0.0.1:3000/identity-config/authentication-profiles \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"Portal local users",
+    "description":"Local users for portal",
+    "isActive":true,
+    "provider":"local",
+    "radiusProfileId":null,
+    "ldapProfileId":null,
+    "groupSource":"none",
+    "sessionTtlSeconds":1800
+  }' | jq -r '.data.authenticationProfiles[] | select(.name=="Portal local users") | .id')
+```
+
+Przepnij portal:
+
+```bash
+curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{\"portalAuthenticationProfileId\":\"$LOCAL_AUTH_ID\"}"
+```
+
+Na `h1`:
+
+```bash
+curl -k -sS -i -X POST https://192.168.10.254/api/identity/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"portal-local","password":"local-pass"}'
+```
+
+Oczekiwane: HTTP `201`, sesja ma `username:"portal-local"`, `groups:[]`.
+
+Sprawdz, ze RADIUS user `user/user123` nie przejdzie przez ten profile:
+
+```bash
+curl -k -sS -i -X POST https://192.168.10.254/api/identity/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"user","password":"user123"}'
+```
+
+Oczekiwane: HTTP `401` — RADIUS-only userow nie ma w lokalnej bazie.
+
+Wroc portal:
+
+```bash
+curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"portalAuthenticationProfileId":"default-portal-radius"}'
+```
+
+## ID-23 - Inactive auth profile odrzuca login
+
+Cel: `isActive:false` na profilu wskazywanym przez settings = `misconfigured`, nie `accept`.
+
+Wylacz default-portal-radius:
+
+```bash
+curl -k -sS -X PUT https://127.0.0.1:3000/identity-config/authentication-profiles/default-portal-radius \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"Default portal RADIUS",
+    "description":"Seeded from environment",
+    "isActive":false,
+    "provider":"radius",
+    "radiusProfileId":"default-radius",
+    "ldapProfileId":"default-ldap",
+    "groupSource":"ldap",
+    "sessionTtlSeconds":1800
+  }'
+```
+
+Na `h1`:
+
+```bash
+curl -k -sS -i -X POST https://192.168.10.254/api/identity/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"user","password":"user123"}'
+```
+
+Oczekiwane: HTTP `503` lub `500` z `message` zawierajacym `inactive`. Logi backendu maja `auth.engine.result` z `result:"misconfigured"`.
+
+Przywroc:
+
+```bash
+curl -k -sS -X PUT https://127.0.0.1:3000/identity-config/authentication-profiles/default-portal-radius \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"Default portal RADIUS",
+    "description":"Seeded from environment",
+    "isActive":true,
+    "provider":"radius",
+    "radiusProfileId":"default-radius",
+    "ldapProfileId":"default-ldap",
+    "groupSource":"ldap",
+    "sessionTtlSeconds":1800
+  }'
+```
+
+## ID-24 - Delete profilu w uzyciu zwraca 409
+
+Cel: nie da sie usunac auth profile, ktory wskazuje settings; nie da sie usunac RADIUS/LDAP profile, ktory wskazuje auth profile.
+
+Usuniecie default-portal-radius (wskazywany przez settings):
+
+```bash
+curl -k -sS -i -X DELETE https://127.0.0.1:3000/identity-config/authentication-profiles/default-portal-radius \
+  -H "authorization: Bearer $ACCESS_TOKEN"
+```
+
+Oczekiwane: HTTP `409`, message zawiera `in use` / `referenced`.
+
+Usuniecie default-radius (wskazywany przez auth profile):
+
+```bash
+curl -k -sS -i -X DELETE https://127.0.0.1:3000/identity-config/radius-profiles/default-radius \
+  -H "authorization: Bearer $ACCESS_TOKEN"
+```
+
+Oczekiwane: HTTP `409`.
+
+Usuniecie nieuzywanego profilu z ID-19 dziala:
+
+```bash
+curl -k -sS -i -X DELETE "https://127.0.0.1:3000/identity-config/radius-profiles/$RADIUS_ID" \
+  -H "authorization: Bearer $ACCESS_TOKEN"
+```
+
+Oczekiwane: HTTP `200`, profile znika z `getIdentityConfig`.
+
+## ID-25 - Identity sessions admin API
+
+Cel: admin widzi i revokuje sesje runtime z panelu.
+
+Warunek: aktywna sesja `user` z ID-06.
+
+List:
+
+```bash
+curl -k -sS https://127.0.0.1:3000/identity-sessions \
+  -H "authorization: Bearer $ACCESS_TOKEN" | jq '.data.sessions[] | {sessionId, username, ipAddress, expiresAt}'
+```
+
+Oczekiwane: lista zawiera sesje dla `192.168.10.10`, `username:"user"`.
+
+Revoke przez `sourceIp`:
+
+```bash
+curl -k -sS -X POST https://127.0.0.1:3000/identity-sessions/revoke \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"sourceIp":"192.168.10.10"}' | jq
+```
+
+Oczekiwane: `data.removed:true`.
+
+Na `h1`:
+
+```bash
+curl -k -sS https://192.168.10.254/api/identity/session
+curl --connect-timeout 3 -m 5 -i http://192.168.20.10:8080/api/ping
+```
+
+Oczekiwane: `data.authenticated:false`, ruch dropowany.
+
+Revoke bez `sessionId` ani `sourceIp`:
+
+```bash
+curl -k -sS -i -X POST https://127.0.0.1:3000/identity-sessions/revoke \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{}'
+```
+
+Oczekiwane: HTTP `400`, message `sessionId or sourceIp is required`.
+
+## ID-26 - Group source `radius_vsa`
+
+Cel: gdy `groupSource:"radius_vsa"`, backend bierze grupy z atrybutow VSA RADIUS-a, nie z LDAP-a.
+
+Warunek wstepny: serwer RADIUS musi zwracac `Filter-Id` albo `Class` z grupami (lab freeradius musi byc skonfigurowany — sprawdz `/etc/freeradius/3.0/users` na vm `radius`).
+
+Stworz auth profile z `groupSource:"radius_vsa"`:
+
+```bash
+VSA_AUTH_ID=$(curl -k -sS -X POST https://127.0.0.1:3000/identity-config/authentication-profiles \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"Portal RADIUS VSA",
+    "description":"Groups from RADIUS attributes",
+    "isActive":true,
+    "provider":"radius",
+    "radiusProfileId":"default-radius",
+    "ldapProfileId":null,
+    "groupSource":"radius_vsa",
+    "sessionTtlSeconds":1800
+  }' | jq -r '.data.authenticationProfiles[] | select(.name=="Portal RADIUS VSA") | .id')
+
+curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{\"portalAuthenticationProfileId\":\"$VSA_AUTH_ID\"}"
+```
+
+Na `h1`:
+
+```bash
+curl -k -sS -X POST https://192.168.10.254/api/identity/logout
+curl -k -sS -i -X POST https://192.168.10.254/api/identity/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"user","password":"user123"}'
+curl -k -sS https://192.168.10.254/api/identity/session
+```
+
+Oczekiwane: jezeli RADIUS nie zwraca grup, `data.groups:[]` i polityki na `identity_group=users` zablokuja ruch. Jezeli zwraca, `groups` zawiera wartosci z VSA. Logi backendu `identity.groups.resolved` ma `source:"radius_vsa"`.
+
+Wroc portal do defaultu i posprzataj:
+
+```bash
+curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"portalAuthenticationProfileId":"default-portal-radius"}'
+curl -k -sS -X DELETE "https://127.0.0.1:3000/identity-config/authentication-profiles/$VSA_AUTH_ID" \
+  -H "authorization: Bearer $ACCESS_TOKEN"
+```
+
+## ID-27 - Wiele profili admin login + adminRoleMappings
+
+Cel: drugi profile dla `adminAuthenticationProfileId` z innym mappingiem; switch zmienia, kto dostaje admin role.
+
+Profile A (ldap_group=admins → admin):
+
+```bash
+ADMIN_PROF_A=$(curl -k -sS -X POST https://127.0.0.1:3000/identity-config/authentication-profiles \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"Admin RADIUS A",
+    "description":"admins -> admin",
+    "isActive":true,
+    "provider":"radius",
+    "radiusProfileId":"default-radius",
+    "ldapProfileId":"default-ldap",
+    "groupSource":"ldap",
+    "sessionTtlSeconds":1800,
+    "adminRoleMappings":[{"matchType":"ldap_group","matchValue":"admins","role":"admin"}]
+  }' | jq -r '.data.authenticationProfiles[] | select(.name=="Admin RADIUS A") | .id')
+```
+
+Profile B (ldap_group=admins → viewer):
+
+```bash
+ADMIN_PROF_B=$(curl -k -sS -X POST https://127.0.0.1:3000/identity-config/authentication-profiles \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"Admin RADIUS B",
+    "description":"admins -> viewer",
+    "isActive":true,
+    "provider":"radius",
+    "radiusProfileId":"default-radius",
+    "ldapProfileId":"default-ldap",
+    "groupSource":"ldap",
+    "sessionTtlSeconds":1800,
+    "adminRoleMappings":[{"matchType":"ldap_group","matchValue":"admins","role":"viewer"}]
+  }' | jq -r '.data.authenticationProfiles[] | select(.name=="Admin RADIUS B") | .id')
+```
+
+Switch admin na A:
+
+```bash
+curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{\"adminAuthenticationProfileId\":\"$ADMIN_PROF_A\"}"
+curl -k -sS -X POST https://127.0.0.1:3000/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"admin","password":"admin123"}' | jq '.data | {roles, authProvider}'
+```
+
+Oczekiwane: `roles:["admin"]`, `authProvider:"radius"`.
+
+Switch admin na B:
+
+```bash
+curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{\"adminAuthenticationProfileId\":\"$ADMIN_PROF_B\"}"
+curl -k -sS -X POST https://127.0.0.1:3000/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"admin","password":"admin123"}' | jq '.data | {roles, authProvider}'
+```
+
+Oczekiwane: `roles:["viewer"]`. Lokalny break-glass admina nadal jest dostepny przez `admin/<lokalne haslo>`.
+
+Posprzataj:
+
+```bash
+curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"adminAuthenticationProfileId":null}'
+curl -k -sS -X DELETE "https://127.0.0.1:3000/identity-config/authentication-profiles/$ADMIN_PROF_A" -H "authorization: Bearer $ACCESS_TOKEN"
+curl -k -sS -X DELETE "https://127.0.0.1:3000/identity-config/authentication-profiles/$ADMIN_PROF_B" -H "authorization: Bearer $ACCESS_TOKEN"
+```
+
+## ID-28 - Brak admin profile = blokada zewnetrznego admin loginu
+
+Cel: gdy `adminAuthenticationProfileId:null`, login zewnetrznego admina jest niemozliwy, ale lokalny break-glass dziala.
+
+Upewnij sie, ze admin pointer jest pusty:
+
+```bash
+curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"adminAuthenticationProfileId":null}'
+```
+
+Login RADIUS-only admina (brak w lokalnej bazie):
+
+```bash
+curl -k -sS -i -X POST https://127.0.0.1:3000/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"radius-only-admin","password":"x"}'
+```
+
+Oczekiwane: HTTP `401` z `Invalid credentials`.
+
+Lokalny `admin` ze swoim haslem przechodzi:
+
+```bash
+curl -k -sS -i -X POST https://127.0.0.1:3000/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"admin","password":"admin"}'
+```
+
+Oczekiwane: HTTP `201` z `roles` z lokalnej bazy.
+
+## ID-29 - Sprzatanie po ID-19..ID-28
+
+Po skonczonych testach skasuj sztuczne profile:
+
+```bash
+curl -k -sS -X DELETE "https://127.0.0.1:3000/identity-config/ldap-profiles/$LDAP_ID" -H "authorization: Bearer $ACCESS_TOKEN"
+curl -k -sS -X DELETE "https://127.0.0.1:3000/identity-config/authentication-profiles/$LDAP_AUTH_ID" -H "authorization: Bearer $ACCESS_TOKEN"
+curl -k -sS -X DELETE "https://127.0.0.1:3000/identity-config/authentication-profiles/$LOCAL_AUTH_ID" -H "authorization: Bearer $ACCESS_TOKEN"
+```
+
+Sprawdz koncowy stan:
+
+```bash
+curl -k -sS https://127.0.0.1:3000/identity-config -H "authorization: Bearer $ACCESS_TOKEN" | jq '.data | {radius:[.radiusServerProfiles[].id], ldap:[.ldapServerProfiles[].id], auth:[.authenticationProfiles[].id], settings:.settings}'
+```
+
+Oczekiwane: zostaja tylko `default-radius`, `default-ldap`, `default-portal-radius`. Settings: portal=`default-portal-radius`, admin=null.
+
 ## Kryterium koncowe flow demo
 
 Minimalny zielony scenariusz Issue 1-7:
@@ -709,3 +1481,18 @@ Minimalny zielony scenariusz Issue 1-7:
 9. `ID-15`: resolver stref nie zalezy od labowych subnetow.
 10. `ID-16`: portal listener zapisuje sie w identity configu.
 11. `ID-17`: admin login przez RADIUS dziala tylko z jawnie zmapowana rola.
+
+Rozszerzony scenariusz pokrywajacy zarzadzanie profilami:
+
+12. `ID-18`: lokalny admin dostaje access token i widzi caly identity config.
+13. `ID-19` + `ID-19a`: RADIUS server profile CRUD i `/test` (Access-Accept i Access-Reject) bez tworzenia sesji.
+14. `ID-20`: LDAP server profile CRUD i `/test` (bind + lookup z grupami).
+15. `ID-21`: provider `ldap` autentykuje portalowo bez RADIUS-a, log pokazuje `provider:"ldap"`.
+16. `ID-22`: provider `local` przepuszcza lokalnego usera w portalu i odrzuca RADIUS-only.
+17. `ID-23`: `isActive:false` na aktywnym profilu = portal odrzuca login jako misconfigured.
+18. `ID-24`: delete profilu wskazywanego przez settings/auth profile zwraca `409`, delete nieuzywanego `200`.
+19. `ID-25`: `/identity-sessions` listuje sesje runtime, revoke po `sourceIp` blokuje ruch.
+20. `ID-26`: `groupSource:"radius_vsa"` pomija LDAP, grupy lecą z atrybutow RADIUS.
+21. `ID-27`: switch `adminAuthenticationProfileId` zmienia `adminRoleMappings` live.
+22. `ID-28`: `adminAuthenticationProfileId:null` blokuje zewnetrzny admin login, lokalny break-glass dziala.
+23. `ID-29`: po sprzataniu zostaja tylko domyslne profile.
