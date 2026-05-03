@@ -73,6 +73,8 @@ pub enum CheckError {
         first_id: Uuid,
         second_id: Uuid,
     },
+    #[error("VLAN subinterface [{source_id}] references parent [{parent_id}] which is not a physical interface")]
+    VlanParentMustBePhysical { source_id: Uuid, parent_id: Uuid },
 }
 
 pub fn validate_bundle<S: BuildHasher>(
@@ -92,6 +94,7 @@ pub fn validate_bundle<S: BuildHasher>(
 
     check_default_zone_present(zones, &mut errors);
     check_duplicate_zone_interface_names(zone_interfaces, &mut errors);
+    check_vlan_parent_is_physical(zone_interfaces, &mut errors);
     check_collection(short_type_name::<Policy>(), policies, &known, &mut errors);
     check_collection(
         short_type_name::<ZonePair>(),
@@ -125,16 +128,35 @@ fn check_duplicate_zone_interface_names<S: BuildHasher>(
     zone_interfaces: &HashMap<ZoneInterfaceId, ZoneInterface, S>,
     errors: &mut Vec<CheckError>,
 ) {
-    let mut seen: HashMap<&str, Uuid> = HashMap::new();
+    let mut seen: HashMap<String, Uuid> = HashMap::new();
+    for (id, _zone_interface) in zone_interfaces {
+        if let Some(name) = crate::zones::resolve_os_name(zone_interfaces, id) {
+            let id_uuid = Uuid::from(id.clone());
+            if let Some(existing) = seen.insert(name.clone(), id_uuid) {
+                errors.push(CheckError::DuplicateZoneInterfaceName {
+                    name,
+                    first_id: existing,
+                    second_id: id_uuid,
+                });
+            }
+        }
+    }
+}
+
+fn check_vlan_parent_is_physical<S: BuildHasher>(
+    zone_interfaces: &HashMap<ZoneInterfaceId, ZoneInterface, S>,
+    errors: &mut Vec<CheckError>,
+) {
     for (id, zone_interface) in zone_interfaces {
-        let name = zone_interface.interface_name();
-        let id_uuid = Uuid::from(id.clone());
-        if let Some(existing) = seen.insert(name, id_uuid) {
-            errors.push(CheckError::DuplicateZoneInterfaceName {
-                name: name.to_string(),
-                first_id: existing,
-                second_id: id_uuid,
-            });
+        if let crate::zones::ZoneInterfaceKind::Vlan(vlan) = &zone_interface.kind {
+            if let Some(parent) = zone_interfaces.get(&vlan.parent_interface_id) {
+                if !matches!(parent.kind, crate::zones::ZoneInterfaceKind::Physical(_)) {
+                    errors.push(CheckError::VlanParentMustBePhysical {
+                        source_id: Uuid::from(id.clone()),
+                        parent_id: Uuid::from(vlan.parent_interface_id.clone()),
+                    });
+                }
+            }
         }
     }
 }
@@ -397,5 +419,394 @@ mod tests {
 
         let errors = validate_bundle(&policies, &HashMap::new(), &zones, &zone_interfaces);
         assert_eq!(errors.len(), 2);
+    }
+
+    #[test]
+    fn vlan_parent_not_found_in_bundle() {
+        let z_id = Uuid::nil();
+        let zi_id = Uuid::now_v7();
+        let missing_parent_id = Uuid::now_v7();
+
+        let mut zones = HashMap::new();
+        let (zid, z) = create_test_zone(z_id);
+        zones.insert(zid, z);
+
+        let mut zone_interfaces = HashMap::new();
+        let vlan_zi = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(missing_parent_id),
+                vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Missing,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(zi_id), vlan_zi);
+
+        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &zone_interfaces);
+        assert!(errors.iter().any(|err| matches!(err, CheckError::BrokenReference(_))));
+    }
+
+    #[test]
+    fn vlan_parent_is_vlan_not_physical() {
+        let z_id = Uuid::nil();
+        let parent_id = Uuid::now_v7();
+        let grandparent_id = Uuid::now_v7();
+        let vlan_id = Uuid::now_v7();
+
+        let mut zones = HashMap::new();
+        let (zid, z) = create_test_zone(z_id);
+        zones.insert(zid, z);
+
+        let mut zone_interfaces = HashMap::new();
+        
+        let grandparent = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: "eth0".to_string(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(grandparent_id), grandparent);
+
+        let parent_vlan = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(grandparent_id),
+                vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(parent_id), parent_vlan);
+
+        let child_vlan = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(parent_id),
+                vlan_id: crate::zones::VlanId::try_from(200).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(vlan_id), child_vlan);
+
+        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &zone_interfaces);
+        assert!(errors.iter().any(|err| matches!(err, CheckError::VlanParentMustBePhysical { .. })));
+    }
+
+    #[test]
+    fn vlan_parent_is_physical_passes() {
+        let z_id = Uuid::nil();
+        let parent_id = Uuid::now_v7();
+        let vlan_id = Uuid::now_v7();
+
+        let mut zones = HashMap::new();
+        let (zid, z) = create_test_zone(z_id);
+        zones.insert(zid, z);
+
+        let mut zone_interfaces = HashMap::new();
+        
+        let parent = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: "eth0".to_string(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(parent_id), parent);
+
+        let vlan = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(parent_id),
+                vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(vlan_id), vlan);
+
+        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &zone_interfaces);
+        assert!(!errors.iter().any(|err| matches!(err, CheckError::VlanParentMustBePhysical { .. })));
+    }
+
+    #[test]
+    fn duplicate_derived_vlan_name_detected() {
+        let z_id = Uuid::nil();
+        let parent_id = Uuid::now_v7();
+        let vlan1_id = Uuid::now_v7();
+        let vlan2_id = Uuid::now_v7();
+
+        let mut zones = HashMap::new();
+        let (zid, z) = create_test_zone(z_id);
+        zones.insert(zid, z);
+
+        let mut zone_interfaces = HashMap::new();
+        
+        let parent = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: "eth0".to_string(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(parent_id), parent);
+
+        let vlan1 = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(parent_id),
+                vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(vlan1_id), vlan1);
+
+        let vlan2 = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(parent_id),
+                vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(vlan2_id), vlan2);
+
+        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &zone_interfaces);
+        assert!(errors.iter().any(|err| matches!(err, CheckError::DuplicateZoneInterfaceName { .. })));
+    }
+
+    #[test]
+    fn different_parents_same_vlan_id_ok() {
+        let z_id = Uuid::nil();
+        let parent1_id = Uuid::now_v7();
+        let parent2_id = Uuid::now_v7();
+        let vlan1_id = Uuid::now_v7();
+        let vlan2_id = Uuid::now_v7();
+
+        let mut zones = HashMap::new();
+        let (zid, z) = create_test_zone(z_id);
+        zones.insert(zid, z);
+
+        let mut zone_interfaces = HashMap::new();
+        
+        let parent1 = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: "eth0".to_string(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(parent1_id), parent1);
+
+        let parent2 = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: "eth1".to_string(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(parent2_id), parent2);
+
+        let vlan1 = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(parent1_id),
+                vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(vlan1_id), vlan1);
+
+        let vlan2 = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(parent2_id),
+                vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(vlan2_id), vlan2);
+
+        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &zone_interfaces);
+        assert!(!errors.iter().any(|err| matches!(err, CheckError::DuplicateZoneInterfaceName { .. })));
+    }
+
+    #[test]
+    fn physical_and_vlan_cannot_share_name() {
+        let z_id = Uuid::nil();
+        let parent_id = Uuid::now_v7();
+        let physical_id = Uuid::now_v7();
+        let vlan_id = Uuid::now_v7();
+
+        let mut zones = HashMap::new();
+        let (zid, z) = create_test_zone(z_id);
+        zones.insert(zid, z);
+
+        let mut zone_interfaces = HashMap::new();
+        
+        let parent = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: "eth0".to_string(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(parent_id), parent);
+
+        let physical = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: "eth0.100".to_string(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(physical_id), physical);
+
+        let vlan = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(parent_id),
+                vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(vlan_id), vlan);
+
+        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &zone_interfaces);
+        assert!(errors.iter().any(|err| matches!(err, CheckError::DuplicateZoneInterfaceName { .. })));
+    }
+
+    #[test]
+    fn duplicate_physical_names_still_detected() {
+        let z_id = Uuid::nil();
+        let zi1_id = Uuid::now_v7();
+        let zi2_id = Uuid::now_v7();
+
+        let mut zones = HashMap::new();
+        let (zid, z) = create_test_zone(z_id);
+        zones.insert(zid, z);
+
+        let mut zone_interfaces = HashMap::new();
+        
+        let zi1 = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: "eth0".to_string(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(zi1_id), zi1);
+
+        let zi2 = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: "eth0".to_string(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(zi2_id), zi2);
+
+        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &zone_interfaces);
+        assert!(errors.iter().any(|err| matches!(err, CheckError::DuplicateZoneInterfaceName { .. })));
+    }
+
+    #[test]
+    fn vlan_parent_self_reference_rejected() {
+        let z_id = Uuid::nil();
+        let vlan_id = Uuid::now_v7();
+
+        let mut zones = HashMap::new();
+        let (zid, z) = create_test_zone(z_id);
+        zones.insert(zid, z);
+
+        let mut zone_interfaces = HashMap::new();
+        
+        let vlan = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(vlan_id),
+                vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(vlan_id), vlan);
+
+        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &zone_interfaces);
+        assert!(errors.iter().any(|err| matches!(err, CheckError::VlanParentMustBePhysical { .. })));
+    }
+
+    #[test]
+    fn valid_bundle_with_vlan_interfaces_passes() {
+        let z_id = Uuid::nil();
+        let parent_id = Uuid::now_v7();
+        let vlan_id = Uuid::now_v7();
+
+        let mut zones = HashMap::new();
+        let (zid, z) = create_test_zone(z_id);
+        zones.insert(zid, z);
+
+        let mut zone_interfaces = HashMap::new();
+        
+        let parent = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Physical(crate::zones::PhysicalInterface {
+                interface_name: "eth0".to_string(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(parent_id), parent);
+
+        let vlan = ZoneInterface {
+            zone_id: ZoneId::from(z_id),
+            kind: crate::zones::ZoneInterfaceKind::Vlan(crate::zones::VlanSubinterface {
+                parent_interface_id: ZoneInterfaceId::from(parent_id),
+                vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+            }),
+            status: crate::zones::InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed: false,
+        };
+        zone_interfaces.insert(ZoneInterfaceId::from(vlan_id), vlan);
+
+        let errors = validate_bundle(&HashMap::new(), &HashMap::new(), &zones, &zone_interfaces);
+        assert!(errors.is_empty());
     }
 }

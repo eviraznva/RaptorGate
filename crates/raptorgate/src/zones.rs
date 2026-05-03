@@ -279,6 +279,23 @@ impl ForeignKeys for ZoneInterface {
     }
 }
 
+pub fn resolve_os_name<S: std::hash::BuildHasher>(
+    zone_interfaces: &std::collections::HashMap<ZoneInterfaceId, ZoneInterface, S>,
+    id: &ZoneInterfaceId,
+) -> Option<String> {
+    let zi = zone_interfaces.get(id)?;
+    match &zi.kind {
+        ZoneInterfaceKind::Physical(p) => Some(p.interface_name.clone()),
+        ZoneInterfaceKind::Vlan(v) => {
+            zone_interfaces.get(&v.parent_interface_id)
+                .and_then(|parent| match &parent.kind {
+                    ZoneInterfaceKind::Physical(p) => Some(format!("{}.{}", p.interface_name, v.vlan_id)),
+                    ZoneInterfaceKind::Vlan(_) => None,
+                })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
