@@ -26,7 +26,7 @@ use ngfw::proto::services::{
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::tls::pinning_detector::PinningConfig;
 use ngfw::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
-use ngfw::interfaces::{InterfaceController, InterfaceMonitor, OperState, SystemInterface};
+use ngfw::interfaces::{InterfaceMonitor, NetlinkInterfaceController, OperState, SystemInterface};
 use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
@@ -147,7 +147,7 @@ fn shared_server() -> &'static SharedServer {
                 ));
                 let interface_monitor = Arc::new(StaticInterfaceMonitor::new());
                 let interface_controller = Arc::new(
-                    InterfaceController::new().expect("failed to init interface controller"),
+                    NetlinkInterfaceController::new().expect("failed to init interface controller"),
                 );
 
                 let policy_engine = Arc::new(

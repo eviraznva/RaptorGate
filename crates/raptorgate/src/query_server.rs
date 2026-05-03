@@ -56,23 +56,25 @@ use crate::interfaces::{InterfaceController, InterfaceMonitor};
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
 use crate::zones::{ZoneInterfaceId, ZonePair, ZoneInterface};
 
-pub struct QueryServer<PolicySwap, Monitor>
+pub struct QueryServer<PolicySwap, Monitor, Controller>
 where
     PolicySwap: PolicyManager + Send + Sync,
     Monitor: InterfaceMonitor + Send + Sync,
+    Controller: InterfaceController + Send + Sync,
 {
-    handler: QueryHandler<PolicySwap, Monitor>,
+    handler: QueryHandler<PolicySwap, Monitor, Controller>,
     socket_path: String,
     shutdown: CancellationToken,
 }
 
-impl<PolicySwap, Monitor> QueryServer<PolicySwap, Monitor>
+impl<PolicySwap, Monitor, Controller> QueryServer<PolicySwap, Monitor, Controller>
 where
     PolicySwap: PolicyManager + Send + Sync + 'static,
     Monitor: InterfaceMonitor + Send + Sync + 'static,
+    Controller: InterfaceController + Send + Sync + 'static,
 {
     pub fn new(
-        handler: QueryHandler<PolicySwap, Monitor>,
+        handler: QueryHandler<PolicySwap, Monitor, Controller>,
         socket_path: impl Into<String>,
         shutdown: CancellationToken,
     ) -> Self {
@@ -118,10 +120,11 @@ where
     }
 }
 
-pub struct QueryHandler<PolicySwap, Monitor>
+pub struct QueryHandler<PolicySwap, Monitor, Controller>
 where
     PolicySwap: PolicyManager,
     Monitor: InterfaceMonitor,
+    Controller: InterfaceController,
 {
     pub tcp_tracker: Arc<TcpSessionTracker>,
     pub nat_engine: Arc<Mutex<NatEngine>>,
@@ -143,13 +146,14 @@ where
     /// Detektor pinningu — wspoldzielony z TlsDecisionEngine do obserwacji stanu.
     pub pinning_detector: Arc<PinningDetector>,
     pub interface_monitor: Arc<Monitor>,
-    pub interface_controller: Arc<InterfaceController>,
+    pub interface_controller: Arc<Controller>,
 }
 
-impl<PolicySwap, Monitor> Clone for QueryHandler<PolicySwap, Monitor>
+impl<PolicySwap, Monitor, Controller> Clone for QueryHandler<PolicySwap, Monitor, Controller>
 where
     PolicySwap: PolicyManager,
     Monitor: InterfaceMonitor,
+    Controller: InterfaceController,
 {
     fn clone(&self) -> Self {
         Self {
@@ -192,10 +196,11 @@ where
 }
 
 #[tonic::async_trait]
-impl<Swapper, Monitor> FirewallQueryService for QueryHandler<Swapper, Monitor>
+impl<Swapper, Monitor, Controller> FirewallQueryService for QueryHandler<Swapper, Monitor, Controller>
 where
     Swapper: PolicyManager + Send + Sync + 'static,
     Monitor: InterfaceMonitor + Send + Sync + 'static,
+    Controller: InterfaceController + Send + Sync + 'static,
 {
     async fn get_tcp_sessions(
         &self,
@@ -665,10 +670,11 @@ where
 }
 
 #[tonic::async_trait]
-impl<Swapper, Monitor> FirewallConfigSnapshotService for QueryHandler<Swapper, Monitor>
+impl<Swapper, Monitor, Controller> FirewallConfigSnapshotService for QueryHandler<Swapper, Monitor, Controller>
 where
     Swapper: PolicyManager + Send + Sync + 'static,
     Monitor: InterfaceMonitor + Send + Sync + 'static,
+    Controller: InterfaceController + Send + Sync + 'static,
 {
     #[allow(clippy::too_many_lines)]
     async fn push_active_config_snapshot(
@@ -825,10 +831,11 @@ where
     }
 }
 
-impl<PolicySwap, Monitor> QueryHandler<PolicySwap, Monitor>
+impl<PolicySwap, Monitor, Controller> QueryHandler<PolicySwap, Monitor, Controller>
 where
     PolicySwap: PolicyManager,
     Monitor: InterfaceMonitor,
+    Controller: InterfaceController,
 {
     async fn apply_nat_rules(
         &self,

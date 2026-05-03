@@ -46,7 +46,7 @@ use crate::tls::{
     CaManager, DecryptedChainInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig,
     PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
-use crate::interfaces::{InterfaceController, NetworkInterfaceMonitor};
+use crate::interfaces::{NetlinkInterfaceController, NetworkInterfaceMonitor};
 use crate::netlink::listener::NetlinkListener;
 use crate::netlink::routing_table::RoutingTable;
 use etherparse::NetSlice;
@@ -125,7 +125,6 @@ async fn main() {
     let config = config_provider.get_config();
     tracing::info!(
         event = "startup.config.loaded",
-        capture_interfaces = ?config.capture_interfaces,
         data_dir = %config.data_dir.display(),
         query_socket_path = %config.query_socket_path,
         event_socket_path = %config.event_socket_path,
@@ -192,7 +191,7 @@ async fn main() {
             .expect("Failed to initialize network interface monitor"),
     );
     let interface_controller = Arc::new(
-        InterfaceController::new().expect("Failed to initialize interface controller"),
+        NetlinkInterfaceController::new().expect("Failed to initialize interface controller"),
     );
     
     let routing_table = match RoutingTable::new(&netlink_listener, netlink_cancel).await {
@@ -238,7 +237,7 @@ async fn main() {
         .await;
 
     tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
-    let interface_ips = resolve_interface_ips(&config.capture_interfaces);
+    let interface_ips = resolve_interface_ips(&vec![]);
     let local_ips = collect_local_ips(&interface_ips);
     let nat_store = Arc::new(NatConfigProvider::from_disk(config.data_dir.clone()).await);
     let nat_rules = match nat_store.get_config().to_runtime_rules() {
@@ -283,7 +282,7 @@ async fn main() {
 
     let dpi_classifier = Arc::new(DpiClassifier::new());
 
-    let query_server = QueryServer::<DiskPolicyProvider, NetworkInterfaceMonitor>::new(
+    let query_server = QueryServer::<DiskPolicyProvider, NetworkInterfaceMonitor, NetlinkInterfaceController>::new(
         QueryHandler {
             tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
@@ -420,7 +419,7 @@ async fn main() {
 
                 match TransparentRedirect::new(
                     listen_addr,
-                    config.capture_interfaces.clone(),
+                    vec![],
                     config.tls_inspection_ports.clone(),
                 )
                 .and_then(|redirect| redirect.install())
