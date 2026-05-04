@@ -315,6 +315,11 @@ Vagrant.configure("2") do |config|
       ip: "192.168.56.254",
       netmask: "255.255.255.0",
       libvirt__network_name: "mgmt"
+    r1.vm.network "private_network",
+      ip: "192.168.99.1",
+      libvirt__network_name: "trunk1",
+      libvirt__dhcp_enabled: false,
+      auto_config: false
 
     # config.trigger.before :provision do |t|
     #   t.info = "rsyncing .router_sync -> /resources"
@@ -376,6 +381,28 @@ Vagrant.configure("2") do |config|
     radius.vm.provision "shell", inline: configure_interface("eth1", "192.168.20.30", "24", "192.168.20.254") + <<-SHELL
       ip route del default 2>/dev/null || true
       ip route add default via 192.168.20.254
+    SHELL
+  end
+
+  config.vm.define "hvlan10" do |h|
+    h.vm.network "private_network", ip: "192.168.99.10", libvirt__network_name: "trunk1", libvirt__dhcp_enabled: false, auto_config: false
+    h.vm.provision "shell", inline: <<-SHELL
+    ip link set eth1 up
+    ip link add link eth1 name eth1.10 type vlan id 10
+    ip addr add 192.168.10.50/24 dev eth1.10
+    ip link set eth1.10 up
+    ip route add default via 192.168.10.254  # r1 as gateway
+    SHELL
+  end
+
+  config.vm.define "hvlan20" do |h|
+    h.vm.network "private_network", ip: "192.168.99.20", libvirt__network_name: "trunk1", libvirt__dhcp_enabled: false, auto_config: false
+    h.vm.provision "shell", inline: <<-SHELL
+    ip link set eth1 up
+    ip link add link eth1 name eth1.20 type vlan id 20
+    ip addr add 192.168.20.50/24 dev eth1.20
+    ip link set eth1.20 up
+    ip route add default via 192.168.20.254
     SHELL
   end
 end
