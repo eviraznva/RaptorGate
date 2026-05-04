@@ -307,7 +307,7 @@ async fn main() {
         tail: Chain {
             head: LocalOwnershipStage {
                 config_provider: Arc::clone(&config_provider),
-                local_ips: Arc::new(local_ips),
+                local_ips: Arc::new(local_ips.clone()),
             },
             tail: Chain {
                 head: IdentityLookupStage {
@@ -399,6 +399,7 @@ async fn main() {
                     listen_addr,
                     config.capture_interfaces.clone(),
                     config.tls_inspection_ports.clone(),
+                    local_ips.iter().copied().collect(),
                 )
                 .and_then(|redirect| redirect.install())
                 {

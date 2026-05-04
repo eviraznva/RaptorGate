@@ -140,12 +140,60 @@ Limit throttlingu loginu to 5 prob na 60 sekund dla jednego klienta. Jesli zobac
 
 6. Dostep do portalu z przegladarki:
 
-Portal frontend siedzi pod `https://192.168.10.254/portal/login` i wymaga klienta w sieci `192.168.10.0/24` (czyli h1). h1 jest headless. Dwie opcje, zeby kliknac portal recznie:
+Portal `https://192.168.10.254/portal/login` jest na interfejsie eth1 r1. Host deweloperski ma libvirt bridge `virbr3` z IP `192.168.10.1`, wiec polaczenie z hosta na `192.168.10.254` idzie bezposrednio (bez tunelu) z `src=192.168.10.1`. To wystarczy do testu portalu.
 
-- **Opcja A — Firefox na h1 przez SSH X11**: na hoscie deweloperskim `vagrant ssh h1 -- -X`, potem w sesji `sudo dnf install -y firefox || sudo apt-get install -y firefox-esr` (jednorazowo), `firefox https://192.168.10.254/portal/login &`. Cert self-signed — kliknij "Advanced" / "Accept Risk".
-- **Opcja B — przegladarka hosta przez tunnel**: na hoscie `vagrant ssh h1 -- -L 8443:192.168.10.254:443 -N &`, potem w przegladarce hosta `https://localhost:8443/portal/login`. UWAGA: Host header bedzie `localhost` — backend traktuje `sourceIp` po IP polaczenia, a polaczenie idzie z h1 (gdzie konczy sie tunnel), wiec `sourceIp` = `192.168.10.10`. Self-signed cert — accept.
+Problem dotyczy tylko ruchu na **h2** (`192.168.20.10`): host ma bezposredni route do `192.168.20.0/24` przez `virbr2` i omija r1, wiec pre-auth gate nie jest sprawdzany. Trzeba przekierowac ten ruch przez h1.
 
-Komentarz `Przegladarka` w testach ponizej zaklada Opcje A albo B; wybierz raz na poczatku.
+**Opcja D — host route przez h1 (ZALECANE, bez proxy)**
+
+Na hoscie:
+
+```bash
+sudo ip route replace 192.168.20.0/24 via 192.168.10.10
+```
+
+Na h1 wlacz forwarding (raz na czas testow):
+
+```bash
+vagrant ssh h1 -- 'sudo sysctl -w net.ipv4.ip_forward=1'
+```
+
+Co teraz:
+- Host → portal (`192.168.10.254`) idzie virbr3 bezposrednio. `sourceIp` w backendzie = `192.168.10.1` (bridge IP hosta). Sesja zapisuje sie na `192.168.10.1`.
+- Host → h2 (`192.168.20.10`) idzie virbr3 → h1 → r1 → h2. r1 widzi `src=192.168.10.1`, identity gate sprawdza ten IP, sesja istnieje (po loginie portalu) → ruch przechodzi.
+
+Test w domyslnym Firefoxie hosta:
+
+1. `https://192.168.10.254/portal/login` → "Advanced" → "Accept Risk" → login `user/user123`.
+2. Nowa zakladka: `http://192.168.20.10:8080/api/ping` → JSON `{"status":"ok"}`.
+3. Logout → ten sam URL → timeout (gate blokuje).
+
+Po teście usun route i forwarding:
+
+```bash
+sudo ip route replace 192.168.20.0/24 dev virbr2
+vagrant ssh h1 -- 'sudo sysctl -w net.ipv4.ip_forward=0'
+```
+
+Weryfikacja zrodla na r1:
+
+```bash
+sudo tcpdump -ni any 'host 192.168.20.10 and port 8080'
+```
+
+Pusto = pakiety nie ida przez r1 (route nie zadzial), test nic nie sprawdza.
+
+**Opcja A — Firefox na h1 przez SSH X11 (alternatywa)**: jezeli chcesz zeby `sourceIp` byl scisle `192.168.10.10` (jak z konsoli z h1), zainstaluj Firefoxa na h1 i przekieruj X11. `vagrant ssh h1 -- -X`, w sesji `sudo apt-get install -y firefox-esr xauth` (raz), `firefox https://192.168.10.254/portal/login &`. Wolniejszy render, wymaga GUI biblioteki na h1.
+
+**Opcja C — SOCKS5 proxy (alternatywa, dziala)**: SSH dynamic forwarding zamienia h1 w proxy. Browser z osobnym profilem + manualnym SOCKS5. Ostroznie z DNS prefetch i telemetria — Firefox/Chrome moga wieszac sie na zewnetrznych URL-ach przez tunnel. PAC file ogranicza proxy do dwoch testowych IP, reszta direct:
+
+```
+data:application/x-ns-proxy-autoconfig,function FindProxyForURL(url,host){if(host=="192.168.10.254"||host=="192.168.20.10")return "SOCKS5 127.0.0.1:1080";return "DIRECT";}
+```
+
+Tunnel: `vagrant ssh-config h1 > /tmp/h1.ssh && ssh -F /tmp/h1.ssh -D 1080 -N -f h1`. Stop: `pkill -f 'ssh.*-D 1080'`.
+
+W praktyce Opcja D wystarczy.
 
 ## ID-01 - LDAP i RADIUS z r1
 
