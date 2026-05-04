@@ -64,9 +64,6 @@ function parseZoneInterface(value: unknown): ParsedZoneInterface {
 	if (typeof raw.zoneId !== "string") {
 		throw new Error("GetLiveZoneInterfaces item is missing zoneId");
 	}
-	if (!isRecord(raw.kind)) {
-		throw new Error("GetLiveZoneInterfaces item is missing kind");
-	}
 	if (
 		!Array.isArray(raw.addresses) ||
 		raw.addresses.some((address) => typeof address !== "string")
@@ -75,12 +72,23 @@ function parseZoneInterface(value: unknown): ParsedZoneInterface {
 	}
 
 	let interfaceName: string;
-	if (isRecord(raw.kind.physical) && typeof raw.kind.physical.interfaceName === "string") {
-		interfaceName = raw.kind.physical.interfaceName;
-	} else if (isRecord(raw.kind.vlan)) {
-		interfaceName = `vlan${raw.kind.vlan.vlanId}`;
+	if (isRecord(raw.kind)) {
+		// ts-proto shape: kind: { $case: "physical", physical: { interfaceName } }
+		if (isRecord(raw.kind.physical) && typeof raw.kind.physical.interfaceName === "string") {
+			interfaceName = raw.kind.physical.interfaceName;
+		} else if (isRecord(raw.kind.vlan)) {
+			interfaceName = `vlan${raw.kind.vlan.vlanId}`;
+		} else {
+			throw new Error("GetLiveZoneInterfaces item has invalid kind");
+		}
+	} else if (isRecord((raw as any).physical)) {
+		// proto-loader shape: physical: { interfaceName }
+		interfaceName = (raw as any).physical.interfaceName;
+	} else if (isRecord((raw as any).vlan)) {
+		// proto-loader shape: vlan: { vlanId }
+		interfaceName = `vlan${(raw as any).vlan.vlanId}`;
 	} else {
-		throw new Error("GetLiveZoneInterfaces item has invalid kind");
+		throw new Error("GetLiveZoneInterfaces item has invalid interface type");
 	}
 
 	return {
