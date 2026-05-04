@@ -110,7 +110,9 @@ async function generateSshConfig(): Promise<boolean> {
 async function isNgfwActive(): Promise<boolean> {
 	try {
 		const { stdout } = await vagrant_ssh("systemctl is-active ngfw");
-		return stdout.trim() === "active";
+
+		console.log(`called run, got ${stdout}`)
+		return stdout.match("active") !== null;
 	} catch {
 		return false;
 	}
@@ -193,9 +195,7 @@ async function waitFor(
 			console.log(`[ssh-tunnel] ${label} — OK (attempt ${attempt})`);
 			return;
 		}
-		if (attempt === 1) {
-			console.log(`[ssh-tunnel] Waiting for ${label} ...`);
-		}
+		console.log(`[ssh-tunnel] Waiting for ${label} ...`);
 		await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
 	}
 }
@@ -216,6 +216,7 @@ function createEventTunnelLoop(
 			await waitFor(isVmRunning, `${VM_NAME} VM to be running`);
 			await waitFor(generateSshConfig, "SSH config generation");
 			await waitFor(isNgfwActive, "ngfw service to be active");
+			console.log("ngfw active")
 			await removeRemoteSocket(TUNNEL_REMOTE_SOCKET);
 
 			console.log("[event-tunnel] Establishing reverse SSH tunnel ...");

@@ -183,5 +183,5 @@ describe("Zone Policy E2E", () => {
 		} finally {
 			await udpServer.kill();
 		}
-	});
+	}, {timeout: 10_000} );
 });

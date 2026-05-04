@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(__dirname, "../..");
 export const VAGRANT_DIR = path.resolve(REPO_ROOT, "vagrant");
 
-export const KNOWN_HOSTS = ["h1", "h2", "r1", "ldap", "radius"] as const;
+export const KNOWN_HOSTS = ["h1", "h2", "r1", "ldap", "radius", "hvlan10", "hvlan20"] as const;
 export type KnownHost = (typeof KNOWN_HOSTS)[number];
 
 export function sshConfigPath(host: KnownHost): string {

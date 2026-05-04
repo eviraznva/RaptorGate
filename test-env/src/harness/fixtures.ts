@@ -120,6 +120,80 @@ export function createDefaultSnapshotBundle(
 	};
 }
 
+export function createVlanZoneBundle(rules: Rule[]): ConfigBundle {
+	const vlan10ZoneId = crypto.randomUUID();
+	const vlan20ZoneId = crypto.randomUUID();
+	const eth3Id = crypto.randomUUID();
+
+	const zones: Zone[] = [
+		{ id: "00000000-0000-0000-0000-000000000000", name: "default" },
+		{ id: vlan10ZoneId, name: "vlan10" },
+		{ id: vlan20ZoneId, name: "vlan20" },
+	];
+
+	const zoneInterfaces: ZoneInterface[] = [
+		{
+			id: crypto.randomUUID(),
+			zoneId: vlan10ZoneId,
+			vlan: { parentInterfaceId: eth3Id, vlanId: 10 },
+			sniffed: true,
+			status: 0,
+			addresses: ["192.168.10.254/24"],
+		},
+		{
+			id: crypto.randomUUID(),
+			zoneId: vlan20ZoneId,
+			vlan: { parentInterfaceId: eth3Id, vlanId: 20 },
+			sniffed: true,
+			status: 0,
+			addresses: ["192.168.20.254/24"],
+		},
+		{
+			id: eth3Id,
+			zoneId: vlan10ZoneId,
+			physical: { interfaceName: "eth3" },
+			sniffed: false,
+			status: 0,
+			addresses: [],
+		},
+	] as any;
+
+	const zonePair10to20Id = crypto.randomUUID();
+	const zonePair20to10Id = crypto.randomUUID();
+
+	const zonePairs: ZonePair[] = [
+		{
+			id: zonePair10to20Id,
+			srcZoneId: vlan10ZoneId,
+			dstZoneId: vlan20ZoneId,
+			defaultPolicy: DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED,
+		},
+		{
+			id: zonePair20to10Id,
+			srcZoneId: vlan20ZoneId,
+			dstZoneId: vlan10ZoneId,
+			defaultPolicy: DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED,
+		},
+	];
+
+	const rulesWithZonePairs = rules.map((rule, idx) => ({
+		...rule,
+		zonePairId: idx === 0 ? zonePair10to20Id : zonePair20to10Id,
+	}));
+
+	return {
+		zones,
+		zonePairs,
+		zoneInterfaces,
+		rules: rulesWithZonePairs,
+		natRules: [],
+		dnsBlacklist: [],
+		sslBypassList: [],
+		ipsSignatures: [],
+		firewallCertificates: [],
+	};
+}
+
 export async function resetFirewallState(
 	client: FirewallQueryServiceClient,
 	snapshotClient: FirewallConfigSnapshotServiceClient,
