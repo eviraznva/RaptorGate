@@ -208,6 +208,17 @@ async fn main() {
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
     let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
+    
+    // Startup VLAN reconciliation
+    let loaded_zone_interfaces = zone_interfaces.get_zone_interfaces();
+    let vlan_reconciler = Arc::new(crate::interfaces::VlanReconciler::new(Arc::clone(&interface_controller)));
+    let startup_errors = vlan_reconciler
+        .reconcile(&std::collections::HashMap::new(), &loaded_zone_interfaces)
+        .await;
+    if !startup_errors.is_empty() {
+        tracing::warn!(errors = ?startup_errors, "startup VLAN reconciliation partial failures");
+    }
+    
     let zone_resolver = Arc::new(crate::zones::resolver::RoutingZoneResolver::new(
         Arc::clone(&zone_interfaces),
         Arc::clone(&zone_pairs),
@@ -281,40 +292,6 @@ async fn main() {
     };
 
     let dpi_classifier = Arc::new(DpiClassifier::new());
-
-    let query_server = QueryServer::<DiskPolicyProvider, NetworkInterfaceMonitor, NetlinkInterfaceController>::new(
-        QueryHandler {
-            tcp_tracker: Arc::clone(&tcp_session_tracker),
-            nat_engine: Arc::clone(&nat_engine),
-            nat_store: Arc::clone(&nat_store),
-            policy_store: Arc::clone(&policy_provider),
-            policy_engine: Arc::clone(&policy_engine),
-            zone_store: zones,
-            zone_pair_store: Arc::clone(&zone_pairs),
-            zone_interface_store: Arc::clone(&zone_interfaces),
-            config_provider: Arc::clone(&config_provider),
-            dns_inspection_store: Arc::clone(&dns_inspection_store),
-            dns_inspection: Arc::clone(&dns_inspection),
-            ips_store: Arc::clone(&ips_store),
-            ips: Arc::clone(&ips),
-            decision_engine: Arc::clone(&decision_engine),
-            server_key_store: Arc::clone(&server_key_store),
-            pinning_detector: decision_engine.pinning_detector_arc(),
-            interface_monitor: Arc::clone(&interface_monitor),
-            interface_controller,
-        },
-        &config.query_socket_path,
-        CancellationToken::new(),
-    );
-    tokio::spawn(query_server.serve());
-    let server_cert_server = server_certificate_server::ServerCertificateServer::new(
-        server_certificate_server::ServerCertificateHandler {
-            server_key_store: Arc::clone(&server_key_store),
-        },
-        &config.server_cert_socket_path,
-        CancellationToken::new(),
-    );
-    tokio::spawn(server_cert_server.serve());
 
     let control_server = ControlServer::new(
         config.control_plane_socket_path.clone(),
@@ -475,9 +452,55 @@ async fn main() {
 
     let (sniffer, mut raw_rx) = InterfaceSniffer::with_sniffing(config.pcap_timeout_ms);
     let sniffer = Arc::new(sniffer);
+    
+    // Startup sniffer reconciliation
+    let sniffed_names: Vec<String> = loaded_zone_interfaces
+        .iter()
+        .filter(|(_, zi)| zi.sniffed)
+        .filter_map(|(id, _)| crate::zones::resolve_os_name(&loaded_zone_interfaces, id))
+        .collect();
+    sniffer.reconcile_capture_interfaces(&sniffed_names);
+    
     config_provider
         .register(Arc::clone(&sniffer), "InterfaceSniffer")
         .await;
+
+    // QueryHandler construction moved here to have access to both vlan_reconciler and sniffer
+    let query_server = QueryServer::<DiskPolicyProvider, NetworkInterfaceMonitor, NetlinkInterfaceController>::new(
+        QueryHandler {
+            tcp_tracker: Arc::clone(&tcp_session_tracker),
+            nat_engine: Arc::clone(&nat_engine),
+            nat_store: Arc::clone(&nat_store),
+            policy_store: Arc::clone(&policy_provider),
+            policy_engine: Arc::clone(&policy_engine),
+            zone_store: zones,
+            zone_pair_store: Arc::clone(&zone_pairs),
+            zone_interface_store: Arc::clone(&zone_interfaces),
+            config_provider: Arc::clone(&config_provider),
+            dns_inspection_store: Arc::clone(&dns_inspection_store),
+            dns_inspection: Arc::clone(&dns_inspection),
+            ips_store: Arc::clone(&ips_store),
+            ips: Arc::clone(&ips),
+            decision_engine: Arc::clone(&decision_engine),
+            server_key_store: Arc::clone(&server_key_store),
+            pinning_detector: decision_engine.pinning_detector_arc(),
+            interface_monitor: Arc::clone(&interface_monitor),
+            interface_controller: Arc::clone(&interface_controller),
+            vlan_reconciler,
+            interface_sniffer: Arc::clone(&sniffer),
+        },
+        &config.query_socket_path,
+        CancellationToken::new(),
+    );
+    tokio::spawn(query_server.serve());
+    let server_cert_server = server_certificate_server::ServerCertificateServer::new(
+        server_certificate_server::ServerCertificateHandler {
+            server_key_store: Arc::clone(&server_key_store),
+        },
+        &config.server_cert_socket_path,
+        CancellationToken::new(),
+    );
+    tokio::spawn(server_cert_server.serve());
 
     while let Some(raw_packet) = raw_rx.recv().await {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {

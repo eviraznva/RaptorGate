@@ -170,6 +170,10 @@ fn shared_server() -> &'static SharedServer {
                     .unwrap(),
                 );
 
+                let vlan_reconciler = Arc::new(ngfw::interfaces::VlanReconciler::new(Arc::clone(&interface_controller)));
+                let (interface_sniffer, _rx) = ngfw::data_plane::interface_sniffer::InterfaceSniffer::with_sniffing(100);
+                let interface_sniffer = Arc::new(interface_sniffer);
+
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
                     nat_engine: Arc::new(Mutex::new(NatEngine::new(&None, HashMap::new()))),
@@ -189,6 +193,8 @@ fn shared_server() -> &'static SharedServer {
                     pinning_detector: decision_engine.pinning_detector_arc(),
                     interface_monitor,
                     interface_controller,
+                    vlan_reconciler,
+                    interface_sniffer,
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();

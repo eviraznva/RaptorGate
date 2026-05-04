@@ -35,7 +35,7 @@ service FirewallQueryService {
   rpc GetPinningBypass (GetPinningBypassRequest) returns (GetPinningBypassResponse);
 
   rpc SetInterfaceState (SetInterfaceStateRequest) returns (SetInterfaceStateResponse);
-  // rpc UpdateZoneInterfaceProperties (UpdateZoneInterfacePropertiesRequest) returns (UpdateZoneInterfacePropertiesResponse); // RETIRED
+  rpc UpdatePhysicalInterfaceProperties (UpdatePhysicalInterfacePropertiesRequest) returns (UpdatePhysicalInterfacePropertiesResponse);
 }
 
 message GetTcpSessionsRequest {}
@@ -197,13 +197,12 @@ message SetInterfaceStateRequest {
 
 message SetInterfaceStateResponse {}
 
-/* RETIRED
-message UpdateZoneInterfacePropertiesRequest {
+message UpdatePhysicalInterfacePropertiesRequest {
   string id = 1;
-  optional string interface_name = 2;
-  optional uint32 vlan_id = 3;
-  optional string address = 4;
+  optional string new_name = 2;
+  optional string new_address = 3;
 }
 
-message UpdateZoneInterfacePropertiesResponse {}
-*/
+message UpdatePhysicalInterfacePropertiesResponse {
+  string message = 1;
+}

@@ -7,6 +7,7 @@ pub use monitor::{
     InterfaceMonitor, NetworkInterfaceMonitor, NetworkInterfaceMonitorError, OperState,
     SystemInterface, SystemInterfaceId,
 };
+pub use vlan_reconciler::{VlanReconciler, VlanReconciliationError};
 
 #[cfg(test)]
 pub use controller::MockInterfaceController;
