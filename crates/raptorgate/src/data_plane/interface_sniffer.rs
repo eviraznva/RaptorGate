@@ -30,28 +30,42 @@ pub struct InterfaceSniffer {
     tx: mpsc::Sender<RawPacket>,
     handles: DashMap<String, CancellationToken>,
     pcap_timeout_ms: AtomicI32,
+    #[cfg(test)]
+    test_mode: bool,
 }
 
 impl InterfaceSniffer {
-    pub fn with_sniffing(
-        config: &AppConfig,
-    ) -> (Self, mpsc::Receiver<RawPacket>, Vec<SnifferError>) {
+    pub fn with_sniffing(pcap_timeout_ms: i32) -> (Self, mpsc::Receiver<RawPacket>) {
         let (tx, rx) = mpsc::channel(1024);
         let sniffer = Self {
             tx,
             handles: DashMap::new(),
-            pcap_timeout_ms: AtomicI32::new(config.pcap_timeout_ms),
+            pcap_timeout_ms: AtomicI32::new(pcap_timeout_ms),
+            #[cfg(test)]
+            test_mode: false,
         };
+        (sniffer, rx)
+    }
 
-        // TODO: Part 2/3 - get sniffed interfaces from ZoneInterface.sniffed field
-        let mut errs = Vec::<SnifferError>::new();
-        // for iface in &config.capture_interfaces {
-        //     if let Err(err) = sniffer.sniff_new(iface.clone()) {
-        //         errs.push(err);
-        //     }
-        // }
-
-        (sniffer, rx, errs)
+    pub fn reconcile_capture_interfaces(&self, sniffed_interfaces: &[String]) {
+        let old: Vec<String> = self.handles.iter().map(|e| e.key().clone()).collect();
+        for iface in &old {
+            if !sniffed_interfaces.contains(iface) {
+                self.cancel_sniffing(iface);
+            }
+        }
+        for iface in sniffed_interfaces {
+            if !self.handles.contains_key(iface) {
+                if let Err(e) = self.sniff_new(iface.clone()) {
+                    tracing::error!(
+                        event = "sniffer.reconcile.failed",
+                        iface = %iface,
+                        error = %e,
+                        "failed to start sniffing interface during reconciliation"
+                    );
+                }
+            }
+        }
     }
 
     pub fn sniff_new(&self, iface: String) -> Result<(), SnifferError> {
@@ -61,6 +75,13 @@ impl InterfaceSniffer {
                 iface = %iface,
                 "already sniffing interface, ignoring"
             );
+            return Ok(());
+        }
+
+        #[cfg(test)]
+        if self.test_mode {
+            let token = CancellationToken::new();
+            self.handles.insert(iface, token);
             return Ok(());
         }
 
@@ -257,6 +278,29 @@ impl InterfaceSniffer {
 
         Ok(cap)
     }
+
+    #[cfg(test)]
+    pub fn new_for_test() -> (Self, mpsc::Receiver<RawPacket>) {
+        let (tx, rx) = mpsc::channel(1024);
+        let sniffer = Self {
+            tx,
+            handles: DashMap::new(),
+            pcap_timeout_ms: AtomicI32::new(100),
+            test_mode: true,
+        };
+        (sniffer, rx)
+    }
+
+    #[cfg(test)]
+    pub fn insert_test_handle(&self, iface: String) {
+        let token = CancellationToken::new();
+        self.handles.insert(iface, token);
+    }
+
+    #[cfg(test)]
+    pub fn has_handle(&self, iface: &str) -> bool {
+        self.handles.contains_key(iface)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -270,46 +314,12 @@ pub enum SnifferError {
 #[tonic::async_trait]
 impl ConfigObserver for InterfaceSniffer {
     async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {
-        // TODO: Part 2/3 - get sniffed interfaces from ZoneInterface.sniffed field
-        let old_interfaces: Vec<String> = self.handles.iter().map(|e| e.key().clone()).collect();
-        let new_interfaces: Vec<String> = vec![]; // &new_config.capture_interfaces;
-
-        let old_timeout = Duration::from_millis(self.pcap_timeout_ms.load(Ordering::Relaxed) as u64);
-
-        for iface in &old_interfaces {
-            if !new_interfaces.contains(iface) {
-                self.cancel_sniffing(iface);
-            }
-        }
-
-        for iface in &new_interfaces {
-            if self.handles.contains_key(iface) {
-                continue;
-            }
-            self.sniff_new(iface.clone())?;
-        }
-
         self.pcap_timeout_ms.store(new_config.pcap_timeout_ms, Ordering::Relaxed);
-
-        let new_interfaces: Vec<String> = self.handles.iter().map(|e| e.key().clone()).collect();
-        let new_timeout = Duration::from_millis(self.pcap_timeout_ms.load(Ordering::Relaxed) as u64);
-
-        emit(Event::new(EventKind::SnifferConfigChanged {
-            old_interfaces: old_interfaces.clone(),
-            new_interfaces: new_interfaces.clone(),
-            old_timeout,
-            new_timeout,
-        }));
-
         tracing::info!(
             event = "sniffer.config.changed",
-            old_interfaces = ?old_interfaces,
-            new_interfaces = ?new_interfaces,
-            old_timeout_ms = old_timeout.as_millis(),
-            new_timeout_ms = new_timeout.as_millis(),
-            "sniffer config changed"
+            pcap_timeout_ms = new_config.pcap_timeout_ms,
+            "sniffer pcap timeout updated"
         );
-
         Ok(())
     }
 }
@@ -324,5 +334,84 @@ mod tests {
         assert_eq!(calculate_retry_delay(5), Duration::from_millis(50));
         assert_eq!(calculate_retry_delay(6), Duration::from_millis(5000));
         assert_eq!(calculate_retry_delay(10), Duration::from_millis(5000));
+    }
+
+    #[test]
+    fn test_reconcile_starts_sniffing_new_interfaces() {
+        let (sniffer, _rx) = InterfaceSniffer::new_for_test();
+        assert!(!sniffer.has_handle("eth0"));
+        
+        sniffer.reconcile_capture_interfaces(&["eth0".to_string()]);
+        
+        assert!(sniffer.has_handle("eth0"));
+    }
+
+    #[test]
+    fn test_reconcile_stops_removed_interfaces() {
+        let (sniffer, _rx) = InterfaceSniffer::new_for_test();
+        sniffer.insert_test_handle("eth0".to_string());
+        assert!(sniffer.has_handle("eth0"));
+        
+        sniffer.reconcile_capture_interfaces(&["eth1".to_string()]);
+        
+        assert!(!sniffer.has_handle("eth0"));
+        assert!(sniffer.has_handle("eth1"));
+    }
+
+    #[test]
+    fn test_reconcile_idempotent() {
+        let (sniffer, _rx) = InterfaceSniffer::new_for_test();
+        
+        sniffer.reconcile_capture_interfaces(&["eth0".to_string()]);
+        assert!(sniffer.has_handle("eth0"));
+        assert_eq!(sniffer.handles.len(), 1);
+        
+        sniffer.reconcile_capture_interfaces(&["eth0".to_string()]);
+        assert!(sniffer.has_handle("eth0"));
+        assert_eq!(sniffer.handles.len(), 1);
+    }
+
+    #[test]
+    fn test_reconcile_empty_stops_all() {
+        let (sniffer, _rx) = InterfaceSniffer::new_for_test();
+        sniffer.insert_test_handle("eth0".to_string());
+        sniffer.insert_test_handle("eth1".to_string());
+        assert_eq!(sniffer.handles.len(), 2);
+        
+        sniffer.reconcile_capture_interfaces(&[]);
+        
+        assert_eq!(sniffer.handles.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_config_change_only_updates_timeout() {
+        let (sniffer, _rx) = InterfaceSniffer::new_for_test();
+        sniffer.insert_test_handle("eth0".to_string());
+        assert_eq!(sniffer.pcap_timeout_ms.load(Ordering::Relaxed), 100);
+        
+        let new_config = AppConfig {
+            pcap_timeout_ms: 250,
+            tun_device_name: "tun0".to_string(),
+            tun_address: "10.0.0.1".parse().unwrap(),
+            tun_netmask: "255.255.255.0".parse().unwrap(),
+            data_dir: "/tmp".into(),
+            event_socket_path: "/tmp/events.sock".to_string(),
+            query_socket_path: "/tmp/query.sock".to_string(),
+            dev_config: None,
+            pki_dir: "/tmp/pki".to_string(),
+            ssl_inspection_enabled: false,
+            mitm_listen_addr: "127.0.0.1:8443".to_string(),
+            control_plane_socket_path: "/tmp/control.sock".to_string(),
+            server_cert_socket_path: "/tmp/cert.sock".to_string(),
+            ssl_bypass_domains: vec![],
+            tls_inspection_ports: vec![443],
+            block_tls_on_undeclared_ports: false,
+        };
+        
+        sniffer.on_config_change(&new_config).await.unwrap();
+        
+        assert_eq!(sniffer.pcap_timeout_ms.load(Ordering::Relaxed), 250);
+        assert!(sniffer.has_handle("eth0"));
+        assert_eq!(sniffer.handles.len(), 1);
     }
 }

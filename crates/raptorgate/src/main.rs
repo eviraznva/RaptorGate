@@ -465,18 +465,11 @@ async fn main() {
         .register(Arc::clone(&tun), "TunForwarder")
         .await;
 
-    let (sniffer, mut raw_rx, errs) = InterfaceSniffer::with_sniffing(&config);
+    let (sniffer, mut raw_rx) = InterfaceSniffer::with_sniffing(config.pcap_timeout_ms);
     let sniffer = Arc::new(sniffer);
     config_provider
         .register(Arc::clone(&sniffer), "InterfaceSniffer")
         .await;
-    for e in errs {
-        tracing::error!(
-            event = "startup.sniffer.failed",
-            error = %e,
-            "interface sniffer error"
-        );
-    }
 
     while let Some(raw_packet) = raw_rx.recv().await {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {
