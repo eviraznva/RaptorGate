@@ -80,7 +80,7 @@ describe("VLAN Zone Communication", () => {
 
 		await performCommand({
 			host: "hvlan10",
-			command: "ping -c 1 -W 2 192.168.20.50",
+			command: "ping -c 1 -W 2 192.168.120.50",
 		})
 			.expectOutput([/1 packets transmitted, 1 received/])
 			.isOk()
@@ -88,7 +88,7 @@ describe("VLAN Zone Communication", () => {
 
 		await performCommand({
 			host: "hvlan20",
-			command: "ping -c 1 -W 2 192.168.10.50",
+			command: "ping -c 1 -W 2 192.168.110.50",
 		})
 			.expectOutput([/1 packets transmitted, 1 received/])
 			.isOk()
@@ -102,7 +102,7 @@ describe("VLAN Zone Communication", () => {
 		try {
 			await performCommand({
 				host: "hvlan10",
-				command: 'echo "test" | nc -w 2 192.168.20.50 4444',
+				command: 'echo "test" | nc -w 2 192.168.120.50 4444',
 			})
 				.isOk()
 				.run();
@@ -118,7 +118,7 @@ describe("VLAN Zone Communication", () => {
 		try {
 			await performCommand({
 				host: "hvlan20",
-				command: 'echo "test" | nc -w 2 192.168.10.50 4445',
+				command: 'echo "test" | nc -w 2 192.168.110.50 4445',
 			})
 				.isOk()
 				.run();
@@ -195,14 +195,14 @@ describe("VLAN Zone Communication", () => {
 
 		await performCommand({
 			host: "hvlan10",
-			command: "ping -c 1 -W 2 192.168.20.50",
+			command: "ping -c 1 -W 2 192.168.120.50",
 		})
 			.isErr()
 			.run();
 
 		await performCommand({
 			host: "hvlan20",
-			command: "ping -c 1 -W 2 192.168.10.50",
+			command: "ping -c 1 -W 2 192.168.110.50",
 		})
 			.isErr()
 			.run();
@@ -215,7 +215,7 @@ describe("VLAN Zone Communication", () => {
 		try {
 			await performCommand({
 				host: "hvlan10",
-				command: 'echo "test" | nc -w 2 192.168.20.50 4444',
+				command: 'echo "test" | nc -w 2 192.168.120.50 4444',
 			})
 				.isOk()
 				.run();
@@ -231,7 +231,7 @@ describe("VLAN Zone Communication", () => {
 		try {
 			await performCommand({
 				host: "hvlan20",
-				command: 'echo "test" | nc -w 2 192.168.10.50 4445',
+				command: 'echo "test" | nc -w 2 192.168.110.50 4445',
 			})
 				.isOk()
 				.run();

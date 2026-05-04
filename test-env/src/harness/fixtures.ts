@@ -138,7 +138,7 @@ export function createVlanZoneBundle(rules: Rule[]): ConfigBundle {
 			vlan: { parentInterfaceId: eth3Id, vlanId: 10 },
 			sniffed: true,
 			status: 0,
-			addresses: ["192.168.10.254/24"],
+			addresses: ["192.168.110.254/24"],
 		},
 		{
 			id: crypto.randomUUID(),
@@ -146,7 +146,7 @@ export function createVlanZoneBundle(rules: Rule[]): ConfigBundle {
 			vlan: { parentInterfaceId: eth3Id, vlanId: 20 },
 			sniffed: true,
 			status: 0,
-			addresses: ["192.168.20.254/24"],
+			addresses: ["192.168.120.254/24"],
 		},
 		{
 			id: eth3Id,
