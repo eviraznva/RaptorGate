@@ -8,6 +8,7 @@ import {
 	performCommand,
 } from "../harness";
 import { DefaultPolicy } from "../generated/common/common";
+import type { ZoneInterface } from "../generated/config/config_models";
 import {
 	createDefaultSnapshotBundle,
 	DEFAULT_APP_CONFIG,
@@ -34,27 +35,28 @@ describe("Zone Policy E2E", () => {
 				{
 					id: "00000000-0000-0000-0000-000000000000",
 					name: "default",
-					interfaceIds: [],
 				},
-				{ id: zone1Id, name: "zone1", interfaceIds: [zi1Id] },
-				{ id: zone2Id, name: "zone2", interfaceIds: [zi2Id] },
+				{ id: zone1Id, name: "zone1" },
+				{ id: zone2Id, name: "zone2" },
 			],
 			zoneInterfaces: [
 				{
 					id: zi1Id,
 					zoneId: zone1Id,
-					interfaceName: "eth1",
+					physical: { interfaceName: "eth1" },
+					sniffed: true,
 					status: 0,
 					addresses: [],
 				},
 				{
 					id: zi2Id,
 					zoneId: zone2Id,
-					interfaceName: "eth2",
+					physical: { interfaceName: "eth2" },
+					sniffed: true,
 					status: 0,
 					addresses: [],
 				},
-			],
+			] as any,
 			zonePairs: [
 				{
 					id: zonePair1to2Id,

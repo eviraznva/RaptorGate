@@ -13,7 +13,6 @@ import type {
 import type { ConfigBundle } from "../generated/services/config_snapshot_service";
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
-	captureInterfaces: ["eth1", "eth2"],
 	pcapTimeoutMs: 3000,
 	tunDeviceName: "tun0",
 	tunAddress: "10.254.254.1",
@@ -22,22 +21,31 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
 	eventSocketPath: "./sockets/event.sock",
 	querySocketPath: "/resources/ngfw/sockets/query.sock",
 	pkiDir: "/resources/ngfw/pki",
+	sslInspectionEnabled: false,
+	mitmListenAddr: "127.0.0.1:8888",
+	controlPlaneSocketPath: "/resources/ngfw/sockets/control.sock",
+	sslBypassDomains: [],
+	tlsInspectionPorts: [],
+	blockTlsOnUndeclaredPorts: false,
+	serverCertSocketPath: "/resources/ngfw/sockets/server_cert.sock",
 };
 
 const DEFAULT_ZONE_ID = "00000000-0000-0000-0000-000000000000";
 
-export const DEFAULT_ZONE_INTERFACES: ZoneInterface[] = [
+export const DEFAULT_ZONE_INTERFACES: any[] = [
 	{
 		id: crypto.randomUUID(),
 		zoneId: DEFAULT_ZONE_ID,
-		interfaceName: "eth1",
+		physical: { interfaceName: "eth1" },
+		sniffed: true,
 		status: 0,
 		addresses: [],
 	},
 	{
 		id: crypto.randomUUID(),
 		zoneId: DEFAULT_ZONE_ID,
-		interfaceName: "eth2",
+		physical: { interfaceName: "eth2" },
+		sniffed: true,
 		status: 0,
 		addresses: [],
 	},
@@ -47,10 +55,6 @@ export const DEFAULT_ZONES: Zone[] = [
 	{
 		id: DEFAULT_ZONE_ID,
 		name: "default",
-		interfaceIds: [
-			DEFAULT_ZONE_INTERFACES[0]!.id,
-			DEFAULT_ZONE_INTERFACES[1]!.id,
-		],
 	},
 ];
 

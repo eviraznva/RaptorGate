@@ -15,10 +15,18 @@ import {
 type RuntimeZoneInterface = {
 	id?: unknown;
 	zoneId?: unknown;
-	interfaceName?: unknown;
-	vlanId?: unknown;
+	kind?: unknown;
 	status?: unknown;
 	addresses?: unknown;
+	sniffed?: unknown;
+};
+
+type ParsedZoneInterface = {
+	id: string;
+	zoneId: string;
+	interfaceName: string;
+	status: InterfaceStatus;
+	addresses: string[];
 };
 
 type RuntimeGetLiveZoneInterfacesResponse = {
@@ -36,7 +44,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-function parseZoneInterface(value: unknown): ZoneInterface {
+function parseZoneInterface(value: unknown): ParsedZoneInterface {
 	if (!isRecord(value)) {
 		throw new Error("GetLiveZoneInterfaces item is not an object");
 	}
@@ -48,8 +56,8 @@ function parseZoneInterface(value: unknown): ZoneInterface {
 	if (typeof raw.zoneId !== "string") {
 		throw new Error("GetLiveZoneInterfaces item is missing zoneId");
 	}
-	if (typeof raw.interfaceName !== "string") {
-		throw new Error("GetLiveZoneInterfaces item is missing interfaceName");
+	if (!isRecord(raw.kind)) {
+		throw new Error("GetLiveZoneInterfaces item is missing kind");
 	}
 	if (
 		!Array.isArray(raw.addresses) ||
@@ -58,17 +66,25 @@ function parseZoneInterface(value: unknown): ZoneInterface {
 		throw new Error("GetLiveZoneInterfaces item has invalid addresses");
 	}
 
+	let interfaceName: string;
+	if (isRecord(raw.kind.physical) && typeof raw.kind.physical.interfaceName === "string") {
+		interfaceName = raw.kind.physical.interfaceName;
+	} else if (isRecord(raw.kind.vlan)) {
+		interfaceName = `vlan${raw.kind.vlan.vlanId}`;
+	} else {
+		throw new Error("GetLiveZoneInterfaces item has invalid kind");
+	}
+
 	return {
 		id: raw.id,
 		zoneId: raw.zoneId,
-		interfaceName: raw.interfaceName,
-		vlanId: typeof raw.vlanId === "number" ? raw.vlanId : undefined,
+		interfaceName,
 		status: interfaceStatusFromJSON(raw.status),
 		addresses: raw.addresses,
 	};
 }
 
-async function getLiveZoneInterfaces(): Promise<ZoneInterface[]> {
+async function getLiveZoneInterfaces(): Promise<ParsedZoneInterface[]> {
 	const client = getClient() as unknown as QueryClientWithLiveZoneInterfaces;
 
 	return new Promise((resolve, reject) => {
@@ -107,9 +123,9 @@ async function getLiveZoneInterfaces(): Promise<ZoneInterface[]> {
 }
 
 function findZoneInterfaceByName(
-	zoneInterfaces: ZoneInterface[],
+	zoneInterfaces: ParsedZoneInterface[],
 	interfaceName: string,
-): ZoneInterface {
+): ParsedZoneInterface {
 	const zoneInterface = zoneInterfaces.find(
 		(item) => item.interfaceName === interfaceName,
 	);
