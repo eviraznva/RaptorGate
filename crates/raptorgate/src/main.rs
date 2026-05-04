@@ -337,6 +337,7 @@ async fn main() {
         tail: Chain {
             head: LocalOwnershipStage {
                 config_provider: Arc::clone(&config_provider),
+                zone_interface_provider: Arc::clone(&zone_interfaces),
                 local_ips: Arc::new(local_ips),
             },
             tail: Chain {
@@ -417,9 +418,16 @@ async fn main() {
                     .parse()
                     .expect("MITM_LISTEN_ADDR must be a valid socket address");
 
+                let sniffed_names: Vec<String> = zone_interfaces
+                    .get_zone_interfaces()
+                    .iter()
+                    .filter(|(_, zi)| zi.sniffed)
+                    .filter_map(|(id, _)| crate::zones::resolve_os_name(&zone_interfaces.get_zone_interfaces(), id))
+                    .collect();
+
                 match TransparentRedirect::new(
                     listen_addr,
-                    vec![],
+                    sniffed_names,
                     config.tls_inspection_ports.clone(),
                 )
                 .and_then(|redirect| redirect.install())

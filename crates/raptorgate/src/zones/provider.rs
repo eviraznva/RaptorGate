@@ -225,6 +225,16 @@ impl ZoneInterfaceProvider {
             })
             .collect()
     }
+
+    #[cfg(test)]
+    pub fn new_for_test(map: HashMap<ZoneInterfaceId, ZoneInterface>) -> Self {
+        let name_index = build_name_index(&map);
+        let store = ListDiskStore::new("test_zone_interfaces", std::path::PathBuf::from("/tmp"));
+        Self {
+            swapper: Swapper::new(map, store),
+            name_index: ArcSwap::new(Arc::new(name_index)),
+        }
+    }
 }
 
 fn build_name_index(entries: &HashMap<ZoneInterfaceId, ZoneInterface>) -> HashMap<String, ZoneInterfaceId> {
