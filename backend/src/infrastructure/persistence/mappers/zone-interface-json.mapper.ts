@@ -11,6 +11,8 @@ export class ZoneInterfaceJsonMapper {
       record.status,
       record.addresses,
       new Date(record.createdAt),
+      record.sniffed,
+      record.parentInterfaceId,
     );
   }
 
@@ -22,6 +24,8 @@ export class ZoneInterfaceJsonMapper {
       vlanId: zoneInterface.getVlanId(),
       status: zoneInterface.getStatus(),
       addresses: zoneInterface.getAddresses(),
+      sniffed: zoneInterface.getSniffed(),
+      parentInterfaceId: zoneInterface.getParentInterfaceId(),
       createdAt: zoneInterface.getCreatedAt().toISOString(),
     };
   }

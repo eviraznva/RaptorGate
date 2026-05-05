@@ -16,6 +16,8 @@ export const ZoneInterfaceRecordSchema = z
     vlanId: z.number().int().nullable(),
     status: z.enum(['unspecified', 'active', 'inactive', 'missing', 'unknown']),
     addresses: z.array(z.string()),
+    sniffed: z.boolean(),
+    parentInterfaceId: z.string().nullable(),
     createdAt: isoDateTimeSchema,
   })
   .strict();

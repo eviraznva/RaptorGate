@@ -14,6 +14,8 @@ export class ZoneInterface {
     private status: ZoneInterfaceStatus,
     private addresses: string[],
     private readonly createdAt: Date,
+    private sniffed: boolean,
+    private parentInterfaceId: string | null,
   ) {}
 
   public static create(
@@ -24,6 +26,8 @@ export class ZoneInterface {
     status: ZoneInterfaceStatus,
     addresses: string[],
     createdAt: Date,
+    sniffed: boolean = false,
+    parentInterfaceId: string | null = null,
   ): ZoneInterface {
     return new ZoneInterface(
       id,
@@ -33,6 +37,8 @@ export class ZoneInterface {
       status,
       addresses,
       createdAt,
+      sniffed,
+      parentInterfaceId,
     );
   }
 
@@ -62,5 +68,17 @@ export class ZoneInterface {
 
   public getAddresses(): string[] {
     return this.addresses;
+  }
+
+  public getSniffed(): boolean {
+    return this.sniffed;
+  }
+
+  public getParentInterfaceId(): string | null {
+    return this.parentInterfaceId;
+  }
+
+  public getKind(): "physical" | "vlan" {
+    return this.vlanId === null ? "physical" : "vlan";
   }
 }

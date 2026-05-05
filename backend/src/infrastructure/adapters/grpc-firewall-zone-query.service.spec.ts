@@ -44,7 +44,6 @@ describe("GrpcFirewallZoneQueryService", () => {
           {
             id: "zone-1",
             name: "inside",
-            interfaceIds: ["if-1", "if-2"],
           },
         ],
       }),
@@ -60,7 +59,6 @@ describe("GrpcFirewallZoneQueryService", () => {
     expect(zones[0].getIsActive()).toBe(true);
     expect(zones[0].getCreatedBy()).toBe("");
     expect(zones[0].getCreatedAt()).toBeInstanceOf(Date);
-    expect(zones[0].getInterfaceIds()).toEqual(["if-1", "if-2"]);
   });
 
   it("calls getZone and maps a single zone", async () => {
@@ -69,7 +67,6 @@ describe("GrpcFirewallZoneQueryService", () => {
         zone: {
           id: "zone-2",
           name: "dmz",
-          interfaceIds: ["if-3"],
         },
       }),
     );
@@ -78,7 +75,6 @@ describe("GrpcFirewallZoneQueryService", () => {
 
     expect(client.getZone).toHaveBeenCalledWith({ id: "zone-2" });
     expect(zone?.getId()).toBe("zone-2");
-    expect(zone?.getInterfaceIds()).toEqual(["if-3"]);
   });
 
   it("calls getZoneInterfaces and maps interface fields", async () => {
@@ -88,38 +84,42 @@ describe("GrpcFirewallZoneQueryService", () => {
           {
             id: "zi-1",
             zoneId: "zone-1",
-            interfaceName: "eth0",
+            kind: { $case: "physical", physical: { interfaceName: "eth0" } },
             status: InterfaceStatus.INTERFACE_STATUS_UNSPECIFIED,
             addresses: ["192.168.50.10/24"],
+            sniffed: false,
           },
           {
             id: "zi-2",
             zoneId: "zone-1",
-            interfaceName: "eth1",
-            vlanId: 20,
+            kind: { $case: "vlan", vlan: { parentInterfaceId: "zi-1", vlanId: 20 } },
             status: InterfaceStatus.INTERFACE_STATUS_ACTIVE,
             addresses: ["2001:db8::1/64"],
+            sniffed: false,
           },
           {
             id: "zi-3",
             zoneId: "zone-2",
-            interfaceName: "eth2",
+            kind: { $case: "physical", physical: { interfaceName: "eth2" } },
             status: InterfaceStatus.INTERFACE_STATUS_INACTIVE,
             addresses: [],
+            sniffed: false,
           },
           {
             id: "zi-4",
             zoneId: "zone-2",
-            interfaceName: "eth3",
+            kind: { $case: "physical", physical: { interfaceName: "eth3" } },
             status: InterfaceStatus.INTERFACE_STATUS_MISSING,
             addresses: [],
+            sniffed: false,
           },
           {
             id: "zi-5",
             zoneId: "zone-3",
-            interfaceName: "eth4",
+            kind: { $case: "physical", physical: { interfaceName: "eth4" } },
             status: InterfaceStatus.INTERFACE_STATUS_UNKNOWN,
             addresses: [],
+            sniffed: false,
           },
         ],
       }),
@@ -143,10 +143,10 @@ describe("GrpcFirewallZoneQueryService", () => {
         zoneInterface: {
           id: "zi-1",
           zoneId: "zone-1",
-          interfaceName: "eth0",
-          vlanId: 10,
+          kind: { $case: "vlan", vlan: { parentInterfaceId: "zi-parent", vlanId: 10 } },
           status: InterfaceStatus.INTERFACE_STATUS_ACTIVE,
           addresses: ["10.0.0.1/24"],
+          sniffed: false,
         },
       }),
     );
@@ -166,9 +166,10 @@ describe("GrpcFirewallZoneQueryService", () => {
           {
             id: "live-1",
             zoneId: "zone-1",
-            interfaceName: "eth9",
+            kind: { $case: "physical", physical: { interfaceName: "eth9" } },
             status: InterfaceStatus.INTERFACE_STATUS_ACTIVE,
             addresses: ["172.16.0.1/16"],
+            sniffed: false,
           },
         ],
       }),
@@ -290,7 +291,7 @@ describe("GrpcFirewallZoneQueryService", () => {
     );
   });
 
-  it("keeps existing JSON zone records compatible with default interfaceIds", () => {
+  it("keeps existing JSON zone records compatible with default values", () => {
     const zone = ZoneJsonMapper.toDomain({
       id: "5d375e76-b212-4c9e-8da0-601e5ebb3cd3",
       name: "inside",
@@ -300,6 +301,7 @@ describe("GrpcFirewallZoneQueryService", () => {
       createdBy: "77144f8f-c7b8-4ff4-988f-700f8cd3f937",
     });
 
-    expect(zone.getInterfaceIds()).toEqual([]);
+    expect(zone.getId()).toBe("5d375e76-b212-4c9e-8da0-601e5ebb3cd3");
+    expect(zone.getName()).toBe("inside");
   });
 });
