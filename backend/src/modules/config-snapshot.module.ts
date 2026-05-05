@@ -9,6 +9,7 @@ import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interfac
 import { ConfigSnapshotDiffService } from '../application/services/config-snapshot-diff.service.js';
 import { ApplyConfigSnapshotUseCase } from '../application/use-cases/apply-config-snapshot.use-case.js';
 import { ExportConfigUseCase } from '../application/use-cases/export-config.use-case.js';
+import { FactoryResetUseCase } from '../application/use-cases/factory-reset.use-case.js';
 import { GetConfigDiffUseCase } from '../application/use-cases/get-config-diff.use-case.js';
 import { GetConfigHistoryUseCase } from '../application/use-cases/get-config-history.use-case.js';
 import { ImportConfigUseCase } from '../application/use-cases/import-config.use-case.js';
@@ -150,6 +151,7 @@ import { Env } from '../shared/config/env.validation.js';
     RollbackConfigUseCase,
     ExportConfigUseCase,
     ImportConfigUseCase,
+    FactoryResetUseCase,
     ConfigSnapshotDiffService,
     GrpcConfigSnapshotPushService,
     FileStore,

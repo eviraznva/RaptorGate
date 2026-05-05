@@ -53,9 +53,9 @@ fn save_meta(pki_dir: &Path, id: &str, meta: &ServerKeyMeta) -> anyhow::Result<(
     Ok(())
 }
 
-fn delete_meta(pki_dir: &Path, id: &str) {
+fn delete_meta(pki_dir: &Path, id: &str) -> bool {
     let path = meta_path(pki_dir, id);
-    let _ = fs::remove_file(path);
+    fs::remove_file(path).is_ok()
 }
 
 fn save_key_to_disk(pki_dir: &Path, id: &str, key_pem: &str) -> anyhow::Result<()> {
@@ -83,12 +83,13 @@ fn load_key_from_disk(pki_dir: &Path, id: &str) -> anyhow::Result<String> {
     String::from_utf8(decrypted).context("Server key contains invalid UTF-8")
 }
 
-fn delete_key_from_disk(pki_dir: &Path, id: &str) -> anyhow::Result<()> {
+fn delete_key_from_disk(pki_dir: &Path, id: &str) -> anyhow::Result<bool> {
     let path = key_path(pki_dir, id);
-    if path.exists() {
-        fs::remove_file(&path).with_context(|| format!("Failed to delete server key {id}"))?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e).with_context(|| format!("Failed to delete server key {id}")),
     }
-    Ok(())
 }
 
 // Wpis inbound TLS dla jednego serwera.
@@ -112,6 +113,12 @@ pub struct InboundServerInfo {
     pub key_ref: String,
     pub bypass: bool,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ServerKeyClearReport {
+    pub removed_entries: u64,
+    pub removed_files: u64,
 }
 
 // Wynik get_entry, ServerConfig + flagi runtime.
@@ -296,6 +303,66 @@ impl ServerKeyStore {
             tracing::info!(%addr, "Inbound TLS server key removed");
         }
         Ok(removed)
+    }
+
+    pub fn clear_all(&self) -> anyhow::Result<ServerKeyClearReport> {
+        let pki = Path::new(&self.pki_dir);
+        let mut report = ServerKeyClearReport::default();
+
+        for entry in self.list() {
+            if self.entries.remove(&entry.addr).is_some() {
+                report.removed_entries += 1;
+                if delete_key_from_disk(pki, &entry.key_ref)? {
+                    report.removed_files += 1;
+                }
+                if delete_meta(pki, &entry.key_ref) {
+                    report.removed_files += 1;
+                }
+            }
+        }
+
+        let dir = pki.join(SERVER_KEYS_DIR);
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(report),
+            Err(e) => return Err(e).context("Failed to read server_keys directory"),
+        };
+
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let Some(key_ref) = name.strip_suffix(".meta.json") else {
+                continue;
+            };
+
+            let Ok(meta_content) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(meta) = serde_json::from_str::<ServerKeyMeta>(&meta_content) else {
+                continue;
+            };
+            if meta.key_ref != key_ref {
+                continue;
+            }
+
+            if delete_key_from_disk(pki, key_ref)? {
+                report.removed_files += 1;
+            }
+            if delete_meta(pki, key_ref) {
+                report.removed_files += 1;
+            }
+        }
+
+        Ok(report)
     }
 
     // Zwraca liste zarejestrowanych serwerow inbound.
@@ -644,6 +711,45 @@ mod tests {
         let store = ServerKeyStore::new(&dir);
         let ok = store.set_enabled(test_addr(), false).unwrap();
         assert!(!ok);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn clear_all_removes_runtime_and_orphaned_key_material_only() {
+        let dir = temp_dir();
+        let store = ServerKeyStore::new(&dir);
+        let (cert, key) = make_server_cert();
+        let addr = test_addr();
+
+        store
+            .add(addr, &cert, &key, "live-ref", "cn", "FP", false, true)
+            .unwrap();
+        save_key_to_disk(Path::new(&dir), "orphan-ref", &key).unwrap();
+        save_meta(
+            Path::new(&dir),
+            "orphan-ref",
+            &ServerKeyMeta {
+                addr: "10.0.0.10".into(),
+                port: 443,
+                common_name: "orphan".into(),
+                fingerprint: "ORPHAN".into(),
+                certificate_pem: cert,
+                key_ref: "orphan-ref".into(),
+                bypass: false,
+                enabled: true,
+            },
+        )
+        .unwrap();
+        std::fs::write(Path::new(&dir).join(SERVER_KEYS_DIR).join("foreign.pem"), "keep").unwrap();
+
+        let report = store.clear_all().unwrap();
+
+        assert_eq!(report.removed_entries, 1);
+        assert_eq!(report.removed_files, 4);
+        assert!(store.list().is_empty());
+        assert!(!key_path(Path::new(&dir), "live-ref").exists());
+        assert!(!meta_path(Path::new(&dir), "orphan-ref").exists());
+        assert!(Path::new(&dir).join(SERVER_KEYS_DIR).join("foreign.pem").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

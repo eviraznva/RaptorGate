@@ -4,6 +4,7 @@ mod data_plane;
 mod disk_store;
 mod dpi;
 mod events;
+mod factory_reset;
 mod interfaces;
 mod ip_defrag;
 mod logging;
@@ -267,6 +268,7 @@ async fn main() {
             interface_monitor,
             interface_controller,
             metrics_collector: Arc::clone(&metrics_collector),
+            reset_lock: Arc::new(Mutex::new(())),
         },
         &config.query_socket_path,
         CancellationToken::new(),

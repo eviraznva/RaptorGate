@@ -10,6 +10,8 @@ import type { ClientGrpc } from "@nestjs/microservices";
 import { firstValueFrom } from "rxjs";
 import type {
   ConfigSnapshotPushReason,
+  FactoryResetCommand,
+  FactoryResetResult,
   IConfigSnapshotPushService,
 } from "../../application/ports/config-snapshot-push-service.interface.js";
 import type { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
@@ -28,6 +30,7 @@ import type { Timestamp } from "../grpc/generated/google/protobuf/timestamp.js";
 import {
   type ConfigBundle,
   FIREWALL_CONFIG_SNAPSHOT_SERVICE_NAME,
+  type FactoryResetRequest,
   type FirewallConfigSnapshotServiceClient,
   type PushActiveConfigSnapshotRequest,
 } from "../grpc/generated/services/config_snapshot_service.js";
@@ -52,6 +55,70 @@ export class GrpcConfigSnapshotPushService
       this.grpcClient.getService<FirewallConfigSnapshotServiceClient>(
         FIREWALL_CONFIG_SNAPSHOT_SERVICE_NAME,
       );
+  }
+
+  async factoryReset(command: FactoryResetCommand): Promise<FactoryResetResult> {
+    const correlationId = randomUUID();
+    const request: FactoryResetRequest = {
+      correlationId,
+      reason: command.reason ?? 'factory_reset',
+      clearPki: command.clearPki,
+      clearServerKeys: command.clearServerKeys,
+    };
+
+    this.logger.warn({
+      event: 'firewall.factory_reset.started',
+      message: 'requesting firewall factory reset',
+      correlationId,
+      clearPki: request.clearPki ?? true,
+      clearServerKeys: request.clearServerKeys ?? true,
+    });
+
+    try {
+      const response = await firstValueFrom(
+        this.configSnapshotPushClient.factoryReset(request),
+      );
+
+      if (!response.accepted) {
+        this.logger.warn({
+          event: 'firewall.factory_reset.rejected',
+          message: response.message || 'firewall rejected factory reset',
+          correlationId,
+          safeStateApplied: response.safeStateApplied,
+        });
+        throw new Error(
+          `Firewall rejected factory reset: ${response.message || 'unknown reason'}`,
+        );
+      }
+
+      this.logger.warn({
+        event: 'firewall.factory_reset.succeeded',
+        message: 'firewall factory reset completed',
+        correlationId,
+        removedServerKeys: response.removedServerKeys,
+        removedServerKeyFiles: response.removedServerKeyFiles,
+        removedCaFiles: response.removedCaFiles,
+      });
+
+      return response;
+    } catch (error) {
+      const reasonText =
+        error instanceof Error ? error.message : 'Unknown gRPC error';
+
+      this.logger.error(
+        {
+          event: 'firewall.factory_reset.failed',
+          message: 'failed to request firewall factory reset',
+          correlationId,
+          error: reasonText,
+        },
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      throw new ServiceUnavailableException(
+        `Firewall factory reset service is unavailable. ${reasonText}`,
+      );
+    }
   }
 
   async pushActiveConfigSnapshot(
