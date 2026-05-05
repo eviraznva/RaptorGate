@@ -212,6 +212,32 @@ pub fn save_untrust_ca(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CaClearReport {
+    pub removed_files: u64,
+}
+
+pub fn clear_ca_files(dir: &Path) -> anyhow::Result<CaClearReport> {
+    let mut removed_files = 0;
+    for name in [
+        "ca.key.enc",
+        "ca.crt",
+        "ca.meta.json",
+        "untrust_ca.key.enc",
+        "untrust_ca.crt",
+        "untrust_ca.meta.json",
+    ] {
+        let path = dir.join(name);
+        match fs::remove_file(&path) {
+            Ok(()) => removed_files += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("Failed to remove {name}")),
+        }
+    }
+
+    Ok(CaClearReport { removed_files })
+}
+
 // Wczytuje Untrust CA z dysku. Zwraca None gdy pliki nie istnieją.
 pub fn load_untrust_ca(dir: &Path) -> anyhow::Result<Option<LoadedCa>> {
     let key_path = dir.join("untrust_ca.key.enc");
@@ -352,6 +378,22 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn clear_ca_files_removes_only_known_ca_files() {
+        let dir = temp_dir();
+        save_ca(&dir, "key", "cert", "fp", 0).unwrap();
+        save_untrust_ca(&dir, "untrust-key", "untrust-cert", "untrust-fp", 0).unwrap();
+        std::fs::write(dir.join("foreign.pem"), "keep").unwrap();
+
+        let report = clear_ca_files(&dir).unwrap();
+
+        assert_eq!(report.removed_files, 6);
+        assert!(!dir.join("ca.key.enc").exists());
+        assert!(!dir.join("untrust_ca.key.enc").exists());
+        assert!(dir.join("foreign.pem").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

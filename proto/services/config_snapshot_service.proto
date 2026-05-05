@@ -9,6 +9,9 @@ syntax = "proto3";
     // backend -> firewall
     rpc PushActiveConfigSnapshot(PushActiveConfigSnapshotRequest)
         returns (PushActiveConfigSnapshotResponse);
+
+    rpc FactoryReset(FactoryResetRequest)
+        returns (FactoryResetResponse);
   }
 
   message PushActiveConfigSnapshotRequest {
@@ -49,5 +52,22 @@ syntax = "proto3";
     bool accepted = 2;
     string message = 3;
     string applied_snapshot_id = 4;
+  }
+
+  message FactoryResetRequest {
+    string correlation_id = 1;
+    string reason = 2;
+    optional bool clear_pki = 3;
+    optional bool clear_server_keys = 4;
+  }
+
+  message FactoryResetResponse {
+    string correlation_id = 1;
+    bool accepted = 2;
+    string message = 3;
+    bool safe_state_applied = 4;
+    uint64 removed_server_keys = 5;
+    uint64 removed_server_key_files = 6;
+    uint64 removed_ca_files = 7;
   }
 

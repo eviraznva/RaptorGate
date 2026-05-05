@@ -2,6 +2,7 @@ pub mod config;
 pub mod data_plane;
 pub mod dpi;
 pub mod events;
+pub mod factory_reset;
 pub mod integrity;
 pub mod interfaces;
 pub mod ip_defrag;

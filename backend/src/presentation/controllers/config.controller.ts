@@ -13,6 +13,7 @@ import { ApiBody, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import type { GetConfigDiffDto } from '../../application/dtos/get-config-diff.dto.js';
 import { ApplyConfigSnapshotUseCase } from '../../application/use-cases/apply-config-snapshot.use-case.js';
 import { ExportConfigUseCase } from '../../application/use-cases/export-config.use-case.js';
+import { FactoryResetUseCase } from '../../application/use-cases/factory-reset.use-case.js';
 import { GetConfigDiffUseCase } from '../../application/use-cases/get-config-diff.use-case.js';
 import { GetConfigHistoryUseCase } from '../../application/use-cases/get-config-history.use-case.js';
 import { ImportConfigUseCase } from '../../application/use-cases/import-config.use-case.js';
@@ -40,6 +41,10 @@ import { ResponseMessage } from '../decorators/response-message.decorator.js';
 import { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.js';
 import { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 import { ExportConfigResponseDto } from '../dtos/export-config-response.dto.js';
+import {
+  FactoryResetDto,
+  FactoryResetResponseDto,
+} from '../dtos/factory-reset.dto.js';
 import { GetConfigDiffQueryDto } from '../dtos/get-config-diff-query.dto.js';
 import { GetConfigDiffResponseDto } from '../dtos/get-config-diff-response.dto.js';
 import { GetConfigHistoryResponseDto } from '../dtos/get-config-history-response.dto.js';
@@ -61,6 +66,8 @@ export class ConfigController {
     private readonly exportConfigUseCase: ExportConfigUseCase,
     @Inject(ImportConfigUseCase)
     private readonly importConfigUseCase: ImportConfigUseCase,
+    @Inject(FactoryResetUseCase)
+    private readonly factoryResetUseCase: FactoryResetUseCase,
   ) {}
 
   @ApiOperation({
@@ -176,6 +183,29 @@ export class ConfigController {
   ): Promise<RollbackConfigSnapshotResponseDto> {
     const config = await this.rollbackConfigUseCase.execute({ id });
     return config;
+  }
+
+  @ApiOperation({
+    summary: 'Factory reset firewall configuration',
+    description:
+      'Resets firewall local configuration to safe defaults and removes working key material on the firewall.',
+  })
+  @Roles(Role.Operator)
+  @RequirePermissions(Permission.SNAPSHOTS_RESTORE)
+  @Post('factory-reset')
+  @HttpCode(HttpStatus.OK)
+  @ApiBody({ type: FactoryResetDto, required: false })
+  @ResponseMessage('Firewall factory reset completed')
+  @ApiOkEnvelope(FactoryResetResponseDto, 'Firewall factory reset completed')
+  @ApiError400('Validation failed')
+  @ApiError401('Access token is missing, invalid, or expired')
+  @ApiError403('Insufficient permissions to factory reset firewall')
+  @ApiError429('Too many requests')
+  @ApiError500('Internal server error while factory resetting firewall')
+  async factoryReset(
+    @Body() dto: FactoryResetDto = {},
+  ): Promise<FactoryResetResponseDto> {
+    return this.factoryResetUseCase.execute(dto);
   }
 
   @ApiOperation({
