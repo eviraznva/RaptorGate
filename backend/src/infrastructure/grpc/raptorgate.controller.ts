@@ -1,8 +1,8 @@
-import { status } from '@grpc/grpc-js';
-import { Controller, Inject, Logger } from '@nestjs/common';
-import { RpcException } from '@nestjs/microservices';
-import { GetActiveConfigUseCase } from '../../application/use-cases/get-active-config.use-case.js';
-import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { status } from "@grpc/grpc-js";
+import { Controller, Inject, Logger } from "@nestjs/common";
+import { RpcException } from "@nestjs/microservices";
+import { GetActiveConfigUseCase } from "../../application/use-cases/get-active-config.use-case.js";
+import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
 import {
   FactoryResetRequest,
   FactoryResetResponse,
@@ -10,23 +10,25 @@ import {
   FirewallConfigSnapshotServiceControllerMethods,
   PushActiveConfigSnapshotRequest,
   PushActiveConfigSnapshotResponse,
-} from './generated/services/config_snapshot_service';
+} from "./generated/services/config_snapshot_service";
 
 @Controller()
 @FirewallConfigSnapshotServiceControllerMethods()
-export class RaptorGateController implements FirewallConfigSnapshotServiceController {
+export class RaptorGateController
+  implements FirewallConfigSnapshotServiceController
+{
   private readonly logger = new Logger(RaptorGateController.name);
 
   private static readonly ALLOWED_REASONS = new Set([
-    'apply',
-    'rollback',
-    'manual_sync',
+    "apply",
+    "rollback",
+    "manual_sync",
   ]);
 
   private static readonly ALLOWED_SNAPSHOT_TYPES = new Set([
-    'manual_import',
-    'rollback_point',
-    'auto_save',
+    "manual_import",
+    "rollback_point",
+    "auto_save",
   ]);
 
   constructor(
@@ -44,7 +46,7 @@ export class RaptorGateController implements FirewallConfigSnapshotServiceContro
     return {
       correlationId,
       accepted: false,
-      message: 'Factory reset must be executed by firewall gRPC service',
+      message: "Factory reset must be executed by firewall gRPC service",
       safeStateApplied: false,
       removedServerKeys: 0,
       removedServerKeyFiles: 0,
@@ -60,39 +62,39 @@ export class RaptorGateController implements FirewallConfigSnapshotServiceContro
     try {
       const snapshot = request.snapshot;
       if (!snapshot) {
-        return this.reject(correlationId, 'Missing snapshot payload');
+        return this.reject(correlationId, "Missing snapshot payload");
       }
 
       const reason = this.normalize(request.reason).toLowerCase();
       if (!this.isAllowedReason(reason)) {
-        return this.reject(correlationId, 'Invalid reason');
+        return this.reject(correlationId, "Invalid reason");
       }
 
       if (!this.isUuid(snapshot.id)) {
-        return this.reject(correlationId, 'Invalid snapshot id');
+        return this.reject(correlationId, "Invalid snapshot id");
       }
 
       if (!this.isUuid(snapshot.createdBy)) {
-        return this.reject(correlationId, 'Invalid createdBy');
+        return this.reject(correlationId, "Invalid createdBy");
       }
 
       if (
         !Number.isInteger(snapshot.versionNumber) ||
         snapshot.versionNumber < 1
       ) {
-        return this.reject(correlationId, 'Invalid versionNumber');
+        return this.reject(correlationId, "Invalid versionNumber");
       }
 
       if (!this.isAllowedSnapshotType(snapshot.snapshotType)) {
-        return this.reject(correlationId, 'Invalid snapshotType');
+        return this.reject(correlationId, "Invalid snapshotType");
       }
 
       if (!this.isSha256(snapshot.checksum)) {
-        return this.reject(correlationId, 'Invalid checksum format');
+        return this.reject(correlationId, "Invalid checksum format");
       }
 
       if (!snapshot.bundle) {
-        return this.reject(correlationId, 'Missing bundle');
+        return this.reject(correlationId, "Missing bundle");
       }
 
       try {
@@ -107,7 +109,7 @@ export class RaptorGateController implements FirewallConfigSnapshotServiceContro
           return {
             correlationId,
             accepted: true,
-            message: 'Snapshot already active',
+            message: "Snapshot already active",
             appliedSnapshotId: snapshot.id,
           };
         }
@@ -125,7 +127,7 @@ reason=${reason} snapshotId=${snapshot.id} version=${snapshot.versionNumber}`,
       return {
         correlationId,
         accepted: true,
-        message: 'Snapshot validated',
+        message: "Snapshot validated",
         appliedSnapshotId: snapshot.id,
       };
     } catch (error) {
@@ -136,7 +138,7 @@ reason=${reason} snapshotId=${snapshot.id} version=${snapshot.versionNumber}`,
 
       throw new RpcException({
         code: status.INTERNAL,
-        message: 'Failed to process pushed config snapshot',
+        message: "Failed to process pushed config snapshot",
       });
     }
   }
@@ -149,7 +151,7 @@ reason=${reason} snapshotId=${snapshot.id} version=${snapshot.versionNumber}`,
       correlationId,
       accepted: false,
       message,
-      appliedSnapshotId: '',
+      appliedSnapshotId: "",
     };
   }
 
@@ -172,6 +174,6 @@ reason=${reason} snapshotId=${snapshot.id} version=${snapshot.versionNumber}`,
   }
 
   private normalize(value: string | null | undefined): string {
-    return value?.trim() ?? '';
+    return value?.trim() ?? "";
   }
 }

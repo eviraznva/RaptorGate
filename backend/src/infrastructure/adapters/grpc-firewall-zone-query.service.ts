@@ -167,21 +167,20 @@ export class GrpcFirewallZoneQueryService
     }
   }
 
-  async updateZoneInterfaceProperties(
+  async updatePhysicalInterfaceProperties(
     input: UpdateZoneInterfacePropertiesInput,
   ): Promise<void> {
     try {
       await firstValueFrom(
-        this.firewallQueryClient.updateZoneInterfaceProperties({
+        this.firewallQueryClient.updatePhysicalInterfaceProperties({
           id: input.id,
-          interfaceName: input.interfaceName,
-          vlanId: input.vlanId,
-          address: input.address,
+          newName: input.interfaceName,
+          newAddress: input.address,
         }),
       );
     } catch (error) {
       throw this.toTransportException(
-        "update zone interface properties",
+        "update physical interface properties",
         error,
       );
     }
@@ -216,22 +215,35 @@ export class GrpcFirewallZoneQueryService
   }
 
   private toZoneEntity(zone: GrpcZone): Zone {
-    return Zone.create(zone.id, zone.name, null, true, new Date(), "", [
-      ...zone.interfaceIds,
-    ]);
+    return Zone.create(zone.id, zone.name, null, true, new Date(), "");
   }
 
   private toZoneInterfaceEntity(
     zoneInterface: GrpcZoneInterface,
   ): ZoneInterface {
+    const interfaceName =
+      zoneInterface.kind?.$case === "physical"
+        ? zoneInterface.kind.physical.interfaceName
+        : "";
+    const vlanId =
+      zoneInterface.kind?.$case === "vlan"
+        ? zoneInterface.kind.vlan.vlanId ?? null
+        : null;
+    const parentInterfaceId =
+      zoneInterface.kind?.$case === "vlan"
+        ? zoneInterface.kind.vlan.parentInterfaceId
+        : null;
+
     return ZoneInterface.create(
       zoneInterface.id,
       zoneInterface.zoneId,
-      zoneInterface.interfaceName,
-      zoneInterface.vlanId ?? null,
+      interfaceName,
+      vlanId,
       this.toZoneInterfaceStatus(zoneInterface.status),
       [...zoneInterface.addresses],
       new Date(),
+      zoneInterface.sniffed,
+      parentInterfaceId,
     );
   }
 

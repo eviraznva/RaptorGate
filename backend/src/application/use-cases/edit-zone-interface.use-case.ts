@@ -77,7 +77,7 @@ export class EditZoneInterfaceUseCase {
     // const firewallAddress = this.getFirewallAddress(dto, addresses);
 
     // if (this.shouldUpdateFirewallProperties(dto)) {
-    //   await this.firewallZoneQueryService.updateZoneInterfaceProperties({
+    //   await this.firewallZoneQueryService.updatePhysicalInterfaceProperties({
     //     id: dto.id,
     //     interfaceName: savedZoneInterface.getInterfaceName(),
     //     vlanId: dto.vlanId === null ? undefined : dto.vlanId,
