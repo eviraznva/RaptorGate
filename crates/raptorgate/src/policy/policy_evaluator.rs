@@ -17,7 +17,8 @@ pub struct DnsEvalContext {
     pub dnssec_status: Option<DnssecStatus>,
 }
 
-pub(crate) struct PolicyEvalContext<'a, 'p> {
+#[derive(Clone)]
+pub struct PolicyEvalContext<'a, 'p> {
     pub packet: &'a SlicedPacket<'p>,
     pub arrival: &'a ArrivalInfo,
     pub dns: Option<&'a DnsEvalContext>,

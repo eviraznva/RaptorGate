@@ -25,7 +25,6 @@ message RuleSet {
 message Zone {
   string id   = 1;
   string name = 2;
-  repeated string interface_ids = 3;
 }
 
 message ZoneSet {
@@ -46,13 +45,26 @@ enum InterfaceAdministrativeState {
   INTERFACE_ADMINISTRATIVE_STATE_DOWN = 2;
 }
 
+message PhysicalInterface {
+  string interface_name = 1;
+}
+
+message VlanSubinterface {
+  string parent_interface_id = 1;
+  uint32 vlan_id = 2;
+}
+
 message ZoneInterface {
   string          id             = 1;
   string          zone_id        = 2;
-  string          interface_name = 3;
-  optional uint32 vlan_id        = 4;
+  // Fields 3 (interface_name) and 4 (vlan_id) are retired.
   InterfaceStatus status         = 5;
   repeated string addresses      = 6;
+  oneof kind {
+    PhysicalInterface physical = 7;
+    VlanSubinterface vlan = 8;
+  }
+  bool sniffed = 9;
 }
 
 message ZoneInterfaceSet {
@@ -389,7 +401,7 @@ message ConfigSectionVersions {
 // ── AppConfig — runtime-swappable firewall configuration ─────────────────────
 
 message AppConfig {
-  repeated string capture_interfaces = 1;
+  // Field 1 retired (capture_interfaces moved to ZoneInterface.sniffed).
   int32           pcap_timeout_ms    = 2;
   string          tun_device_name    = 3;
   string          tun_address        = 4;

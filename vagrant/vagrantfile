@@ -34,6 +34,13 @@ def configure_dns_path(iface, dns)
   SHELL
 end
 
+def install_packages()
+  <<-SHELL
+    sudo apt update 
+    sudo apt install -y arping traceroute
+  SHELL
+end
+
 def setup_nftables
   <<-SHELL
     apt-get update
@@ -221,7 +228,7 @@ def setup_ngfw_service
     # MITM proxy (SSL inspection) terminuje lokalnie TCP/8443 po REDIRECT z 443.
     # INPUT ma policy drop, wiec trzeba wpuscic nowe polaczenia na 8443.
     nft add rule inet filter input tcp dport 8443 ct state new accept
-    chown -R vagrant:vagrant /resources/ngfw/sockets
+    sudo chown -R vagrant:vagrant /resources/ngfw/sockets
   SHELL
 end
 unless File.respond_to?(:exists?)
@@ -315,7 +322,11 @@ Vagrant.configure("2") do |config|
       ip: "192.168.56.254",
       netmask: "255.255.255.0",
       libvirt__network_name: "mgmt"
-
+    r1.vm.network "private_network",
+      libvirt__network_name: "trunk1",
+      libvirt__forward_mode: "none",
+      libvirt__dhcp_enabled: false,
+      auto_config: false
     # config.trigger.before :provision do |t|
     #   t.info = "rsyncing .router_sync -> /resources"
     #   t.run = { inline: "vagrant rsync r1" }
@@ -326,7 +337,7 @@ Vagrant.configure("2") do |config|
     r1_provision = configure_interface("eth1", "192.168.10.254", "24") +
       configure_interface("eth2", "192.168.20.254", "24") +
       configure_interface("eth3", "192.168.56.254", "24") +
-      setup_tun_device + setup_nftables + setup_ngfw_service + setup_observability
+      setup_tun_device + setup_nftables + setup_ngfw_service + setup_observability + install_packages
 
     unless ENV['NO_BACKEND'] == '1'
       r1_provision += setup_backend_service + setup_frontend_service
@@ -376,6 +387,42 @@ Vagrant.configure("2") do |config|
     radius.vm.provision "shell", inline: configure_interface("eth1", "192.168.20.30", "24", "192.168.20.254") + <<-SHELL
       ip route del default 2>/dev/null || true
       ip route add default via 192.168.20.254
+    SHELL
+  end
+
+  config.vm.define "hvlan10" do |h|
+    h.vm.network "private_network",
+      libvirt__network_name: "trunk1",
+      libvirt__forward_mode: "none",
+      libvirt__dhcp_enabled: false,
+      auto_config: false
+    h.vm.provision "shell", inline: <<-SHELL
+    ip link set eth1 up
+    ip link del eth1.10 2>/dev/null || true
+    ip link add link eth1 name eth1.10 type vlan id 10
+    ip addr flush dev eth1.10
+    ip addr add 192.168.110.50/24 dev eth1.10
+    ip link set eth1.10 up
+    ip route del default via 192.168.10.254 2>/dev/null || true
+    ip route add default via 192.168.110.254
+    SHELL
+  end
+
+  config.vm.define "hvlan20" do |h|
+    h.vm.network "private_network",
+      libvirt__network_name: "trunk1",
+      libvirt__forward_mode: "none",
+      libvirt__dhcp_enabled: false,
+      auto_config: false
+    h.vm.provision "shell", inline: <<-SHELL
+    ip link set eth1 up
+    ip link del eth1.20 2>/dev/null || true
+    ip link add link eth1 name eth1.20 type vlan id 20
+    ip addr flush dev eth1.20
+    ip addr add 192.168.120.50/24 dev eth1.20
+    ip link set eth1.20 up
+    ip route del default via 192.168.20.254 2>/dev/null || true
+    ip route add default via 192.168.120.254
     SHELL
   end
 end

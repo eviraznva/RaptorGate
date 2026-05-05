@@ -22,13 +22,18 @@ use crate::{
     ml::{MlPacketInspector, MlPrediction},
     packet_validator::validate,
     pipeline::{Stage, StageOutcome},
-    policy::provider::DiskPolicyProvider,
+    policy::engine::PolicyEngine,
     rule_tree::{ArrivalInfo, Verdict},
+    zones::{
+        provider::ZoneInterfaceProvider, InterfaceStatus, PhysicalInterface, VlanSubinterface,
+        ZoneId, ZoneInterface, ZoneInterfaceId, ZoneInterfaceKind, ZonePairId,
+    },
 };
 
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 use crate::dpi::AppProto;
+use crate::interfaces::InterfaceMonitor;
 use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext};
 
 #[derive(Clone)]
@@ -74,6 +79,7 @@ impl Stage for MetricsStage {
 #[derive(Clone)]
 pub struct LocalOwnershipStage {
     pub config_provider: Arc<AppConfigProvider>,
+    pub zone_interface_provider: Arc<ZoneInterfaceProvider>,
     pub local_ips: Arc<HashSet<IpAddr>>,
 }
 
@@ -93,7 +99,7 @@ impl Stage for LocalOwnershipStage {
         }
 
         let config = self.config_provider.get_config();
-        if should_halt_for_tls_redirect(ctx, &config) {
+        if should_halt_for_tls_redirect(ctx, &config, &self.zone_interface_provider) {
             tracing::trace!(
                 dst_ip = %dst_ip,
                 iface = %ctx.borrow_src_interface(),
@@ -114,19 +120,20 @@ fn packet_destination_ip(ctx: &PacketContext) -> Option<IpAddr> {
     }
 }
 
-fn should_halt_for_tls_redirect(ctx: &PacketContext, config: &AppConfig) -> bool {
+fn should_halt_for_tls_redirect(
+    ctx: &PacketContext,
+    config: &AppConfig,
+    zone_interface_provider: &ZoneInterfaceProvider,
+) -> bool {
     if !config.ssl_inspection_enabled {
         return false;
     }
-
-    if !config
-        .capture_interfaces
-        .iter()
-        .any(|iface| iface.as_str() == ctx.borrow_src_interface().as_ref())
+    if !zone_interface_provider
+        .get_zone_interface_by_name(ctx.borrow_src_interface().as_ref())
+        .is_some_and(|(_, zi)| zi.sniffed)
     {
         return false;
     }
-
     matches!(
         &ctx.borrow_sliced_packet().transport,
         Some(TransportSlice::Tcp(tcp))
@@ -168,11 +175,13 @@ impl Stage for NatPreroutingStage {
 }
 
 #[derive(Clone)]
-pub struct NatPostroutingStage {
+pub struct NatPostroutingStage<M: InterfaceMonitor> {
     pub engine: Arc<Mutex<NatEngine>>,
+    pub routing_table: Arc<crate::netlink::routing_table::RoutingTable>,
+    pub interface_monitor: Arc<M>,
 }
 
-impl Stage for NatPostroutingStage {
+impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
         !packet_is_decrypted(ctx)
     }
@@ -184,7 +193,11 @@ impl Stage for NatPostroutingStage {
             _ => return StageOutcome::Continue,
         };
 
-        let Some(out_iface) = infer_out_interface(dst_ip) else {
+        let Some(out_iface_idx) = self.routing_table.route_lookup(dst_ip) else {
+            return StageOutcome::Continue;
+        };
+
+        let Some(out_iface_sys) = self.interface_monitor.get_by_index(out_iface_idx) else {
             return StageOutcome::Continue;
         };
 
@@ -196,7 +209,7 @@ impl Stage for NatPostroutingStage {
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        engine.process_postrouting(raw_mut, out_iface, None);
+        engine.process_postrouting(raw_mut, &out_iface_sys.name, None);
         StageOutcome::Continue
     }
 }
@@ -269,17 +282,7 @@ impl Stage for FtpAlgStage {
     }
 }
 
-// FIXME: no ale nie hardcodujemy tego pany, to czeba sie kernela pytac
-// Kiedyś się zaimplementuje
-fn infer_out_interface(dst_ip: IpAddr) -> Option<&'static str> {
-    match dst_ip {
-        IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 10] => Some("eth1"),
-        IpAddr::V4(ip) if ip.octets()[0..3] == [192, 168, 20] => Some("eth2"),
-        IpAddr::V6(ip) if ip.segments()[0] == 0xfd10 => Some("eth1"),
-        IpAddr::V6(ip) if ip.segments()[0] == 0xfd20 => Some("eth2"),
-        _ => None,
-    }
-}
+
 
 /// Stage sprawdzający blocklist DNS.
 ///
@@ -579,22 +582,45 @@ fn emit_ml_threat_detected(ctx: &PacketContext, prediction: &MlPrediction) {
 /// dla pakietów DNS wywołuje walidację DNSSEC w `spawn_blocking` (blokujące I/O
 /// sieciowe nie może odbywać się bezpośrednio w kontekście async).
 #[derive(Clone)]
-pub struct PolicyEvalStage {
-    pub provider: Arc<DiskPolicyProvider>,
+pub struct PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneResolver {
+    pub policy_engine: Arc<PolicyEngine>,
+    pub zone_resolver: Arc<ZR>,
     /// Opcjonalny dostawca DNSSEC — wstrzykiwany z `DnsInspection`.
     pub dnssec: Option<Arc<dyn DnssecProvider>>,
 }
 
-impl Stage for PolicyEvalStage {
+impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneResolver {
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
         let arrival = ArrivalInfo::from_time(ctx.borrow_arrival_time());
 
-        // Wyznacz status DNSSEC dla pakietów DNS (leniwie, przez spawn_blocking).
+        let dst_ip = match &ctx.borrow_sliced_packet().net {
+            Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
+            Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
+            _ => return StageOutcome::Continue,
+        };
+
+        let pair = self.zone_resolver.resolve(ctx.borrow_src_interface(), dst_ip);
+        
+        let pair_id = match pair {
+            Some(ref p) => &p.id,
+            None => {
+                log_packet_decision(
+                    ctx,
+                    "policy.packet.dropped",
+                    "policy_eval",
+                    "drop",
+                    "no matching zone pair found, zones: ",
+
+                );
+                return StageOutcome::Halt;
+            }
+        };
+
         let dnssec_status = if let Some(provider) = &self.dnssec {
             let is_dns = ctx
                 .borrow_dpi_ctx()
                 .as_ref()
-                .map_or(false, |d| d.app_proto == Some(AppProto::Dns));
+                .is_some_and(|d| d.app_proto == Some(AppProto::Dns));
 
             if is_dns {
                 let domain = ctx
@@ -608,8 +634,6 @@ impl Stage for PolicyEvalStage {
                     tokio::task::spawn_blocking(move || p.check_domain(&domain, qtype).status)
                         .await
                         .ok()
-                        .map(Some)
-                        .unwrap_or(None)
                 } else {
                     None
                 }
@@ -624,7 +648,7 @@ impl Stage for PolicyEvalStage {
             dnssec_status: Some(status),
         });
 
-        let verdict = self.provider.get_evaluator().evaluate(PolicyEvalContext {
+        let verdict = self.policy_engine.evaluate(pair_id, PolicyEvalContext {
             packet: ctx.borrow_sliced_packet(),
             arrival: &arrival,
             dns: dns_ctx.as_ref(),
@@ -632,8 +656,8 @@ impl Stage for PolicyEvalStage {
         });
 
         match verdict {
-            Verdict::Allow => StageOutcome::Continue,
-            Verdict::Drop => {
+            Some(Verdict::Allow) => StageOutcome::Continue,
+            Some(Verdict::Drop) => {
                 log_packet_decision(
                     ctx,
                     "policy.packet.dropped",
@@ -643,7 +667,7 @@ impl Stage for PolicyEvalStage {
                 );
                 StageOutcome::Halt
             }
-            Verdict::AllowWarn(msg) => {
+            Some(Verdict::AllowWarn(msg)) => {
                 log_packet_decision(
                     ctx,
                     "policy.packet.allowed_with_warning",
@@ -651,10 +675,11 @@ impl Stage for PolicyEvalStage {
                     "allow_warn",
                     &msg,
                 );
-                ctx.with_warnings_mut(|w| w.push(msg));
+                ctx.with_warnings_mut(|w| w.push(msg.clone()));
+                events::emit(Event::new(EventKind::PolicyWarning { message: msg, verdict: "allow" }));
                 StageOutcome::Continue
             }
-            Verdict::DropWarn(msg) => {
+            Some(Verdict::DropWarn(msg)) => {
                 log_packet_decision(
                     ctx,
                     "policy.packet.dropped_with_warning",
@@ -662,8 +687,25 @@ impl Stage for PolicyEvalStage {
                     "drop_warn",
                     &msg,
                 );
-                ctx.with_warnings_mut(|w| w.push(msg));
+                ctx.with_warnings_mut(|w| w.push(msg.clone()));
+                events::emit(Event::new(EventKind::PolicyWarning { message: msg, verdict: "drop" }));
                 StageOutcome::Halt
+            }
+            None => {
+                let fallback = pair.map(|p| p.default_policy).unwrap_or(crate::zones::DefaultPolicy::Drop);
+                match fallback {
+                    crate::zones::DefaultPolicy::Allow => StageOutcome::Continue,
+                    _ => {
+                        log_packet_decision(
+                            ctx,
+                            "policy.packet.dropped",
+                            "policy_eval",
+                            "drop",
+                            "no policy or default drop",
+                        );
+                        StageOutcome::Halt
+                    }
+                }
             }
         }
     }
@@ -1089,10 +1131,12 @@ mod tests {
     use super::*;
     use etherparse::PacketBuilder;
     use std::path::PathBuf;
+    use std::collections::HashMap;
+    use uuid::Uuid;
+    use crate::policy::Policy;
 
     fn sample_config() -> AppConfig {
         AppConfig {
-            capture_interfaces: vec!["eth1".into(), "eth2".into()],
             pcap_timeout_ms: 5000,
             tun_device_name: "tun0".into(),
             tun_address: "10.254.254.1".parse().unwrap(),
@@ -1110,6 +1154,31 @@ mod tests {
             tls_inspection_ports: vec![443],
             block_tls_on_undeclared_ports: false,
         }
+    }
+
+    struct TestZoneInterface {
+        id: &'static str,
+        zone_id: &'static str,
+        kind: ZoneInterfaceKind,
+        sniffed: bool,
+    }
+
+    fn test_zone_interface_provider(interfaces: Vec<TestZoneInterface>) -> Arc<ZoneInterfaceProvider> {
+        let mut map = HashMap::new();
+        
+        for iface in interfaces {
+            let id = ZoneInterfaceId::from(Uuid::parse_str(iface.id).unwrap());
+            let zone_interface = ZoneInterface {
+                zone_id: ZoneId::from(Uuid::parse_str(iface.zone_id).unwrap()),
+                kind: iface.kind,
+                status: InterfaceStatus::Active,
+                addresses: vec![],
+                sniffed: iface.sniffed,
+            };
+            map.insert(id, zone_interface);
+        }
+        
+        Arc::new(ZoneInterfaceProvider::new_for_test(map))
     }
 
     fn tcp_context(src: [u8; 4], dst: [u8; 4], dst_port: u16, iface: &str) -> PacketContext {
@@ -1134,36 +1203,217 @@ mod tests {
 
     #[test]
     fn tls_redirect_halts_tcp_443_on_capture_interface() {
+        let provider = test_zone_interface_provider(vec![TestZoneInterface {
+            id: "00000000-0000-0000-0000-000000000001",
+            zone_id: "00000000-0000-0000-0000-000000000002",
+            kind: ZoneInterfaceKind::Physical(PhysicalInterface {
+                interface_name: "eth1".to_string(),
+            }),
+            sniffed: true,
+        }]);
         let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth1");
-        assert!(should_halt_for_tls_redirect(&ctx, &sample_config()));
+        assert!(should_halt_for_tls_redirect(&ctx, &sample_config(), &provider));
+    }
+
+    struct MockZoneResolver(ZonePairId);
+    impl crate::zones::resolver::ZoneResolver for MockZoneResolver {
+        fn resolve(&self, _src: &str, _dst: std::net::IpAddr) -> Option<crate::zones::ResolvedZonePair> {
+            None // Return None to trigger halt in the first test
+        }
     }
 
     #[test]
-    fn tls_redirect_ignores_non_tls_ports() {
-        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 80, "eth1");
-        assert!(!should_halt_for_tls_redirect(&ctx, &sample_config()));
+    fn policy_eval_stage_returns_halt_on_none_evaluator() {
+        let engine = Arc::new(PolicyEngine::from_policies(&HashMap::new(), &HashMap::new()).unwrap());
+        let zp_id = ZonePairId::from(Uuid::now_v7());
+        let stage = PolicyEvalStage {
+            policy_engine: engine,
+            zone_resolver: Arc::new(MockZoneResolver(zp_id)),
+            dnssec: None,
+        };
+
+        let mut ctx = tcp_context([192, 168, 1, 10], [10, 0, 0, 1], 80, "eth1");
+        let outcome = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(stage.process(&mut ctx));
+
+        assert_eq!(outcome, StageOutcome::Halt);
+    }
+
+    #[test]
+    fn policy_eval_stage_maps_allow_verdict() {
+        let zp_id = ZonePairId::from(Uuid::now_v7());
+        let zp = crate::zones::ZonePair {
+            src_zone_id: Uuid::now_v7().into(),
+            dst_zone_id: Uuid::now_v7().into(),
+            default_policy: crate::zones::DefaultPolicy::Drop,
+        };
+
+        let policy = Policy {
+            name: "allow-all".into(),
+            zone_pair_id: zp_id.clone(),
+            priority: 1,
+            rule_tree: crate::rule_tree::RuleTree::new(
+                crate::rule_tree::matcher::MatchBuilder::with_arm(
+                    crate::rule_tree::MatchKind::IpVer,
+                    crate::rule_tree::Pattern::Wildcard,
+                    crate::rule_tree::ArmEnd::Verdict(Verdict::Allow),
+                )
+                .build()
+                .unwrap(),
+            ),
+        };
+
+        let mut policies = HashMap::new();
+        policies.insert(crate::policy::PolicyId::from(Uuid::now_v7()), policy);
+
+        let mut zone_pairs = HashMap::new();
+        zone_pairs.insert(zp_id.clone(), zp);
+
+        let engine = Arc::new(PolicyEngine::from_policies(&policies, &zone_pairs).unwrap());
+        struct MockZoneResolverAllow(ZonePairId);
+        impl crate::zones::resolver::ZoneResolver for MockZoneResolverAllow {
+            fn resolve(&self, _src: &str, _dst: std::net::IpAddr) -> Option<crate::zones::ResolvedZonePair> {
+                Some(crate::zones::ResolvedZonePair {
+                    id: self.0.clone(),
+                    default_policy: crate::zones::DefaultPolicy::Drop,
+                })
+            }
+        }
+
+        let stage = PolicyEvalStage {
+            policy_engine: engine,
+            zone_resolver: Arc::new(MockZoneResolverAllow(zp_id)),
+            dnssec: None,
+        };
+
+        let mut ctx = tcp_context([192, 168, 1, 10], [10, 0, 0, 1], 80, "eth1");
+        let outcome = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(stage.process(&mut ctx));
+
+        assert_eq!(outcome, StageOutcome::Continue);
     }
 
     #[test]
     fn tls_redirect_ignores_unknown_interfaces() {
+        let provider = test_zone_interface_provider(vec![TestZoneInterface {
+            id: "00000000-0000-0000-0000-000000000001",
+            zone_id: "00000000-0000-0000-0000-000000000002",
+            kind: ZoneInterfaceKind::Physical(PhysicalInterface { interface_name: "eth1".to_string(),
+            }),
+            sniffed: true,
+        }]);
         let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth9");
-        assert!(!should_halt_for_tls_redirect(&ctx, &sample_config()));
+        assert!(!should_halt_for_tls_redirect(&ctx, &sample_config(), &provider));
     }
 
     #[test]
     fn tls_redirect_halts_on_custom_inspection_port() {
+        let provider = test_zone_interface_provider(vec![TestZoneInterface {
+            id: "00000000-0000-0000-0000-000000000001",
+            zone_id: "00000000-0000-0000-0000-000000000002",
+            kind: ZoneInterfaceKind::Physical(PhysicalInterface { interface_name: "eth1".to_string(),
+            }),
+            sniffed: true,
+        }]);
         let mut config = sample_config();
         config.tls_inspection_ports = vec![443, 8443];
         let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 8443, "eth1");
-        assert!(should_halt_for_tls_redirect(&ctx, &config));
+        assert!(should_halt_for_tls_redirect(&ctx, &config, &provider));
     }
 
     #[test]
     fn tls_redirect_ignores_port_outside_inspection_list() {
+        let provider = test_zone_interface_provider(vec![TestZoneInterface {
+            id: "00000000-0000-0000-0000-000000000001",
+            zone_id: "00000000-0000-0000-0000-000000000002",
+            kind: ZoneInterfaceKind::Physical(PhysicalInterface { interface_name: "eth1".to_string(),
+            }),
+            sniffed: true,
+        }]);
         let mut config = sample_config();
         config.tls_inspection_ports = vec![443];
         let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 8443, "eth1");
-        assert!(!should_halt_for_tls_redirect(&ctx, &config));
+        assert!(!should_halt_for_tls_redirect(&ctx, &config, &provider));
+    }
+
+    #[test]
+    fn should_halt_returns_true_for_sniffed_interface() {
+        let provider = test_zone_interface_provider(vec![TestZoneInterface {
+            id: "00000000-0000-0000-0000-000000000001",
+            zone_id: "00000000-0000-0000-0000-000000000002",
+            kind: ZoneInterfaceKind::Physical(PhysicalInterface { interface_name: "eth0".to_string(),
+            }),
+            sniffed: true,
+        }]);
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth0");
+        assert!(should_halt_for_tls_redirect(&ctx, &sample_config(), &provider));
+    }
+
+    #[test]
+    fn should_halt_returns_false_for_unsniffed_interface() {
+        let provider = test_zone_interface_provider(vec![TestZoneInterface {
+            id: "00000000-0000-0000-0000-000000000001",
+            zone_id: "00000000-0000-0000-0000-000000000002",
+            kind: ZoneInterfaceKind::Physical(PhysicalInterface { interface_name: "eth0".to_string(),
+            }),
+            sniffed: false,
+        }]);
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth0");
+        assert!(!should_halt_for_tls_redirect(&ctx, &sample_config(), &provider));
+    }
+
+    #[test]
+    fn should_halt_returns_false_for_unknown_interface() {
+        let provider = test_zone_interface_provider(vec![TestZoneInterface {
+            id: "00000000-0000-0000-0000-000000000001",
+            zone_id: "00000000-0000-0000-0000-000000000002",
+            kind: ZoneInterfaceKind::Physical(PhysicalInterface { interface_name: "eth0".to_string(),
+            }),
+            sniffed: true,
+        }]);
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth9");
+        assert!(!should_halt_for_tls_redirect(&ctx, &sample_config(), &provider));
+    }
+
+    #[test]
+    fn should_halt_vlan_uses_derived_name() {
+        let provider = test_zone_interface_provider(vec![
+            TestZoneInterface {
+                id: "00000000-0000-0000-0000-000000000001",
+                zone_id: "00000000-0000-0000-0000-000000000002",
+                kind: ZoneInterfaceKind::Physical(PhysicalInterface { interface_name: "eth0".to_string(),
+            }),
+                sniffed: false,
+            },
+            TestZoneInterface {
+                id: "00000000-0000-0000-0000-000000000003",
+                zone_id: "00000000-0000-0000-0000-000000000002",
+                kind: ZoneInterfaceKind::Vlan(VlanSubinterface {
+                    parent_interface_id: ZoneInterfaceId::from(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()),
+                    vlan_id: crate::zones::VlanId::try_from(100).unwrap(),
+                }),
+                sniffed: true,
+            },
+        ]);
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth0.100");
+        assert!(should_halt_for_tls_redirect(&ctx, &sample_config(), &provider));
+    }
+
+    #[test]
+    fn should_halt_false_when_ssl_inspection_disabled() {
+        let provider = test_zone_interface_provider(vec![TestZoneInterface {
+            id: "00000000-0000-0000-0000-000000000001",
+            zone_id: "00000000-0000-0000-0000-000000000002",
+            kind: ZoneInterfaceKind::Physical(PhysicalInterface { interface_name: "eth0".to_string(),
+            }),
+            sniffed: true,
+        }]);
+        let mut config = sample_config();
+        config.ssl_inspection_enabled = false;
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 443, "eth0");
+        assert!(!should_halt_for_tls_redirect(&ctx, &config, &provider));
     }
 
     #[test]
