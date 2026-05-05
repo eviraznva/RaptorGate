@@ -129,6 +129,7 @@ def build(
 @click.option("--loss", "loss_name", type=click.Choice(["weighted_ce", "focal"]), default="weighted_ce")
 @click.option("--focal-gamma", type=float, default=2.0)
 @click.option("--amp/--no-amp", default=True)
+@click.option("--attack-confidence-threshold", type=click.FloatRange(0.0, 1.0), default=0.5)
 def train(
     train_path: Path,
     test_path: Path | None,
@@ -145,6 +146,7 @@ def train(
     loss_name: str,
     focal_gamma: float,
     amp: bool,
+    attack_confidence_threshold: float,
 ) -> None:
     """Train an ONNX traffic classifier from feature Parquet."""
     if epochs < 1:
@@ -180,6 +182,7 @@ def train(
                 loss=loss_name,
                 focal_gamma=focal_gamma,
                 amp=amp,
+                attack_confidence_threshold=attack_confidence_threshold,
             ),
             log=click.echo,
         )

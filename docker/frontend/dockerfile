@@ -8,6 +8,8 @@ RUN bun install --frozen-lockfile
 COPY frontend ./
 
 ENV RAPTOR_GATE_API_URL=/api
+ENV RAPTOR_GATE_METRICS_WS_URL=
+ENV RAPTOR_GATE_ALERTS_WS_URL=
 RUN bun run build
 
 FROM alpine:3.19 AS runtime

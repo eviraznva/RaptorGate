@@ -9,6 +9,7 @@ import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interfac
 import { ConfigSnapshotDiffService } from '../application/services/config-snapshot-diff.service.js';
 import { ApplyConfigSnapshotUseCase } from '../application/use-cases/apply-config-snapshot.use-case.js';
 import { ExportConfigUseCase } from '../application/use-cases/export-config.use-case.js';
+import { FactoryResetUseCase } from '../application/use-cases/factory-reset.use-case.js';
 import { GetConfigDiffUseCase } from '../application/use-cases/get-config-diff.use-case.js';
 import { GetConfigHistoryUseCase } from '../application/use-cases/get-config-history.use-case.js';
 import { ImportConfigUseCase } from '../application/use-cases/import-config.use-case.js';
@@ -24,6 +25,7 @@ import { RULES_REPOSITORY_TOKEN } from '../domain/repositories/rules-repository.
 import { USER_REPOSITORY_TOKEN } from '../domain/repositories/user.repository.js';
 import { USER_ROLES_REPOSITORY_TOKEN } from '../domain/repositories/user-roles.repository.js';
 import { ZONE_REPOSITORY_TOKEN } from '../domain/repositories/zone.repository.js';
+import { ZONE_INTERFACE_REPOSITORY_TOKEN } from '../domain/repositories/zone-interface.repository.js';
 import { ZONE_PAIR_REPOSITORY_TOKEN } from '../domain/repositories/zone-pair.repository.js';
 import {
   CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN,
@@ -46,6 +48,7 @@ import { JsonRolePermissionsRepository } from '../infrastructure/persistence/rep
 import { JsonRuleRepository } from '../infrastructure/persistence/repositories/json-rule.repository.js';
 import { JsonUserRepository } from '../infrastructure/persistence/repositories/json-user.repository.js';
 import { JsonUserRoleRepository } from '../infrastructure/persistence/repositories/json-user-role.repository.js';
+import { JsonZoneInterfaceRepository } from '../infrastructure/persistence/repositories/json-zone-interface.repository.js';
 import { JsonZoneRepository } from '../infrastructure/persistence/repositories/json-zone.repository.js';
 import { JsonZonePairRepository } from '../infrastructure/persistence/repositories/json-zone-pair.repository.js';
 import { ConfigController } from '../presentation/controllers/config.controller.js';
@@ -148,6 +151,7 @@ import { Env } from '../shared/config/env.validation.js';
     RollbackConfigUseCase,
     ExportConfigUseCase,
     ImportConfigUseCase,
+    FactoryResetUseCase,
     ConfigSnapshotDiffService,
     GrpcConfigSnapshotPushService,
     FileStore,
@@ -187,6 +191,10 @@ import { Env } from '../shared/config/env.validation.js';
     {
       provide: ZONE_REPOSITORY_TOKEN,
       useClass: JsonZoneRepository,
+    },
+    {
+      provide: ZONE_INTERFACE_REPOSITORY_TOKEN,
+      useClass: JsonZoneInterfaceRepository,
     },
     {
       provide: FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,

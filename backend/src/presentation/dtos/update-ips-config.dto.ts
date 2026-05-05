@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsIn,
   IsNumber,
+  IsOptional,
   IsString,
   Max,
   Min,
@@ -63,6 +64,14 @@ const IPS_APP_PROTOCOLS: IpsAppProtocol[] = [
   "quic",
   "unknown",
 ];
+
+export type IpsMatchType = "literal" | "regex";
+
+const IPS_MATCH_TYPES: IpsMatchType[] = ["literal", "regex"];
+
+export type IpsPatternEncoding = "text" | "hex";
+
+const IPS_PATTERN_ENCODINGS: IpsPatternEncoding[] = ["text", "hex"];
 
 export class IpsGeneralConfig {
   @ApiProperty({
@@ -135,6 +144,35 @@ export class IpsSignatureConfigDto {
   pattern: string;
 
   @ApiProperty({
+    enum: IPS_MATCH_TYPES,
+    description: "Typ dopasowania wzorca",
+    example: "regex",
+    default: "regex",
+  })
+  @IsOptional()
+  @IsIn(IPS_MATCH_TYPES)
+  matchType: IpsMatchType = "regex";
+
+  @ApiProperty({
+    enum: IPS_PATTERN_ENCODINGS,
+    description: "Kodowanie wzorca",
+    example: "text",
+    default: "text",
+  })
+  @IsOptional()
+  @IsIn(IPS_PATTERN_ENCODINGS)
+  patternEncoding: IpsPatternEncoding = "text";
+
+  @ApiProperty({
+    description: "Czy dopasowanie tekstowe ma ignorować wielkość liter",
+    example: false,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  caseInsensitive: boolean = false;
+
+  @ApiProperty({
     enum: IPS_SEVERITIES,
     description: "Poziom krytyczności sygnatury",
     example: "high",
@@ -167,7 +205,7 @@ export class IpsSignatureConfigDto {
   })
   @IsArray()
   @IsNumber({}, { each: true })
-  @Min(0, { each: true })
+  @Min(1, { each: true })
   @Max(65535, { each: true })
   srcPorts: number[];
 
@@ -178,7 +216,7 @@ export class IpsSignatureConfigDto {
   })
   @IsArray()
   @IsNumber({}, { each: true })
-  @Min(0, { each: true })
+  @Min(1, { each: true })
   @Max(65535, { each: true })
   dstPorts: number[];
 }

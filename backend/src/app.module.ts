@@ -19,6 +19,7 @@ import { PinningModule } from "./modules/pinning.module.js";
 import { RealtimeModule } from "./modules/realtime.module.js";
 import { RulesModule } from "./modules/rules.module.js";
 import { SslModule } from "./modules/ssl.module.js";
+import { TcpSessionsModule } from "./modules/tcp-sessions.module.js";
 import { UserModule } from "./modules/user.module.js";
 import { ZoneModule } from "./modules/zone.module.js";
 import { ZonePairsModule } from "./modules/zone-pairs.module.js";
@@ -53,6 +54,7 @@ import { validate } from "./shared/config/env.validation.js";
     ZoneModule,
     NatModule,
     PinningModule,
+    TcpSessionsModule,
     SslModule,
   ],
   controllers: [AppController],

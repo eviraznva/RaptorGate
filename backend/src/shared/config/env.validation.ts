@@ -38,6 +38,8 @@ const envSchema = z.object({
       return val;
     })
     .default([]),
+  METRICS_WS_PORT: z.coerce.number().positive().default(2000),
+  ALERTS_WS_PORT: z.coerce.number().positive().default(2001),
 });
 
 export type Env = z.infer<typeof envSchema>;

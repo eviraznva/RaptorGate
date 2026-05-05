@@ -8,6 +8,14 @@ import {
   IpsAppProtocolType,
 } from "src/domain/value-objects/ips-app-protocol.vo";
 import {
+  IpsMatchType,
+  IpsMatchTypeType,
+} from "src/domain/value-objects/ips-match-type.vo";
+import {
+  IpsPatternEncoding,
+  IpsPatternEncodingType,
+} from "src/domain/value-objects/ips-pattern-encoding.vo";
+import {
   SignatureSeverity,
   SignatureSeverityType,
 } from "src/domain/value-objects/signature-severity.vo";
@@ -73,6 +81,26 @@ export function mapProtocolToDto(vo: IpsAppProtocol): IpsDto.IpsAppProtocol {
   }
 }
 
+export function mapMatchTypeToDto(vo: IpsMatchType): IpsDto.IpsMatchType {
+  switch (vo.getValue()) {
+    case "IPS_MATCH_TYPE_LITERAL":
+      return "literal";
+    case "IPS_MATCH_TYPE_REGEX":
+      return "regex";
+  }
+}
+
+export function mapPatternEncodingToDto(
+  vo: IpsPatternEncoding,
+): IpsDto.IpsPatternEncoding {
+  switch (vo.getValue()) {
+    case "IPS_PATTERN_ENCODING_TEXT":
+      return "text";
+    case "IPS_PATTERN_ENCODING_HEX":
+      return "hex";
+  }
+}
+
 export function mapSeverityFromDtoValue(
   dto: IpsDto.IpsSeverity,
 ): SignatureSeverityType {
@@ -135,6 +163,30 @@ export function mapProtocolFromDtoValue(
   }
 }
 
+export function mapMatchTypeFromDtoValue(
+  dto: IpsDto.IpsMatchType | undefined,
+): IpsMatchTypeType {
+  switch (dto) {
+    case "literal":
+      return "IPS_MATCH_TYPE_LITERAL";
+    case "regex":
+    default:
+      return "IPS_MATCH_TYPE_REGEX";
+  }
+}
+
+export function mapPatternEncodingFromDtoValue(
+  dto: IpsDto.IpsPatternEncoding | undefined,
+): IpsPatternEncodingType {
+  switch (dto) {
+    case "hex":
+      return "IPS_PATTERN_ENCODING_HEX";
+    case "text":
+    default:
+      return "IPS_PATTERN_ENCODING_TEXT";
+  }
+}
+
 export class IpsConfigResponseMapper {
   constructor() {}
 
@@ -149,6 +201,11 @@ export class IpsConfigResponseMapper {
           enabled: signature.getIsActive(),
           category: signature.getCategory().getValue(),
           pattern: signature.getPattern().getValue(),
+          matchType: mapMatchTypeToDto(signature.getMatchType()),
+          patternEncoding: mapPatternEncodingToDto(
+            signature.getPatternEncoding(),
+          ),
+          caseInsensitive: signature.getCaseInsensitive(),
           severity: mapSeverityToDto(signature.getSeverity()),
           action: mapActionToDto(signature.getAction()),
           appProtocols: signature

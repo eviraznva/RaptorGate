@@ -1,18 +1,39 @@
+export type ZoneInterfaceStatus =
+  | "unspecified"
+  | "active"
+  | "inactive"
+  | "missing"
+  | "unknown";
+
 export class ZoneInterface {
   private constructor(
     private readonly id: string,
+    private readonly zoneId: string,
     private interfaceName: string,
-    private vlanId: number,
+    private vlanId: number | null,
+    private status: ZoneInterfaceStatus,
+    private addresses: string[],
     private readonly createdAt: Date,
   ) {}
 
   public static create(
     id: string,
+    zoneId: string,
     interfaceName: string,
-    vlanId: number,
+    vlanId: number | null,
+    status: ZoneInterfaceStatus,
+    addresses: string[],
     createdAt: Date,
   ): ZoneInterface {
-    return new ZoneInterface(id, interfaceName, vlanId, createdAt);
+    return new ZoneInterface(
+      id,
+      zoneId,
+      interfaceName,
+      vlanId,
+      status,
+      addresses,
+      createdAt,
+    );
   }
 
   public getId(): string {
@@ -23,11 +44,23 @@ export class ZoneInterface {
     return this.interfaceName;
   }
 
-  public getVlanId(): number {
+  public getVlanId(): number | null {
     return this.vlanId;
+  }
+
+  public getStatus(): ZoneInterfaceStatus {
+    return this.status;
+  }
+
+  public getZoneId(): string {
+    return this.zoneId;
   }
 
   public getCreatedAt(): Date {
     return this.createdAt;
+  }
+
+  public getAddresses(): string[] {
+    return this.addresses;
   }
 }

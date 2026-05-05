@@ -7,6 +7,8 @@ import {
 } from "src/domain/repositories/ips-config.repository";
 import { IpsAction } from "src/domain/value-objects/ips-action.vo";
 import { IpsAppProtocol } from "src/domain/value-objects/ips-app-protocol.vo";
+import { IpsMatchType } from "src/domain/value-objects/ips-match-type.vo";
+import { IpsPatternEncoding } from "src/domain/value-objects/ips-pattern-encoding.vo";
 import { Port } from "src/domain/value-objects/port.vo";
 import { RegexPattern } from "src/domain/value-objects/regex-pattern.vo";
 import { SignatureCategory } from "src/domain/value-objects/signature-category.vo";
@@ -17,6 +19,26 @@ import {
   FIREWALL_IPS_CONFIG_QUERY_SERVICE_TOKEN,
   type IFirewallIpsConfigQueryService,
 } from "../ports/firewall-ips-config-query-service.interface";
+
+function toDomainMatchType(matchType: string | undefined): string {
+  switch (matchType) {
+    case "literal":
+      return "IPS_MATCH_TYPE_LITERAL";
+    case "regex":
+    default:
+      return "IPS_MATCH_TYPE_REGEX";
+  }
+}
+
+function toDomainPatternEncoding(patternEncoding: string | undefined): string {
+  switch (patternEncoding) {
+    case "hex":
+      return "IPS_PATTERN_ENCODING_HEX";
+    case "text":
+    default:
+      return "IPS_PATTERN_ENCODING_TEXT";
+  }
+}
 
 @Injectable()
 export class UpdateIpsConfigUseCase {
@@ -40,6 +62,11 @@ export class UpdateIpsConfigUseCase {
           signature.enabled,
           SignatureCategory.create(signature.category),
           RegexPattern.create(signature.pattern),
+          IpsMatchType.create(toDomainMatchType(signature.matchType)),
+          IpsPatternEncoding.create(
+            toDomainPatternEncoding(signature.patternEncoding),
+          ),
+          signature.caseInsensitive ?? false,
           SignatureSeverity.create(signature.severity),
           IpsAction.create(signature.action),
           signature.appProtocols.map((appProtocol) =>

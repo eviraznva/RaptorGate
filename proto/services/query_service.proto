@@ -39,7 +39,32 @@ service FirewallQueryService {
 }
 
 message GetTcpSessionsRequest {}
-message GetTcpSessionsResponse {}
+message GetTcpSessionsResponse {
+  repeated TcpTrackedSession sessions = 1;
+}
+
+message TcpSessionEndpoint {
+  string ip = 1;
+  uint32 port = 2;
+}
+
+message TcpTrackedSession {
+  TcpSessionEndpoint endpoint_a = 1;
+  TcpSessionEndpoint endpoint_b = 2;
+  TcpTrackedSessionState state = 3;
+}
+
+enum TcpTrackedSessionState {
+  TCP_TRACKED_SESSION_STATE_UNSPECIFIED = 0;
+  TCP_TRACKED_SESSION_STATE_SYN_SENT = 1;
+  TCP_TRACKED_SESSION_STATE_SYN_ACK_RECEIVED = 2;
+  TCP_TRACKED_SESSION_STATE_ESTABLISHED = 3;
+  TCP_TRACKED_SESSION_STATE_FIN_SENT = 4;
+  TCP_TRACKED_SESSION_STATE_ACK_SENT = 5;
+  TCP_TRACKED_SESSION_STATE_ACK_FIN_SENT = 6;
+  TCP_TRACKED_SESSION_STATE_TIME_WAIT = 7;
+  TCP_TRACKED_SESSION_STATE_CLOSED = 8;
+}
 
 message GetPoliciesRequest {}
 message GetPoliciesResponse {

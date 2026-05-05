@@ -7,12 +7,12 @@ use uuid::Uuid;
 
 use crate::{
     config::{AppConfig, ConfigObserver},
-    disk_store::ListDiskStore,
+    disk_store::{ListDiskStore, SavedProperty},
     interfaces::{InterfaceMonitor, OperState},
     swapper::Swapper,
     zones::{
-        DefaultPolicy, InterfaceStatus, Zone, ZoneId, ZoneInterface, ZoneInterfaceId, ZonePair,
-        ZonePairId,
+        DefaultPolicy, InterfaceStatus, PhysicalInterface, Zone, ZoneId, ZoneInterface,
+        ZoneInterfaceId, ZoneInterfaceKind, ZonePair, ZonePairId,
     },
 };
 
@@ -157,6 +157,73 @@ impl ZoneInterfaceProvider {
         tracing::info!("no zone interfaces found on disk, initializing empty");
         let name_index = ArcSwap::new(Arc::new(HashMap::new()));
         Self { swapper: Swapper::new(HashMap::new(), store), name_index }
+    }
+
+    pub async fn collect<M: InterfaceMonitor>(config: &AppConfig, monitor: &M) -> Self {
+        let store: ListDiskStore<ZoneInterface> =
+            ListDiskStore::new("zone_interfaces", config.data_dir.clone());
+
+        let mut loaded_items: HashMap<ZoneInterfaceId, ZoneInterface> =
+            if let Ok(loaded) = store.load().await {
+                #[allow(clippy::from_iter_instead_of_collect)]
+                HashMap::from_iter(loaded.into_iter().map(|prop| (prop.id.into(), prop.contents)))
+            } else {
+                tracing::info!("no zone interfaces found on disk, initializing empty");
+                HashMap::new()
+            };
+
+        let system_interfaces = monitor.snapshot();
+        let mut changes_made = false;
+
+        for (name, sys_iface) in system_interfaces {
+            let exists = loaded_items
+                .iter()
+                .any(|(id, _)| crate::zones::resolve_os_name(&loaded_items, id).as_deref() == Some(name.as_str()));
+            if !exists {
+                let id = ZoneInterfaceId(Uuid::now_v7());
+                let new_zone_interface = ZoneInterface {
+                    zone_id: Uuid::nil().into(),
+                    kind: ZoneInterfaceKind::Physical(PhysicalInterface {
+                        interface_name: name.clone(),
+                    }),
+                    status: match sys_iface.oper_state {
+                        OperState::Up => InterfaceStatus::Active,
+                        OperState::Down => InterfaceStatus::Inactive,
+                        OperState::Unknown => InterfaceStatus::Unknown,
+                    },
+                    addresses: sys_iface
+                        .addresses
+                        .into_iter()
+                        .map(|a| a.to_string())
+                        .collect(),
+                    sniffed: false,
+                };
+
+                tracing::info!(
+                    interface = %name,
+                    "Discovered new system interface, adding to zone interfaces"
+                );
+                loaded_items.insert(id, new_zone_interface);
+                changes_made = true;
+            }
+        }
+
+        if changes_made {
+            let items_to_save: Vec<SavedProperty<ZoneInterface>> = loaded_items
+                .iter()
+                .map(|(id, contents)| SavedProperty {
+                    id: id.clone().into(),
+                    contents: contents.clone(),
+                })
+                .collect();
+
+            if let Err(e) = store.save(items_to_save).await {
+                tracing::error!("Failed to save collected zone interfaces: {}", e);
+            }
+        }
+
+        let name_index = ArcSwap::new(Arc::new(build_name_index(&loaded_items)));
+        Self { swapper: Swapper::new(loaded_items, store), name_index }
     }
 
     pub async fn swap_zone_interfaces(&self, new: Vec<(ZoneInterfaceId, ZoneInterface)>) -> Result<(), Error> {

@@ -4,6 +4,8 @@ import { RpcException } from '@nestjs/microservices';
 import { GetActiveConfigUseCase } from '../../application/use-cases/get-active-config.use-case.js';
 import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import {
+  FactoryResetRequest,
+  FactoryResetResponse,
   FirewallConfigSnapshotServiceController,
   FirewallConfigSnapshotServiceControllerMethods,
   PushActiveConfigSnapshotRequest,
@@ -31,6 +33,24 @@ export class RaptorGateController implements FirewallConfigSnapshotServiceContro
     @Inject(GetActiveConfigUseCase)
     private readonly getActiveConfigUseCase: GetActiveConfigUseCase,
   ) {}
+
+  factoryReset(request: FactoryResetRequest): FactoryResetResponse {
+    const correlationId = this.normalize(request.correlationId);
+
+    this.logger.warn(
+      `[FactoryReset] rejected on backend gRPC controller correlationId=${correlationId} reason=${this.normalize(request.reason)}`,
+    );
+
+    return {
+      correlationId,
+      accepted: false,
+      message: 'Factory reset must be executed by firewall gRPC service',
+      safeStateApplied: false,
+      removedServerKeys: 0,
+      removedServerKeyFiles: 0,
+      removedCaFiles: 0,
+    };
+  }
 
   async pushActiveConfigSnapshot(
     request: PushActiveConfigSnapshotRequest,

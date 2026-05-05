@@ -16,11 +16,11 @@ use ngfw::proto::config::{InterfaceStatus, Rule, Zone, ZoneInterface, ZonePair};
 use ngfw::proto::services::firewall_config_snapshot_service_client::FirewallConfigSnapshotServiceClient;
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::proto::services::{
-    ActiveConfigSnapshot, ConfigBundle, GetConfigRequest, GetIpsConfigRequest,
+    ActiveConfigSnapshot, ConfigBundle, FactoryResetRequest, GetConfigRequest, GetIpsConfigRequest,
     GetLiveZoneInterfacesRequest, GetNatConfigRequest, GetPinningBypassRequest,
     GetPinningStatsRequest, GetPoliciesRequest, GetZoneInterfaceRequest,
     GetZoneInterfacesRequest, GetZonePairsRequest, GetZonesRequest,
-    PushActiveConfigSnapshotRequest, SwapConfigRequest, SwapIpsConfigRequest,
+    GetTcpSessionsRequest, PushActiveConfigSnapshotRequest, SwapConfigRequest, SwapIpsConfigRequest,
     SwapNatConfigRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
@@ -138,7 +138,8 @@ fn shared_server() -> &'static SharedServer {
                     .expect("failed to load policy provider");
                 let zones = ZoneProvider::from_disk(&config).await;
                 let zone_pairs = ZonePairProvider::from_disk(&config).await;
-                let zone_interfaces = ZoneInterfaceProvider::from_disk(&config).await;
+                let interface_monitor = Arc::new(StaticInterfaceMonitor::new());
+                let zone_interfaces = ZoneInterfaceProvider::collect(&config, &*interface_monitor).await;
                 let dns_inspection_store =
                     Arc::new(DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await);
                 let dns_initial_config = dns_inspection_store.get_config().clone();
@@ -157,7 +158,6 @@ fn shared_server() -> &'static SharedServer {
                     EchTlsPolicy::default(),
                     PinningConfig::default(),
                 ));
-                let interface_monitor = Arc::new(StaticInterfaceMonitor::new());
                 let interface_controller = Arc::new(
                     NetlinkInterfaceController::new().expect("failed to init interface controller"),
                 );
@@ -195,6 +195,8 @@ fn shared_server() -> &'static SharedServer {
                     interface_controller,
                     vlan_reconciler,
                     interface_sniffer,
+                    metrics_collector: Arc::new(ngfw::metrics::MetricsCollector::new()),
+                    reset_lock: Arc::new(Mutex::new(())),
                 };
 
                 let socket = "/tmp/test-query-shared.sock".to_string();
@@ -401,6 +403,19 @@ async fn push_active_config_snapshot_raptorlang_error() {
 }
 
 #[tokio::test]
+async fn get_tcp_sessions_returns_empty_tracker_sessions() {
+    let mut query_client = connect(&shared_server().socket).await;
+
+    let resp = query_client
+        .get_tcp_sessions(GetTcpSessionsRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(resp.sessions.is_empty());
+}
+
+#[tokio::test]
 #[serial(snapshot_bundle, nat_config)]
 async fn fetch_policies_returns_ok() {
     let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
@@ -428,6 +443,54 @@ async fn fetch_policies_returns_ok() {
         expected_rule_name,
         inner.rules.iter().map(|r| &r.name).collect::<Vec<_>>()
     );
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle, nat_config)]
+async fn factory_reset_restores_safe_defaults() {
+    let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
+    let mut query_client = connect(&shared_server().socket).await;
+    let valid = create_valid_bundle(
+        "factory_reset_rule",
+        "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }",
+    );
+    let (request, _, _) = create_snapshot_request(valid.bundle);
+
+    let push_response = snapshot_client
+        .push_active_config_snapshot(request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(push_response.accepted);
+
+    let reset_response = snapshot_client
+        .factory_reset(FactoryResetRequest {
+            correlation_id: Uuid::now_v7().to_string(),
+            reason: "test".into(),
+            clear_pki: Some(false),
+            clear_server_keys: Some(true),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(reset_response.accepted);
+    assert!(reset_response.safe_state_applied);
+
+    let policies = query_client
+        .get_policies(GetPoliciesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(policies.rules.len(), 1);
+    assert_eq!(policies.rules[0].name, "Default policy");
+
+    let nat = query_client
+        .get_nat_config(GetNatConfigRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(nat.config.unwrap().items.is_empty());
 }
 
 #[tokio::test]

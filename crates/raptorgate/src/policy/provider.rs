@@ -47,6 +47,21 @@ impl PolicyManager for DiskPolicyProvider {
     }
 }
 
+pub fn default_drop_policy() -> anyhow::Result<(PolicyId, Policy)> {
+    let policy = Policy {
+        name: "Default policy".into(),
+        zone_pair_id: Uuid::nil().into(),
+        priority: 0,
+        rule_tree: RuleTree::new(MatchBuilder::with_arm(
+                MatchKind::IpVer,
+                Pattern::Wildcard,
+                ArmEnd::Verdict(Verdict::DropWarn("Using default drop all policy".into())
+                )).build()?)
+    };
+
+    Ok((Uuid::nil().into(), policy))
+}
+
 impl DiskPolicyProvider {
     /// # Panics
     /// if dev config cannot be applied
@@ -78,18 +93,7 @@ impl DiskPolicyProvider {
             return Ok(Self { swapper: Swapper::new(policies, store) })
         }
 
-        let default_policy = Policy {
-            name: "Default policy".into(),
-            zone_pair_id: Uuid::nil().into(),
-            priority: 0,
-            rule_tree: RuleTree::new(MatchBuilder::with_arm(
-                    MatchKind::IpVer,
-                    Pattern::Wildcard,
-                    ArmEnd::Verdict(Verdict::DropWarn("Using default drop all policy".into())
-                    )).build()?)
-        };
-
-        let policies = HashMap::from([(Uuid::nil().into(), default_policy)]);
+        let policies = HashMap::from([default_drop_policy()?]);
 
         tracing::info!("No policies found on disk, using default drop all policy.");
         Ok(Self { swapper: Swapper::new(policies, store)})

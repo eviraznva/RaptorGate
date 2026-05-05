@@ -1,4 +1,4 @@
-export type FirewallEventSource = 'IPS' | 'TLS' | 'DNS' | 'TCP';
+export type FirewallEventSource = 'IPS' | 'TLS' | 'DNS' | 'TCP' | 'ML';
 
 export type FirewallEventDecision =
   | 'decrypt'
@@ -26,4 +26,19 @@ export interface FirewallEvent {
   action?: string;
   interface?: string;
   payload_length?: number;
+  sni?: string;
+  tls_version?: string;
+  domain?: string;
+  reason?: string;
+  stage?: string;
+  mode?: string;
+  direction?: string;
+  blocked?: boolean;
+  log_id?: string;
+  ech_origin?: string;
+  ech_action?: string;
+  ml_score?: number;
+  ml_threshold?: number;
+  model_checksum?: string;
+  attack_type?: string;
 }

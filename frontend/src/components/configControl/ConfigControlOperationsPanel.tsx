@@ -1,15 +1,13 @@
 import { useRef, useState, type ChangeEvent } from "react";
 import type { ConfigSnapshot } from "./types";
-import { useImportConfigMutation, useApplyConfigMutation } from "../../services/config";
+import {
+  useImportConfigMutation,
+  useApplyConfigMutation,
+  useRollbackConfigMutation,
+} from "../../services/config";
 import type { ApiFailure, ApiSuccess } from "../../types/ApiResponse";
 import type { SnapshotType } from "../../types/config/Config";
 import { generateSHA256 } from "../../utils/generateSHA256";
-
-const APPLY_PREVIEW = `{
-  "snapshotType": "manual_import",
-  "isActive": true,
-  "changeSummary": "Applied current running config"
-}`;
 
 const IMPORT_PREVIEW = `{
   "id": "123e4567-e89b-12d3-a456-426614174000",
@@ -35,7 +33,9 @@ const OPERATION_TABS: { key: OperationTab; label: string }[] = [
 type ConfigControlOperationsPanelProps = {
   data: ConfigSnapshot;
   fileName: string;
+  selectedSnapshot: ConfigSnapshot | null;
   onExport: (data: ConfigSnapshot, fileName: string) => void;
+  onRollbackSuccess: (snapshot: ConfigSnapshot) => void;
 };
 
 export default function ConfigControlOperationsPanel(
@@ -55,10 +55,14 @@ export default function ConfigControlOperationsPanel(
   const [applyConfig, { isError: isApplyError, isSuccess: isApplySuccess, isLoading: isApplyLoading, error: applyError }] =
     useApplyConfigMutation();
 
+  const [rollbackConfig, { isError: isRollbackError, isSuccess: isRollbackSuccess, isLoading: isRollbackLoading, error: rollbackError }] =
+    useRollbackConfigMutation();
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleApply = async function () {
     try {
+      setResponseError(undefined);
       await applyConfig({
         snapshotType: applySnapshotType,
         isActive: applyIsActive,
@@ -75,6 +79,7 @@ export default function ConfigControlOperationsPanel(
 
   const handleImport = async function () {
     try {
+      setResponseError(undefined);
       const config = JSON.parse(importedConfig) as ConfigSnapshot;
       const bundleChecksum = await generateSHA256(
         JSON.stringify(config.payloadJson),
@@ -89,6 +94,25 @@ export default function ConfigControlOperationsPanel(
         const payload = response as ApiSuccess<ConfigSnapshot>;
 
         return payload.data;
+      }
+    } catch (error) {
+      setResponseError(error as ApiFailure);
+    }
+  };
+
+  const handleRollback = async function () {
+    if (!props.selectedSnapshot) {
+      return;
+    }
+
+    try {
+      setResponseError(undefined);
+      const response = await rollbackConfig(props.selectedSnapshot.id).unwrap();
+
+      if (response.statusCode === 201) {
+        const payload = response as ApiSuccess<ConfigSnapshot>;
+
+        props.onRollbackSuccess(payload.data);
       }
     } catch (error) {
       setResponseError(error as ApiFailure);
@@ -306,21 +330,57 @@ export default function ConfigControlOperationsPanel(
             <div className="text-[11px] tracking-[0.2em] uppercase text-[#8a8a8a]">
               POST /config/rollback/{"{id}"}
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-[#0f0f0f] border border-[#262626] px-3 py-2.5">
+                <p className="text-[10px] tracking-[0.14em] uppercase text-[#4a4a4a]">
+                  Version
+                </p>
+                <p className="text-base font-mono text-[#f5f5f5]">
+                  {props.selectedSnapshot
+                    ? `v${props.selectedSnapshot.versionNumber}`
+                    : "-"}
+                </p>
+              </div>
+              <div className="bg-[#0f0f0f] border border-[#262626] px-3 py-2.5">
+                <p className="text-[10px] tracking-[0.14em] uppercase text-[#4a4a4a]">
+                  State
+                </p>
+                <p className="text-base font-mono text-[#f5f5f5]">
+                  {props.selectedSnapshot?.isActive ? "active" : "inactive"}
+                </p>
+              </div>
+            </div>
             <div className="space-y-1.5">
               <label className="text-[10px] tracking-[0.16em] uppercase text-[#4a4a4a]">
                 Target snapshot ID
               </label>
               <input
                 className="w-full bg-[#0c0c0c] border border-[#262626] px-3 py-2 text-base text-[#f5f5f5]"
-                value="5f4e635f-d6d5-4ce4-a8ff-bf8d7184db11"
+                value={props.selectedSnapshot?.id ?? ""}
                 readOnly
               />
             </div>
+            {isRollbackError && (
+              <p className="text-[#ef4444] text-xs">
+                {responseError?.message ??
+                  (rollbackError as ApiFailure)?.message ??
+                  "Rollback failed"}
+              </p>
+            )}
+
+            {isRollbackSuccess && (
+              <p className="text-[#10b981] text-xs">
+                Snapshot rollback completed.
+              </p>
+            )}
+
             <button
               type="button"
-              className="w-full border border-[#06b6d4] text-[#06b6d4] text-[11px] tracking-[0.14em] uppercase py-2 hover:bg-[#06b6d4] hover:text-black transition"
+              disabled={!props.selectedSnapshot || isRollbackLoading}
+              onClick={handleRollback}
+              className="w-full border border-[#06b6d4] text-[#06b6d4] text-[11px] tracking-[0.14em] uppercase py-2 hover:bg-[#06b6d4] hover:text-black transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Rollback To Snapshot
+              {isRollbackLoading ? "Rolling Back..." : "Rollback To Snapshot"}
             </button>
           </section>
         )}

@@ -4,9 +4,11 @@ mod data_plane;
 mod disk_store;
 mod dpi;
 mod events;
+mod factory_reset;
 mod interfaces;
 mod ip_defrag;
 mod logging;
+mod metrics;
 mod ml;
 mod netlink;
 mod packet_validator;
@@ -36,8 +38,9 @@ use crate::dpi::DpiClassifier;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
     DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
-    IpsStage, LocalOwnershipStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage,
-    PolicyEvalStage, TcpClassificationStage, TlsPortEnforcementStage, ValidationStage,
+    IpsStage, LocalOwnershipStage, MetricsStage, MlAlertStage, NatPostroutingStage,
+    NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, TlsPortEnforcementStage,
+    ValidationStage,
 };
 use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::policy::provider::DiskPolicyProvider;
@@ -63,26 +66,32 @@ async fn main() {
     type DataPipeline<M> = Chain<
         ValidationStage,
         Chain<
-            LocalOwnershipStage,
+            MetricsStage,
             Chain<
-                DpiStage,
+                LocalOwnershipStage,
                 Chain<
-                    TlsPortEnforcementStage,
+                    DpiStage,
                     Chain<
-                        DnsBlockListStage,
+                        TlsPortEnforcementStage,
                         Chain<
-                            DnsTunnelingStage,
+                            DnsBlockListStage,
                             Chain<
-                                DnsEchMitigationStage,
+                                DnsTunnelingStage,
                                 Chain<
-                                    IpsStage,
+                                    DnsEchMitigationStage,
                                     Chain<
-                                        NatPreroutingStage,
+                                        IpsStage,
                                         Chain<
-                                            TcpClassificationStage,
+                                            NatPreroutingStage,
                                             Chain<
-                                                MlAlertStage,
-                                                Chain<PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>, Chain<NatPostroutingStage<M>, FtpAlgStage>>,
+                                                TcpClassificationStage,
+                                                Chain<
+                                                    MlAlertStage,
+                                                    Chain<
+                                                        PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
+                                                        Chain<NatPostroutingStage<M>, FtpAlgStage>,
+                                                    >,
+                                                >,
                                             >,
                                         >,
                                     >,
@@ -167,6 +176,7 @@ async fn main() {
     ));
 
     let tcp_session_tracker = TcpSessionTracker::new();
+    let metrics_collector = Arc::new(metrics::MetricsCollector::new());
     let policy_provider = Arc::new(
         DiskPolicyProvider::from_loaded(&config)
             .await
@@ -208,7 +218,7 @@ async fn main() {
     let zones = Arc::new(crate::zones::provider::ZoneProvider::from_disk(&config).await);
     let zone_pairs = Arc::new(crate::zones::provider::ZonePairProvider::from_disk(&config).await);
     let zone_interfaces = Arc::new(crate::zones::provider::ZoneInterfaceProvider::from_disk(&config).await);
-    
+
     // Startup VLAN reconciliation
     let loaded_zone_interfaces = zone_interfaces.get_zone_interfaces();
     let vlan_reconciler = Arc::new(crate::interfaces::VlanReconciler::new(Arc::clone(&interface_controller)));
@@ -218,7 +228,7 @@ async fn main() {
     if !startup_errors.is_empty() {
         tracing::warn!(errors = ?startup_errors, "startup VLAN reconciliation partial failures");
     }
-    
+
     let zone_resolver = Arc::new(crate::zones::resolver::RoutingZoneResolver::new(
         Arc::clone(&zone_interfaces),
         Arc::clone(&zone_pairs),
@@ -312,63 +322,67 @@ async fn main() {
     let pipeline: DataPipeline<NetworkInterfaceMonitor> = DataPipeline {
         head: ValidationStage,
         tail: Chain {
-            head: LocalOwnershipStage {
-                config_provider: Arc::clone(&config_provider),
-                zone_interface_provider: Arc::clone(&zone_interfaces),
-                local_ips: Arc::new(local_ips),
+            head: MetricsStage {
+                collector: Arc::clone(&metrics_collector),
             },
             tail: Chain {
-                head: DpiStage {
-                    classifier: Arc::clone(&dpi_classifier),
-                    flow_stats: Arc::clone(&ml_flow_stats),
-                    pinning_detector: Some(decision_engine.pinning_detector_arc()),
+                head: LocalOwnershipStage {
+                    config_provider: Arc::clone(&config_provider),
+                    zone_interface_provider: Arc::clone(&zone_interfaces),
+                    local_ips: Arc::new(local_ips),
                 },
                 tail: Chain {
-                    head: TlsPortEnforcementStage {
-                        config_provider: Arc::clone(&config_provider),
+                    head: DpiStage {
+                        classifier: Arc::clone(&dpi_classifier),
+                        flow_stats: Arc::clone(&ml_flow_stats),
+                        pinning_detector: Some(decision_engine.pinning_detector_arc()),
                     },
                     tail: Chain {
-                        head: DnsBlockListStage {
-                            inspection: Arc::clone(&dns_inspection),
+                        head: TlsPortEnforcementStage {
+                            config_provider: Arc::clone(&config_provider),
                         },
                         tail: Chain {
-                            head: DnsTunnelingStage {
+                            head: DnsBlockListStage {
                                 inspection: Arc::clone(&dns_inspection),
                             },
                             tail: Chain {
-                                head: DnsEchMitigationStage {
+                                head: DnsTunnelingStage {
                                     inspection: Arc::clone(&dns_inspection),
                                 },
                                 tail: Chain {
-                                    head: IpsStage {
-                                        inspection: Arc::clone(&ips),
+                                    head: DnsEchMitigationStage {
+                                        inspection: Arc::clone(&dns_inspection),
                                     },
                                     tail: Chain {
-                                        head: NatPreroutingStage {
-                                            engine: Arc::clone(&nat_engine),
+                                        head: IpsStage {
+                                            inspection: Arc::clone(&ips),
                                         },
                                         tail: Chain {
-                                            head: TcpClassificationStage {
-                                                tracker: Arc::clone(&tcp_session_tracker),
-                                                flow_stats: Arc::clone(&ml_flow_stats),
+                                            head: NatPreroutingStage {
+                                                engine: Arc::clone(&nat_engine),
                                             },
                                             tail: Chain {
-                                                head: MlAlertStage::new(Arc::clone(&ml_detector)),
+                                                head: TcpClassificationStage {
+                                                    tracker: Arc::clone(&tcp_session_tracker),
+                                                    flow_stats: Arc::clone(&ml_flow_stats),
+                                                },
                                                 tail: Chain {
-                                                    // TODO: change this to work with multiple zones
-                                                    head: PolicyEvalStage {
-                                                        policy_engine: Arc::clone(&policy_engine),
-                                                        zone_resolver: Arc::clone(&zone_resolver),
-                                                        dnssec: Some(dnssec_provider),
-                                                    },
+                                                    head: MlAlertStage::new(Arc::clone(&ml_detector)),
                                                     tail: Chain {
-                                                        head: NatPostroutingStage {
-                                                            engine: Arc::clone(&nat_engine),
-                                                            routing_table: Arc::clone(&routing_table),
-                                                            interface_monitor: Arc::clone(&interface_monitor),
+                                                        head: PolicyEvalStage {
+                                                            policy_engine: Arc::clone(&policy_engine),
+                                                            zone_resolver: Arc::clone(&zone_resolver),
+                                                            dnssec: Some(dnssec_provider),
                                                         },
-                                                        tail: FtpAlgStage {
-                                                            engine: Arc::clone(&nat_engine),
+                                                        tail: Chain {
+                                                            head: NatPostroutingStage {
+                                                                engine: Arc::clone(&nat_engine),
+                                                                routing_table: Arc::clone(&routing_table),
+                                                                interface_monitor: Arc::clone(&interface_monitor),
+                                                            },
+                                                            tail: FtpAlgStage {
+                                                                engine: Arc::clone(&nat_engine),
+                                                            },
                                                         },
                                                     },
                                                 },
@@ -488,6 +502,8 @@ async fn main() {
             interface_controller: Arc::clone(&interface_controller),
             vlan_reconciler,
             interface_sniffer: Arc::clone(&sniffer),
+            metrics_collector: Arc::clone(&metrics_collector),
+            reset_lock: Arc::new(Mutex::new(())),
         },
         &config.query_socket_path,
         CancellationToken::new(),
@@ -506,6 +522,7 @@ async fn main() {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {
             let pipeline = pipeline.clone();
             let tun = Arc::clone(&tun);
+            let metrics_collector = Arc::clone(&metrics_collector);
             tokio::spawn(async move {
                 if !matches!(
                     &ctx.borrow_sliced_packet().net,
@@ -518,6 +535,8 @@ async fn main() {
 
                 if matches!(result, StageOutcome::Continue) {
                     tun.forward(&ctx).await;
+                } else {
+                    metrics_collector.observe_drop();
                 }
             });
         }

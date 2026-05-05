@@ -8,6 +8,9 @@ export interface Signature {
   enabled: boolean;
   category: string;
   pattern: string;
+  matchType?: string;
+  patternEncoding?: string;
+  caseInsensitive?: boolean;
   severity: string;
   action: string;
   appProtocols: string[];

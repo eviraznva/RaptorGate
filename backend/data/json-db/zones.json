@@ -6,7 +6,7 @@
       "description": "The bedroom of the house",
       "isActive": true,
       "createdAt": "2026-03-19T18:36:47.226Z",
-      "createdBy": "e8898cfc-86f7-4d28-946b-a16f03f485f5"
+      "createdBy": "ac65aaa4-d49c-4cb8-a9b0-eaf335333926"
     },
     {
       "id": "a0db06f9-5063-4035-aadd-845248db19e4",
@@ -14,7 +14,7 @@
       "description": "The office of the company",
       "isActive": true,
       "createdAt": "2026-03-19T18:37:00.315Z",
-      "createdBy": "3c213a14-c65c-4c78-9bea-b0de5dbe4c89"
+      "createdBy": "1f3cd9d7-d7e4-4734-b578-fc057ba93f28"
     },
     {
       "id": "7276db7e-eb41-4dc6-9b88-12f854e104f2",
@@ -22,7 +22,7 @@
       "description": "Internal network",
       "isActive": true,
       "createdAt": "2026-03-23T11:34:56.532Z",
-      "createdBy": "d027e483-2714-4c47-8283-c356737fb931"
+      "createdBy": "4d2c6bdd-7773-469d-bc9f-2d8894700936"
     },
     {
       "id": "050eca33-2b53-4470-9f11-d369e0e7abbc",
@@ -30,23 +30,7 @@
       "description": "Internet",
       "isActive": true,
       "createdAt": "2026-03-23T11:35:03.586Z",
-      "createdBy": "b5cecc4f-b8db-4f40-984e-bd356986a8df"
-    },
-    {
-      "id": "b5fc6256-d502-41a7-9370-d69663bf26b6",
-      "name": "Dupa",
-      "description": "Dupa of the house",
-      "isActive": true,
-      "createdAt": "2026-03-26T17:22:17.835Z",
-      "createdBy": "a1de215e-2c26-4808-a3fe-caa38c97a4b6"
-    },
-    {
-      "id": "59a1672e-8fe4-41a5-a399-be821534dd63",
-      "name": "Test",
-      "description": "Tymek jest gejem",
-      "isActive": true,
-      "createdAt": "2026-04-25T17:42:51.845Z",
-      "createdBy": "00000000-0000-4000-8000-000000000001"
+      "createdBy": "5d0571ae-6ffe-497c-a5fe-88de1814cf72"
     }
   ]
 }

@@ -1,7 +1,7 @@
 export type FirewallEvent = {
   timestamp: string;
   event_type: string;
-  source: "IPS" | "TLS" | "DNS" | "TCP";
+  source: "IPS" | "TLS" | "DNS" | "TCP" | "ML";
   decision: "decrypt" | "bypass" | "block" | "alert" | "error" | "observe";
   src_ip?: string;
   src_port?: number;
@@ -16,4 +16,19 @@ export type FirewallEvent = {
   action?: string;
   interface?: string;
   payload_length?: number;
+  sni?: string;
+  tls_version?: string;
+  domain?: string;
+  reason?: string;
+  stage?: string;
+  mode?: string;
+  direction?: string;
+  blocked?: boolean;
+  log_id?: string;
+  ech_origin?: string;
+  ech_action?: string;
+  ml_score?: number;
+  ml_threshold?: number;
+  model_checksum?: string;
+  attack_type?: string;
 };

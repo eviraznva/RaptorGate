@@ -22,10 +22,14 @@ use crate::data_plane::ips::config::IpsConfig;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::data_plane::nat::{NatConfigProvider, NatEngine};
-use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
+use crate::factory_reset::{safe_app_config, FactoryResetOptions, FactoryResetReport};
+use crate::data_plane::tcp_session_tracker::{
+    EndpointIdentifier, TcpClosingState, TcpHandshakeState, TcpSessionState, TcpSessionTracker,
+};
+use crate::metrics::{MetricsCollector, MetricsService};
 use crate::policy::nat::nat_rules::NatRules;
 use crate::policy::engine::PolicyEngine;
-use crate::policy::provider::PolicyManager;
+use crate::policy::provider::{default_drop_policy, PolicyManager};
 use crate::policy::{Policy, PolicyId};
 use crate::proto::common::CertificateType;
 use crate::proto::services::firewall_query_service_server::{
@@ -34,22 +38,26 @@ use crate::proto::services::firewall_query_service_server::{
 use crate::proto::services::firewall_config_snapshot_service_server::{
     FirewallConfigSnapshotService, FirewallConfigSnapshotServiceServer,
 };
+use crate::proto::services::firewall_metrics_service_server::FirewallMetricsServiceServer;
 use crate::proto::services::{
     GetConfigRequest, GetConfigResponse, GetDnsInspectionConfigRequest,
     GetDnsInspectionConfigResponse, GetIpsConfigRequest, GetIpsConfigResponse,
     GetNatBindingsRequest, GetNatBindingsResponse, GetNatConfigRequest, GetNatConfigResponse,
     GetPinningBypassRequest, GetPinningBypassResponse, GetPinningStatsRequest,
     GetPinningStatsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest,
-    GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse,
+    GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, TcpSessionEndpoint,
+    TcpTrackedSession, TcpTrackedSessionState,
     GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
     GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest,
     SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
     SwapIpsConfigRequest, SwapIpsConfigResponse, SwapNatConfigRequest, SwapNatConfigResponse,
-    GetSystemTimeRequest, GetSystemTimeResponse, PushActiveConfigSnapshotRequest,
-    PushActiveConfigSnapshotResponse, SetInterfaceStateRequest, SetInterfaceStateResponse,
-    UpdatePhysicalInterfacePropertiesRequest, UpdatePhysicalInterfacePropertiesResponse,
+    FactoryResetRequest, FactoryResetResponse, GetSystemTimeRequest, GetSystemTimeResponse,
+    PushActiveConfigSnapshotRequest, PushActiveConfigSnapshotResponse, SetInterfaceStateRequest,
+    SetInterfaceStateResponse, UpdatePhysicalInterfacePropertiesRequest,
+    UpdatePhysicalInterfacePropertiesResponse,
 };
 use crate::tls::pinning_detector::PinningDetector;
+use crate::tls::cert_storage::clear_ca_files;
 use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
 use crate::validation::validate_bundle;
 use crate::zones::Zone;
@@ -110,6 +118,9 @@ where
 
         if let Err(e) = tonic::transport::Server::builder()
             .add_service(FirewallQueryServiceServer::new(self.handler.clone()))
+            .add_service(FirewallMetricsServiceServer::new(MetricsService::new(
+                Arc::clone(&self.handler.metrics_collector),
+            )))
             .add_service(FirewallConfigSnapshotServiceServer::new(self.handler))
             .serve_with_incoming_shutdown(incoming, self.shutdown.cancelled())
             .await
@@ -150,6 +161,8 @@ where
     pub interface_controller: Arc<Controller>,
     pub vlan_reconciler: Arc<crate::interfaces::VlanReconciler<Controller>>,
     pub interface_sniffer: Arc<crate::data_plane::interface_sniffer::InterfaceSniffer>,
+    pub metrics_collector: Arc<MetricsCollector>,
+    pub reset_lock: Arc<Mutex<()>>,
 }
 
 impl<PolicySwap, Monitor, Controller> Clone for QueryHandler<PolicySwap, Monitor, Controller>
@@ -180,6 +193,8 @@ where
             interface_controller: Arc::clone(&self.interface_controller),
             vlan_reconciler: Arc::clone(&self.vlan_reconciler),
             interface_sniffer: Arc::clone(&self.interface_sniffer),
+            metrics_collector: Arc::clone(&self.metrics_collector),
+            reset_lock: Arc::clone(&self.reset_lock),
         }
     }
 }
@@ -200,6 +215,29 @@ where
         .collect()
 }
 
+fn tcp_endpoint_into_proto(endpoint: EndpointIdentifier) -> TcpSessionEndpoint {
+    TcpSessionEndpoint {
+        ip: endpoint.ip.to_string(),
+        port: u16::from(endpoint.port) as u32,
+    }
+}
+
+fn tcp_session_state_into_proto(state: TcpSessionState) -> TcpTrackedSessionState {
+    match state {
+        TcpSessionState::Handshake(TcpHandshakeState::SynSent) =>
+            TcpTrackedSessionState::SynSent,
+        TcpSessionState::Handshake(TcpHandshakeState::SynAckReceived) =>
+            TcpTrackedSessionState::SynAckReceived,
+        TcpSessionState::Established => TcpTrackedSessionState::Established,
+        TcpSessionState::Closed => TcpTrackedSessionState::Closed,
+        TcpSessionState::Closing(TcpClosingState::FinSent) => TcpTrackedSessionState::FinSent,
+        TcpSessionState::Closing(TcpClosingState::AckSent) => TcpTrackedSessionState::AckSent,
+        TcpSessionState::Closing(TcpClosingState::AckFinSent) =>
+            TcpTrackedSessionState::AckFinSent,
+        TcpSessionState::TimeWait => TcpTrackedSessionState::TimeWait,
+    }
+}
+
 #[tonic::async_trait]
 impl<Swapper, Monitor, Controller> FirewallQueryService for QueryHandler<Swapper, Monitor, Controller>
 where
@@ -211,7 +249,22 @@ where
         &self,
         _request: Request<GetTcpSessionsRequest>,
     ) -> Result<Response<GetTcpSessionsResponse>, Status> {
-        Err(Status::unimplemented("not yet implemented"))
+        let sessions = self
+            .tcp_tracker
+            .get_sessions()
+            .into_iter()
+            .map(|(id, state)| {
+                let (endpoint_a, endpoint_b) = id.endpoints();
+
+                TcpTrackedSession {
+                    endpoint_a: Some(tcp_endpoint_into_proto(endpoint_a)),
+                    endpoint_b: Some(tcp_endpoint_into_proto(endpoint_b)),
+                    state: tcp_session_state_into_proto(state) as i32,
+                }
+            })
+            .collect();
+
+        Ok(Response::new(GetTcpSessionsResponse { sessions }))
     }
 
     async fn get_policies(
@@ -663,6 +716,78 @@ where
     Monitor: InterfaceMonitor + Send + Sync + 'static,
     Controller: InterfaceController + Send + Sync + 'static,
 {
+    async fn factory_reset(
+        &self,
+        request: Request<FactoryResetRequest>,
+    ) -> Result<Response<FactoryResetResponse>, Status> {
+        let inner = request.into_inner();
+        let correlation_id = inner.correlation_id.clone();
+        let options = FactoryResetOptions {
+            clear_pki: inner.clear_pki.unwrap_or(true),
+            clear_server_keys: inner.clear_server_keys.unwrap_or(true),
+        };
+        let _reset_guard = self.reset_lock.lock().await;
+
+        tracing::warn!(
+            event = "factory_reset.started",
+            correlation_id,
+            reason = %inner.reason,
+            clear_pki = options.clear_pki,
+            clear_server_keys = options.clear_server_keys,
+            "factory reset requested"
+        );
+
+        if let Err(e) = self.apply_factory_safe_state().await {
+            tracing::error!(event = "factory_reset.failed", correlation_id, error = %e, "failed to apply factory safe state");
+            return Ok(Response::new(FactoryResetResponse {
+                correlation_id,
+                accepted: false,
+                message: format!("failed to apply safe state: {e}"),
+                safe_state_applied: false,
+                removed_server_keys: 0,
+                removed_server_key_files: 0,
+                removed_ca_files: 0,
+            }));
+        }
+
+        let mut report = FactoryResetReport {
+            safe_state_applied: true,
+            ..FactoryResetReport::default()
+        };
+
+        if let Err(e) = self.clear_factory_reset_materials(options, &mut report) {
+            tracing::error!(event = "factory_reset.failed", correlation_id, error = %e, "failed to clear factory reset materials");
+            return Ok(Response::new(FactoryResetResponse {
+                correlation_id,
+                accepted: false,
+                message: format!("safe state applied, cleanup failed: {e}"),
+                safe_state_applied: true,
+                removed_server_keys: report.removed_server_keys,
+                removed_server_key_files: report.removed_server_key_files,
+                removed_ca_files: report.removed_ca_files,
+            }));
+        }
+
+        tracing::warn!(
+            event = "factory_reset.completed",
+            correlation_id,
+            removed_server_keys = report.removed_server_keys,
+            removed_server_key_files = report.removed_server_key_files,
+            removed_ca_files = report.removed_ca_files,
+            "factory reset completed"
+        );
+
+        Ok(Response::new(FactoryResetResponse {
+            correlation_id,
+            accepted: true,
+            message: String::new(),
+            safe_state_applied: report.safe_state_applied,
+            removed_server_keys: report.removed_server_keys,
+            removed_server_key_files: report.removed_server_key_files,
+            removed_ca_files: report.removed_ca_files,
+        }))
+    }
+
     #[allow(clippy::too_many_lines)]
     async fn push_active_config_snapshot(
         &self,
@@ -670,6 +795,7 @@ where
     ) -> Result<Response<PushActiveConfigSnapshotResponse>, Status> {
         let inner = request.into_inner();
         let correlation_id = inner.correlation_id.clone();
+        let _reset_guard = self.reset_lock.lock().await;
 
         // Extract snapshot_id before consuming the snapshot
         let snapshot = inner
@@ -845,6 +971,65 @@ where
     Monitor: InterfaceMonitor,
     Controller: InterfaceController,
 {
+    async fn apply_factory_safe_state(&self) -> anyhow::Result<()> {
+        self.policy_store
+            .swap_policies(vec![default_drop_policy()?])
+            .await?;
+
+        let empty_domains: Vec<String> = Vec::new();
+        self.decision_engine.reload_bypass(&empty_domains);
+        self.decision_engine
+            .reload_known_pinned_domains(&empty_domains);
+        self.decision_engine.reload_ech_policy(EchTlsPolicy::default());
+
+        self.apply_nat_rules(&[]).await?;
+
+        let dns_config = DnsInspectionConfig::default();
+        self.dns_inspection_store
+            .swap_config(dns_config.clone())
+            .await?;
+        self.dns_inspection.update_config(&dns_config)?;
+
+        let ips_config = IpsConfig::default();
+        self.ips_store.swap_config(ips_config.clone()).await?;
+        self.ips.update_config(&ips_config)?;
+
+        self.zone_store.swap_zones(Vec::new()).await?;
+        self.zone_interface_store
+            .swap_zone_interfaces(Vec::new())
+            .await?;
+        self.zone_pair_store.swap_zone_pairs(Vec::new()).await?;
+
+        let safe_config = {
+            let current = self.config_provider.get_config();
+            safe_app_config(current.as_ref())
+        };
+        self.config_provider.swap_config(safe_config).await?;
+
+        tracing::warn!(event = "factory_reset.safe_state_applied", "factory reset safe state applied");
+        Ok(())
+    }
+
+    fn clear_factory_reset_materials(
+        &self,
+        options: FactoryResetOptions,
+        report: &mut FactoryResetReport,
+    ) -> anyhow::Result<()> {
+        if options.clear_server_keys {
+            let key_report = self.server_key_store.clear_all()?;
+            report.removed_server_keys = key_report.removed_entries;
+            report.removed_server_key_files = key_report.removed_files;
+        }
+
+        if options.clear_pki {
+            let config = self.config_provider.get_config();
+            let ca_report = clear_ca_files(Path::new(&config.pki_dir))?;
+            report.removed_ca_files = ca_report.removed_files;
+        }
+
+        Ok(())
+    }
+
     async fn apply_nat_rules(
         &self,
         rules: &[crate::proto::config::NatRule],
