@@ -59,6 +59,10 @@ rustls-pemfile = "2"
 webpki-roots = "0.26"
 x509-parser = "0.16"
 tract-onnx = "0.21"
+mailparse = "0.16.1"
+smtp-proto = "0.2.1"
+imap-proto = "0.16.7"
+imap-codec = "1.0.0"
 
 [dev-dependencies]
 serial_test = "3.2.0"
