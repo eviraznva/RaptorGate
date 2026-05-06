@@ -194,27 +194,7 @@ impl SmtpTracker {
                 }
                 session.response_receiver.reset();
             }
-            Err(smtp_proto::Error::NeedsMoreData { .. }) => {
-                let mut request_bytes = tcp.payload().iter();
-                let current_state = session.state;
-                match session.request_receiver.ingest(&mut request_bytes) {
-                    Ok(request) => {
-                        let result = current_state.transition(SessionTransition::Request(request));
-                        session.client = Some(src.clone());
-                        session.server = Some(dst.clone());
-                        session.response_receiver = ResponseReceiver::default();
-                        match result {
-                            Ok(Some(next)) => session.state = next,
-                            Ok(None) => {}
-                            Err(()) => should_remove = true,
-                        }
-                    }
-                    Err(smtp_proto::Error::NeedsMoreData { .. }) => {}
-                    Err(_) => {
-                        session.request_receiver = RequestReceiver::default();
-                    }
-                }
-            }
+            Err(smtp_proto::Error::NeedsMoreData { .. }) => {}
             Err(_) => {
                 let mut request_bytes = tcp.payload().iter();
                 let current_state = session.state;
