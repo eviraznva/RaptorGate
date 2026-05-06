@@ -15,35 +15,76 @@ enum SessionState {
     DataPhase,
 }
 
-enum SessionTransition {
-    GreetingReceived,
-    EHLOReceived,
-    MailFromReceived,
-    RcptToReceived,
-    DataReceived,
-    OkReceived,
+enum SessionTransition<'a> {
+    Request(smtp_proto::Request<Cow<'a, str>>),
+    Response(smtp_proto::Response<String>),
+    Greeting,
 }
 
 impl SessionState {
-    fn transition(&self, event: SessionTransition) -> Option<SessionState> {
-        match (self, event) {
-            (SessionState::TcpEstabilished, SessionTransition::GreetingReceived) => {
-                Some(SessionState::GreetingReceived)
+    fn transition(&self, event: SessionTransition) -> Result<Option<SessionState>, ()> {
+        match event {
+            SessionTransition::Greeting => match self {
+                SessionState::TcpEstabilished => Ok(Some(SessionState::GreetingReceived)),
+                _ => Err(()),
+            },
+            SessionTransition::Response(response) => {
+                if response.code == 220 {
+                    return self.transition(SessionTransition::Greeting);
+                }
+                if response.code == 250 && let SessionState::DataPhase = self {
+                    return Ok(Some(SessionState::Ready));
+                }
+                Ok(None)
             }
-            (SessionState::GreetingReceived, SessionTransition::EHLOReceived) => {
-                Some(SessionState::Ready)
+            SessionTransition::Request(request) => {
+                if matches!(self, SessionState::TcpEstabilished) {
+                    return Err(());
+                }
+                match request {
+                    smtp_proto::Request::Ehlo { .. }
+                    | smtp_proto::Request::Lhlo { .. }
+                    | smtp_proto::Request::Helo { .. } => match self {
+                        SessionState::GreetingReceived
+                        | SessionState::Ready
+                        | SessionState::EnvelopeOpen
+                        | SessionState::ReciepientSet => Ok(Some(SessionState::Ready)),
+                        _ => Err(()),
+                    },
+                    smtp_proto::Request::Mail { .. } => match self {
+                        SessionState::Ready => Ok(Some(SessionState::EnvelopeOpen)),
+                        _ => Err(()),
+                    },
+                    smtp_proto::Request::Rcpt { .. } => match self {
+                        SessionState::EnvelopeOpen => Ok(Some(SessionState::ReciepientSet)),
+                        SessionState::ReciepientSet => Ok(None),
+                        _ => Err(()),
+                    },
+                    smtp_proto::Request::Data | smtp_proto::Request::Bdat { .. } => match self {
+                        SessionState::ReciepientSet => Ok(Some(SessionState::DataPhase)),
+                        _ => Err(()),
+                    },
+                    smtp_proto::Request::Auth { .. } => {
+                        tracing::info!("SMTP AUTH encountered; not yet supported");
+                        Ok(None)
+                    }
+                    smtp_proto::Request::Noop { .. }
+                    | smtp_proto::Request::Vrfy { .. }
+                    | smtp_proto::Request::Expn { .. }
+                    | smtp_proto::Request::Help { .. }
+                    | smtp_proto::Request::Etrn { .. }
+                    | smtp_proto::Request::Atrn { .. }
+                    | smtp_proto::Request::Burl { .. } => Ok(None),
+                    smtp_proto::Request::StartTls => {
+                        tracing::warn!(
+                            "TLS message encountered for SMTP, not supported, dropping session"
+                        );
+                        Err(())
+                    }
+                    smtp_proto::Request::Rset => Ok(Some(SessionState::Ready)),
+                    smtp_proto::Request::Quit => Err(()),
+                }
             }
-            (SessionState::Ready, SessionTransition::MailFromReceived) => {
-                Some(SessionState::EnvelopeOpen)
-            }
-            (SessionState::EnvelopeOpen, SessionTransition::RcptToReceived) => {
-                Some(SessionState::ReciepientSet)
-            }
-            (SessionState::ReciepientSet, SessionTransition::DataReceived) => {
-                Some(SessionState::DataPhase)
-            }
-            (SessionState::DataPhase, SessionTransition::OkReceived) => Some(SessionState::Ready),
-            _ => None,
         }
     }
 }
@@ -60,68 +101,6 @@ struct SmtpTracker {
     sessions: DashMap<TcpIdentifier, SmtpSession>,
 }
 
-fn handle_response(state: &SessionState, response: smtp_proto::Response<String>) -> Option<SessionState> {
-    if response.code == 220 {
-        state.transition(SessionTransition::GreetingReceived)
-    } else {
-        Some(state.clone())
-    }
-}
-
-fn handle_request(state: &SessionState, request: &smtp_proto::Request<Cow<str>>) -> Option<SessionState> {
-    if matches!(state, SessionState::TcpEstabilished) {
-        return None;
-    }
-
-    match request {
-        smtp_proto::Request::Ehlo { .. }
-        | smtp_proto::Request::Lhlo { .. }
-        | smtp_proto::Request::Helo { .. } => match state {
-            SessionState::GreetingReceived
-            | SessionState::Ready
-            | SessionState::EnvelopeOpen
-            | SessionState::ReciepientSet => Some(SessionState::Ready),
-            _ => None,
-        },
-        smtp_proto::Request::Mail { .. } => state.transition(SessionTransition::MailFromReceived),
-        smtp_proto::Request::Rcpt { .. } => match state {
-            SessionState::EnvelopeOpen => Some(SessionState::ReciepientSet),
-            SessionState::ReciepientSet => Some(state.clone()),
-            _ => None,
-        },
-        smtp_proto::Request::Data | smtp_proto::Request::Bdat { .. } => {
-            state.transition(SessionTransition::DataReceived)
-        }
-        smtp_proto::Request::Auth { .. } => {
-            tracing::info!("SMTP AUTH encountered; not yet supported");
-            if matches!(state, SessionState::DataPhase) {
-                Some(state.clone())
-            } else {
-                Some(state.clone())
-            }
-        }
-        smtp_proto::Request::Noop { .. }
-        | smtp_proto::Request::Vrfy { .. }
-        | smtp_proto::Request::Expn { .. }
-        | smtp_proto::Request::Help { .. }
-        | smtp_proto::Request::Etrn { .. }
-        | smtp_proto::Request::Atrn { .. }
-        | smtp_proto::Request::Burl { .. } => {
-            if matches!(state, SessionState::DataPhase) {
-                Some(state.clone())
-            } else {
-                Some(state.clone())
-            }
-        }
-        smtp_proto::Request::StartTls => {
-            tracing::warn!("TLS message encountered for SMTP, not supported, dropping session");
-            None
-        }
-        smtp_proto::Request::Rset => Some(SessionState::Ready),
-        smtp_proto::Request::Quit => None,
-    }
-}
-
 impl SmtpTracker {
     pub fn new() -> Self {
         SmtpTracker {
@@ -129,6 +108,7 @@ impl SmtpTracker {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn on_new_packet(
         &mut self,
         packet: TransportSlice,
@@ -157,19 +137,15 @@ impl SmtpTracker {
                 loop {
                     match session.response_receiver.parse(&mut bytes) {
                         Ok(response) => {
-                            if let Some(next_state) = handle_response(&session.state, response) {
-                                session.state = next_state;
-                            } else {
-                                should_remove = true;
-                                break;
+                            match session.state.transition(SessionTransition::Response(response)) {
+                                Ok(Some(next)) => session.state = next,
+                                Ok(None) => {}
+                                Err(()) => { should_remove = true; break; }
                             }
                             session.response_receiver.reset();
                         }
                         Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
-                        Err(_) => {
-                            should_remove = true;
-                            break;
-                        }
+                        Err(_) => { should_remove = true; break; }
                     }
                 }
             } else {
@@ -178,11 +154,10 @@ impl SmtpTracker {
                     let current_state = session.state;
                     match session.request_receiver.ingest(&mut bytes) {
                         Ok(request) => {
-                            if let Some(next_state) = handle_request(&current_state, &request) {
-                                session.state = next_state;
-                            } else {
-                                should_remove = true;
-                                break;
+                            match current_state.transition(SessionTransition::Request(request)) {
+                                Ok(Some(next)) => session.state = next,
+                                Ok(None) => {}
+                                Err(()) => { should_remove = true; break; }
                             }
                         }
                         Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
@@ -212,10 +187,10 @@ impl SmtpTracker {
                 session.server = Some(src.clone());
                 session.client = Some(dst.clone());
                 session.request_receiver = RequestReceiver::default();
-                if let Some(next_state) = handle_response(&session.state, response) {
-                    session.state = next_state;
-                } else {
-                    should_remove = true;
+                match session.state.transition(SessionTransition::Response(response)) {
+                    Ok(Some(next)) => session.state = next,
+                    Ok(None) => {}
+                    Err(()) => should_remove = true,
                 }
                 session.response_receiver.reset();
             }
@@ -224,14 +199,14 @@ impl SmtpTracker {
                 let current_state = session.state;
                 match session.request_receiver.ingest(&mut request_bytes) {
                     Ok(request) => {
-                        let next_state = handle_request(&current_state, &request);
+                        let result = current_state.transition(SessionTransition::Request(request));
                         session.client = Some(src.clone());
                         session.server = Some(dst.clone());
                         session.response_receiver = ResponseReceiver::default();
-                        if let Some(next_state) = next_state {
-                            session.state = next_state;
-                        } else {
-                            should_remove = true;
+                        match result {
+                            Ok(Some(next)) => session.state = next,
+                            Ok(None) => {}
+                            Err(()) => should_remove = true,
                         }
                     }
                     Err(smtp_proto::Error::NeedsMoreData { .. }) => {}
@@ -245,14 +220,14 @@ impl SmtpTracker {
                 let current_state = session.state;
                 match session.request_receiver.ingest(&mut request_bytes) {
                     Ok(request) => {
-                        let next_state = handle_request(&current_state, &request);
+                        let result = current_state.transition(SessionTransition::Request(request));
                         session.client = Some(src.clone());
                         session.server = Some(dst.clone());
                         session.response_receiver = ResponseReceiver::default();
-                        if let Some(next_state) = next_state {
-                            session.state = next_state;
-                        } else {
-                            should_remove = true;
+                        match result {
+                            Ok(Some(next)) => session.state = next,
+                            Ok(None) => {}
+                            Err(()) => should_remove = true,
                         }
                     }
                     Err(smtp_proto::Error::NeedsMoreData { .. }) => {
