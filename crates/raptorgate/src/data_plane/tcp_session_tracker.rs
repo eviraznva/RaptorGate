@@ -480,6 +480,11 @@ impl TcpSessionTracker {
 
         Ok(())
     }
+
+
+    pub fn get_session(&self, id: &TcpIdentifier) -> Option<TcpSessionState> {
+        self.sessions.get(id).map(|s| s.state)
+    }
 }
 
 enum PostAction {
