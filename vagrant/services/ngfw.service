@@ -1,7 +1,7 @@
 [Unit]
 Description=NGFW daemon
-After=network.target backend.service
-Wants=backend.service
+After=network.target 
+# Wants=backend.service
 
 [Service]
 WorkingDirectory=/resources/ngfw
