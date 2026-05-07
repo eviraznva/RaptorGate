@@ -4,6 +4,7 @@ mod flow_key;
 pub mod parsers;
 mod proto;
 pub mod smtp;
+pub mod smtp_policy_retriever;
 
 pub use classifier::{DpiClassifier, InspectResult};
 pub use context::{DpiContext, FtpDataEndpoint, FtpRewriteKind, IpsMatch, TlsAction};

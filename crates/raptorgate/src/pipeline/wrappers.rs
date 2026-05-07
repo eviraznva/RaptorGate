@@ -1328,6 +1328,7 @@ mod tests {
                 .build()
                 .unwrap(),
             ),
+            smtp_policy: crate::policy::SmtpPolicy::default(),
         };
 
         let mut policies = HashMap::new();

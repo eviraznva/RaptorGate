@@ -239,7 +239,12 @@ async fn main() {
         Arc::clone(&interface_monitor),
     ));
 
-    let smtp_tracker = Arc::new(crate::dpi::smtp::SmtpTracker::new(Arc::clone(&zone_resolver)));
+    let smtp_policy_retriever = Arc::new(crate::dpi::smtp_policy_retriever::SmtpPolicyRetriever::new(
+        Arc::clone(&zone_resolver),
+        Arc::clone(&policy_provider),
+    ));
+
+    let smtp_tracker = Arc::new(crate::dpi::smtp::SmtpTracker::new(Arc::clone(&smtp_policy_retriever)));
 
     let policy_engine = Arc::new(
         crate::policy::engine::PolicyEngine::from_policies(

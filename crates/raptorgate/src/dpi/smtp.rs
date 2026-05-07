@@ -5,10 +5,10 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
+use crate::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
 use crate::interfaces::NetworkInterfaceMonitor;
-use crate::zones::DirectionalZonePairs;
-use crate::zones::resolver::{RoutingZoneResolver, ZoneResolver};
+use crate::zones::resolver::RoutingZoneResolver;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SessionState {
@@ -98,7 +98,7 @@ struct SmtpSession {
     state: SessionState,
     client: Option<EndpointIdentifier>,
     server: Option<EndpointIdentifier>,
-    zone_pairs: Option<DirectionalZonePairs>,
+    policies: Option<SmtpSessionPolicies>,
     request_receiver: RequestReceiver,
     response_receiver: ResponseReceiver,
 }
@@ -137,14 +137,14 @@ impl SmtpSession {
 
 pub struct SmtpTracker {
     sessions: DashMap<TcpIdentifier, SmtpSession>,
-    zone_resolver: Arc<RoutingZoneResolver<NetworkInterfaceMonitor>>,
+    policy_retriever: Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>,
 }
 
 impl SmtpTracker {
-    pub fn new(zone_resolver: Arc<RoutingZoneResolver<NetworkInterfaceMonitor>>) -> Self {
+    pub fn new(policy_retriever: Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>) -> Self {
         SmtpTracker {
             sessions: DashMap::new(),
-            zone_resolver,
+            policy_retriever,
         }
     }
 
@@ -170,7 +170,7 @@ impl SmtpTracker {
             state: SessionState::TcpEstabilished,
             client: None,
             server: None,
-            zone_pairs: None,
+            policies: None,
             request_receiver: RequestReceiver::default(),
             response_receiver: ResponseReceiver::default(),
         });
@@ -230,7 +230,7 @@ impl SmtpTracker {
             Ok(response) => {
                 session.server = Some(src.clone());
                 session.client = Some(dst.clone());
-                session.zone_pairs = Some(self.zone_resolver.resolve_bidirectional(dst.ip, src.ip));
+                session.policies = Some(self.policy_retriever.retrieve(dst.ip, src.ip));
                 session.request_receiver = RequestReceiver::default();
                 if session.apply_transition(SessionTransition::Response(response)).is_err() {
                     should_remove = true;
@@ -250,14 +250,14 @@ impl SmtpTracker {
                         let result = current_state.transition(SessionTransition::Request(request));
                         session.client = Some(src.clone());
                         session.server = Some(dst.clone());
-                        session.zone_pairs = Some(self.zone_resolver.resolve_bidirectional(src.ip, dst.ip));
+                        session.policies = Some(self.policy_retriever.retrieve(src.ip, dst.ip));
                         session.response_receiver = ResponseReceiver::default();
                         if session.apply_transition_result(result).is_err() {
                             should_remove = true;
                         }
                     }
                     Err(smtp_proto::Error::NeedsMoreData { .. }) => {
-                        session.zone_pairs = Some(self.zone_resolver.resolve_bidirectional(src.ip, dst.ip));
+                        session.policies = Some(self.policy_retriever.retrieve(src.ip, dst.ip));
                         session.client = Some(src);
                         session.server = Some(dst);
                         session.response_receiver = ResponseReceiver::default();
@@ -544,10 +544,11 @@ mod tests {
     use unordered_pair::UnorderedPair;
     use crate::data_plane::tcp_session_tracker::TcpIdentifier;
 
-    fn mock_zone_resolver() -> Arc<RoutingZoneResolver<NetworkInterfaceMonitor>> {
+    fn mock_policy_retriever() -> Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>> {
         use crate::zones::provider::{ZoneInterfaceProvider, ZonePairProvider};
         use crate::netlink::routing_table::RoutingTable;
         use crate::config::AppConfig;
+        use crate::policy::provider::DiskPolicyProvider;
         use std::path::PathBuf;
         use tokio_util::sync::CancellationToken;
         
@@ -573,6 +574,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let zone_interfaces = rt.block_on(ZoneInterfaceProvider::from_disk(&config));
         let zone_pairs = rt.block_on(ZonePairProvider::from_disk(&config));
+        let policy_provider = rt.block_on(DiskPolicyProvider::from_loaded(&config)).unwrap();
         let (routing_table, interface_monitor) = rt.block_on(async {
             let cancel = CancellationToken::new();
             let listener = crate::netlink::listener::NetlinkListener::new(cancel.clone()).unwrap();
@@ -581,12 +583,14 @@ mod tests {
             (routing_table, interface_monitor)
         });
         
-        Arc::new(RoutingZoneResolver::new(
+        let zone_resolver = Arc::new(RoutingZoneResolver::new(
             Arc::new(zone_interfaces),
             Arc::new(zone_pairs),
             routing_table,
             Arc::new(interface_monitor),
-        ))
+        ));
+        
+        Arc::new(SmtpPolicyRetriever::new(zone_resolver, Arc::new(policy_provider)))
     }
 
     fn client() -> EndpointIdentifier {
@@ -634,7 +638,7 @@ mod tests {
 
     #[test]
     fn integration_happy_path_smtp_conversation() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         // 1. Server greeting: 220
@@ -676,7 +680,7 @@ mod tests {
 
     #[test]
     fn integration_first_packet_creates_session() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         assert!(!tracker.sessions.contains_key(&id));
@@ -691,7 +695,7 @@ mod tests {
 
     #[test]
     fn integration_subsequent_packets_use_existing_session() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
@@ -710,7 +714,7 @@ mod tests {
 
     #[test]
     fn integration_different_endpoints_create_separate_sessions() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
 
         let client1 = EndpointIdentifier {
             ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
@@ -743,7 +747,7 @@ mod tests {
 
     #[test]
     fn integration_session_identified_regardless_of_direction() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         // Server → Client (greeting)
@@ -762,7 +766,7 @@ mod tests {
 
     #[test]
     fn integration_invalid_ehlo_before_greeting_removes_session() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
@@ -774,7 +778,7 @@ mod tests {
 
     #[test]
     fn integration_invalid_mail_without_ehlo_removes_session() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
@@ -790,7 +794,7 @@ mod tests {
 
     #[test]
     fn integration_quit_removes_session() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
@@ -810,7 +814,7 @@ mod tests {
 
     #[test]
     fn integration_starttls_removes_session() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
@@ -830,7 +834,7 @@ mod tests {
 
     #[test]
     fn integration_rset_resets_to_ready() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
@@ -861,7 +865,7 @@ mod tests {
 
     #[test]
     fn integration_multiple_recipients() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
@@ -899,7 +903,7 @@ mod tests {
 
     #[test]
     fn integration_multiple_concurrent_sessions() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
 
         let clients: Vec<EndpointIdentifier> = (1u16..=3u16).map(|i| EndpointIdentifier {
             ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, i as u8)),
@@ -930,7 +934,7 @@ mod tests {
 
     #[test]
     fn integration_out_of_order_ehlo_before_greeting() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
@@ -942,7 +946,7 @@ mod tests {
 
     #[test]
     fn integration_fragmented_smtp_command() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
@@ -964,7 +968,7 @@ mod tests {
 
     #[test]
     fn integration_helo_instead_of_ehlo() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
@@ -980,7 +984,7 @@ mod tests {
 
     #[test]
     fn integration_lhlo_command() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com LMTP\r\n");
@@ -996,7 +1000,7 @@ mod tests {
 
     #[test]
     fn integration_bdat_instead_of_data() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
@@ -1024,7 +1028,7 @@ mod tests {
 
     #[test]
     fn integration_noop_command() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
@@ -1044,7 +1048,7 @@ mod tests {
 
     #[test]
     fn integration_malformed_command_removes_session() {
-        let tracker = SmtpTracker::new(mock_zone_resolver());
+        let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
         let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
