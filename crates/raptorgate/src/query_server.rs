@@ -17,17 +17,17 @@ use crate::config::provider::AppConfigProvider;
 use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
-use crate::data_plane::nat::config::NatConfig;
+use crate::nat::config::NatConfig;
 use crate::data_plane::ips::config::IpsConfig;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
-use crate::data_plane::nat::{NatConfigProvider, NatEngine};
+use crate::nat::{NatConfigProvider, NatEngine};
 use crate::factory_reset::{safe_app_config, FactoryResetOptions, FactoryResetReport};
 use crate::data_plane::tcp_session_tracker::{
     EndpointIdentifier, TcpClosingState, TcpHandshakeState, TcpSessionState, TcpSessionTracker,
 };
 use crate::metrics::{MetricsCollector, MetricsService};
-use crate::policy::nat::nat_rules::NatRules;
+use crate::nat::config::NatRules;
 use crate::policy::engine::PolicyEngine;
 use crate::policy::provider::{default_drop_policy, PolicyManager};
 use crate::policy::{Policy, PolicyId};
@@ -139,8 +139,9 @@ where
     Controller: InterfaceController,
 {
     pub tcp_tracker: Arc<TcpSessionTracker>,
-    pub nat_engine: Arc<Mutex<NatEngine>>,
+    pub nat_engine: Arc<NatEngine>,
     pub nat_store: Arc<NatConfigProvider>,
+    pub conntrack: Arc<crate::conntrack::table::Conntrack>,
     pub policy_store: Arc<PolicySwap>,
     pub policy_engine: Arc<PolicyEngine>,
     pub zone_store: Arc<ZoneProvider>,
@@ -176,6 +177,7 @@ where
             tcp_tracker: Arc::clone(&self.tcp_tracker),
             nat_engine: Arc::clone(&self.nat_engine),
             nat_store: Arc::clone(&self.nat_store),
+            conntrack: Arc::clone(&self.conntrack),
             policy_store: Arc::clone(&self.policy_store),
             policy_engine: Arc::clone(&self.policy_engine),
             zone_store: Arc::clone(&self.zone_store),
@@ -300,7 +302,27 @@ where
         &self,
         _request: Request<GetNatBindingsRequest>,
     ) -> Result<Response<GetNatBindingsResponse>, Status> {
-        Err(Status::unimplemented("not yet implemented"))
+        let bindings: Vec<crate::proto::services::NatBinding> = self.conntrack.iter_entries().into_iter()
+            .filter_map(|entry| {
+                let transform = entry.nat.lock().clone()?;
+                let reply = entry.reply.lock().clone();
+                
+                Some(crate::proto::services::NatBinding {
+                    binding_id: transform.binding_id,
+                    rule_id: transform.rule_id,
+                    original_src_ip: entry.original.src_ip.to_string(),
+                    original_src_port: u32::from(entry.original.src_port),
+                    original_dst_ip: entry.original.dst_ip.to_string(),
+                    original_dst_port: u32::from(entry.original.dst_port),
+                    translated_src_ip: reply.dst_ip.to_string(),
+                    translated_src_port: u32::from(reply.dst_port),
+                    translated_dst_ip: reply.src_ip.to_string(),
+                    translated_dst_port: u32::from(reply.src_port),
+                    protocol: entry.original.protocol as u8 as u32,
+                })
+            }).collect();
+
+        Ok(Response::new(GetNatBindingsResponse { bindings }))
     }
 
     async fn swap_nat_config(
@@ -337,9 +359,8 @@ where
         &self,
         _request: Request<GetNatConfigRequest>,
     ) -> Result<Response<GetNatConfigResponse>, Status> {
-        let engine = self.nat_engine.lock().await;
-        let config = engine
-            .nat_rules()
+        let config = self.nat_engine
+            .rules()
             .as_deref()
             .map(NatRules::into_proto)
             .unwrap_or_else(|| crate::proto::config::NatRuleSet { items: vec![] });
@@ -1039,8 +1060,7 @@ where
 
         self.nat_store.swap_config(nat_config).await?;
 
-        let mut engine = self.nat_engine.lock().await;
-        engine.replace_rules(&runtime_rules);
+        self.nat_engine.replace_rules(runtime_rules);
         Ok(())
     }
 

@@ -9,7 +9,7 @@ use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use ngfw::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use ngfw::data_plane::ips::ips::Ips;
 use ngfw::data_plane::ips::provider::IpsConfigProvider;
-use ngfw::data_plane::nat::{NatConfigProvider, NatEngine};
+use ngfw::nat::{NatConfigProvider, NatEngine};
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::proto::config::{InterfaceStatus, Rule, Zone, ZoneInterface, ZonePair};
@@ -174,10 +174,30 @@ fn shared_server() -> &'static SharedServer {
                 let (interface_sniffer, _rx) = ngfw::data_plane::interface_sniffer::InterfaceSniffer::with_sniffing(100);
                 let interface_sniffer = Arc::new(interface_sniffer);
 
+                let proto_reg = {
+                    use ngfw::conntrack::proto::{tcp::TcpHandler, udp::UdpHandler, icmp::IcmpHandler, ProtoRegistry};
+                    use ngfw::conntrack::observer::ObserverRegistry;
+                    
+                    let observers = Arc::new(ObserverRegistry::default());
+                    let mut reg = ProtoRegistry::new();
+                    
+                    reg.register(Arc::new(TcpHandler::new(Arc::clone(&observers))));
+                    reg.register(Arc::new(UdpHandler::new(Arc::clone(&observers))));
+                    reg.register(Arc::new(IcmpHandler::v4()));
+                    reg.register(Arc::new(IcmpHandler::v6()));
+                    
+                    reg
+                };
+                let conntrack_for_test = Arc::new(ngfw::conntrack::table::Conntrack::new(
+                    Arc::new(proto_reg),
+                    ngfw::conntrack::config::ConntrackConfig::default(),
+                ));
+
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
-                    nat_engine: Arc::new(Mutex::new(NatEngine::new(&None, HashMap::new()))),
+                    nat_engine: NatEngine::new(None, HashMap::new()),
                     nat_store,
+                    conntrack: conntrack_for_test,
                     policy_store: Arc::new(policy),
                     policy_engine,
                     zone_store: Arc::new(zones),
@@ -942,15 +962,21 @@ async fn swap_and_get_nat_config_roundtrip() {
 
     let swapped = ngfw::proto::config::NatRuleSet {
         items: vec![ngfw::proto::config::NatRule {
-            id: "dnat-http".into(),
-            r#type: ngfw::proto::common::NatRuleType::Dnat as i32,
-            src_ip: String::new(),
-            dst_ip: "203.0.113.10".into(),
-            src_port: None,
-            dst_port: Some(8080),
-            translated_ip: "192.168.10.10".into(),
-            translated_port: Some(80),
+            id: "pat-http".into(),
             priority: 10,
+            in_interface: None,
+            out_interface: None,
+            in_zone: None,
+            out_zone: None,
+            protocol: ngfw::proto::common::NatProtocol::Tcp as i32,
+            action: Some(ngfw::proto::config::nat_rule::Action::Pat(
+                ngfw::proto::config::PatRule {
+                    dst_ip: "203.0.113.10".into(),
+                    dst_port: 8080,
+                    translated_ip: "192.168.10.10".into(),
+                    translated_port: 80,
+                },
+            )),
         }],
     };
 
@@ -969,15 +995,17 @@ async fn swap_and_get_nat_config_roundtrip() {
     let config = response.config.expect("get_nat_config returned no config");
 
     assert_eq!(config.items.len(), 1);
-    assert_eq!(config.items[0].id, "dnat-http");
-    assert_eq!(
-        config.items[0].r#type,
-        ngfw::proto::common::NatRuleType::Dnat as i32
-    );
-    assert_eq!(config.items[0].dst_ip, "203.0.113.10");
-    assert_eq!(config.items[0].dst_port, Some(8080));
-    assert_eq!(config.items[0].translated_ip, "192.168.10.10");
-    assert_eq!(config.items[0].translated_port, Some(80));
+    assert_eq!(config.items[0].id, "pat-http");
+
+    match &config.items[0].action {
+        Some(ngfw::proto::config::nat_rule::Action::Pat(p)) => {
+            assert_eq!(p.dst_ip, "203.0.113.10");
+            assert_eq!(p.dst_port, 8080);
+            assert_eq!(p.translated_ip, "192.168.10.10");
+            assert_eq!(p.translated_port, 80);
+        }
+        other => panic!("expected Pat action, got {other:?}"),
+    }
 }
 
 #[tokio::test]

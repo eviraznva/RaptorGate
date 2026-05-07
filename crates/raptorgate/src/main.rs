@@ -23,6 +23,7 @@ mod tls;
 mod zones;
 mod swapper;
 mod validation;
+mod nat;
 
 use crate::config::provider::AppConfigProvider;
 use crate::control_server::ControlServer;
@@ -32,7 +33,7 @@ use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
-use crate::data_plane::nat::{NatConfigProvider, NatEngine};
+use crate::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
@@ -50,7 +51,7 @@ use crate::tls::{
     CaManager, DecryptedChainInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig,
     PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
-use crate::interfaces::{NetlinkInterfaceController, NetworkInterfaceMonitor};
+use crate::interfaces::{InterfaceMonitor, NetlinkInterfaceController, NetworkInterfaceMonitor};
 use crate::netlink::listener::NetlinkListener;
 use crate::netlink::routing_table::RoutingTable;
 use etherparse::NetSlice;
@@ -307,7 +308,7 @@ async fn main() {
         NetlinkInterfaceController::new().expect("Failed to initialize interface controller"),
     );
     
-    let routing_table = match RoutingTable::new(&netlink_listener, netlink_cancel).await {
+    let routing_table = match RoutingTable::new(&netlink_listener, netlink_cancel.clone()).await {
         Ok(table) => table,
         Err(err) => {
             tracing::error!(
@@ -371,11 +372,67 @@ async fn main() {
             None
         }
     };
-    let nat_engine = Arc::new(Mutex::new(NatEngine::new(&nat_rules, interface_ips)));
+    
+    let nat_engine = NatEngine::new(nat_rules, interface_ips);
+
+    // Late binding NatEngine ⇄ Conntrack: attach Weak ref + register observer
+    // dla port_release on destroy.
+    nat_engine.attach_conntrack(&conntrack);
+    conntrack.register_observer(Arc::clone(&nat_engine) as Arc<dyn CtObserver>);
+
+    // HelperRegistry — FtpHelper instaluje expectations dla data channel.
+    let helpers = {
+        let mut r = crate::conntrack::helper::HelperRegistry::new();
+        r.register(Arc::new(crate::conntrack::helper::ftp::FtpHelper::new()));
+        
+        Arc::new(r)
+    };
+
+    // MASQUERADE flush: subskrypcja netlink → przy zmianie IP rebuild snapshot
+    // i wywołanie replace_interface_ips. Conntrack flushuje stare entries.
+    {
+        let nat_engine_for_addr = Arc::clone(&nat_engine);
+        let monitor_for_addr = Arc::clone(&interface_monitor);
+        
+        let mut rx = netlink_listener.subscribe();
+        
+        let cancel_for_addr = netlink_cancel.clone();
+
+        tokio::spawn(async move {
+            use netlink_packet_route::RouteNetlinkMessage;
+
+            loop {
+                tokio::select! {
+                    _ = cancel_for_addr.cancelled() => break,
+                    
+                    msg = rx.recv() => {
+                        match msg {
+                            Ok(RouteNetlinkMessage::NewAddress(_)) | Ok(RouteNetlinkMessage::DelAddress(_)) => {
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                                
+                                let snapshot = monitor_for_addr.snapshot();
+                                
+                                let new_ips: HashMap<String, Vec<IpAddr>> = snapshot.into_iter()
+                                    .map(|(name, iface)| {
+                                        let ips: Vec<IpAddr> = iface.addresses.iter().map(|n| n.addr()).collect();
+                                        (name, ips)
+                                    }).collect();
+                                
+                                nat_engine_for_addr.replace_interface_ips(new_ips);
+                            }
+                            Ok(_) => {}
+                            Err(_) => {}
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Inicjalizacja providera konfiguracji DNS inspection.
     let dns_inspection_store =
         Arc::new(DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await);
+    
     let dns_initial_config = dns_inspection_store.get_config().clone();
 
     let dns_inspection = match DnsInspection::new((*dns_initial_config).clone()) {
@@ -488,7 +545,8 @@ async fn main() {
                                                                 },
                                                                 tail: Chain {
                                                                     head: FtpAlgStage {
-                                                                        engine: Arc::clone(&nat_engine),
+                                                                        conntrack: Arc::clone(&conntrack),
+                                                                        helpers: Arc::clone(&helpers),
                                                                     },
                                                                     tail: ConntrackConfirmStage {
                                                                         ct: Arc::clone(&conntrack),
@@ -617,6 +675,7 @@ async fn main() {
     // QueryHandler construction moved here to have access to both vlan_reconciler and sniffer
     let query_server = QueryServer::<DiskPolicyProvider, NetworkInterfaceMonitor, NetlinkInterfaceController>::new(
         QueryHandler {
+            conntrack: Arc::clone(&conntrack),
             tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
             nat_store: Arc::clone(&nat_store),

@@ -80,7 +80,24 @@ message GetPolicyResponse {
 }
 
 message GetNatBindingsRequest {}
-message GetNatBindingsResponse {}
+
+message NatBinding {
+  uint64 binding_id      = 1;
+  string rule_id         = 2;
+  string original_src_ip = 3;
+  uint32 original_src_port = 4;
+  string original_dst_ip = 5;
+  uint32 original_dst_port = 6;
+  string translated_src_ip = 7;
+  uint32 translated_src_port = 8;
+  string translated_dst_ip = 9;
+  uint32 translated_dst_port = 10;
+  uint32 protocol         = 11;
+}
+
+message GetNatBindingsResponse {
+  repeated NatBinding bindings = 1;
+}
 
 // ── NAT Config ──────────────────────────────────────────────────────────────
 

@@ -342,10 +342,15 @@ mod tests {
 
         let h = FtpHelper::new();
         let entry = parent_entry();
-        
+
         *entry.nat.lock() = Some(NatTransform {
             rule_id: "rule-1".to_string(),
             binding_id: 99,
+            manip_bits: 0,
+            src_manip: None,
+            dst_manip: None,
+            allocated_ip: None,
+            proto: Protocol::Tcp,
             allocated_port: Some(50000),
         });
 

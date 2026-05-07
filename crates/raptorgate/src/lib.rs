@@ -20,4 +20,5 @@ pub mod zones;
 mod swapper;
 pub mod validation;
 
+pub mod nat;
 pub mod conntrack;

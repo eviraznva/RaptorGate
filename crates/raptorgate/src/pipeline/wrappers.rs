@@ -12,10 +12,10 @@ use crate::{
     data_plane::{
         dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection, EchMitigationVerdict},
         ips::ips::{Ips, IpsSignatureMatch, IpsVerdict},
-        nat::NatEngine,
         packet_context::PacketContext,
         tcp_session_tracker::TcpSessionTracker,
     },
+    nat::NatEngine,
     dpi::{DpiClassifier, FlowKey, InspectResult},
     events::{self, Event, EventKind},
     metrics::MetricsCollector,
@@ -149,44 +149,47 @@ fn packet_is_decrypted(ctx: &PacketContext) -> bool {
 
 #[derive(Clone)]
 pub struct NatPreroutingStage {
-    pub engine: Arc<Mutex<NatEngine>>,
+    pub engine: Arc<NatEngine>,
 }
 
 impl Stage for NatPreroutingStage {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        !packet_is_decrypted(ctx)
+        !packet_is_decrypted(ctx) && ctx.ct().is_some()
     }
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
+        let info = ctx.ct_info().unwrap_or(crate::conntrack::entry::CtInfo::Established);
         let iface = ctx.borrow_src_interface().to_string();
-        let mut engine = self.engine.lock().await;
 
         // Safety: NatEngine rewrites packet header fields in-place without
-        // reallocating the buffer. SlicedPacket holds &[u8] into the same
-        // allocation — buffer address and length are unchanged after the write.
+        // reallocating the buffer.
         let raw_mut = unsafe {
             let ptr = ctx.borrow_raw().as_ptr().cast_mut();
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        engine.process_prerouting(raw_mut, &iface, None);
+        let _ = self.engine.prerouting(raw_mut, &ct, info, &iface, None);
         StageOutcome::Continue
     }
 }
 
 #[derive(Clone)]
 pub struct NatPostroutingStage<M: InterfaceMonitor> {
-    pub engine: Arc<Mutex<NatEngine>>,
+    pub engine: Arc<NatEngine>,
     pub routing_table: Arc<crate::netlink::routing_table::RoutingTable>,
     pub interface_monitor: Arc<M>,
 }
 
 impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        !packet_is_decrypted(ctx)
+        !packet_is_decrypted(ctx) && ctx.ct().is_some()
     }
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
+        let info = ctx.ct_info().unwrap_or(crate::conntrack::entry::CtInfo::Established);
+
         let dst_ip = match &ctx.borrow_sliced_packet().net {
             Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
             Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
@@ -201,84 +204,98 @@ impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
             return StageOutcome::Continue;
         };
 
-        let mut engine = self.engine.lock().await;
-
-        // Safety: same invariant as NatPreroutingStage.
         let raw_mut = unsafe {
             let ptr = ctx.borrow_raw().as_ptr() as *mut u8;
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        engine.process_postrouting(raw_mut, &out_iface_sys.name, None);
+        let _ = self.engine.postrouting(raw_mut, &ct, info, &out_iface_sys.name, None);
         StageOutcome::Continue
     }
 }
 
 #[derive(Clone)]
 pub struct FtpAlgStage {
-    pub engine: Arc<Mutex<NatEngine>>,
+    pub conntrack: Arc<Conntrack>,
+    pub helpers: Arc<crate::conntrack::helper::HelperRegistry>,
 }
 
 impl Stage for FtpAlgStage {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        matches!(
-            ctx.borrow_dpi_ctx(),
-            Some(dpi_ctx)
-                if dpi_ctx.app_proto == Some(AppProto::Ftp)
-                    && !dpi_ctx.decrypted
-                    && dpi_ctx.ftp_data_endpoint.is_some()
-        )
+        ctx.ct().is_some() && matches!(ctx.borrow_dpi_ctx(), Some(dpi_ctx) if dpi_ctx.app_proto == Some(AppProto::Ftp) && !dpi_ctx.decrypted)
     }
 
     async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
+
         let Some(dpi_ctx) = ctx.borrow_dpi_ctx().clone() else {
             return StageOutcome::Continue;
         };
 
-        let original_len = ctx.borrow_raw().len();
+        // 1. Payload rewrite — tylko gdy DPI rozpoznał komendę PORT/PASV/EPRT/EPSV.
+        if dpi_ctx.ftp_data_endpoint.is_some() {
+            let original_len = ctx.borrow_raw().len();
+            let mut raw_copy = ctx.borrow_raw().to_vec();
 
-        let mut raw_copy = ctx.borrow_raw().to_vec();
+            match crate::nat::alg::ftp::ftp_alg_rewrite(&mut raw_copy, &dpi_ctx) {
+                Ok(true) => {
+                    if raw_copy.len() != original_len {
+                        let src_interface = ctx.borrow_src_interface().clone();
+                        let arrival_time = *ctx.borrow_arrival_time();
+                        let warnings = ctx.with_warnings_mut(std::mem::take);
+                        let dpi_ctx_taken = ctx.with_dpi_ctx_mut(|dpi| dpi.take());
 
-        {
-            let mut engine = self.engine.lock().await;
-            engine.process_ftp_alg(&mut raw_copy, &dpi_ctx);
-        }
-
-        if raw_copy.len() != original_len {
-            let src_interface = ctx.borrow_src_interface().clone();
-            let arrival_time = *ctx.borrow_arrival_time();
-            let warnings = ctx.with_warnings_mut(std::mem::take);
-            let dpi_ctx = ctx.with_dpi_ctx_mut(|dpi| dpi.take());
-
-            match PacketContext::from_raw_full(
-                raw_copy,
-                src_interface,
-                warnings,
-                arrival_time,
-                dpi_ctx,
-            ) {
-                Ok(new_ctx) => *ctx = new_ctx,
+                        match PacketContext::from_raw_full(
+                            raw_copy,
+                            src_interface,
+                            warnings,
+                            arrival_time,
+                            dpi_ctx_taken,
+                        ) {
+                            Ok(new_ctx) => *ctx = new_ctx,
+                            Err(err) => {
+                                tracing::warn!(
+                                    event = "ftp_alg.reparse.failed",
+                                    error = %err,
+                                    "FTP ALG rewrite produced an invalid packet"
+                                );
+                                return StageOutcome::Halt;
+                            }
+                        }
+                    } else {
+                        unsafe {
+                            let ptr = ctx.borrow_raw().as_ptr().cast_mut();
+                            std::ptr::copy_nonoverlapping(raw_copy.as_ptr(), ptr, raw_copy.len());
+                        }
+                    }
+                }
+                Ok(false) => {}
                 Err(err) => {
-                    tracing::warn!(
-                        event = "ftp_alg.reparse.failed",
-                        stage = "ftp_alg",
-                        verdict = "drop",
-                        error = %err,
-                        "FTP ALG rewrite produced an invalid packet"
-                    );
+                    tracing::warn!(error = %err, "ftp alg rewrite failed");
                     return StageOutcome::Halt;
                 }
             }
-        } else {
-            // Safety: the backing allocation and length stay unchanged here.
-            // We only overwrite bytes in-place after mutating a cloned buffer.
-            unsafe {
-                let ptr = ctx.borrow_raw().as_ptr().cast_mut();
-                std::ptr::copy_nonoverlapping(raw_copy.as_ptr(), ptr, raw_copy.len());
-            }
+        }
+
+        // 2. Helper dispatch — instalacja expectations dla data channel.
+        let key_proto = ct.original.protocol;
+        let key_port = ct.original.dst_port;
+
+        if let Some(helper) = self.helpers.lookup(key_proto, key_port) {
+            let dir = ctx.ct_direction().unwrap_or(crate::conntrack::tuple::Direction::Original);
+            let payload = transport_payload_slice(ctx.borrow_raw());
+            
+            helper.install_expectations(&ct, payload, dir, &self.conntrack);
         }
 
         StageOutcome::Continue
+    }
+}
+
+fn transport_payload_slice(raw: &[u8]) -> &[u8] {
+    match crate::nat::packet::transport_payload_range(raw) {
+        Some(range) => &raw[range],
+        None => &[],
     }
 }
 

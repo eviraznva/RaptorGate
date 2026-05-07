@@ -84,20 +84,52 @@ message ZonePairSet {
 
 // ── NAT ──────────────────────────────────────────────────────────────────────
 
-message NatRule {
-  string              id               = 1;
-  common.NatRuleType  type             = 2;
-  string              src_ip           = 3;
-  string              dst_ip           = 4;
-  optional uint32     src_port         = 5;
-  optional uint32     dst_port         = 6;
-  string              translated_ip    = 7;
-  optional uint32     translated_port  = 8;
-  uint32              priority         = 9;
+message NatRuleSet {
+  repeated NatRule   items   = 1;
 }
 
-message NatRuleSet {
-  repeated NatRule   items   = 2;
+message NatRule {
+  string  id            = 1;
+  uint32  priority      = 2;
+
+  optional string in_interface  = 3;
+  optional string out_interface = 4;
+  optional string in_zone       = 5;
+  optional string out_zone      = 6;
+  common.NatProtocol protocol   = 7;
+
+  oneof action {
+    SnatRule       snat       = 10;
+    DnatRule       dnat       = 11;
+    PatRule        pat        = 12;
+    MasqueradeRule masquerade = 13;
+  }
+}
+
+message SnatRule {
+  string          src_cidr      = 1;
+  string          translated_ip = 2;
+  optional uint32 src_port_min  = 3;
+  optional uint32 src_port_max  = 4;
+}
+
+message DnatRule {
+  string dst_cidr      = 1;
+  string translated_ip = 2;
+}
+
+message PatRule {
+  string dst_ip          = 1;
+  uint32 dst_port        = 2;
+  string translated_ip   = 3;
+  uint32 translated_port = 4;
+}
+
+message MasqueradeRule {
+  // out_interface w NatRule jest WYMAGANE dla MASQUERADE (walidacja w Rust).
+  optional string src_cidr      = 1;
+  optional uint32 src_port_min  = 2;
+  optional uint32 src_port_max  = 3;
 }
 
 // ── DNS blacklista ────────────────────────────────────────────────────────────

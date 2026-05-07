@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use arc_swap::ArcSwap;
+use derive_more::Display;
 
 use crate::conntrack::entry::NatTransform;
 use crate::conntrack::tuple::{FlowTuple, Protocol};
@@ -54,7 +55,7 @@ impl ExpectationTuple {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Display, Debug, Clone, PartialEq, Eq)]
 pub enum ExpectError {
     GlobalLimit,
     HelperLimit { helper: &'static str },

@@ -32,10 +32,33 @@ pub enum CtInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct TupleManip {
+    pub ip: std::net::IpAddr,
+    pub port: Option<u16>,
+}
+
+#[derive(Debug, Clone)]
 pub struct NatTransform {
     pub rule_id: String,
     pub binding_id: u64,
+    
+    pub manip_bits: u8,
+    
+    pub src_manip: Option<TupleManip>,
+    pub dst_manip: Option<TupleManip>,
+    
+    pub allocated_ip: Option<std::net::IpAddr>,
     pub allocated_port: Option<u16>,
+    
+    pub proto: crate::conntrack::tuple::Protocol,
+}
+
+impl NatTransform {
+    pub const MANIP_SRC: u8 = 1 << 0;
+    pub const MANIP_DST: u8 = 1 << 1;
+
+    pub fn has_src_manip(&self) -> bool { self.manip_bits & Self::MANIP_SRC != 0 }
+    pub fn has_dst_manip(&self) -> bool { self.manip_bits & Self::MANIP_DST != 0 }
 }
 
 #[derive(Debug)]

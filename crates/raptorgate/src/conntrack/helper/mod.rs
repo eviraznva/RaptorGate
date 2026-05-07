@@ -3,6 +3,7 @@ pub mod ftp;
 use std::sync::Arc;
 use std::collections::HashMap;
 
+use crate::conntrack::table::Conntrack;
 use crate::conntrack::entry::ConntrackEntry;
 use crate::conntrack::expectation::Expectation;
 use crate::conntrack::tuple::{Direction, Protocol};
@@ -18,6 +19,14 @@ pub trait Helper: Send + Sync {
     /// Inspekcja payloadu. Zwraca listę expectations do zainstalowania
     /// Pusty vec jeśli nic nie wykryto.
     fn inspect(&self, entry: &ConntrackEntry, payload: &[u8], dir: Direction) -> Vec<Expectation>;
+
+    fn install_expectations(&self, entry: &ConntrackEntry, payload: &[u8], dir: Direction, conntrack: &Conntrack) {
+        for exp in self.inspect(entry, payload, dir) {
+            if let Err(e) = conntrack.expectations().insert(exp) {
+                tracing::debug!(error = %e, helper = self.name(), "failed to install expectation");
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -26,13 +35,11 @@ pub struct HelperRegistry {
 }
 
 impl HelperRegistry {
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     pub fn register(&mut self, helper: Arc<dyn Helper>) {
         let proto = helper.proto();
-
+        
         for &port in helper.ports() {
             self.by_port.insert((proto, port), helper.clone());
         }
@@ -42,25 +49,17 @@ impl HelperRegistry {
         self.by_port.get(&(proto, port)).cloned()
     }
 
-    pub fn len(&self) -> usize {
-        self.by_port.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.by_port.is_empty()
-    }
+    pub fn len(&self) -> usize { self.by_port.len() }
+    
+    pub fn is_empty(&self) -> bool { self.by_port.is_empty() }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-    use std::net::{IpAddr, Ipv4Addr};
     
-    use crate::conntrack::proto::ProtoState;
+    use crate::conntrack::tuple::Protocol;
     use crate::conntrack::entry::ConntrackEntry;
-    use crate::conntrack::proto::udp::UdpProtoState;
-    use crate::conntrack::tuple::{FlowTuple, Protocol};
 
     struct DummyHelper {
         name: &'static str,
@@ -70,8 +69,11 @@ mod tests {
 
     impl Helper for DummyHelper {
         fn name(&self) -> &'static str { self.name }
+        
         fn proto(&self) -> Protocol { self.proto }
+        
         fn ports(&self) -> &'static [u16] { self.ports }
+        
         fn inspect(&self, _e: &ConntrackEntry, _p: &[u8], _d: Direction) -> Vec<Expectation> {
             Vec::new()
         }
@@ -80,8 +82,9 @@ mod tests {
     #[test]
     fn registry_lookup_finds_registered_helper() {
         let mut r = HelperRegistry::new();
+        
         let h = Arc::new(DummyHelper { name: "ftp", proto: Protocol::Tcp, ports: &[21] });
-
+        
         r.register(h);
 
         assert!(r.lookup(Protocol::Tcp, 21).is_some());
@@ -92,8 +95,9 @@ mod tests {
     #[test]
     fn helper_can_register_on_multiple_ports() {
         let mut r = HelperRegistry::new();
+        
         let h = Arc::new(DummyHelper { name: "tftp", proto: Protocol::Udp, ports: &[69, 1069] });
-
+        
         r.register(h);
 
         assert_eq!(r.len(), 2);
@@ -104,27 +108,14 @@ mod tests {
     #[test]
     fn lookup_returns_same_arc_for_all_ports() {
         let mut r = HelperRegistry::new();
+        
         let h: Arc<dyn Helper> = Arc::new(DummyHelper { name: "x", proto: Protocol::Tcp, ports: &[100, 200] });
-
+        
         r.register(h.clone());
 
         let a = r.lookup(Protocol::Tcp, 100).unwrap();
         let b = r.lookup(Protocol::Tcp, 200).unwrap();
-
+        
         assert!(Arc::ptr_eq(&a, &b));
-    }
-    
-    fn _entry_compiles() {
-        let _e = ConntrackEntry::new(
-            1,
-            FlowTuple::new(
-                IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 1234,
-                IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)), 21,
-                Protocol::Tcp,
-            ),
-            ProtoState::Udp(UdpProtoState::default()),
-            Duration::from_secs(60),
-            0,
-        );
     }
 }
