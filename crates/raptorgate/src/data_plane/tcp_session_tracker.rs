@@ -511,7 +511,7 @@ pub enum TcpSessionError {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct TcpIdentifier {
-    endpoints: UnorderedPair<EndpointIdentifier>
+    pub(crate) endpoints: UnorderedPair<EndpointIdentifier>
 }
 
 impl TcpIdentifier {

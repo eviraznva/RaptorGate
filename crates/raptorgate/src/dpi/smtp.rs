@@ -493,4 +493,484 @@ mod tests {
         let state = SessionState::Ready;
         assert_eq!(state.transition(resp(250)), Ok(None));
     }
+
+    // ── Integration tests with real packets ──────────────────────────────────
+
+    use std::net::{IpAddr, Ipv4Addr};
+    use etherparse::{PacketBuilder, SlicedPacket};
+    use unordered_pair::UnorderedPair;
+    use crate::data_plane::tcp_session_tracker::TcpIdentifier;
+
+    fn client() -> EndpointIdentifier {
+        EndpointIdentifier {
+            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            port: crate::rule_tree::types::Port::from(54321u16),
+        }
+    }
+
+    fn server() -> EndpointIdentifier {
+        EndpointIdentifier {
+            ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
+            port: crate::rule_tree::types::Port::from(25u16),
+        }
+    }
+
+    fn session_id() -> TcpIdentifier {
+        TcpIdentifier {
+            endpoints: UnorderedPair::from((client(), server())),
+        }
+    }
+
+    fn smtp_packet(src: &EndpointIdentifier, dst: &EndpointIdentifier, payload: &[u8]) -> Vec<u8> {
+        let src_ip = match src.ip {
+            IpAddr::V4(ip) => ip.octets(),
+            _ => panic!("IPv6 not supported in tests"),
+        };
+        let dst_ip = match dst.ip {
+            IpAddr::V4(ip) => ip.octets(),
+            _ => panic!("IPv6 not supported in tests"),
+        };
+
+        let builder = PacketBuilder::ethernet2([0; 6], [0; 6])
+            .ipv4(src_ip, dst_ip, 64)
+            .tcp(u16::from(src.port), u16::from(dst.port), 1000, 8192);
+
+        let mut packet_data = Vec::with_capacity(builder.size(payload.len()));
+        builder.write(&mut packet_data, payload).unwrap();
+        packet_data
+    }
+
+    fn get_session_state(tracker: &SmtpTracker, id: &TcpIdentifier) -> Option<SessionState> {
+        tracker.sessions.get(id).map(|s| s.state)
+    }
+
+    #[test]
+    fn integration_happy_path_smtp_conversation() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        // 1. Server greeting: 220
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::GreetingReceived));
+
+        // 2. Client EHLO
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+
+        // 3. Client MAIL FROM
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::EnvelopeOpen));
+
+        // 4. Client RCPT TO
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::ReciepientSet));
+
+        // 5. Client DATA
+        let packet = smtp_packet(&client(), &server(), b"DATA\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::DataPhase));
+
+        // 6. Server 250 OK (after data transmission)
+        let packet = smtp_packet(&server(), &client(), b"250 OK\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+    }
+
+    #[test]
+    fn integration_first_packet_creates_session() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        assert!(!tracker.sessions.contains_key(&id));
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        assert!(tracker.sessions.contains_key(&id));
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::GreetingReceived));
+    }
+
+    #[test]
+    fn integration_subsequent_packets_use_existing_session() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        assert_eq!(tracker.sessions.len(), 1);
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert_eq!(tracker.sessions.len(), 1);
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+    }
+
+    #[test]
+    fn integration_different_endpoints_create_separate_sessions() {
+        let tracker = SmtpTracker::new();
+
+        let client1 = EndpointIdentifier {
+            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            port: crate::rule_tree::types::Port::from(54321u16),
+        };
+        let client2 = EndpointIdentifier {
+            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            port: crate::rule_tree::types::Port::from(54322u16),
+        };
+
+        let id1 = TcpIdentifier {
+            endpoints: UnorderedPair::from((client1.clone(), server())),
+        };
+        let id2 = TcpIdentifier {
+            endpoints: UnorderedPair::from((client2.clone(), server())),
+        };
+
+        let packet = smtp_packet(&server(), &client1, b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id1, server(), client1.clone());
+
+        let packet = smtp_packet(&server(), &client2, b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id2, server(), client2);
+
+        assert_eq!(tracker.sessions.len(), 2);
+        assert_eq!(get_session_state(&tracker, &id1), Some(SessionState::GreetingReceived));
+        assert_eq!(get_session_state(&tracker, &id2), Some(SessionState::GreetingReceived));
+    }
+
+    #[test]
+    fn integration_session_identified_regardless_of_direction() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        // Server → Client (greeting)
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        // Client → Server (EHLO)
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert_eq!(tracker.sessions.len(), 1);
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+    }
+
+    #[test]
+    fn integration_invalid_ehlo_before_greeting_removes_session() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert!(!tracker.sessions.contains_key(&id));
+    }
+
+    #[test]
+    fn integration_invalid_mail_without_ehlo_removes_session() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert!(!tracker.sessions.contains_key(&id));
+    }
+
+    #[test]
+    fn integration_quit_removes_session() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"QUIT\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert!(!tracker.sessions.contains_key(&id));
+    }
+
+    #[test]
+    fn integration_starttls_removes_session() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"STARTTLS\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert!(!tracker.sessions.contains_key(&id));
+    }
+
+    #[test]
+    fn integration_rset_resets_to_ready() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::ReciepientSet));
+
+        let packet = smtp_packet(&client(), &server(), b"RSET\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+        assert!(tracker.sessions.contains_key(&id));
+    }
+
+    #[test]
+    fn integration_multiple_recipients() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient1@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::ReciepientSet));
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient2@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::ReciepientSet));
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient3@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::ReciepientSet));
+
+        let packet = smtp_packet(&client(), &server(), b"DATA\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::DataPhase));
+    }
+
+    #[test]
+    fn integration_multiple_concurrent_sessions() {
+        let tracker = SmtpTracker::new();
+
+        let clients: Vec<EndpointIdentifier> = (1u16..=3u16).map(|i| EndpointIdentifier {
+            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, i as u8)),
+            port: crate::rule_tree::types::Port::from(50000 + i),
+        }).collect();
+
+        let ids: Vec<TcpIdentifier> = clients.iter().map(|c| TcpIdentifier {
+            endpoints: UnorderedPair::from((c.clone(), server())),
+        }).collect();
+
+        for (client, id) in clients.iter().zip(&ids) {
+            let packet = smtp_packet(&server(), client, b"220 mail.example.com ESMTP\r\n");
+            let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+            tracker.on_new_packet(sliced.transport.unwrap(), id, server(), client.clone());
+        }
+
+        assert_eq!(tracker.sessions.len(), 3);
+
+        for (client, id) in clients.iter().zip(&ids) {
+            let packet = smtp_packet(client, &server(), b"EHLO client.example.com\r\n");
+            let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+            tracker.on_new_packet(sliced.transport.unwrap(), id, client.clone(), server());
+            assert_eq!(get_session_state(&tracker, id), Some(SessionState::Ready));
+        }
+
+        assert_eq!(tracker.sessions.len(), 3);
+    }
+
+    #[test]
+    fn integration_out_of_order_ehlo_before_greeting() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert!(!tracker.sessions.contains_key(&id));
+    }
+
+    #[test]
+    fn integration_fragmented_smtp_command() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO cli");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::GreetingReceived));
+
+        let packet = smtp_packet(&client(), &server(), b"ent.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+    }
+
+    #[test]
+    fn integration_helo_instead_of_ehlo() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"HELO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+    }
+
+    #[test]
+    fn integration_lhlo_command() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com LMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"LHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+    }
+
+    #[test]
+    fn integration_bdat_instead_of_data() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"BDAT 100 LAST\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::DataPhase));
+    }
+
+    #[test]
+    fn integration_noop_command() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"NOOP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+    }
+
+    #[test]
+    fn integration_malformed_command_removes_session() {
+        let tracker = SmtpTracker::new();
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"INVALID COMMAND\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        assert!(!tracker.sessions.contains_key(&id));
+    }
 }
