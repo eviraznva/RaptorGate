@@ -67,6 +67,7 @@ serde_regex = "1.1.0"
 
 [dev-dependencies]
 serial_test = "3.2.0"
+tempfile = "3"
 
 [[bench]]
 name = "ips_match"

@@ -32,6 +32,14 @@ pub struct DiskPolicyProvider {
     swapper: Swapper<PolicyId, Policy>,
 }
 
+impl DiskPolicyProvider {
+    pub fn from_policies(policies: HashMap<PolicyId, Policy>, data_dir: std::path::PathBuf) -> Self {
+        Self {
+            swapper: Swapper::new(policies, crate::disk_store::ListDiskStore::new("policies", data_dir)),
+        }
+    }
+}
+
 #[async_trait]
 impl PolicyManager for DiskPolicyProvider {
     async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), PolicyProviderError> {

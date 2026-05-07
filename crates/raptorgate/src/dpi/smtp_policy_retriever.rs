@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::policy::{provider::DiskPolicyProvider, SmtpPolicy};
 use crate::zones::resolver::ZoneResolver;
 
+#[derive(Clone)]
 pub struct SmtpSessionPolicies {
     pub client_to_server: Vec<SmtpPolicy>,
     pub server_to_client: Vec<SmtpPolicy>,

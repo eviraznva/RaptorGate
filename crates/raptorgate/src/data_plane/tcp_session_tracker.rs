@@ -515,6 +515,12 @@ pub struct TcpIdentifier {
 }
 
 impl TcpIdentifier {
+    pub fn new(client: EndpointIdentifier, server: EndpointIdentifier) -> Self {
+        Self {
+            endpoints: UnorderedPair::from((client, server)),
+        }
+    }
+
     pub fn endpoints(&self) -> (EndpointIdentifier, EndpointIdentifier) {
         self.endpoints.clone().into_ordered_tuple()
     }

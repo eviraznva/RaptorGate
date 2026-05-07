@@ -37,11 +37,11 @@ pub struct Policy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmtpPolicy {
     #[serde(with = "serde_regex")]
-    sender: Regex,
+    pub sender: Regex,
     #[serde(with = "serde_regex")]
-    recipient: Regex,
+    pub recipient: Regex,
     #[serde(with = "serde_regex")]
-    message: Regex
+    pub message: Regex
 }
 
 impl SmtpPolicy {

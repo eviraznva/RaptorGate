@@ -1569,6 +1569,7 @@ dependencies = [
  "serial_test",
  "simple-dns",
  "smtp-proto",
+ "tempfile",
  "thiserror 2.0.18",
  "time",
  "tls-parser",

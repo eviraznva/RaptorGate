@@ -8,7 +8,7 @@ use crate::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
 use crate::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
 use crate::interfaces::NetworkInterfaceMonitor;
-use crate::zones::resolver::RoutingZoneResolver;
+use crate::zones::resolver::{RoutingZoneResolver, ZoneResolver};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SessionState {
@@ -135,17 +135,21 @@ impl SmtpSession {
     }
 }
 
-pub struct SmtpTracker {
+pub struct SmtpTracker<ZR = RoutingZoneResolver<NetworkInterfaceMonitor>> {
     sessions: DashMap<TcpIdentifier, SmtpSession>,
-    policy_retriever: Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>,
+    policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
 }
 
-impl SmtpTracker {
-    pub fn new(policy_retriever: Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>) -> Self {
+impl<ZR: ZoneResolver> SmtpTracker<ZR> {
+    pub fn new(policy_retriever: Arc<SmtpPolicyRetriever<ZR>>) -> Self {
         SmtpTracker {
             sessions: DashMap::new(),
             policy_retriever,
         }
+    }
+
+    pub fn get_session_policies(&self, id: &TcpIdentifier) -> Option<SmtpSessionPolicies> {
+        self.sessions.get(id).and_then(|s| s.policies.clone())
     }
 
     fn cleanup_session(&self, should_remove: bool, session: RefMut<'_, TcpIdentifier, SmtpSession>) {
