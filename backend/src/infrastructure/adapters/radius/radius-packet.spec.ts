@@ -37,6 +37,17 @@ function attr(type: number, value: Buffer | string): Buffer {
   return Buffer.concat([Buffer.from([type, raw.length + 2]), raw]);
 }
 
+function vendorSubAttr(vendorType: number, value: string): Buffer {
+  const raw = Buffer.from(value, 'utf8');
+  return Buffer.concat([Buffer.from([vendorType, raw.length + 2]), raw]);
+}
+
+function vsa(vendorId: number, subAttrs: Buffer[]): Buffer {
+  const vendor = Buffer.alloc(4);
+  vendor.writeUInt32BE(vendorId, 0);
+  return Buffer.concat([vendor, ...subAttrs]);
+}
+
 describe('radius-packet', () => {
   const secret = 'radiussecret';
 
@@ -225,6 +236,21 @@ describe('radius-packet', () => {
       const attrs = attr(RADIUS_ATTR_VENDOR_SPECIFIC, cisco);
 
       expect(extractGroupsFromAttributes(attrs)).toEqual([]);
+    });
+
+    it('wyciaga role i grupy z Palo Alto VSAs', () => {
+      const paloAlto = Buffer.concat([
+        vsa(25461, [
+          vendorSubAttr(1, 'super_admin'),
+          vendorSubAttr(5, 'Domain Admins'),
+        ]),
+      ]);
+      const attrs = attr(RADIUS_ATTR_VENDOR_SPECIFIC, paloAlto);
+
+      expect(extractGroupsFromAttributes(attrs)).toEqual([
+        'super_admin',
+        'Domain Admins',
+      ]);
     });
   });
 });

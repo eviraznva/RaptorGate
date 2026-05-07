@@ -23,6 +23,9 @@ const HEADER_SIZE = 20;
 const MAX_PASSWORD_LENGTH = 128;
 const MAX_USERNAME_LENGTH = 253;
 const NAS_PORT_TYPE_VIRTUAL = 5;
+const PALO_ALTO_VENDOR_ID = 25461;
+const PALO_ALTO_ATTR_ADMIN_ROLE = 1;
+const PALO_ALTO_ATTR_USER_GROUP = 5;
 
 export interface RadiusAccessRequestInput {
   username: string;
@@ -158,6 +161,12 @@ export function extractGroupsFromAttributes(attributes: Buffer): string[] {
       }
     }
   }
+  for (const raw of extractPaloAltoVsas(values.get(RADIUS_ATTR_VENDOR_SPECIFIC) ?? [])) {
+    const group = raw.toString('utf8').trim();
+    if (group && !groups.includes(group)) {
+      groups.push(group);
+    }
+  }
 
   return groups;
 }
@@ -233,6 +242,33 @@ function extractCiscoAvPairs(attributes: Buffer[]): Buffer[] {
   }
 
   return pairs;
+}
+
+function extractPaloAltoVsas(attributes: Buffer[]): Buffer[] {
+  const values: Buffer[] = [];
+
+  for (const attribute of attributes) {
+    if (attribute.length < 6) continue;
+
+    const vendorId = attribute.readUInt32BE(0);
+    if (vendorId !== PALO_ALTO_VENDOR_ID) continue;
+
+    let offset = 4;
+    while (offset + 2 <= attribute.length) {
+      const vendorType = attribute.readUInt8(offset);
+      const vendorLength = attribute.readUInt8(offset + 1);
+      if (vendorLength < 2 || offset + vendorLength > attribute.length) break;
+      if (
+        vendorType === PALO_ALTO_ATTR_ADMIN_ROLE ||
+        vendorType === PALO_ALTO_ATTR_USER_GROUP
+      ) {
+        values.push(attribute.subarray(offset + 2, offset + vendorLength));
+      }
+      offset += vendorLength;
+    }
+  }
+
+  return values;
 }
 
 function isCiscoRolesAvPair(value: string): boolean {

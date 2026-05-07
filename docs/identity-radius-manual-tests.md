@@ -73,7 +73,7 @@ Konta:
 
 | username | password | LDAP group |
 | --- | --- | --- |
-| `admin` | `admin123` | `admins` |
+| `admin` | `admin1234` | `admins` |
 | `user` | `user123` | `users` |
 | `guest` | `guest123` | `guests` |
 
@@ -298,7 +298,7 @@ Oczekiwane: kazde zapytanie zwraca odpowiedni `uid`.
 Na `r1`:
 
 ```bash
-radtest admin admin123 192.168.20.30 0 radiussecret
+radtest admin admin1234 192.168.20.30 0 radiussecret
 radtest user user123 192.168.20.30 0 radiussecret
 radtest guest guest123 192.168.20.30 0 radiussecret
 ```
@@ -970,7 +970,7 @@ Warunek: aktywny `adminAuthenticationProfileId` wskazuje profil RADIUS, a profil
 Na `r1`:
 
 ```bash
-curl -k -sS -i -X POST https://127.0.0.1:3000/auth/login -H 'content-type: application/json' -d '{"username":"admin","password":"admin123"}'
+curl -k -sS -i -X POST https://127.0.0.1:3000/auth/login -H 'content-type: application/json' -d '{"username":"admin","password":"admin1234"}'
 ```
 
 Oczekiwane:
@@ -991,7 +991,7 @@ Oczekiwane: endpoint przepuszcza zgodnie z rola `admin` i jej permisjami.
 Usun lub zmien mapping tak, zeby grupa `admins` nie pasowala, i powtorz login:
 
 ```bash
-curl -k -sS -i -X POST https://127.0.0.1:3000/auth/login -H 'content-type: application/json' -d '{"username":"admin","password":"admin123"}'
+curl -k -sS -i -X POST https://127.0.0.1:3000/auth/login -H 'content-type: application/json' -d '{"username":"admin","password":"admin1234"}'
 ```
 
 Oczekiwane:
@@ -1519,7 +1519,7 @@ curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
   -d "{\"adminAuthenticationProfileId\":\"$ADMIN_PROF_A\"}"
 curl -k -sS -X POST https://127.0.0.1:3000/auth/login \
   -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"admin123"}' | jq '.data | {roles, authProvider}'
+  -d '{"username":"admin","password":"admin1234"}' | jq '.data | {roles, authProvider}'
 ```
 
 Oczekiwane: `roles:["admin"]`, `authProvider:"radius"`.
@@ -1533,7 +1533,7 @@ curl -k -sS -X PATCH https://127.0.0.1:3000/identity-config/settings \
   -d "{\"adminAuthenticationProfileId\":\"$ADMIN_PROF_B\"}"
 curl -k -sS -X POST https://127.0.0.1:3000/auth/login \
   -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"admin123"}' | jq '.data | {roles, authProvider}'
+  -d '{"username":"admin","password":"admin1234"}' | jq '.data | {roles, authProvider}'
 ```
 
 Oczekiwane: `roles:["viewer"]`. Lokalny break-glass admina nadal jest dostepny przez `admin/<lokalne haslo>`.

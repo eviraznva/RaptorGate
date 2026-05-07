@@ -21,7 +21,7 @@ done
 
 echo "== RADIUS Access-Accept ($RADIUS_HOST) =="
 # Pary uid:haslo zgodne z seed.ldif.
-for pair in admin:admin123 user:user123 guest:guest123; do
+for pair in admin:admin1234 user:user123 guest:guest123; do
   uid="${pair%%:*}"
   pw="${pair##*:}"
   out=$(radtest "$uid" "$pw" "$RADIUS_HOST" 0 "$RADIUS_SECRET" 2>&1 || true)
