@@ -127,6 +127,19 @@ export class LoginUserUseCase {
       throw new InvalidCredentialsException();
     }
 
+    if (externalResult.provider === "ldap") {
+      if (!user) {
+        this.logger.warn({
+          event: "auth.admin.ldap_authorization_denied",
+          message: "LDAP admin authentication accepted but local admin user was not found",
+          username: dto.username,
+          profileId: externalResult.profileId,
+        });
+        throw new InvalidCredentialsException();
+      }
+      return this.completeLogin(user, "ldap");
+    }
+
     const authorization = await this.adminAuthorization.authorize(externalResult);
     if (authorization.kind === "misconfigured") {
       throw new AuthenticationMisconfiguredException(authorization.reason);
@@ -209,7 +222,7 @@ export class LoginUserUseCase {
     >,
     role: "super_admin" | "admin" | "operator" | "viewer",
   ): Promise<LoginResponseDto> {
-    if (result.provider !== "radius" && result.provider !== "ldap") {
+    if (result.provider !== "radius") {
       throw new InvalidCredentialsException();
     }
     const provider = result.provider;

@@ -62,7 +62,7 @@ export class RolesPermissionsGuard implements CanActivate {
 
     // Sprawdzenie roli
     if (requiredRoles && requiredRoles.length > 0) {
-      const userRoleNames = userRoles.map((r) => r.getName());
+      const userRoleNames = expandRoleNames(userRoles.map((r) => r.getName()));
 
       const hasRole = requiredRoles.some((role) =>
         userRoleNames.includes(role),
@@ -108,4 +108,23 @@ export class RolesPermissionsGuard implements CanActivate {
 
     return roles.filter((role): role is NonNullable<typeof role> => role !== null);
   }
+}
+
+function expandRoleNames(roleNames: string[]): string[] {
+  const names = new Set(roleNames);
+
+  if (names.has(Role.SuperAdmin)) {
+    names.add(Role.Admin);
+    names.add(Role.Operator);
+    names.add(Role.Viewer);
+  }
+  if (names.has(Role.Admin)) {
+    names.add(Role.Operator);
+    names.add(Role.Viewer);
+  }
+  if (names.has(Role.Operator)) {
+    names.add(Role.Viewer);
+  }
+
+  return [...names];
 }
