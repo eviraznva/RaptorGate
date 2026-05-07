@@ -39,7 +39,7 @@ use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
     DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
     IpsStage, LocalOwnershipStage, MetricsStage, MlAlertStage, NatPostroutingStage,
-    NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, TlsPortEnforcementStage,
+    NatPreroutingStage, PolicyEvalStage, SmtpStage, TcpClassificationStage, TlsPortEnforcementStage,
     ValidationStage,
 };
 use crate::pipeline::{Chain, Stage, StageOutcome};
@@ -84,12 +84,15 @@ async fn main() {
                                         Chain<
                                             NatPreroutingStage,
                                             Chain<
-                                                TcpClassificationStage,
+                                                SmtpStage,
                                                 Chain<
-                                                    MlAlertStage,
+                                                    TcpClassificationStage,
                                                     Chain<
-                                                        PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
-                                                        Chain<NatPostroutingStage<M>, FtpAlgStage>,
+                                                        MlAlertStage,
+                                                        Chain<
+                                                            PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
+                                                            Chain<NatPostroutingStage<M>, FtpAlgStage>,
+                                                        >,
                                                     >,
                                                 >,
                                             >,
@@ -236,6 +239,8 @@ async fn main() {
         Arc::clone(&interface_monitor),
     ));
 
+    let smtp_tracker = Arc::new(crate::dpi::smtp::SmtpTracker::new(Arc::clone(&zone_resolver)));
+
     let policy_engine = Arc::new(
         crate::policy::engine::PolicyEngine::from_policies(
             &policy_provider.get_policies(),
@@ -362,26 +367,32 @@ async fn main() {
                                                 engine: Arc::clone(&nat_engine),
                                             },
                                             tail: Chain {
-                                                head: TcpClassificationStage {
-                                                    tracker: Arc::clone(&tcp_session_tracker),
-                                                    flow_stats: Arc::clone(&ml_flow_stats),
+                                                head: SmtpStage {
+                                                    tracker: Arc::clone(&smtp_tracker),
+                                                    tcp_tracker: Arc::clone(&tcp_session_tracker),
                                                 },
                                                 tail: Chain {
-                                                    head: MlAlertStage::new(Arc::clone(&ml_detector)),
+                                                    head: TcpClassificationStage {
+                                                        tracker: Arc::clone(&tcp_session_tracker),
+                                                        flow_stats: Arc::clone(&ml_flow_stats),
+                                                    },
                                                     tail: Chain {
-                                                        head: PolicyEvalStage {
-                                                            policy_engine: Arc::clone(&policy_engine),
-                                                            zone_resolver: Arc::clone(&zone_resolver),
-                                                            dnssec: Some(dnssec_provider),
-                                                        },
+                                                        head: MlAlertStage::new(Arc::clone(&ml_detector)),
                                                         tail: Chain {
-                                                            head: NatPostroutingStage {
-                                                                engine: Arc::clone(&nat_engine),
-                                                                routing_table: Arc::clone(&routing_table),
-                                                                interface_monitor: Arc::clone(&interface_monitor),
+                                                            head: PolicyEvalStage {
+                                                                policy_engine: Arc::clone(&policy_engine),
+                                                                zone_resolver: Arc::clone(&zone_resolver),
+                                                                dnssec: Some(dnssec_provider),
                                                             },
-                                                            tail: FtpAlgStage {
-                                                                engine: Arc::clone(&nat_engine),
+                                                            tail: Chain {
+                                                                head: NatPostroutingStage {
+                                                                    engine: Arc::clone(&nat_engine),
+                                                                    routing_table: Arc::clone(&routing_table),
+                                                                    interface_monitor: Arc::clone(&interface_monitor),
+                                                                },
+                                                                tail: FtpAlgStage {
+                                                                    engine: Arc::clone(&nat_engine),
+                                                                },
                                                             },
                                                         },
                                                     },

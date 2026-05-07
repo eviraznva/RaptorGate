@@ -7,6 +7,7 @@ use dashmap::DashMap;
 use etherparse::{NetSlice, TransportSlice};
 use tokio::sync::Mutex;
 
+use crate::dpi::smtp::SmtpTracker;
 use crate::{
     config::{provider::AppConfigProvider, AppConfig},
     data_plane::{
@@ -1124,6 +1125,68 @@ fn packet_flow_key(ctx: &PacketContext) -> Option<FlowKey> {
     };
 
     Some(FlowKey::new(src_ip, src_port, dst_ip, dst_port))
+}
+
+#[derive(Clone)]
+pub struct SmtpStage {
+    pub tracker: Arc<SmtpTracker>,
+    pub tcp_tracker: Arc<TcpSessionTracker>,
+}
+
+impl Stage for SmtpStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        matches!(
+            ctx.borrow_sliced_packet().transport,
+            Some(TransportSlice::Tcp(_))
+        )
+    }
+    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        let sliced = ctx.borrow_sliced_packet();
+        let Some(TransportSlice::Tcp(tcp)) = &sliced.transport else {
+            return StageOutcome::Continue;
+        };
+
+        let (src, dst) = match &sliced.net {
+            Some(NetSlice::Ipv4(ipv4)) => {
+                let header = ipv4.header();
+                let src = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                    ip: IpAddr::V4(header.source_addr()),
+                    port: crate::rule_tree::types::Port::from(tcp.source_port()),
+                };
+                let dst = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                    ip: IpAddr::V4(header.destination_addr()),
+                    port: crate::rule_tree::types::Port::from(tcp.destination_port()),
+                };
+                (src, dst)
+            }
+            Some(NetSlice::Ipv6(ipv6)) => {
+                let header = ipv6.header();
+                let src = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                    ip: IpAddr::V6(header.source_addr()),
+                    port: crate::rule_tree::types::Port::from(tcp.source_port()),
+                };
+                let dst = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                    ip: IpAddr::V6(header.destination_addr()),
+                    port: crate::rule_tree::types::Port::from(tcp.destination_port()),
+                };
+                (src, dst)
+            }
+            _ => return StageOutcome::Continue,
+        };
+
+        let session_id = crate::data_plane::tcp_session_tracker::TcpIdentifier {
+            endpoints: unordered_pair::UnorderedPair::from((src.clone(), dst.clone())),
+        };
+
+        self.tracker.on_new_packet(
+            sliced.transport.clone().expect("this should always have transport"),
+            &session_id,
+            src,
+            dst,
+        );
+
+        StageOutcome::Continue
+    }
 }
 
 #[cfg(test)]

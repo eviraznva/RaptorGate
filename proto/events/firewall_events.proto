@@ -69,12 +69,23 @@ message EventKind {
     RouteModifiedEvent route_modified = 29;
     RouteDeletedEvent  route_deleted  = 30;
     PolicyWarningEvent policy_warning = 31;
+    SmtpSessionStateChangedEvent smtp_session_state_changed = 32;
   }
 }
 
 message TcpEndpoint {
   string ip   = 1;
   uint32 port = 2;
+}
+
+message SmtpSession {
+  TcpEndpoint client = 1;
+  TcpEndpoint server = 2;
+}
+
+message SmtpSessionStateChangedEvent {
+  SmtpSession session = 1;
+  string new_state = 2;
 }
 
 message EventBusConnectedEvent {}
