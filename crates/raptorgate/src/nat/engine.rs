@@ -196,6 +196,9 @@ impl NatEngine {
 
             if !proto_matches(rule.protocol(), ct.original.protocol) { continue; }
 
+            if !port_in_range(rule.match_src_port_range(), ct.original.src_port) { continue; }
+            if !port_in_range(rule.match_dst_port_range(), ct.original.dst_port) { continue; }
+
             if !flow_matches_action(rule.action(), &ct.original) { continue; }
 
             return Some(Arc::new(rule.clone()));
@@ -440,6 +443,14 @@ fn apply_transform_to_tuple(reply: &FlowTuple, t: &NatTransform) -> FlowTuple {
 
 #[derive(Debug, Clone, Copy)]
 enum PacketDirection { Original, Reply }
+
+/// Match port flow vs Optional zakres reguły. None = brak ograniczenia (zawsze pasuje).
+fn port_in_range(range: Option<(u16, u16)>, port: u16) -> bool {
+    match range {
+        None => true,
+        Some((lo, hi)) => port >= lo && port <= hi,
+    }
+}
 
 fn proto_matches(rule_proto: NatProtocol, flow_proto: Protocol) -> bool {
     match (rule_proto, flow_proto) {

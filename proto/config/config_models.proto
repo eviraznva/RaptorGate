@@ -98,6 +98,13 @@ message NatRule {
   optional string out_zone      = 6;
   common.NatProtocol protocol   = 7;
 
+  // Matchery portów. Wszystkie opcjonalne. Jeśli pusty/nieustawiony — match wszystkiego.
+  // Range inclusive [min, max]. Single port = ustaw min == max.
+  optional uint32 match_src_port_min = 20;
+  optional uint32 match_src_port_max = 21;
+  optional uint32 match_dst_port_min = 22;
+  optional uint32 match_dst_port_max = 23;
+
   oneof action {
     SnatRule       snat       = 10;
     DnatRule       dnat       = 11;

@@ -11,8 +11,6 @@ service FirewallQueryService {
   rpc GetPolicies   (GetPoliciesRequest)       returns (GetPoliciesResponse);
   rpc GetPolicy     (GetPolicyRequest)         returns (GetPolicyResponse);
   rpc GetNatBindings(GetNatBindingsRequest)    returns (GetNatBindingsResponse);
-  rpc SwapNatConfig (SwapNatConfigRequest)     returns (SwapNatConfigResponse);
-  rpc GetNatConfig  (GetNatConfigRequest)      returns (GetNatConfigResponse);
 
   rpc GetZones      (GetZonesRequest)          returns (GetZonesResponse);
   rpc GetZone       (GetZoneRequest)           returns (GetZoneResponse);
@@ -22,14 +20,7 @@ service FirewallQueryService {
   rpc GetZonePairs  (GetZonePairsRequest)      returns (GetZonePairsResponse);
   rpc GetZonePair   (GetZonePairRequest)       returns (GetZonePairResponse);
 
-  rpc SwapConfig    (SwapConfigRequest)        returns (SwapConfigResponse);
-  rpc GetConfig     (GetConfigRequest)         returns (GetConfigResponse);
-
   rpc GetSystemTime (GetSystemTimeRequest)     returns (GetSystemTimeResponse);
-  rpc SwapDnsInspectionConfig (SwapDnsInspectionConfigRequest) returns (SwapDnsInspectionConfigResponse);
-  rpc GetDnsInspectionConfig  (GetDnsInspectionConfigRequest)  returns (GetDnsInspectionConfigResponse);
-  rpc SwapIpsConfig           (SwapIpsConfigRequest)           returns (SwapIpsConfigResponse);
-  rpc GetIpsConfig            (GetIpsConfigRequest)            returns (GetIpsConfigResponse);
 
   rpc GetPinningStats  (GetPinningStatsRequest)  returns (GetPinningStatsResponse);
   rpc GetPinningBypass (GetPinningBypassRequest) returns (GetPinningBypassResponse);
@@ -99,20 +90,6 @@ message GetNatBindingsResponse {
   repeated NatBinding bindings = 1;
 }
 
-// ── NAT Config ──────────────────────────────────────────────────────────────
-
-message SwapNatConfigRequest {
-  config.NatRuleSet config = 1;
-}
-
-message SwapNatConfigResponse {}
-
-message GetNatConfigRequest {}
-
-message GetNatConfigResponse {
-  config.NatRuleSet config = 1;
-}
-
 message GetZonesRequest {}
 
 message GetZonesResponse {
@@ -147,8 +124,6 @@ message GetLiveZoneInterfacesResponse {
   repeated config.ZoneInterface zone_interfaces = 1;
 }
 
-// Zone Pairs
-
 message GetZonePairsRequest {}
 
 message GetZonePairsResponse {
@@ -163,54 +138,11 @@ message GetZonePairResponse {
   config.ZonePair zone_pair = 1;
 }
 
-// ── AppConfig ────────────────────────────────────────────────────────────────
-
-message SwapConfigRequest {
-  config.AppConfig config = 1;
-}
-
-message SwapConfigResponse {}
-
-message GetConfigRequest {}
-
-message GetConfigResponse {
-  config.AppConfig config = 1;
-}
-
 message GetSystemTimeRequest {}
 
 message GetSystemTimeResponse {
   google.protobuf.Timestamp time = 1;
 }
-// ── DNS Inspection Config ─────────────────────────────────────────────────────
-
-message SwapDnsInspectionConfigRequest {
-  config.DnsInspectionConfig config = 1;
-}
-
-message SwapDnsInspectionConfigResponse {}
-
-message GetDnsInspectionConfigRequest {}
-
-message GetDnsInspectionConfigResponse {
-  config.DnsInspectionConfig config = 1;
-}
-
-// ── IPS Config ───────────────────────────────────────────────────────────────
-
-message SwapIpsConfigRequest {
-  config.IpsConfig config = 1;
-}
-
-message SwapIpsConfigResponse {}
-
-message GetIpsConfigRequest {}
-
-message GetIpsConfigResponse {
-  config.IpsConfig config = 1;
-}
-
-// ── Pinning detector observability ───────────────────────────────────────────
 
 message GetPinningStatsRequest {}
 
@@ -229,8 +161,6 @@ message GetPinningBypassResponse {
   string reason = 2;
   uint32 failure_count = 3;
 }
-
-// ── Interface Management ─────────────────────────────────────────────────────
 
 message SetInterfaceStateRequest {
   string id = 1;

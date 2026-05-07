@@ -50,6 +50,14 @@ pub struct CommonMatchers {
     pub out_zone: Option<String>,
     #[serde(default = "default_protocol_all")]
     pub protocol: NatConfigProtocol,
+    #[serde(default)]
+    pub match_src_port_min: Option<u16>,
+    #[serde(default)]
+    pub match_src_port_max: Option<u16>,
+    #[serde(default)]
+    pub match_dst_port_min: Option<u16>,
+    #[serde(default)]
+    pub match_dst_port_max: Option<u16>,
 }
 
 fn default_protocol_all() -> NatConfigProtocol { NatConfigProtocol::All }
@@ -192,6 +200,10 @@ impl NatConfigRule {
             in_zone: rule.in_zone().map(String::from),
             out_zone: rule.out_zone().map(String::from),
             protocol: NatConfigProtocol::from_runtime(rule.protocol()),
+            match_src_port_min: rule.match_src_port_range().map(|(lo, _)| lo),
+            match_src_port_max: rule.match_src_port_range().map(|(_, hi)| hi),
+            match_dst_port_min: rule.match_dst_port_range().map(|(lo, _)| lo),
+            match_dst_port_max: rule.match_dst_port_range().map(|(_, hi)| hi),
         };
         
         match rule.action() {
@@ -244,6 +256,8 @@ fn build_rule(id: &str, priority: u32, common: &CommonMatchers, action: NatActio
         common.in_zone.clone(),
         common.out_zone.clone(),
         common.protocol.to_runtime(),
+        pair_ports(common.match_src_port_min, common.match_src_port_max, "match_src_port")?,
+        pair_ports(common.match_dst_port_min, common.match_dst_port_max, "match_dst_port")?,
         action,
     ))
 }
@@ -327,21 +341,28 @@ pub struct NatRule {
     in_zone: Option<String>,
     out_zone: Option<String>,
     protocol: NatProtocol,
+    match_src_port_range: Option<(u16, u16)>,
+    match_dst_port_range: Option<(u16, u16)>,
     action: NatAction,
 }
 
 impl NatRule {
-    pub fn new(id: String,
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: String,
         priority: u32,
         in_interface: Option<String>,
         out_interface: Option<String>,
         in_zone: Option<String>,
         out_zone: Option<String>,
         protocol: NatProtocol,
+        match_src_port_range: Option<(u16, u16)>,
+        match_dst_port_range: Option<(u16, u16)>,
         action: NatAction,
     ) -> Self {
         Self {
-            id, priority, in_interface, out_interface, in_zone, out_zone, protocol, action
+            id, priority, in_interface, out_interface, in_zone, out_zone,
+            protocol, match_src_port_range, match_dst_port_range, action,
         }
     }
 
@@ -387,11 +408,13 @@ impl NatRule {
             value.in_zone,
             value.out_zone,
             NatProtocol::from_proto(value.protocol)?,
+            parse_port_range(value.match_src_port_min, value.match_src_port_max, "match_src_port")?,
+            parse_port_range(value.match_dst_port_min, value.match_dst_port_max, "match_dst_port")?,
             action,
         ))
     }
 
-    pub fn into_proto(self) -> config::NatRule {
+    pub fn into_proto(&self) -> config::NatRule {
         let action = match &self.action {
             NatAction::Snat { src_cidr, translated_ip, src_port_range } => {
                 config::nat_rule::Action::Snat(config::SnatRule {
@@ -435,6 +458,10 @@ impl NatRule {
             in_zone: self.in_zone.clone(),
             out_zone: self.out_zone.clone(),
             protocol: self.protocol.to_proto() as i32,
+            match_src_port_min: self.match_src_port_range.map(|(lo, _)| u32::from(lo)),
+            match_src_port_max: self.match_src_port_range.map(|(_, hi)| u32::from(hi)),
+            match_dst_port_min: self.match_dst_port_range.map(|(lo, _)| u32::from(lo)),
+            match_dst_port_max: self.match_dst_port_range.map(|(_, hi)| u32::from(hi)),
             action: Some(action),
         }
     }
@@ -446,6 +473,8 @@ impl NatRule {
     pub fn in_zone(&self) -> Option<&str> { self.in_zone.as_deref() }
     pub fn out_zone(&self) -> Option<&str> { self.out_zone.as_deref() }
     pub fn protocol(&self) -> NatProtocol { self.protocol }
+    pub fn match_src_port_range(&self) -> Option<(u16, u16)> { self.match_src_port_range }
+    pub fn match_dst_port_range(&self) -> Option<(u16, u16)> { self.match_dst_port_range }
     pub fn action(&self) -> &NatAction { &self.action }
 }
 
@@ -471,7 +500,7 @@ impl NatRules {
 
     pub fn into_proto(&self) -> config::NatRuleSet {
         config::NatRuleSet {
-            items: self.rules.iter().cloned().map(NatRule::into_proto).collect(),
+            items: self.rules.iter().map(NatRule::into_proto).collect(),
         }
     }
 }

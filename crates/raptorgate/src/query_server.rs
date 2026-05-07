@@ -40,17 +40,13 @@ use crate::proto::services::firewall_config_snapshot_service_server::{
 };
 use crate::proto::services::firewall_metrics_service_server::FirewallMetricsServiceServer;
 use crate::proto::services::{
-    GetConfigRequest, GetConfigResponse, GetDnsInspectionConfigRequest,
-    GetDnsInspectionConfigResponse, GetIpsConfigRequest, GetIpsConfigResponse,
-    GetNatBindingsRequest, GetNatBindingsResponse, GetNatConfigRequest, GetNatConfigResponse,
+    GetNatBindingsRequest, GetNatBindingsResponse,
     GetPinningBypassRequest, GetPinningBypassResponse, GetPinningStatsRequest,
     GetPinningStatsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest,
     GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, TcpSessionEndpoint,
     TcpTrackedSession, TcpTrackedSessionState,
     GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
-    GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse, SwapConfigRequest,
-    SwapConfigResponse, SwapDnsInspectionConfigRequest, SwapDnsInspectionConfigResponse,
-    SwapIpsConfigRequest, SwapIpsConfigResponse, SwapNatConfigRequest, SwapNatConfigResponse,
+    GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse,
     FactoryResetRequest, FactoryResetResponse, GetSystemTimeRequest, GetSystemTimeResponse,
     PushActiveConfigSnapshotRequest, PushActiveConfigSnapshotResponse, SetInterfaceStateRequest,
     SetInterfaceStateResponse, UpdatePhysicalInterfacePropertiesRequest,
@@ -325,51 +321,6 @@ where
         Ok(Response::new(GetNatBindingsResponse { bindings }))
     }
 
-    async fn swap_nat_config(
-        &self,
-        request: Request<SwapNatConfigRequest>,
-    ) -> Result<Response<SwapNatConfigResponse>, Status> {
-        let proto_config = request
-            .into_inner()
-            .config
-            .ok_or_else(|| Status::invalid_argument("missing config field in request"))?;
-
-        let rule_count = proto_config.items.len();
-
-        tracing::info!(
-            event = "nat.swap.started",
-            rules = rule_count,
-            "received NAT config swap request"
-        );
-
-        self.apply_nat_rules(&proto_config.items)
-            .await
-            .map_err(|e| Status::invalid_argument(format!("invalid nat config: {e}")))?;
-
-        tracing::info!(
-            event = "nat.swap.succeeded",
-            rules = rule_count,
-            "NAT config applied"
-        );
-
-        Ok(Response::new(SwapNatConfigResponse {}))
-    }
-
-    async fn get_nat_config(
-        &self,
-        _request: Request<GetNatConfigRequest>,
-    ) -> Result<Response<GetNatConfigResponse>, Status> {
-        let config = self.nat_engine
-            .rules()
-            .as_deref()
-            .map(NatRules::into_proto)
-            .unwrap_or_else(|| crate::proto::config::NatRuleSet { items: vec![] });
-
-        Ok(Response::new(GetNatConfigResponse {
-            config: Some(config),
-        }))
-    }
-
     async fn get_zones(
         &self,
         _request: Request<GetZonesRequest>,
@@ -480,152 +431,12 @@ where
         }
     }
 
-    async fn swap_config(
-        &self,
-        request: Request<SwapConfigRequest>,
-    ) -> Result<Response<SwapConfigResponse>, Status> {
-        let proto_config = request
-            .into_inner()
-            .config
-            .ok_or_else(|| Status::invalid_argument("missing config field"))?;
-
-        let new_config = AppConfig::from_proto(proto_config)
-            .map_err(|e| Status::invalid_argument(format!("invalid config: {e}")))?;
-
-        tracing::info!(
-            event = "config.swap.started",
-            query_socket_path = %new_config.query_socket_path,
-            event_socket_path = %new_config.event_socket_path,
-            "received AppConfig swap request"
-        );
-
-        self.config_provider
-            .swap_config(new_config)
-            .await
-            .map_err(|e| Status::internal(format!("failed to swap config: {e}")))?;
-
-        tracing::info!(
-            event = "config.swap.succeeded",
-            "AppConfig swap request applied"
-        );
-
-        Ok(Response::new(SwapConfigResponse {}))
-    }
-
-    async fn get_config(
-        &self,
-        _request: Request<GetConfigRequest>,
-    ) -> Result<Response<GetConfigResponse>, Status> {
-        let config = self.config_provider.get_config();
-        Ok(Response::new(GetConfigResponse {
-            config: Some(config.to_proto()),
-        }))
-    }
-
     async fn get_system_time(
         &self,
         _request: Request<GetSystemTimeRequest>,
     ) -> Result<Response<GetSystemTimeResponse>, Status> {
         Ok(Response::new(GetSystemTimeResponse {
             time: Some(SystemTime::now().into()),
-        }))
-    }
-
-    async fn swap_dns_inspection_config(
-        &self,
-        request: Request<SwapDnsInspectionConfigRequest>,
-    ) -> Result<Response<SwapDnsInspectionConfigResponse>, Status> {
-        let proto_config = request
-            .into_inner()
-            .config
-            .ok_or_else(|| Status::invalid_argument("missing config field in request"))?;
-
-        let new_config = DnsInspectionConfig::from_proto(proto_config)
-            .map_err(|e| Status::invalid_argument(format!("invalid dns inspection config: {e}")))?;
-
-        tracing::info!(
-            event = "dns_inspection.swap.started",
-            enabled = new_config.general.enabled,
-            blocklist_domains = new_config.blocklist.domains.len(),
-            dns_tunneling_enabled = new_config.dns_tunneling.enabled,
-            dnssec_enabled = new_config.dnssec.enabled,
-            "received DNS inspection config swap request"
-        );
-
-        self.dns_inspection_store
-            .swap_config(new_config.clone())
-            .await
-            .map_err(|e| Status::internal(format!("failed to save dns inspection config: {e}")))?;
-
-        self.dns_inspection
-            .update_config(&new_config)
-            .map_err(|e| Status::internal(format!("failed to apply dns inspection config: {e}")))?;
-
-        tracing::info!(
-            event = "dns_inspection.swap.succeeded",
-            enabled = new_config.general.enabled,
-            "DNS inspection config applied"
-        );
-
-        Ok(Response::new(SwapDnsInspectionConfigResponse {}))
-    }
-
-    async fn get_dns_inspection_config(
-        &self,
-        _request: Request<GetDnsInspectionConfigRequest>,
-    ) -> Result<Response<GetDnsInspectionConfigResponse>, Status> {
-        let config = self.dns_inspection_store.get_config();
-        Ok(Response::new(GetDnsInspectionConfigResponse {
-            config: Some(config.to_proto()),
-        }))
-    }
-
-    async fn swap_ips_config(
-        &self,
-        request: Request<SwapIpsConfigRequest>,
-    ) -> Result<Response<SwapIpsConfigResponse>, Status> {
-        let proto_config = request
-            .into_inner()
-            .config
-            .ok_or_else(|| Status::invalid_argument("missing config field in request"))?;
-
-        let new_config = IpsConfig::from_proto(proto_config)
-            .map_err(|e| Status::invalid_argument(format!("invalid ips config: {e}")))?;
-
-        tracing::info!(
-            event = "ips.swap.started",
-            enabled = new_config.general.enabled,
-            detection_enabled = new_config.detection.enabled,
-            signatures = new_config.signatures.len(),
-            "received IPS config swap request"
-        );
-
-        self.ips_store
-            .swap_config(new_config.clone())
-            .await
-            .map_err(|e| Status::internal(format!("failed to save ips config: {e}")))?;
-
-        self.ips
-            .update_config(&new_config)
-            .map_err(|e| Status::internal(format!("failed to apply ips config: {e}")))?;
-
-        tracing::info!(
-            event = "ips.swap.succeeded",
-            enabled = new_config.general.enabled,
-            signatures = new_config.signatures.len(),
-            "IPS config applied"
-        );
-
-        Ok(Response::new(SwapIpsConfigResponse {}))
-    }
-
-    async fn get_ips_config(
-        &self,
-        _request: Request<GetIpsConfigRequest>,
-    ) -> Result<Response<GetIpsConfigResponse>, Status> {
-        let config = self.ips_store.get_config();
-        Ok(Response::new(GetIpsConfigResponse {
-            config: Some(config.to_proto()),
         }))
     }
 
@@ -920,6 +731,42 @@ where
             }));
         }
 
+        if let Some(proto_app) = bundle.app_config.clone() {
+            if let Err(e) = self.apply_app_config(proto_app).await {
+                tracing::error!(error = %e, "AppConfig snapshot apply failed");
+                return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                    correlation_id,
+                    accepted: false,
+                    message: format!("app config apply failed: {e}"),
+                    applied_snapshot_id: String::new(),
+                }));
+            }
+        }
+
+        if let Some(proto_dns) = bundle.dns_inspection_config.clone() {
+            if let Err(e) = self.apply_dns_inspection_config(proto_dns).await {
+                tracing::error!(error = %e, "DnsInspectionConfig snapshot apply failed");
+                return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                    correlation_id,
+                    accepted: false,
+                    message: format!("dns inspection config apply failed: {e}"),
+                    applied_snapshot_id: String::new(),
+                }));
+            }
+        }
+
+        if let Some(proto_ips) = bundle.ips_config.clone() {
+            if let Err(e) = self.apply_ips_config(proto_ips).await {
+                tracing::error!(error = %e, "IpsConfig snapshot apply failed");
+                return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                    correlation_id,
+                    accepted: false,
+                    message: format!("ips config apply failed: {e}"),
+                    applied_snapshot_id: String::new(),
+                }));
+            }
+        }
+
         self.zone_store
             .swap_zones(zones.into_iter().collect())
             .await
@@ -1076,6 +923,37 @@ where
             .swap_config(new_config.clone())
             .await?;
         self.dns_inspection.update_config(&new_config)?;
+        Ok(())
+    }
+
+    async fn apply_app_config(
+        &self,
+        proto: crate::proto::config::AppConfig,
+    ) -> anyhow::Result<()> {
+        let new_config = AppConfig::from_proto(proto)?;
+        self.config_provider.swap_config(new_config).await?;
+        Ok(())
+    }
+
+    async fn apply_dns_inspection_config(
+        &self,
+        proto: crate::proto::config::DnsInspectionConfig,
+    ) -> anyhow::Result<()> {
+        let new_config = DnsInspectionConfig::from_proto(proto)?;
+        self.dns_inspection_store
+            .swap_config(new_config.clone())
+            .await?;
+        self.dns_inspection.update_config(&new_config)?;
+        Ok(())
+    }
+
+    async fn apply_ips_config(
+        &self,
+        proto: crate::proto::config::IpsConfig,
+    ) -> anyhow::Result<()> {
+        let new_config = IpsConfig::from_proto(proto)?;
+        self.ips_store.swap_config(new_config.clone()).await?;
+        self.ips.update_config(&new_config)?;
         Ok(())
     }
 
