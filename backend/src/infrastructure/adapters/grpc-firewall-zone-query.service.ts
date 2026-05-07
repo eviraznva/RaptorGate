@@ -167,23 +167,10 @@ export class GrpcFirewallZoneQueryService
     }
   }
 
-  async updatePhysicalInterfaceProperties(
-    input: UpdateZoneInterfacePropertiesInput,
+  async updateZoneInterfaceProperties(
+    _input: UpdateZoneInterfacePropertiesInput,
   ): Promise<void> {
-    try {
-      await firstValueFrom(
-        this.firewallQueryClient.updatePhysicalInterfaceProperties({
-          id: input.id,
-          newName: input.interfaceName,
-          newAddress: input.address,
-        }),
-      );
-    } catch (error) {
-      throw this.toTransportException(
-        "update physical interface properties",
-        error,
-      );
-    }
+    return;
   }
 
   async getZonePairs(): Promise<ZonePair[]> {
@@ -215,36 +202,43 @@ export class GrpcFirewallZoneQueryService
   }
 
   private toZoneEntity(zone: GrpcZone): Zone {
-    return Zone.create(zone.id, zone.name, null, true, new Date(), "");
+    return Zone.create(zone.id, zone.name, null, true, new Date(), "", []);
   }
 
   private toZoneInterfaceEntity(
     zoneInterface: GrpcZoneInterface,
   ): ZoneInterface {
-    const interfaceName =
-      zoneInterface.kind?.$case === "physical"
-        ? zoneInterface.kind.physical.interfaceName
-        : "";
-    const vlanId =
-      zoneInterface.kind?.$case === "vlan"
-        ? zoneInterface.kind.vlan.vlanId ?? null
-        : null;
-    const parentInterfaceId =
-      zoneInterface.kind?.$case === "vlan"
-        ? zoneInterface.kind.vlan.parentInterfaceId
-        : null;
-
     return ZoneInterface.create(
       zoneInterface.id,
       zoneInterface.zoneId,
-      interfaceName,
-      vlanId,
+      this.getZoneInterfaceName(zoneInterface),
+      this.getZoneInterfaceVlanId(zoneInterface),
       this.toZoneInterfaceStatus(zoneInterface.status),
       [...zoneInterface.addresses],
       new Date(),
-      zoneInterface.sniffed,
-      parentInterfaceId,
     );
+  }
+
+  private getZoneInterfaceName(zoneInterface: GrpcZoneInterface): string {
+    if (zoneInterface.kind?.$case === "physical") {
+      return zoneInterface.kind.physical.interfaceName;
+    }
+
+    if (zoneInterface.kind?.$case === "vlan") {
+      return zoneInterface.kind.vlan.parentInterfaceId;
+    }
+
+    return "";
+  }
+
+  private getZoneInterfaceVlanId(
+    zoneInterface: GrpcZoneInterface,
+  ): number | null {
+    if (zoneInterface.kind?.$case === "vlan") {
+      return zoneInterface.kind.vlan.vlanId;
+    }
+
+    return null;
   }
 
   private toZonePairEntity(zonePair: GrpcZonePair): ZonePair {

@@ -1,4 +1,5 @@
 mod config;
+mod conntrack;
 mod control_server;
 mod data_plane;
 mod disk_store;
@@ -37,10 +38,10 @@ use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
-    DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
-    IpsStage, LocalOwnershipStage, MetricsStage, MlAlertStage, NatPostroutingStage,
-    NatPreroutingStage, PolicyEvalStage, TcpClassificationStage, TlsPortEnforcementStage,
-    ValidationStage,
+    ConntrackConfirmStage, ConntrackInStage, DnsBlockListStage, DnsEchMitigationStage,
+    DnsTunnelingStage, DpiStage, FtpAlgStage, IpsStage, L4StateStage, LocalOwnershipStage,
+    MetricsStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
+    TlsPortEnforcementStage, ValidationStage,
 };
 use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::policy::provider::DiskPolicyProvider;
@@ -59,6 +60,16 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use crate::conntrack::config::ConntrackConfig;
+use crate::conntrack::entry::{ConntrackEntry, CtStatus};
+use crate::conntrack::observer::{AnomalyKind, CtObserver, DestroyReason, ObserverRegistry};
+use crate::conntrack::proto::icmp::IcmpHandler;
+use crate::conntrack::proto::ProtoRegistry;
+use crate::conntrack::proto::tcp::TcpHandler;
+use crate::conntrack::proto::udp::UdpHandler;
+use crate::conntrack::reaper::Reaper;
+use crate::conntrack::table::Conntrack;
+use crate::conntrack::tuple::Direction as CtDirection;
 
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
@@ -70,26 +81,32 @@ async fn main() {
             Chain<
                 LocalOwnershipStage,
                 Chain<
-                    DpiStage,
+                    ConntrackInStage,
                     Chain<
-                        TlsPortEnforcementStage,
+                        DpiStage,
                         Chain<
-                            DnsBlockListStage,
+                            TlsPortEnforcementStage,
                             Chain<
-                                DnsTunnelingStage,
+                                DnsBlockListStage,
                                 Chain<
-                                    DnsEchMitigationStage,
+                                    DnsTunnelingStage,
                                     Chain<
-                                        IpsStage,
+                                        DnsEchMitigationStage,
                                         Chain<
-                                            NatPreroutingStage,
+                                            IpsStage,
                                             Chain<
-                                                TcpClassificationStage,
+                                                NatPreroutingStage,
                                                 Chain<
-                                                    MlAlertStage,
+                                                    L4StateStage,
                                                     Chain<
-                                                        PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
-                                                        Chain<NatPostroutingStage<M>, FtpAlgStage>,
+                                                        MlAlertStage,
+                                                        Chain<
+                                                            PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
+                                                            Chain<
+                                                                NatPostroutingStage<M>,
+                                                                Chain<FtpAlgStage, ConntrackConfirmStage>,
+                                                            >,
+                                                        >,
                                                     >,
                                                 >,
                                             >,
@@ -176,6 +193,92 @@ async fn main() {
     ));
 
     let tcp_session_tracker = TcpSessionTracker::new();
+
+
+    let ct_observers = Arc::new(ObserverRegistry::default());
+
+    let mut proto_reg = ProtoRegistry::new();
+
+    proto_reg.register(Arc::new(TcpHandler::new(Arc::clone(&ct_observers))));
+    proto_reg.register(Arc::new(UdpHandler::new(Arc::clone(&ct_observers))));
+    proto_reg.register(Arc::new(IcmpHandler::v4()));
+    proto_reg.register(Arc::new(IcmpHandler::v6()));
+
+    let conntrack = Arc::new(Conntrack::new(Arc::new(proto_reg), ConntrackConfig::default()));
+
+    // Test-only logger observer. Loguje każdy event conntrack na poziomie info.
+    // Bug: handlery emit do `ct_observers`, core emit do wewnętrznego registry,
+    // więc rejestrujemy ten sam logger w obu — bez tego connection lifecycle
+    // (new/destroy) byłby niewidoczny przez ct_observers.
+    struct LoggingCtObserver;
+
+    impl CtObserver for LoggingCtObserver {
+        fn on_new(&self, entry: &ConntrackEntry) {
+            tracing::info!(
+                event = "ct.observer.new",
+                flow_id = entry.id,
+                zone = entry.zone,
+                proto = ?entry.original.protocol,
+                src = %entry.original.src_ip,
+                sport = entry.original.src_port,
+                dst = %entry.original.dst_ip,
+                dport = entry.original.dst_port,
+                "ct entry confirmed"
+            );
+        }
+
+        fn on_update(&self, entry: &ConntrackEntry, changed: CtStatus) {
+            tracing::info!(
+                event = "ct.observer.update",
+                flow_id = entry.id,
+                changed = ?changed,
+                status = ?entry.status(),
+                "ct entry updated"
+            );
+        }
+
+        fn on_destroy(&self, entry: &ConntrackEntry, reason: DestroyReason) {
+            tracing::info!(
+                event = "ct.observer.destroy",
+                flow_id = entry.id,
+                reason = ?reason,
+                bytes_orig = entry.bytes_orig.load(std::sync::atomic::Ordering::Relaxed),
+                bytes_reply = entry.bytes_reply.load(std::sync::atomic::Ordering::Relaxed),
+                packets_orig = entry.packets_orig.load(std::sync::atomic::Ordering::Relaxed),
+                packets_reply = entry.packets_reply.load(std::sync::atomic::Ordering::Relaxed),
+                "ct entry destroyed"
+            );
+        }
+
+        fn on_anomaly(&self, entry: &ConntrackEntry, kind: AnomalyKind) {
+            tracing::warn!(
+                event = "ct.observer.anomaly",
+                flow_id = entry.id,
+                kind = ?kind,
+                "ct anomaly"
+            );
+        }
+
+        fn on_payload(&self, entry: &ConntrackEntry, dir: CtDirection, payload: &[u8]) {
+            tracing::info!(
+                event = "ct.observer.payload",
+                flow_id = entry.id,
+                proto = ?entry.original.protocol,
+                dir = ?dir,
+                len = payload.len(),
+                preview = %String::from_utf8_lossy(&payload[..payload.len().min(32)]),
+                "ct payload chunk"
+            );
+        }
+    }
+
+    let ct_logger: Arc<dyn CtObserver> = Arc::new(LoggingCtObserver);
+    ct_observers.register(Arc::clone(&ct_logger));         // handlery: payload, anomaly
+    conntrack.register_observer(Arc::clone(&ct_logger));    // core: new, update, destroy
+    tracing::info!(event = "ct.logger.registered", "conntrack debug observer attached");
+
+    let _ct_reaper = Reaper::spawn(Arc::clone(&conntrack));
+
     let metrics_collector = Arc::new(metrics::MetricsCollector::new());
     let policy_provider = Arc::new(
         DiskPolicyProvider::from_loaded(&config)
@@ -332,56 +435,65 @@ async fn main() {
                     local_ips: Arc::new(local_ips),
                 },
                 tail: Chain {
-                    head: DpiStage {
-                        classifier: Arc::clone(&dpi_classifier),
-                        flow_stats: Arc::clone(&ml_flow_stats),
-                        pinning_detector: Some(decision_engine.pinning_detector_arc()),
+                    head: ConntrackInStage {
+                        ct: Arc::clone(&conntrack),
                     },
                     tail: Chain {
-                        head: TlsPortEnforcementStage {
-                            config_provider: Arc::clone(&config_provider),
+                        head: DpiStage {
+                            classifier: Arc::clone(&dpi_classifier),
+                            flow_stats: Arc::clone(&ml_flow_stats),
+                            pinning_detector: Some(decision_engine.pinning_detector_arc()),
                         },
                         tail: Chain {
-                            head: DnsBlockListStage {
-                                inspection: Arc::clone(&dns_inspection),
+                            head: TlsPortEnforcementStage {
+                                config_provider: Arc::clone(&config_provider),
                             },
                             tail: Chain {
-                                head: DnsTunnelingStage {
+                                head: DnsBlockListStage {
                                     inspection: Arc::clone(&dns_inspection),
                                 },
                                 tail: Chain {
-                                    head: DnsEchMitigationStage {
+                                    head: DnsTunnelingStage {
                                         inspection: Arc::clone(&dns_inspection),
                                     },
                                     tail: Chain {
-                                        head: IpsStage {
-                                            inspection: Arc::clone(&ips),
+                                        head: DnsEchMitigationStage {
+                                            inspection: Arc::clone(&dns_inspection),
                                         },
                                         tail: Chain {
-                                            head: NatPreroutingStage {
-                                                engine: Arc::clone(&nat_engine),
+                                            head: IpsStage {
+                                                inspection: Arc::clone(&ips),
                                             },
                                             tail: Chain {
-                                                head: TcpClassificationStage {
-                                                    tracker: Arc::clone(&tcp_session_tracker),
-                                                    flow_stats: Arc::clone(&ml_flow_stats),
+                                                head: NatPreroutingStage {
+                                                    engine: Arc::clone(&nat_engine),
                                                 },
                                                 tail: Chain {
-                                                    head: MlAlertStage::new(Arc::clone(&ml_detector)),
+                                                    head: L4StateStage {
+                                                        flow_stats: Arc::clone(&ml_flow_stats),
+                                                    },
                                                     tail: Chain {
-                                                        head: PolicyEvalStage {
-                                                            policy_engine: Arc::clone(&policy_engine),
-                                                            zone_resolver: Arc::clone(&zone_resolver),
-                                                            dnssec: Some(dnssec_provider),
-                                                        },
+                                                        head: MlAlertStage::new(Arc::clone(&ml_detector)),
                                                         tail: Chain {
-                                                            head: NatPostroutingStage {
-                                                                engine: Arc::clone(&nat_engine),
-                                                                routing_table: Arc::clone(&routing_table),
-                                                                interface_monitor: Arc::clone(&interface_monitor),
+                                                            head: PolicyEvalStage {
+                                                                policy_engine: Arc::clone(&policy_engine),
+                                                                zone_resolver: Arc::clone(&zone_resolver),
+                                                                dnssec: Some(dnssec_provider),
                                                             },
-                                                            tail: FtpAlgStage {
-                                                                engine: Arc::clone(&nat_engine),
+                                                            tail: Chain {
+                                                                head: NatPostroutingStage {
+                                                                    engine: Arc::clone(&nat_engine),
+                                                                    routing_table: Arc::clone(&routing_table),
+                                                                    interface_monitor: Arc::clone(&interface_monitor),
+                                                                },
+                                                                tail: Chain {
+                                                                    head: FtpAlgStage {
+                                                                        engine: Arc::clone(&nat_engine),
+                                                                    },
+                                                                    tail: ConntrackConfirmStage {
+                                                                        ct: Arc::clone(&conntrack),
+                                                                    },
+                                                                },
                                                             },
                                                         },
                                                     },
@@ -468,11 +580,34 @@ async fn main() {
     let sniffer = Arc::new(sniffer);
     
     // Startup sniffer reconciliation
-    let sniffed_names: Vec<String> = loaded_zone_interfaces
+    let mut sniffed_names: Vec<String> = loaded_zone_interfaces
         .iter()
         .filter(|(_, zi)| zi.sniffed)
         .filter_map(|(id, _)| crate::zones::resolve_os_name(&loaded_zone_interfaces, id))
         .collect();
+
+    // Fallback z env CAPTURE_INTERFACES gdy zone_interfaces nie ma sniffed=true.
+    // Bez tego pipeline startuje, ale 0 capture → żaden pakiet nie wchodzi.
+    if sniffed_names.is_empty() {
+        if let Ok(env_ifaces) = std::env::var("CAPTURE_INTERFACES") {
+            for name in env_ifaces.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                sniffed_names.push(name.to_string());
+            }
+            if !sniffed_names.is_empty() {
+                tracing::warn!(
+                    event = "sniffer.fallback.env",
+                    interfaces = ?sniffed_names,
+                    "no sniffed interfaces in zone_interfaces.json, using CAPTURE_INTERFACES env"
+                );
+            }
+        }
+    }
+
+    tracing::info!(
+        event = "sniffer.reconcile.start",
+        interfaces = ?sniffed_names,
+        "starting capture on interfaces"
+    );
     sniffer.reconcile_capture_interfaces(&sniffed_names);
     
     config_provider
@@ -518,17 +653,27 @@ async fn main() {
     );
     tokio::spawn(server_cert_server.serve());
 
+    tracing::info!(event = "pipeline.loop.start", "entering packet processing loop");
+
+    let pkt_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
     while let Some(raw_packet) = raw_rx.recv().await {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {
             let pipeline = pipeline.clone();
             let tun = Arc::clone(&tun);
             let metrics_collector = Arc::clone(&metrics_collector);
+            let counter = Arc::clone(&pkt_counter);
             tokio::spawn(async move {
                 if !matches!(
                     &ctx.borrow_sliced_packet().net,
                     Some(NetSlice::Ipv4(_) | NetSlice::Ipv6(_))
                 ) {
                     return;
+                }
+
+                let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n == 1 || n % 1000 == 0 {
+                    tracing::info!(event = "pipeline.packet.tick", count = n, "pipeline processed packet");
                 }
 
                 let result: StageOutcome = pipeline.process(&mut ctx).await;
