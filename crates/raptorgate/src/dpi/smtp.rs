@@ -4,6 +4,7 @@ use smtp_proto::{request::receiver::RequestReceiver, response::parser::ResponseR
 use std::borrow::Cow;
 
 use crate::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
+use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SessionState {
@@ -97,6 +98,38 @@ struct SmtpSession {
     response_receiver: ResponseReceiver,
 }
 
+impl SmtpSession {
+    fn apply_transition(&mut self, event: SessionTransition<'_>) -> Result<(), ()> {
+        let result = self.state.transition(event);
+        self.apply_transition_result(result)
+    }
+
+    fn apply_transition_result(&mut self, result: Result<Option<SessionState>, ()>) -> Result<(), ()> {
+        match result {
+            Ok(Some(next)) => {
+                self.state = next;
+                self.emit_state_changed();
+                Ok(())
+            }
+            Ok(None) => {
+                self.emit_state_changed();
+                Ok(())
+            }
+            Err(()) => Err(()),
+        }
+    }
+
+    fn emit_state_changed(&self) {
+        emit(Event::new(EventKind::SmtpSessionStateChanged {
+            session: SmtpSessionInfo {
+                client: self.client.clone(),
+                server: self.server.clone(),
+            },
+            new_state: format!("{:?}", self.state),
+        }));
+    }
+}
+
 struct SmtpTracker {
     sessions: DashMap<TcpIdentifier, SmtpSession>,
 }
@@ -145,10 +178,9 @@ impl SmtpTracker {
                 loop {
                     match session.response_receiver.parse(&mut bytes) {
                         Ok(response) => {
-                            match session.state.transition(SessionTransition::Response(response)) {
-                                Ok(Some(next)) => session.state = next,
-                                Ok(None) => {}
-                                Err(()) => { should_remove = true; break; }
+                            if session.apply_transition(SessionTransition::Response(response)).is_err() {
+                                should_remove = true;
+                                break;
                             }
                             session.response_receiver.reset();
                         }
@@ -162,10 +194,10 @@ impl SmtpTracker {
                     let current_state = session.state;
                     match session.request_receiver.ingest(&mut bytes) {
                         Ok(request) => {
-                            match current_state.transition(SessionTransition::Request(request)) {
-                                Ok(Some(next)) => session.state = next,
-                                Ok(None) => {}
-                                Err(()) => { should_remove = true; break; }
+                            let result = current_state.transition(SessionTransition::Request(request));
+                            if session.apply_transition_result(result).is_err() {
+                                should_remove = true;
+                                break;
                             }
                         }
                         Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
@@ -191,10 +223,8 @@ impl SmtpTracker {
                 session.server = Some(src.clone());
                 session.client = Some(dst.clone());
                 session.request_receiver = RequestReceiver::default();
-                match session.state.transition(SessionTransition::Response(response)) {
-                    Ok(Some(next)) => session.state = next,
-                    Ok(None) => {}
-                    Err(()) => should_remove = true,
+                if session.apply_transition(SessionTransition::Response(response)).is_err() {
+                    should_remove = true;
                 }
                 session.response_receiver.reset();
             }
@@ -202,16 +232,18 @@ impl SmtpTracker {
             Err(_) => {
                 let mut request_bytes = tcp.payload().iter();
                 let current_state = session.state;
-                match session.request_receiver.ingest(&mut request_bytes) {
+                let ingest_result = {
+                    let receiver = &mut session.request_receiver;
+                    receiver.ingest(&mut request_bytes)
+                };
+                match ingest_result {
                     Ok(request) => {
                         let result = current_state.transition(SessionTransition::Request(request));
                         session.client = Some(src.clone());
                         session.server = Some(dst.clone());
                         session.response_receiver = ResponseReceiver::default();
-                        match result {
-                            Ok(Some(next)) => session.state = next,
-                            Ok(None) => {}
-                            Err(()) => should_remove = true,
+                        if session.apply_transition_result(result).is_err() {
+                            should_remove = true;
                         }
                     }
                     Err(smtp_proto::Error::NeedsMoreData { .. }) => {
