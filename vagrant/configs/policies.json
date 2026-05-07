@@ -15,7 +15,7 @@
       "zone_pair_id": "33333333-3333-4333-8333-333333333333",
       "priority": 10,
       "rule_tree": {
-        "head": "match auth_state {\n\t= authenticated:\n\t\tmatch identity_group {\n\t\t\t= \"guests\":\n\t\t\t\tmatch protocol {\n\t\t\t\t\t= tcp:\n\t\t\t\t\t\tmatch dst_port {\n\t\t\t\t\t\t\t|(= 22 = 3389 = 445): verdict drop\n\t\t\t\t\t\t}\n\t\t\t\t}\n\t\t}\n}\n"
+        "head": "match auth_state {\n\t= authenticated:\n\t\tmatch identity_group {\n\t\t\t= \"guests\":\n\t\t\t\tmatch protocol {\n\t\t\t\t\t= tcp:\n\t\t\t\t\t\tmatch dst_port {\n\t\t\t\t\t\t\t|(= 22 = 3389 = 445 = 8080): verdict drop\n\t\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n}\n"
       }
     },
     {

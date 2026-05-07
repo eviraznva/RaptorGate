@@ -89,6 +89,14 @@ Komendy `vagrant` wykonuj z katalogu `vagrant/`. Do maszyn wchodzisz recznie prz
 vagrant status
 ```
 
+Po `vagrant destroy` albo po provisioningu samego `r1` nie zakladaj, ze providery auth i `h2` sa gotowe. Przed testami portalu upewnij sie, ze `r1`, `radius`, `ldap` i `h2` sa uruchomione i po zmianach reprovisionowane:
+
+```bash
+vagrant provision radius ldap h2 r1
+```
+
+Jezeli portal login zwraca `503` z message `ECONNREFUSED: connection refused, recv`, to nie jest blad UI ani captive portalu. To znaczy, ze `r1` nie moze polaczyc sie z RADIUS-em albo LDAP-em. Wroc wtedy do ID-01 i potwierdz `radtest` oraz `ldapsearch` zanim przejdziesz do testow przegladarkowych.
+
 2. Na `r1` sprawdz podstawowe uslugi:
 
 ```bash
@@ -110,6 +118,8 @@ sudo tail -f /var/log/raptorgate/firewall/$(date +%F).log
 ```bash
 grep '^DEV_OVERRIDE_POLICY=' /etc/systemd/system/ngfw.env
 ```
+
+Brak outputu jest OK i oznacza, ze `DEV_OVERRIDE_POLICY` nie jest ustawione. W tym labie to stan domyslny: NGFW dziala z normalna polityka, a nie z override z env.
 
 Uwaga: jezeli `DEV_OVERRIDE_POLICY` jest allow-all, testy blokowania po braku sesji/logout/expire nie zweryfikuja enforcementu identity. Wtedy problem jest w sposobie spiecia identity z normalna polityka/configiem, a nie w RADIUS.
 
@@ -140,38 +150,124 @@ Limit throttlingu loginu to 5 prob na 60 sekund dla jednego klienta. Jesli zobac
 
 6. Dostep do portalu z przegladarki:
 
-Portal `https://192.168.10.254/portal/login` jest na interfejsie eth1 r1. Host deweloperski ma libvirt bridge `virbr3` z IP `192.168.10.1`, wiec polaczenie z hosta na `192.168.10.254` idzie bezposrednio (bez tunelu) z `src=192.168.10.1`. To wystarczy do testu portalu.
+Portal `https://192.168.10.254/portal/login` jest na interfejsie `eth1` r1. Domyslny browser hosta zwykle potrafi wejsc na portal bez tunelu, ale wtedy backend widzi `sourceIp` bridge'a hosta, np. `192.168.10.1`. To testuje tylko render portalu.
 
-Problem dotyczy tylko ruchu na **h2** (`192.168.20.10`): host ma bezposredni route do `192.168.20.0/24` przez `virbr2` i omija r1, wiec pre-auth gate nie jest sprawdzany. Trzeba przekierowac ten ruch przez h1.
+Do testow identity + enforcementu h1 -> h2 z GUI uzyj tunelu SOCKS przez `h1` i PAC w Firefoxie. Wtedy portal i h2 ida przez `h1`, a backend widzi klienta jako `sourceIp=192.168.10.10`.
 
-**Opcja D — host route przez h1 (ZALECANE, bez proxy)**
+Uwaga: nie ustawiaj manualnego SOCKS dla calego Firefoxa. Firefox/Chrome moga wysylac przez proxy poboczne polaczenia, ktore zapychaja tunel i portal zaczyna ladowac sie w nieskonczonosc. PAC ponizej kieruje przez SOCKS tylko dwa labowe IP, reszta idzie direct.
 
-Na hoscie:
+**Opcja C — Firefox na hoscie przez SOCKS + PAC (ZALECANE dla GUI)**
+
+Po `vagrant destroy`, restarcie hosta albo ponownym deployu wykonaj od nowa:
+
+```bash
+cd /home/dawid/Project/RaptorGate/vagrant
+vagrant status h1 r1 h2
+vagrant ssh-config h1 > /tmp/h1-portal.ssh
+ssh -F /tmp/h1-portal.ssh -o ExitOnForwardFailure=yes -M -S /tmp/h1-portal-socks.ctl -f -N -D 127.0.0.1:1090 h1
+```
+
+Jezeli port `1090` jest zajety albo poprzedni tunnel zawisl:
+
+```bash
+ssh -F /tmp/h1-portal.ssh -S /tmp/h1-portal-socks.ctl -O exit h1 2>/dev/null || true
+ss -ltnp 'sport = :1090'
+```
+
+Jezeli `ss` nadal pokazuje stary proces `ssh` na `127.0.0.1:1090`, zamknij ten konkretny PID i uruchom tunnel jeszcze raz:
+
+```bash
+kill <PID_Z_SS>
+ssh -F /tmp/h1-portal.ssh -o ExitOnForwardFailure=yes -M -S /tmp/h1-portal-socks.ctl -f -N -D 127.0.0.1:1090 h1
+```
+
+Zweryfikuj tunnel z hosta przed otwarciem Firefoxa:
+
+```bash
+curl -k -sS --connect-timeout 3 -m 6 --socks5-hostname 127.0.0.1:1090 https://192.168.10.254/api/identity/session
+```
+
+Oczekiwane:
+
+```json
+{"statusCode":200,"message":"Identity session status","data":{"authenticated":false,"sourceIp":"192.168.10.10"}}
+```
+
+Sprawdz tez sam HTML portalu:
+
+```bash
+curl -k -sS -I --connect-timeout 3 -m 6 --socks5-hostname 127.0.0.1:1090 https://192.168.10.254/portal/login
+```
+
+Oczekiwane: `HTTP/1.1 200 OK`.
+
+Przed loginem ruch do h2 ma byc blokowany:
+
+```bash
+curl -sS -i --connect-timeout 3 -m 6 --socks5-hostname 127.0.0.1:1090 http://192.168.20.10:8080/api/ping
+```
+
+Oczekiwane: timeout.
+
+W Firefoxie utworz osobny profil testowy i ustaw:
+
+- `Settings -> Network Settings`
+- `Automatic proxy configuration URL`
+- URL PAC:
+
+```text
+data:application/x-ns-proxy-autoconfig,function FindProxyForURL(url,host){if(host=="192.168.10.254"||host=="192.168.20.10")return "SOCKS5 127.0.0.1:1090";return "DIRECT";}
+```
+
+Kliknij `Reload` przy PAC, potem `OK`.
+
+Test w Firefoxie:
+
+1. `https://192.168.10.254/api/identity/session` -> JSON z `sourceIp:"192.168.10.10"`.
+2. `https://192.168.10.254/portal/login` -> "Advanced" -> "Accept Risk" -> login `user/user123`.
+3. Nowa zakladka: `http://192.168.20.10:8080/api/ping` -> JSON `{"status":"ok"}`.
+4. Logout w portalu -> ten sam URL do h2 -> timeout.
+
+Po testach zamknij tunnel:
+
+```bash
+ssh -F /tmp/h1-portal.ssh -S /tmp/h1-portal-socks.ctl -O exit h1
+```
+
+Jezeli Firefox znow zacznie ladowac portal w nieskonczonosc:
+
+1. Zamknij okno Firefoxa z profilem testowym.
+2. Zamknij tunnel komenda `ssh -O exit` powyzej.
+3. Sprawdz `ss -ltnp 'sport = :1090'`; jezeli zostal proces `ssh`, zamknij jego PID.
+4. Uruchom tunnel od nowa i najpierw potwierdz `curl ... /api/identity/session`.
+
+**Opcja D — host route przez h1 (alternatywa bez proxy, wymaga sudo na hoscie)**
+
+Ten wariant zapisuje sesje dla IP bridge'a hosta, np. `192.168.10.1`, a nie dla `192.168.10.10`. Uzywaj go tylko jezeli chcesz testowac domyslny browser hosta bez PAC.
+
+Najpierw sprawdz aktualne trasy, bo nazwy `virbrX` zaleza od libvirt:
+
+```bash
+ip route get 192.168.10.254
+ip route get 192.168.20.10
+```
+
+Na hoscie przekieruj ruch do h2 przez h1:
 
 ```bash
 sudo ip route replace 192.168.20.0/24 via 192.168.10.10
 ```
 
-Na h1 wlacz forwarding (raz na czas testow):
+Na h1 wlacz forwarding:
 
 ```bash
 vagrant ssh h1 -- 'sudo sysctl -w net.ipv4.ip_forward=1'
 ```
 
-Co teraz:
-- Host → portal (`192.168.10.254`) idzie virbr3 bezposrednio. `sourceIp` w backendzie = `192.168.10.1` (bridge IP hosta). Sesja zapisuje sie na `192.168.10.1`.
-- Host → h2 (`192.168.20.10`) idzie virbr3 → h1 → r1 → h2. r1 widzi `src=192.168.10.1`, identity gate sprawdza ten IP, sesja istnieje (po loginie portalu) → ruch przechodzi.
-
-Test w domyslnym Firefoxie hosta:
-
-1. `https://192.168.10.254/portal/login` → "Advanced" → "Accept Risk" → login `user/user123`.
-2. Nowa zakladka: `http://192.168.20.10:8080/api/ping` → JSON `{"status":"ok"}`.
-3. Logout → ten sam URL → timeout (gate blokuje).
-
-Po teście usun route i forwarding:
+Po tescie przywroc route do bridge'a z `ip route get 192.168.20.10` i wylacz forwarding, np.:
 
 ```bash
-sudo ip route replace 192.168.20.0/24 dev virbr2
+sudo ip route replace 192.168.20.0/24 dev virbr3
 vagrant ssh h1 -- 'sudo sysctl -w net.ipv4.ip_forward=0'
 ```
 
@@ -181,19 +277,9 @@ Weryfikacja zrodla na r1:
 sudo tcpdump -ni any 'host 192.168.20.10 and port 8080'
 ```
 
-Pusto = pakiety nie ida przez r1 (route nie zadzial), test nic nie sprawdza.
+Pusto = pakiety nie ida przez r1, wiec test nic nie sprawdza.
 
-**Opcja A — Firefox na h1 przez SSH X11 (alternatywa)**: jezeli chcesz zeby `sourceIp` byl scisle `192.168.10.10` (jak z konsoli z h1), zainstaluj Firefoxa na h1 i przekieruj X11. `vagrant ssh h1 -- -X`, w sesji `sudo apt-get install -y firefox-esr xauth` (raz), `firefox https://192.168.10.254/portal/login &`. Wolniejszy render, wymaga GUI biblioteki na h1.
-
-**Opcja C — SOCKS5 proxy (alternatywa, dziala)**: SSH dynamic forwarding zamienia h1 w proxy. Browser z osobnym profilem + manualnym SOCKS5. Ostroznie z DNS prefetch i telemetria — Firefox/Chrome moga wieszac sie na zewnetrznych URL-ach przez tunnel. PAC file ogranicza proxy do dwoch testowych IP, reszta direct:
-
-```
-data:application/x-ns-proxy-autoconfig,function FindProxyForURL(url,host){if(host=="192.168.10.254"||host=="192.168.20.10")return "SOCKS5 127.0.0.1:1080";return "DIRECT";}
-```
-
-Tunnel: `vagrant ssh-config h1 > /tmp/h1.ssh && ssh -F /tmp/h1.ssh -D 1080 -N -f h1`. Stop: `pkill -f 'ssh.*-D 1080'`.
-
-W praktyce Opcja D wystarczy.
+**Opcja A — Firefox na h1 przez SSH X11 (alternatywa)**: jezeli chcesz zeby `sourceIp` byl scisle `192.168.10.10` bez SOCKS, zainstaluj Firefoxa na h1 i przekieruj X11. `vagrant ssh h1 -- -X`, w sesji `sudo apt-get install -y firefox-esr xauth` (raz), `firefox https://192.168.10.254/portal/login &`. Wolniejszy render, wymaga GUI biblioteki na h1.
 
 ## ID-01 - LDAP i RADIUS z r1
 
@@ -275,7 +361,7 @@ Oczekiwane: wpis drop z `src_ip=192.168.10.10`, `dst_ip=192.168.20.10`, `dst_por
 
 ### Przegladarka
 
-W Firefoxie (Opcja A albo B z Przygotowania) wpisz `http://192.168.20.10:8080/api/ping`.
+W Firefoxie (Opcja C albo A z Przygotowania) wpisz `http://192.168.20.10:8080/api/ping`.
 
 Oczekiwane: strona sie nie laduje, browser pokazuje timeout / "Unable to connect". Log firewalla na `r1` ma drop jak wyzej.
 
