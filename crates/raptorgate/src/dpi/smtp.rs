@@ -7,7 +7,8 @@ use std::sync::Arc;
 use crate::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
 use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
 use crate::interfaces::NetworkInterfaceMonitor;
-use crate::zones::resolver::RoutingZoneResolver;
+use crate::zones::DirectionalZonePairs;
+use crate::zones::resolver::{RoutingZoneResolver, ZoneResolver};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SessionState {
@@ -97,6 +98,7 @@ struct SmtpSession {
     state: SessionState,
     client: Option<EndpointIdentifier>,
     server: Option<EndpointIdentifier>,
+    zone_pairs: Option<DirectionalZonePairs>,
     request_receiver: RequestReceiver,
     response_receiver: ResponseReceiver,
 }
@@ -108,7 +110,6 @@ impl SmtpSession {
     }
 
     fn apply_transition_result(&mut self, result: Result<Option<SessionState>, ()>) -> Result<(), ()> {
-        tracing::info!(result=?result, "received result");
         match result {
             Ok(Some(next)) => {
                 self.state = next;
@@ -169,6 +170,7 @@ impl SmtpTracker {
             state: SessionState::TcpEstabilished,
             client: None,
             server: None,
+            zone_pairs: None,
             request_receiver: RequestReceiver::default(),
             response_receiver: ResponseReceiver::default(),
         });
@@ -228,6 +230,7 @@ impl SmtpTracker {
             Ok(response) => {
                 session.server = Some(src.clone());
                 session.client = Some(dst.clone());
+                session.zone_pairs = Some(self.zone_resolver.resolve_bidirectional(dst.ip, src.ip));
                 session.request_receiver = RequestReceiver::default();
                 if session.apply_transition(SessionTransition::Response(response)).is_err() {
                     should_remove = true;
@@ -247,12 +250,14 @@ impl SmtpTracker {
                         let result = current_state.transition(SessionTransition::Request(request));
                         session.client = Some(src.clone());
                         session.server = Some(dst.clone());
+                        session.zone_pairs = Some(self.zone_resolver.resolve_bidirectional(src.ip, dst.ip));
                         session.response_receiver = ResponseReceiver::default();
                         if session.apply_transition_result(result).is_err() {
                             should_remove = true;
                         }
                     }
                     Err(smtp_proto::Error::NeedsMoreData { .. }) => {
+                        session.zone_pairs = Some(self.zone_resolver.resolve_bidirectional(src.ip, dst.ip));
                         session.client = Some(src);
                         session.server = Some(dst);
                         session.response_receiver = ResponseReceiver::default();

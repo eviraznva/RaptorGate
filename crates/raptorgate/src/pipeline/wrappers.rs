@@ -1283,6 +1283,9 @@ mod tests {
         fn resolve(&self, _src: &str, _dst: std::net::IpAddr) -> Option<crate::zones::ResolvedZonePair> {
             None // Return None to trigger halt in the first test
         }
+        fn resolve_bidirectional(&self, _src: std::net::IpAddr, _dst: std::net::IpAddr) -> crate::zones::DirectionalZonePairs {
+            crate::zones::DirectionalZonePairs { forward: None, reverse: None }
+        }
     }
 
     #[test]
@@ -1341,6 +1344,18 @@ mod tests {
                     id: self.0.clone(),
                     default_policy: crate::zones::DefaultPolicy::Drop,
                 })
+            }
+            fn resolve_bidirectional(&self, _src: std::net::IpAddr, _dst: std::net::IpAddr) -> crate::zones::DirectionalZonePairs {
+                crate::zones::DirectionalZonePairs {
+                    forward: Some(crate::zones::ResolvedZonePair {
+                        id: self.0.clone(),
+                        default_policy: crate::zones::DefaultPolicy::Drop,
+                    }),
+                    reverse: Some(crate::zones::ResolvedZonePair {
+                        id: self.0.clone(),
+                        default_policy: crate::zones::DefaultPolicy::Drop,
+                    }),
+                }
             }
         }
 

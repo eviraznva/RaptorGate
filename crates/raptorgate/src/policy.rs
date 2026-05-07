@@ -1,4 +1,5 @@
 use derive_more::{Display, From, Into};
+use regex::bytes::Regex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -29,8 +30,30 @@ pub struct Policy {
     // pub created_by: String,
 
     pub rule_tree: RuleTree,
+
+    pub smtp_policy: SmtpPolicy,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmtpPolicy {
+    #[serde(with = "serde_regex")]
+    sender: Regex,
+    #[serde(with = "serde_regex")]
+    recipient: Regex,
+    #[serde(with = "serde_regex")]
+    message: Regex
+}
+
+impl SmtpPolicy {
+    pub fn default() -> Self {
+        Self {
+            sender: Regex::new("$^").unwrap(),
+            recipient: Regex::new("$^").unwrap(),
+            message: Regex::new("$^").unwrap(),
+        }
+    }
+
+}
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct PolicyId(Uuid);
 
@@ -44,6 +67,7 @@ impl Policy {
             zone_pair_id: ZonePairId::from(Uuid::parse_str(&value.zone_pair_id)?),
             priority: value.priority,
             rule_tree: RuleTree::new(head), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
+            smtp_policy: SmtpPolicy::default()
         }))
     }
 
