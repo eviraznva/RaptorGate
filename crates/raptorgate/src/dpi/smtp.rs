@@ -1,4 +1,4 @@
-use dashmap::DashMap;
+use dashmap::{DashMap, mapref::one::RefMut};
 use etherparse::TransportSlice;
 use smtp_proto::{request::receiver::RequestReceiver, response::parser::ResponseReceiver};
 use std::borrow::Cow;
@@ -108,9 +108,17 @@ impl SmtpTracker {
         }
     }
 
+    fn cleanup_session(&self, should_remove: bool, session: RefMut<'_, TcpIdentifier, SmtpSession>) {
+        if should_remove {
+            let key = session.key().clone();
+            drop(session);
+            self.sessions.remove(&key);
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     pub fn on_new_packet(
-        &mut self,
+        &self,
         packet: TransportSlice,
         session: &TcpIdentifier,
         src: EndpointIdentifier,
@@ -126,7 +134,7 @@ impl SmtpTracker {
             response_receiver: ResponseReceiver::default(),
         });
 
-        let mut should_remove = false;
+        let mut should_remove = false; // need this since dashmap deadlocks when removing an entry without dropping
 
         let is_from_client = session.client.as_ref().is_some_and(|c| *c == src);
         let is_from_server = session.server.as_ref().is_some_and(|s| *s == src);
@@ -173,11 +181,7 @@ impl SmtpTracker {
                 }
             }
 
-            if should_remove {
-                let key = session.key().clone();
-                drop(session);
-                self.sessions.remove(&key);
-            }
+            self.cleanup_session(should_remove, session);
             return;
         }
 
@@ -222,10 +226,6 @@ impl SmtpTracker {
             }
         }
 
-        if should_remove {
-            let key = session.key().clone();
-            drop(session);
-            self.sessions.remove(&key);
-        }
+        self.cleanup_session(should_remove, session);
     }
 }
