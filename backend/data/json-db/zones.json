@@ -1,6 +1,14 @@
 {
   "items": [
     {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "Default Zone",
+      "description": "The default zone for all devices",
+      "isActive": true,
+      "createdAt": "2026-03-19T18:36:30.123Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
       "id": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4",
       "name": "Bedroom",
       "description": "The bedroom of the house",
