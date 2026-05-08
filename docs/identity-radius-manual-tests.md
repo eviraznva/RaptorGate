@@ -123,7 +123,7 @@ Brak outputu jest OK i oznacza, ze `DEV_OVERRIDE_POLICY` nie jest ustawione. W t
 
 Uwaga: jezeli `DEV_OVERRIDE_POLICY` jest allow-all, testy blokowania po braku sesji/logout/expire nie zweryfikuja enforcementu identity. Wtedy problem jest w sposobie spiecia identity z normalna polityka/configiem, a nie w RADIUS.
 
-To samo dotyczy aktywnego config snapshotu. Seedowe `vagrant/configs/policies.json` zawiera identity-aware przyklady dla `auth_state`, `identity_group` i portow aplikacyjnych, ale bez sensownych `zone_interfaces` testy wielu polityk per strefa nie potwierdza live evaluatora. Przed ID-03/06/08/09/10/11/13 aktywny config musi byc identity-aware i nie moze byc globalnym allow-all.
+To samo dotyczy aktywnego config snapshotu. Przed ID-03/06/08/09/10/11/13 aktywny config musi byc identity-aware i nie moze byc globalnym allow-all.
 
 Sprawdz tez pozostale zmienne:
 

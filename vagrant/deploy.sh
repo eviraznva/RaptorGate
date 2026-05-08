@@ -104,9 +104,6 @@ cp -rf ../backend/devCerts/* .router_sync/backend/devCerts/
 rm -rf .router_sync/backend/data && mkdir -p .router_sync/backend/data
 cp -rf ../backend/data/* .router_sync/backend/data/
 cp -rf ../proto/* .router_sync/proto/
-if [ -d ./configs ]; then
-  cp -rf ./configs/. .router_sync/ngfw/
-fi
 cp -rf services .router_sync
 cp -rf nginx/* .router_sync/nginx/
 cp -rf logrotate/* .router_sync/logrotate/
