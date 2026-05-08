@@ -1,6 +1,7 @@
 use bitflags::bitflags;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU32, AtomicU8, Ordering};
 
 use crate::conntrack::proto::ProtoState;
 use crate::conntrack::reassembler::ReassemblyState;
@@ -29,6 +30,22 @@ pub enum CtInfo {
     Established,  // Flow już istnieje, widzieliśmy pakiety w obu kierunkach
     Related,      // Flow jest powiązany z innym flow, np. FTP data connection jest related do FTP control connection
     Invalid,      // Pakiet nie pasuje do żadnego flow ani nie może być NEW np. ACK bez wcześniejszego SYN
+}
+
+const DIRECTION_UNSPECIFIED: u8 = 0;
+const DIRECTION_ORIGINAL: u8 = 1;
+const DIRECTION_REPLY: u8 = 2;
+const INTERFACE_ORIGINAL_INGRESS: u8 = 1 << 0;
+const INTERFACE_ORIGINAL_EGRESS: u8 = 1 << 1;
+const INTERFACE_REPLY_INGRESS: u8 = 1 << 2;
+const INTERFACE_REPLY_EGRESS: u8 = 1 << 3;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConntrackInterfacePath {
+    pub original_ingress: Option<Arc<str>>,
+    pub original_egress: Option<Arc<str>>,
+    pub reply_ingress: Option<Arc<str>>,
+    pub reply_egress: Option<Arc<str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +98,9 @@ pub struct ConntrackEntry {
     pub mark: AtomicU32,
 
     status: AtomicU32,
+    last_direction: AtomicU8,
+    interface_bits: AtomicU8,
+    interfaces: parking_lot::Mutex<ConntrackInterfacePath>,
 
     created_at: Instant,
     last_seen_at: parking_lot::Mutex<Instant>,
@@ -107,6 +127,9 @@ impl ConntrackEntry {
             zone,
             mark: AtomicU32::new(0),
             status: AtomicU32::new(0),
+            last_direction: AtomicU8::new(DIRECTION_UNSPECIFIED),
+            interface_bits: AtomicU8::new(0),
+            interfaces: parking_lot::Mutex::new(ConntrackInterfacePath::default()),
             created_at: now,
             last_seen_at: parking_lot::Mutex::new(now),
             expires_at: parking_lot::Mutex::new(now + timeout),
@@ -156,6 +179,8 @@ impl ConntrackEntry {
     pub fn reply(&self) -> FlowTuple { *self.reply.lock() }
 
     pub fn record_packet(&self, dir: Direction, bytes: u64) {
+        self.last_direction.store(direction_to_u8(dir), Ordering::Release);
+
         match dir {
             Direction::Original => {
                 self.packets_orig.fetch_add(1, Ordering::Relaxed);
@@ -170,6 +195,60 @@ impl ConntrackEntry {
         }
     }
 
+    pub fn last_direction(&self) -> Option<Direction> {
+        u8_to_direction(self.last_direction.load(Ordering::Acquire))
+    }
+
+    pub fn record_ingress_interface(&self, dir: Direction, name: &str) {
+        let bit = ingress_interface_bit(dir);
+        if self.interface_bits.load(Ordering::Acquire) & bit != 0 {
+            return;
+        }
+
+        let mut path = self.interfaces.lock();
+        let written = match dir {
+            Direction::Original if path.original_ingress.is_none() => {
+                path.original_ingress = Some(Arc::<str>::from(name));
+                true
+            },
+            Direction::Reply if path.reply_ingress.is_none() => {
+                path.reply_ingress = Some(Arc::<str>::from(name));
+                true
+            },
+            _ => false,
+        };
+
+        if written {
+            self.interface_bits.fetch_or(bit, Ordering::Release);
+        }
+    }
+
+    pub fn record_egress_interface(&self, dir: Direction, name: &str) {
+        let bit = egress_interface_bit(dir);
+        if self.interface_bits.load(Ordering::Acquire) & bit != 0 {
+            return;
+        }
+
+        let mut path = self.interfaces.lock();
+        let written = match dir {
+            Direction::Original if path.original_egress.is_none() => {
+                path.original_egress = Some(Arc::<str>::from(name));
+                true
+            },
+            Direction::Reply if path.reply_egress.is_none() => {
+                path.reply_egress = Some(Arc::<str>::from(name));
+                true
+            },
+            _ => false,
+        };
+
+        if written {
+            self.interface_bits.fetch_or(bit, Ordering::Release);
+        }
+    }
+
+    pub fn interface_path(&self) -> ConntrackInterfacePath { self.interfaces.lock().clone() }
+
     pub fn ct_info(&self) -> CtInfo {
         let status = self.status();
 
@@ -180,6 +259,35 @@ impl ConntrackEntry {
         } else {
             CtInfo::New
         }
+    }
+}
+
+fn direction_to_u8(dir: Direction) -> u8 {
+    match dir {
+        Direction::Original => DIRECTION_ORIGINAL,
+        Direction::Reply => DIRECTION_REPLY,
+    }
+}
+
+fn u8_to_direction(value: u8) -> Option<Direction> {
+    match value {
+        DIRECTION_ORIGINAL => Some(Direction::Original),
+        DIRECTION_REPLY => Some(Direction::Reply),
+        _ => None,
+    }
+}
+
+fn ingress_interface_bit(dir: Direction) -> u8 {
+    match dir {
+        Direction::Original => INTERFACE_ORIGINAL_INGRESS,
+        Direction::Reply => INTERFACE_REPLY_INGRESS,
+    }
+}
+
+fn egress_interface_bit(dir: Direction) -> u8 {
+    match dir {
+        Direction::Original => INTERFACE_ORIGINAL_EGRESS,
+        Direction::Reply => INTERFACE_REPLY_EGRESS,
     }
 }
 
@@ -279,5 +387,24 @@ mod tests {
         e.set_status(CtStatus::EXPECTED);
 
         assert_eq!(e.ct_info(), CtInfo::Related);
+    }
+
+    #[test]
+    fn records_interface_path_and_last_direction() {
+        let e = entry();
+
+        e.record_ingress_interface(Direction::Original, "eth0");
+        e.record_egress_interface(Direction::Original, "tun0");
+        e.record_ingress_interface(Direction::Reply, "tun0");
+        e.record_egress_interface(Direction::Reply, "eth0");
+        e.record_packet(Direction::Reply, 100);
+
+        let path = e.interface_path();
+
+        assert_eq!(path.original_ingress.as_deref(), Some("eth0"));
+        assert_eq!(path.original_egress.as_deref(), Some("tun0"));
+        assert_eq!(path.reply_ingress.as_deref(), Some("tun0"));
+        assert_eq!(path.reply_egress.as_deref(), Some("eth0"));
+        assert_eq!(e.last_direction(), Some(Direction::Reply));
     }
 }

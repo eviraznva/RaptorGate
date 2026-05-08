@@ -116,6 +116,7 @@ where
             .add_service(FirewallQueryServiceServer::new(self.handler.clone()))
             .add_service(FirewallMetricsServiceServer::new(MetricsService::new(
                 Arc::clone(&self.handler.metrics_collector),
+                Arc::clone(&self.handler.conntrack),
             )))
             .add_service(FirewallConfigSnapshotServiceServer::new(self.handler))
             .serve_with_incoming_shutdown(incoming, self.shutdown.cancelled())

@@ -30,6 +30,7 @@ use crate::{
     },
 };
 use crate::conntrack::table::{Conntrack, ProcessOutcome};
+use crate::conntrack::tuple::Direction;
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 use crate::dpi::AppProto;
@@ -203,6 +204,11 @@ impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
         let Some(out_iface_sys) = self.interface_monitor.get_by_index(out_iface_idx) else {
             return StageOutcome::Continue;
         };
+
+        ct.record_egress_interface(
+            ctx.ct_direction().unwrap_or(Direction::Original),
+            &out_iface_sys.name,
+        );
 
         let raw_mut = unsafe {
             let ptr = ctx.borrow_raw().as_ptr() as *mut u8;
@@ -1158,6 +1164,7 @@ impl Stage for ConntrackInStage {
 
         match outcome {
             ProcessOutcome::Accept { entry, info, direction, is_new } => {
+                entry.record_ingress_interface(direction, ctx.borrow_src_interface().as_ref());
                 ctx.set_conntrack(entry, info, direction, is_new);
 
                 if is_new {
