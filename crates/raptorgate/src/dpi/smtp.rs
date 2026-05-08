@@ -185,7 +185,7 @@ impl SmtpSession {
                 Ok(())
             }
             Ok(None) => {
-                self.emit_state_changed();
+                // self.emit_state_changed();
                 Ok(())
             }
             Err(()) => Err(()),
@@ -354,6 +354,14 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                     
                     match session.request_receiver.ingest(&mut bytes) {
                         Ok(request) => {
+                            tracing::debug!(request=?request, "Smtp Received received request");
+                            let completes_buffered_unit = matches!(
+                                request,
+                                smtp_proto::Request::Mail { .. }
+                                    | smtp_proto::Request::Rcpt { .. }
+                                    | smtp_proto::Request::Data
+                                    | smtp_proto::Request::Rset
+                            );
                             let bdat_params = match &request {
                                 smtp_proto::Request::Bdat { chunk_size, is_last } => Some((*chunk_size, *is_last)),
                                 _ => None,
@@ -382,10 +390,14 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                             if let Some((chunk_size, is_last)) = bdat_params {
                                 session.bdat_receiver = Some(BdatReceiver::new(chunk_size, is_last));
                             }
-                            
+
                             if session.apply_transition_result(result).is_err() {
                                 should_remove = true;
                                 break;
+                            }
+
+                            if disposition.packet == PacketAction::QueueAndHalt && completes_buffered_unit {
+                                disposition.unit = UnitStatus::Complete;
                             }
                         }
                         Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
@@ -408,6 +420,8 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         let mut response_bytes = tcp.payload().iter();
         match session.response_receiver.parse(&mut response_bytes) {
             Ok(response) => {
+                tracing::debug!(response=%response, "Smtp Received received response");
+
                 session.server = Some(src.clone());
                 session.client = Some(dst.clone());
                 session.policies = Some(self.policy_retriever.retrieve(dst.ip, src.ip));
@@ -427,6 +441,7 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                 };
                 match ingest_result {
                     Ok(request) => {
+                        tracing::debug!(request=?request, "Smtp Received received request");
                         let result = current_state.transition(SessionTransition::Request(request));
                         session.client = Some(src.clone());
                         session.server = Some(dst.clone());
@@ -1614,8 +1629,6 @@ mod tests {
         let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
         tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
         assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
-
-        // Get buffered packets
 
         // Simulate replaying packets through SmtpStage again (the bug)
         for pkt_ctx in batch {
