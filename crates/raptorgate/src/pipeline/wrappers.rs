@@ -1178,14 +1178,41 @@ impl Stage for SmtpStage {
             endpoints: unordered_pair::UnorderedPair::from((src.clone(), dst.clone())),
         };
 
-        self.tracker.on_new_packet(
+        let disposition = self.tracker.on_new_packet(
             sliced.transport.clone().expect("this should always have transport"),
             &session_id,
             src,
             dst,
         );
 
-        StageOutcome::Continue
+        match disposition {
+            crate::dpi::smtp::BufferingDisposition::Pass => StageOutcome::Continue,
+            crate::dpi::smtp::BufferingDisposition::Hold => {
+                if let Ok(cloned) = self.clone_packet_context(ctx) {
+                    self.tracker.enqueue_packet(&session_id, cloned);
+                }
+                StageOutcome::Halt
+            }
+            crate::dpi::smtp::BufferingDisposition::Drop => StageOutcome::Halt,
+            crate::dpi::smtp::BufferingDisposition::BufferedUnitComplete => {
+                tracing::info!("SMTP buffered unit complete, reinjection not yet implemented");
+                self.tracker.clear_queued_packets(&session_id);
+                StageOutcome::Halt
+            }
+        }
+    }
+    
+}
+
+impl SmtpStage {
+    fn clone_packet_context(&self, ctx: &PacketContext) -> Result<PacketContext, etherparse::err::packet::SliceError> {
+        let raw = ctx.borrow_raw().to_vec();
+        let interface = ctx.borrow_src_interface().clone();
+        let warnings = ctx.borrow_warnings().clone();
+        let arrival = *ctx.borrow_arrival_time();
+        let dpi = ctx.borrow_dpi_ctx().clone();
+        
+        PacketContext::from_raw_full(raw, interface, warnings, arrival, dpi)
     }
 }
 

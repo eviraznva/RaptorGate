@@ -1,7 +1,8 @@
 use dashmap::{DashMap, mapref::one::RefMut};
 use etherparse::TransportSlice;
-use smtp_proto::{request::receiver::RequestReceiver, response::parser::ResponseReceiver};
+use smtp_proto::{request::receiver::{RequestReceiver, DataReceiver, BdatReceiver}, response::parser::ResponseReceiver};
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
@@ -11,13 +12,35 @@ use crate::interfaces::NetworkInterfaceMonitor;
 use crate::zones::resolver::{RoutingZoneResolver, ZoneResolver};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum DataState {
+    Await354,
+    Collecting,
+    Complete,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum BdatState {
+    Collecting,
+    Complete,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SessionState {
     TcpEstabilished,
     GreetingReceived,
     Ready,
     EnvelopeOpen,
     ReciepientSet,
-    DataPhase,
+    Data(DataState),
+    Bdat(BdatState),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BufferingDisposition {
+    Pass,
+    Hold,
+    Drop,
+    BufferedUnitComplete,
 }
 
 pub(crate) enum SessionTransition<'a> {
@@ -37,8 +60,16 @@ impl SessionState {
                 if response.code == 220 {
                     return self.transition(SessionTransition::Greeting);
                 }
-                if response.code == 250 && let SessionState::DataPhase = self {
-                    return Ok(Some(SessionState::Ready));
+                if response.code == 354 && let SessionState::Data(DataState::Await354) = self {
+                    return Ok(Some(SessionState::Data(DataState::Collecting)));
+                }
+                if response.code == 250 {
+                    if let SessionState::Data(DataState::Complete) = self {
+                        return Ok(Some(SessionState::Ready));
+                    }
+                    if let SessionState::Bdat(BdatState::Complete) = self {
+                        return Ok(Some(SessionState::Ready));
+                    }
                 }
                 Ok(None)
             }
@@ -66,7 +97,13 @@ impl SessionState {
                         _ => Err(()),
                     },
                     smtp_proto::Request::Data | smtp_proto::Request::Bdat { .. } => match self {
-                        SessionState::ReciepientSet => Ok(Some(SessionState::DataPhase)),
+                        SessionState::ReciepientSet => {
+                            if matches!(request, smtp_proto::Request::Data) {
+                                Ok(Some(SessionState::Data(DataState::Await354)))
+                            } else {
+                                Ok(Some(SessionState::Bdat(BdatState::Collecting)))
+                            }
+                        }
                         _ => Err(()),
                     },
                     smtp_proto::Request::Auth { .. } => {
@@ -101,6 +138,12 @@ struct SmtpSession {
     policies: Option<SmtpSessionPolicies>,
     request_receiver: RequestReceiver,
     response_receiver: ResponseReceiver,
+    queued_packets: VecDeque<crate::data_plane::packet_context::PacketContext>,
+    current_sender: Option<String>,
+    current_recipients: Vec<String>,
+    current_message: Vec<u8>,
+    data_receiver: Option<DataReceiver>,
+    bdat_receiver: Option<BdatReceiver>,
 }
 
 impl SmtpSession {
@@ -112,6 +155,20 @@ impl SmtpSession {
     fn apply_transition_result(&mut self, result: Result<Option<SessionState>, ()>) -> Result<(), ()> {
         match result {
             Ok(Some(next)) => {
+                if matches!(next, SessionState::Ready) {
+                    if matches!(self.state, SessionState::Data(_)) {
+                        self.data_receiver = None;
+                        self.current_message.clear();
+                    } else if matches!(self.state, SessionState::Bdat(_)) {
+                        self.bdat_receiver = None;
+                        self.current_message.clear();
+                    }
+                    if !matches!(self.state, SessionState::GreetingReceived | SessionState::TcpEstabilished) {
+                        self.current_sender = None;
+                        self.current_recipients.clear();
+                        self.queued_packets.clear();
+                    }
+                }
                 self.state = next;
                 self.emit_state_changed();
                 Ok(())
@@ -136,7 +193,7 @@ impl SmtpSession {
 }
 
 pub struct SmtpTracker<ZR = RoutingZoneResolver<NetworkInterfaceMonitor>> {
-    sessions: DashMap<TcpIdentifier, SmtpSession>,
+    pub(crate) sessions: DashMap<TcpIdentifier, SmtpSession>,
     policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
 }
 
@@ -150,6 +207,18 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
 
     pub fn get_session_policies(&self, id: &TcpIdentifier) -> Option<SmtpSessionPolicies> {
         self.sessions.get(id).and_then(|s| s.policies.clone())
+    }
+    
+    pub fn enqueue_packet(&self, id: &TcpIdentifier, packet: crate::data_plane::packet_context::PacketContext) {
+        if let Some(mut session) = self.sessions.get_mut(id) {
+            session.queued_packets.push_back(packet);
+        }
+    }
+    
+    pub fn clear_queued_packets(&self, id: &TcpIdentifier) {
+        if let Some(mut session) = self.sessions.get_mut(id) {
+            session.queued_packets.clear();
+        }
     }
 
     fn cleanup_session(&self, should_remove: bool, session: RefMut<'_, TcpIdentifier, SmtpSession>) {
@@ -167,8 +236,8 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         session: &TcpIdentifier,
         src: EndpointIdentifier,
         dst: EndpointIdentifier,
-    ) {
-        let TransportSlice::Tcp(tcp) = packet else { return };
+    ) -> BufferingDisposition {
+        let TransportSlice::Tcp(tcp) = packet else { return BufferingDisposition::Pass };
 
         let mut session = self.sessions.entry(session.clone()).or_insert(SmtpSession {
             state: SessionState::TcpEstabilished,
@@ -177,15 +246,23 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
             policies: None,
             request_receiver: RequestReceiver::default(),
             response_receiver: ResponseReceiver::default(),
+            queued_packets: VecDeque::new(),
+            current_sender: None,
+            current_recipients: Vec::new(),
+            current_message: Vec::new(),
+            data_receiver: None,
+            bdat_receiver: None,
         });
 
         let mut should_remove = false; // need this since dashmap deadlocks when removing an entry without dropping
+        let mut disposition = BufferingDisposition::Pass;
 
         let is_from_client = session.client.as_ref().is_some_and(|c| *c == src);
         let is_from_server = session.server.as_ref().is_some_and(|s| *s == src);
 
         if is_from_client || is_from_server {
             if is_from_server {
+                disposition = BufferingDisposition::Pass;
                 let mut bytes = tcp.payload().iter();
                 loop {
                     match session.response_receiver.parse(&mut bytes) {
@@ -194,6 +271,9 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                                 should_remove = true;
                                 break;
                             }
+                            if matches!(session.state, SessionState::Data(DataState::Collecting)) {
+                                session.data_receiver = Some(DataReceiver::new());
+                            }
                             session.response_receiver.reset();
                         }
                         Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
@@ -201,12 +281,79 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                     }
                 }
             } else {
+                disposition = match session.state {
+                    SessionState::Ready | SessionState::EnvelopeOpen | SessionState::ReciepientSet => BufferingDisposition::Hold,
+                    SessionState::Data(DataState::Await354) | SessionState::Data(DataState::Collecting) => BufferingDisposition::Hold,
+                    SessionState::Bdat(BdatState::Collecting) => BufferingDisposition::Hold,
+                    _ => BufferingDisposition::Pass,
+                };
+                
                 let mut bytes = tcp.payload().iter();
                 loop {
                     let current_state = session.state;
+                    
+                    if matches!(current_state, SessionState::Data(DataState::Collecting)) {
+                        if let Some(mut receiver) = session.data_receiver.take() {
+                            let completed = receiver.ingest(&mut bytes, &mut session.current_message);
+                            if completed {
+                                session.state = SessionState::Data(DataState::Complete);
+                                disposition = BufferingDisposition::BufferedUnitComplete;
+                            } else {
+                                session.data_receiver = Some(receiver);
+                            }
+                        }
+                        break;
+                    }
+                    
+                    if matches!(current_state, SessionState::Bdat(BdatState::Collecting)) {
+                        if let Some(mut receiver) = session.bdat_receiver.take() {
+                            let completed = receiver.ingest(&mut bytes, &mut session.current_message);
+                            if completed {
+                                let is_last = receiver.is_last;
+                                if is_last {
+                                    session.state = SessionState::Bdat(BdatState::Complete);
+                                    disposition = BufferingDisposition::BufferedUnitComplete;
+                                } else {
+                                    session.state = SessionState::ReciepientSet;
+                                }
+                            } else {
+                                session.bdat_receiver = Some(receiver);
+                            }
+                        }
+                        break;
+                    }
+                    
                     match session.request_receiver.ingest(&mut bytes) {
                         Ok(request) => {
+                            let bdat_params = match &request {
+                                smtp_proto::Request::Bdat { chunk_size, is_last } => Some((*chunk_size, *is_last)),
+                                _ => None,
+                            };
+                            
+                            let sender = match &request {
+                                smtp_proto::Request::Mail { from } => Some(from.address.to_string()),
+                                _ => None,
+                            };
+                            
+                            let recipient = match &request {
+                                smtp_proto::Request::Rcpt { to } => Some(to.address.to_string()),
+                                _ => None,
+                            };
+                            
                             let result = current_state.transition(SessionTransition::Request(request));
+                            
+                            if let Some(sender_addr) = sender {
+                                session.current_sender = Some(sender_addr);
+                            }
+                            
+                            if let Some(rcpt_addr) = recipient {
+                                session.current_recipients.push(rcpt_addr);
+                            }
+                            
+                            if let Some((chunk_size, is_last)) = bdat_params {
+                                session.bdat_receiver = Some(BdatReceiver::new(chunk_size, is_last));
+                            }
+                            
                             if session.apply_transition_result(result).is_err() {
                                 should_remove = true;
                                 break;
@@ -214,7 +361,7 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                         }
                         Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
                         Err(_) => {
-                            if matches!(current_state, SessionState::DataPhase) {
+                            if matches!(current_state, SessionState::Data(_) | SessionState::Bdat(_)) {
                                 session.request_receiver = RequestReceiver::default();
                                 break;
                             }
@@ -226,7 +373,7 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
             }
 
             self.cleanup_session(should_remove, session);
-            return;
+            return disposition;
         }
 
         let mut response_bytes = tcp.payload().iter();
@@ -274,6 +421,7 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         }
 
         self.cleanup_session(should_remove, session);
+        BufferingDisposition::Pass
     }
 }
 
@@ -343,12 +491,12 @@ mod tests {
     #[test]
     fn happy_path_data() {
         let state = SessionState::ReciepientSet;
-        assert_eq!(state.transition(req(Request::Data)), Ok(Some(SessionState::DataPhase)));
+        assert_eq!(state.transition(req(Request::Data)), Ok(Some(SessionState::Data(DataState::Await354))));
     }
 
     #[test]
     fn happy_path_data_complete() {
-        let state = SessionState::DataPhase;
+        let state = SessionState::Data(DataState::Complete);
         assert_eq!(state.transition(resp(250)), Ok(Some(SessionState::Ready)));
     }
 
@@ -404,7 +552,7 @@ mod tests {
 
     #[test]
     fn rset_from_data_phase() {
-        let state = SessionState::DataPhase;
+        let state = SessionState::Data(DataState::Collecting);
         assert_eq!(state.transition(req(Request::Rset)), Ok(Some(SessionState::Ready)));
     }
 
@@ -513,14 +661,14 @@ mod tests {
 
     #[test]
     fn ehlo_from_data_phase_fails() {
-        let state = SessionState::DataPhase;
+        let state = SessionState::Data(DataState::Collecting);
         assert_eq!(state.transition(req(Request::Ehlo { host: "client.example.com" })), Err(()));
     }
 
     #[test]
     fn bdat_from_recipient_set() {
         let state = SessionState::ReciepientSet;
-        assert_eq!(state.transition(req(Request::Bdat { chunk_size: 1024, is_last: false })), Ok(Some(SessionState::DataPhase)));
+        assert_eq!(state.transition(req(Request::Bdat { chunk_size: 1024, is_last: false })), Ok(Some(SessionState::Bdat(BdatState::Collecting))));
     }
 
     #[test]
@@ -673,9 +821,21 @@ mod tests {
         let packet = smtp_packet(&client(), &server(), b"DATA\r\n");
         let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
         tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
-        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::DataPhase));
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Data(DataState::Await354)));
 
-        // 6. Server 250 OK (after data transmission)
+        // 6. Server 354 Start mail input
+        let packet = smtp_packet(&server(), &client(), b"354 Start mail input\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Data(DataState::Collecting)));
+
+        // 7. Client sends message body
+        let packet = smtp_packet(&client(), &server(), b"Subject: Test\r\n\r\nTest message\r\n.\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Data(DataState::Complete)));
+
+        // 8. Server 250 OK (after data transmission)
         let packet = smtp_packet(&server(), &client(), b"250 OK\r\n");
         let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
         tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
@@ -902,7 +1062,7 @@ mod tests {
         let packet = smtp_packet(&client(), &server(), b"DATA\r\n");
         let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
         tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
-        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::DataPhase));
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Data(DataState::Await354)));
     }
 
     #[test]
@@ -987,6 +1147,196 @@ mod tests {
     }
 
     #[test]
+    fn integration_buffering_disposition_server_packets_pass() {
+        let tracker = SmtpTracker::new(mock_policy_retriever());
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        let disposition = tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+        assert_eq!(disposition, BufferingDisposition::Pass);
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        let disposition = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disposition, BufferingDisposition::Pass); // EHLO transitions to Ready, not buffered itself
+        
+        // Now in Ready state, MAIL FROM should be buffered
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        let disposition = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disposition, BufferingDisposition::Hold);
+    }
+
+    #[test]
+    fn integration_buffering_disposition_client_packets_hold() {
+        let tracker = SmtpTracker::new(mock_policy_retriever());
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        let disposition = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disposition, BufferingDisposition::Hold);
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        let disposition = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disposition, BufferingDisposition::Hold);
+    }
+
+    #[test]
+    fn integration_buffering_disposition_data_complete() {
+        let tracker = SmtpTracker::new(mock_policy_retriever());
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"DATA\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        let disposition = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disposition, BufferingDisposition::Hold);
+
+        let packet = smtp_packet(&server(), &client(), b"354 Start mail input\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"Subject: Test\r\n\r\nTest message\r\n.\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        let disposition = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disposition, BufferingDisposition::BufferedUnitComplete);
+    }
+
+    #[test]
+    fn integration_transaction_state_captured() {
+        let tracker = SmtpTracker::new(mock_policy_retriever());
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        if let Some(session) = tracker.sessions.get(&id) {
+            assert_eq!(session.current_sender, Some("sender@example.com".to_string()));
+        } else {
+            panic!("Session not found");
+        }
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient1@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient2@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        if let Some(session) = tracker.sessions.get(&id) {
+            assert_eq!(session.current_recipients.len(), 2);
+            assert_eq!(session.current_recipients[0], "recipient1@example.com");
+            assert_eq!(session.current_recipients[1], "recipient2@example.com");
+        } else {
+            panic!("Session not found");
+        }
+    }
+
+    #[test]
+    fn integration_rset_clears_transaction_state() {
+        let tracker = SmtpTracker::new(mock_policy_retriever());
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"RSET\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        if let Some(session) = tracker.sessions.get(&id) {
+            assert_eq!(session.current_sender, None);
+            assert_eq!(session.current_recipients.len(), 0);
+            assert_eq!(session.current_message.len(), 0);
+            assert_eq!(session.state, SessionState::Ready);
+        } else {
+            panic!("Session not found");
+        }
+    }
+
+    #[test]
+    fn integration_bdat_multi_chunk() {
+        let tracker = SmtpTracker::new(mock_policy_retriever());
+        let id = session_id();
+
+        let packet = smtp_packet(&server(), &client(), b"220 mail.example.com ESMTP\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+
+        let packet = smtp_packet(&client(), &server(), b"EHLO client.example.com\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"MAIL FROM:<sender@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"RCPT TO:<recipient@example.com>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+
+        let packet = smtp_packet(&client(), &server(), b"BDAT 10\r\nFirst chunk");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::ReciepientSet));
+
+        let packet = smtp_packet(&client(), &server(), b"BDAT 11 LAST\r\nSecond chunk");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        let disposition = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disposition, BufferingDisposition::BufferedUnitComplete);
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Bdat(BdatState::Complete)));
+    }
+
+    #[test]
     fn integration_lhlo_command() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
@@ -1027,7 +1377,7 @@ mod tests {
         let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
         tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
 
-        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::DataPhase));
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Bdat(BdatState::Collecting)));
     }
 
     #[test]
