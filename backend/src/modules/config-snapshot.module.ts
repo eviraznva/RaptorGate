@@ -15,7 +15,9 @@ import { GetConfigHistoryUseCase } from '../application/use-cases/get-config-his
 import { ImportConfigUseCase } from '../application/use-cases/import-config.use-case.js';
 import { RollbackConfigUseCase } from '../application/use-cases/rollback-config.use-case.js';
 import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../domain/repositories/config-snapshot.repository.js';
+import { DNS_INSPECTION_REPOSITORY_TOKEN } from '../domain/repositories/dns-inspection.repository.js';
 import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../domain/repositories/firewall-certificate.repository.js';
+import { IPS_CONFIG_REPOSITORY_TOKEN } from '../domain/repositories/ips-config.repository.js';
 import { NAT_RULES_REPOSITORY_TOKEN } from '../domain/repositories/nat-rules.repository.js';
 import { SSL_BYPASS_REPOSITORY_TOKEN } from '../domain/repositories/ssl-bypass.repository.js';
 import { PERMISSION_REPOSITORY_TOKEN } from '../domain/repositories/permission.repository.js';
@@ -39,7 +41,9 @@ import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
 import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
 import { FileStore } from '../infrastructure/persistence/json/file-store.js';
 import { JsonConfigSnapshotRepository } from '../infrastructure/persistence/repositories/json-config-snapshot.repository.js';
+import { JsonDnsInspectionRepository } from '../infrastructure/persistence/repositories/json-dns-inspection.repository.js';
 import { JsonFirewallCertificateRepository } from '../infrastructure/persistence/repositories/json-firewall-certificate.repository.js';
+import { JsonIpsConfigRepository } from '../infrastructure/persistence/repositories/json-ips-config.repository.js';
 import { JsonNatRuleRepository } from '../infrastructure/persistence/repositories/json-nat-rule.repository.js';
 import { JsonSslBypassRepository } from '../infrastructure/persistence/repositories/json-ssl-bypass.repository.js';
 import { JsonPermissionRepository } from '../infrastructure/persistence/repositories/json-permission.repository.js';
@@ -167,6 +171,14 @@ import { Env } from '../shared/config/env.validation.js';
     {
       provide: NAT_RULES_REPOSITORY_TOKEN,
       useClass: JsonNatRuleRepository,
+    },
+    {
+      provide: DNS_INSPECTION_REPOSITORY_TOKEN,
+      useClass: JsonDnsInspectionRepository,
+    },
+    {
+      provide: IPS_CONFIG_REPOSITORY_TOKEN,
+      useClass: JsonIpsConfigRepository,
     },
     {
       provide: PERMISSION_REPOSITORY_TOKEN,

@@ -4,6 +4,10 @@ import { ConfigurationSnapshot } from '../../domain/entities/configuration-snaps
 import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
 import type { IConfigSnapshotRepository } from '../../domain/repositories/config-snapshot.repository.js';
 import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
+import type { IDnsInspectionRepository } from '../../domain/repositories/dns-inspection.repository.js';
+import { DNS_INSPECTION_REPOSITORY_TOKEN } from '../../domain/repositories/dns-inspection.repository.js';
+import type { IIpsConfigRepository } from '../../domain/repositories/ips-config.repository.js';
+import { IPS_CONFIG_REPOSITORY_TOKEN } from '../../domain/repositories/ips-config.repository.js';
 import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
 import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
 import type { IPermissionRepository } from '../../domain/repositories/permission.repository.js';
@@ -48,6 +52,8 @@ export class ApplyConfigSnapshotUseCase {
   constructor(
     @Inject(CONFIG_SNAPSHOT_REPOSITORY_TOKEN)
     private readonly configSnapshotRepository: IConfigSnapshotRepository,
+    @Inject(IPS_CONFIG_REPOSITORY_TOKEN)
+    private readonly ipsConfigRepository: IIpsConfigRepository,
     @Inject(NAT_RULES_REPOSITORY_TOKEN)
     private readonly natRulesRepository: INatRulesRepository,
     @Inject(PERMISSION_REPOSITORY_TOKEN)
@@ -75,6 +81,8 @@ export class ApplyConfigSnapshotUseCase {
     private readonly firewallCertificateRepository: IFirewallCertificateRepository,
     @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
     private readonly sslBypassRepository: ISslBypassRepository,
+    @Inject(DNS_INSPECTION_REPOSITORY_TOKEN)
+    private readonly dnsInspectionRepository: IDnsInspectionRepository,
   ) {}
 
   async execute(
@@ -84,6 +92,7 @@ export class ApplyConfigSnapshotUseCase {
     if (!claims) throw new AccessTokenIsInvalidException();
 
     const activeNatRules = await this.natRulesRepository.findActive();
+    const ipsConfig = await this.ipsConfigRepository.get();
     // const allRoles = await this.roleRepository.findAll();
     // const allPermisions = await this.permissionRepository.findAll();
     const activeRules = await this.rulesRepository.findActive();
@@ -96,6 +105,7 @@ export class ApplyConfigSnapshotUseCase {
       cert.getCertType() === 'TLS_SERVER' ? true : cert.getIsActive(),
     );
     const activeBypass = await this.sslBypassRepository.findActive();
+    const dnsInspectionConfig = await this.dnsInspectionRepository.get();
     const allConfigSnapshots =
       await this.configSnapshotRepository.findAllSnapshots();
     const currentActiveSnapshot = allConfigSnapshots.find((snapshot) =>
@@ -134,11 +144,13 @@ export class ApplyConfigSnapshotUseCase {
         ips_signatures: {
           items: [], // TODO: implement ips signatures repository and add to snapshot
         },
+        ips_config: ipsConfig,
         ml_model: null,
         firewall_certificates: {
           items: [...snapshotCerts],
         },
         tls_inspection_policy: tlsInspectionPolicy,
+        dns_inspection_config: dnsInspectionConfig,
         users: {
           items: [...allUsers],
         },

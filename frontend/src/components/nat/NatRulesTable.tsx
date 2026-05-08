@@ -1,6 +1,5 @@
 import type { NatRule, NatType } from "../../types/nat/NatRule";
-
-// ── Sub-components defined at module level (rerender-no-inline-components) ──
+import { getNatRuleType, protocolLabel } from "../../types/nat/NatRule";
 
 function priorityColor(p: number) {
   return p <= 3 ? "#f43f5e" : p <= 7 ? "#f59e0b" : "#06b6d4";
@@ -10,14 +9,8 @@ function PriorityBar({ priority }: { priority: number }) {
   const color = priorityColor(priority);
   return (
     <div className="flex items-center gap-2">
-      <div
-        className="w-[2px] h-7 flex-shrink-0 rounded-sm"
-        style={{ backgroundColor: color }}
-      />
-      <span
-        className="font-mono text-sm font-bold tabular-nums w-5 text-right"
-        style={{ color }}
-      >
+      <div className="w-[2px] h-7 flex-shrink-0 rounded-sm" style={{ backgroundColor: color }} />
+      <span className="font-mono text-sm font-bold tabular-nums w-5 text-right" style={{ color }}>
         {priority}
       </span>
     </div>
@@ -25,9 +18,10 @@ function PriorityBar({ priority }: { priority: number }) {
 }
 
 const TYPE_COLORS: Record<NatType, { text: string; border: string; bg: string }> = {
-  SNAT: { text: "#06b6d4", border: "rgba(6,182,212,0.35)",  bg: "rgba(6,182,212,0.08)"  },
+  SNAT: { text: "#06b6d4", border: "rgba(6,182,212,0.35)", bg: "rgba(6,182,212,0.08)" },
   DNAT: { text: "#f59e0b", border: "rgba(245,158,11,0.35)", bg: "rgba(245,158,11,0.08)" },
-  PAT:  { text: "#10b981", border: "rgba(16,185,129,0.35)", bg: "rgba(16,185,129,0.08)" },
+  PAT: { text: "#10b981", border: "rgba(16,185,129,0.35)", bg: "rgba(16,185,129,0.08)" },
+  MASQUERADE: { text: "#a855f7", border: "rgba(168,85,247,0.35)", bg: "rgba(168,85,247,0.08)" },
 };
 
 function TypeBadge({ type }: { type: NatType }) {
@@ -37,7 +31,7 @@ function TypeBadge({ type }: { type: NatType }) {
       className="inline-block px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.15em] border"
       style={{ color: text, borderColor: border, backgroundColor: bg }}
     >
-      {type}
+      {type === "MASQUERADE" ? "MASQ" : type}
     </span>
   );
 }
@@ -46,17 +40,13 @@ function StatusCell({ isActive }: { isActive: boolean }) {
   return (
     <span className={`flex items-center gap-2 ${isActive ? "text-[#10b981]" : "text-[#8a8a8a]"}`}>
       <span className="relative flex h-2 w-2 flex-shrink-0">
-        {isActive && (
+        {isActive ? (
           <span
             className="absolute inline-flex h-full w-full rounded-full bg-[#10b981]"
             style={{ animation: "pingSlow 2.4s ease-in-out infinite" }}
           />
-        )}
-        <span
-          className={`relative inline-flex h-2 w-2 rounded-full ${
-            isActive ? "bg-[#10b981]" : "bg-[#8a8a8a]"
-          }`}
-        />
+        ) : null}
+        <span className={`relative inline-flex h-2 w-2 rounded-full ${isActive ? "bg-[#10b981]" : "bg-[#8a8a8a]"}`} />
       </span>
       <span className="text-xs uppercase tracking-[0.1em] font-medium">
         {isActive ? "Active" : "Inactive"}
@@ -65,19 +55,111 @@ function StatusCell({ isActive }: { isActive: boolean }) {
   );
 }
 
-function NetCell({ ip, port }: { ip: string | null; port: number | null }) {
-  if (!ip && !port) {
-    return <span className="text-[#4a4a4a] text-xs italic">—</span>;
-  }
+function EmptyText() {
+  return <span className="text-[#4a4a4a] text-xs italic">—</span>;
+}
+
+function RangeText({ min, max }: { min: number | null | undefined; max: number | null | undefined }) {
+  if (min == null && max == null) return <EmptyText />;
   return (
-    <span className="font-mono text-xs">
-      {ip !== null ? <span className="text-[#f5f5f5]">{ip}</span> : null}
-      {ip !== null && port !== null ? (
-        <span className="text-[#4a4a4a]">:</span>
-      ) : null}
-      {port !== null ? <span className="text-[#8a8a8a]">{port}</span> : null}
+    <span className="font-mono text-xs text-[#f5f5f5]">
+      {min ?? "*"}<span className="text-[#4a4a4a]">–</span>{max ?? "*"}
     </span>
   );
+}
+
+function ScopeCell({ rule }: { rule: NatRule }) {
+  const entries = [
+    ["if", rule.inInterface, rule.outInterface],
+    ["zone", rule.inZone, rule.outZone],
+  ].filter(([, from, to]) => from || to);
+
+  if (entries.length === 0) return <EmptyText />;
+
+  return (
+    <div className="space-y-1 font-mono text-xs">
+      {entries.map(([label, from, to]) => (
+        <div key={label}>
+          <span className="text-[#4a4a4a]">{label}</span>{" "}
+          <span className="text-[#f5f5f5]">{from || "*"}</span>
+          <span className="text-[#4a4a4a]"> → </span>
+          <span className="text-[#f5f5f5]">{to || "*"}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MatchCell({ rule }: { rule: NatRule }) {
+  const hasSrc = rule.matchSrcPortMin != null || rule.matchSrcPortMax != null;
+  const hasDst = rule.matchDstPortMin != null || rule.matchDstPortMax != null;
+  if (!hasSrc && !hasDst) return <EmptyText />;
+
+  return (
+    <div className="space-y-1">
+      {hasSrc ? (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9px] uppercase tracking-[0.15em] text-[#4a4a4a]">src</span>
+          <RangeText min={rule.matchSrcPortMin} max={rule.matchSrcPortMax} />
+        </div>
+      ) : null}
+      {hasDst ? (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9px] uppercase tracking-[0.15em] text-[#4a4a4a]">dst</span>
+          <RangeText min={rule.matchDstPortMin} max={rule.matchDstPortMax} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ActionCell({ rule }: { rule: NatRule }) {
+  switch (rule.action.$case) {
+    case "snat":
+      return (
+        <div className="font-mono text-xs">
+          <span className="text-[#f5f5f5]">{rule.action.snat.srcCidr}</span>
+          <span className="text-[#4a4a4a]"> → </span>
+          <span className="text-[#06b6d4]">{rule.action.snat.translatedIp}</span>
+          {rule.action.snat.srcPortMin != null || rule.action.snat.srcPortMax != null ? (
+            <div className="mt-1 text-[#8a8a8a]">
+              src ports <RangeText min={rule.action.snat.srcPortMin} max={rule.action.snat.srcPortMax} />
+            </div>
+          ) : null}
+        </div>
+      );
+    case "dnat":
+      return (
+        <div className="font-mono text-xs">
+          <span className="text-[#f5f5f5]">{rule.action.dnat.dstCidr}</span>
+          <span className="text-[#4a4a4a]"> → </span>
+          <span className="text-[#f59e0b]">{rule.action.dnat.translatedIp}</span>
+        </div>
+      );
+    case "pat":
+      return (
+        <div className="font-mono text-xs">
+          <span className="text-[#f5f5f5]">{rule.action.pat.dstIp}:{rule.action.pat.dstPort}</span>
+          <span className="text-[#4a4a4a]"> → </span>
+          <span className="text-[#10b981]">{rule.action.pat.translatedIp}:{rule.action.pat.translatedPort}</span>
+        </div>
+      );
+    case "masquerade":
+      return (
+        <div className="font-mono text-xs">
+          {rule.action.masquerade.srcCidr ? (
+            <span className="text-[#f5f5f5]">{rule.action.masquerade.srcCidr}</span>
+          ) : (
+            <EmptyText />
+          )}
+          {rule.action.masquerade.srcPortMin != null || rule.action.masquerade.srcPortMax != null ? (
+            <div className="mt-1 text-[#8a8a8a]">
+              src ports <RangeText min={rule.action.masquerade.srcPortMin} max={rule.action.masquerade.srcPortMax} />
+            </div>
+          ) : null}
+        </div>
+      );
+  }
 }
 
 function EmptyState({ onNew }: { onNew: () => void }) {
@@ -90,11 +172,7 @@ function EmptyState({ onNew }: { onNew: () => void }) {
         <div className="text-[#3a3a3a] text-xs mb-4">
           Create a rule to start translating network addresses
         </div>
-        <button
-          type="button"
-          onClick={onNew}
-          className="btn-primary text-[10px] px-4 py-2 tracking-[0.25em] uppercase"
-        >
+        <button type="button" onClick={onNew} className="btn-primary text-[10px] px-4 py-2 tracking-[0.25em] uppercase">
           + New NAT Rule
         </button>
       </td>
@@ -102,7 +180,6 @@ function EmptyState({ onNew }: { onNew: () => void }) {
   );
 }
 
-// ── Filter pills ──
 export type NatFilter = "all" | NatType;
 
 type FilterPillsProps = {
@@ -111,22 +188,23 @@ type FilterPillsProps = {
 };
 
 const FILTER_OPTIONS: { key: NatFilter; label: string }[] = [
-  { key: "all",  label: "All"  },
+  { key: "all", label: "All" },
   { key: "SNAT", label: "SNAT" },
   { key: "DNAT", label: "DNAT" },
-  { key: "PAT",  label: "PAT"  },
+  { key: "PAT", label: "PAT" },
+  { key: "MASQUERADE", label: "MASQ" },
 ];
 
 function FilterPills({ activeFilter, onFilterChange }: FilterPillsProps) {
   return (
     <div className="flex">
-      {FILTER_OPTIONS.map((opt) => (
+      {FILTER_OPTIONS.map((opt, index) => (
         <button
           key={opt.key}
           type="button"
           onClick={() => onFilterChange(opt.key)}
-          className={`px-3 py-1.5 text-[9px] letter-spacing-[0.15em] uppercase border transition-colors first:border-r-0 last:border-l-0
-            ${opt.key !== "all" && opt.key !== "SNAT" ? "border-l-0" : ""}
+          className={`px-3 py-1.5 text-[9px] uppercase border transition-colors
+            ${index > 0 ? "border-l-0" : ""}
             ${
               activeFilter === opt.key
                 ? "text-[#06b6d4] border-[#06b6d4] bg-[#06b6d4]/10"
@@ -140,14 +218,19 @@ function FilterPills({ activeFilter, onFilterChange }: FilterPillsProps) {
   );
 }
 
-// ── Table headers ──
 const TABLE_HEADERS = [
-  "Priority", "Type", "Status",
-  "Source IP:Port", "", "Translated IP:Port", "Destination IP:Port",
-  "ID", "Updated", "Actions",
+  "Priority",
+  "Type",
+  "Protocol",
+  "Status",
+  "Scope",
+  "Port Match",
+  "Action",
+  "ID",
+  "Updated",
+  "Actions",
 ];
 
-// ── Main table ──
 type NatRulesTableProps = {
   rules: NatRule[];
   activeFilter: NatFilter;
@@ -179,12 +262,10 @@ export default function NatRulesTable({
   onDeleteConfirm,
   onDeleteCancel,
 }: NatRulesTableProps) {
-  const filtered =
-    activeFilter === "all" ? rules : rules.filter((r) => r.type === activeFilter);
+  const filtered = activeFilter === "all" ? rules : rules.filter((r) => getNatRuleType(r) === activeFilter);
 
   return (
     <>
-      {/* Toolbar */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-4">
           <span className="text-[11px] tracking-[0.25em] uppercase">NAT Rule List</span>
@@ -193,26 +274,21 @@ export default function NatRulesTable({
           </span>
           <FilterPills activeFilter={activeFilter} onFilterChange={onFilterChange} />
         </div>
-        <button
-          type="button"
-          onClick={onNew}
-          className="btn-primary text-[10px] px-4 py-2 tracking-[0.25em] uppercase"
-        >
+        <button type="button" onClick={onNew} className="btn-primary text-[10px] px-4 py-2 tracking-[0.25em] uppercase">
           + New NAT Rule
         </button>
       </div>
 
-      {/* Table */}
       <div className="bg-[#161616] border border-[#262626] overflow-x-auto">
-        <table className="w-full min-w-[960px]">
+        <table className="w-full min-w-[1120px]">
           <thead>
             <tr className="border-b border-[#262626]">
               {TABLE_HEADERS.map((h, i) => (
                 <th
-                  key={i}
-                  className={`text-left p-4 text-xs text-[#8a8a8a] uppercase tracking-[0.2em] font-medium whitespace-nowrap
-                    ${i === 4 ? "w-6 px-0" : ""}
-                    ${i === 9 ? "text-right w-28" : ""}`}
+                  key={h}
+                  className={`text-left p-4 text-xs text-[#8a8a8a] uppercase tracking-[0.2em] font-medium whitespace-nowrap ${
+                    i === 9 ? "text-right w-28" : ""
+                  }`}
                 >
                   {h}
                 </th>
@@ -223,94 +299,88 @@ export default function NatRulesTable({
             {filtered.length === 0 ? (
               <EmptyState onNew={onNew} />
             ) : (
-              filtered.map((rule) => (
-                <tr
-                  key={rule.id}
-                  className="border-b border-[#262626] last:border-b-0 hover:bg-[#1b1b1b] transition-colors"
-                >
-                  {/* Priority */}
-                  <td className="p-4">
-                    <PriorityBar priority={rule.priority} />
-                  </td>
-                  {/* Type */}
-                  <td className="p-4">
-                    <TypeBadge type={rule.type} />
-                  </td>
-                  {/* Status */}
-                  <td className="p-4">
-                    <StatusCell isActive={rule.isActive} />
-                  </td>
-                  {/* Source IP:Port */}
-                  <td className="p-4">
-                    <NetCell ip={rule.sourceIp} port={rule.sourcePort} />
-                  </td>
-                  {/* Arrow */}
-                  <td className="px-0 text-[#06b6d4] text-sm">→</td>
-                  {/* Translated IP:Port */}
-                  <td className="p-4">
-                    <NetCell ip={rule.translatedIp} port={rule.translatedPort} />
-                  </td>
-                  {/* Destination IP:Port */}
-                  <td className="p-4">
-                    <NetCell ip={rule.destinationIp} port={rule.destinationPort} />
-                  </td>
-                  {/* ID */}
-                  <td className="p-4">
-                    <span
-                      className="text-xs px-2 py-0.5 border font-mono text-[#8a8a8a] tracking-wider"
-                      style={{ borderColor: "#06b6d430", backgroundColor: "#06b6d408" }}
-                      title={rule.id}
-                    >
-                      {shortId(rule.id)}
-                    </span>
-                  </td>
-                  {/* Updated */}
-                  <td className="p-4">
-                    <span className="text-[#4a4a4a] text-xs font-mono">{fmtDate(rule.updatedAt)}</span>
-                  </td>
-                  {/* Actions */}
-                  <td className="p-4 text-right">
-                    {confirmDeleteId === rule.id ? (
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onDeleteConfirm(rule.id)}
-                          className="text-xs text-[#f43f5e] hover:text-[#ff6b6b] tracking-wider uppercase font-bold"
-                        >
-                          Confirm
-                        </button>
-                        <span className="text-[#4a4a4a] text-xs">│</span>
-                        <button
-                          type="button"
-                          onClick={onDeleteCancel}
-                          className="text-xs text-[#8a8a8a] hover:text-[#f5f5f5] tracking-wider uppercase font-bold"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-end gap-4">
-                        <button
-                          type="button"
-                          onClick={() => onEdit(rule)}
-                          className="text-[#8a8a8a] hover:text-[#06b6d4] transition-colors text-lg"
-                          title="Edit"
-                        >
-                          ✎
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteClick(rule.id)}
-                          className="text-[#8a8a8a] hover:text-[#f43f5e] transition-colors text-lg"
-                          title="Delete"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))
+              filtered.map((rule) => {
+                const type = getNatRuleType(rule);
+                return (
+                  <tr key={rule.id} className="border-b border-[#262626] last:border-b-0 hover:bg-[#1b1b1b] transition-colors">
+                    <td className="p-4">
+                      <PriorityBar priority={rule.priority} />
+                    </td>
+                    <td className="p-4">
+                      <TypeBadge type={type} />
+                    </td>
+                    <td className="p-4">
+                      <span className="text-xs px-2 py-0.5 border font-mono text-[#8a8a8a] tracking-wider border-[#262626]">
+                        {protocolLabel(rule.protocol)}
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <StatusCell isActive={rule.isActive} />
+                    </td>
+                    <td className="p-4">
+                      <ScopeCell rule={rule} />
+                    </td>
+                    <td className="p-4">
+                      <MatchCell rule={rule} />
+                    </td>
+                    <td className="p-4">
+                      <ActionCell rule={rule} />
+                    </td>
+                    <td className="p-4">
+                      <span
+                        className="text-xs px-2 py-0.5 border font-mono text-[#8a8a8a] tracking-wider"
+                        style={{ borderColor: "#06b6d430", backgroundColor: "#06b6d408" }}
+                        title={rule.id}
+                      >
+                        {shortId(rule.id)}
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <span className="text-[#4a4a4a] text-xs font-mono">{fmtDate(rule.updatedAt)}</span>
+                    </td>
+                    <td className="p-4 text-right">
+                      {confirmDeleteId === rule.id ? (
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => onDeleteConfirm(rule.id)}
+                            className="text-xs text-[#f43f5e] hover:text-[#ff6b6b] tracking-wider uppercase font-bold"
+                          >
+                            Confirm
+                          </button>
+                          <span className="text-[#4a4a4a] text-xs">│</span>
+                          <button
+                            type="button"
+                            onClick={onDeleteCancel}
+                            className="text-xs text-[#8a8a8a] hover:text-[#f5f5f5] tracking-wider uppercase font-bold"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-4">
+                          <button
+                            type="button"
+                            onClick={() => onEdit(rule)}
+                            className="text-[#8a8a8a] hover:text-[#06b6d4] transition-colors text-lg"
+                            title="Edit"
+                          >
+                            ✎
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteClick(rule.id)}
+                            className="text-[#8a8a8a] hover:text-[#f43f5e] transition-colors text-lg"
+                            title="Delete"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

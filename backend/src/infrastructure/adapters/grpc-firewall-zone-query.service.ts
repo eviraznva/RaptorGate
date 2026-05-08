@@ -167,7 +167,7 @@ export class GrpcFirewallZoneQueryService
     }
   }
 
-  async updateZoneInterfaceProperties(
+  async updatePhysicalInterfaceProperties(
     _input: UpdateZoneInterfacePropertiesInput,
   ): Promise<void> {
     return;

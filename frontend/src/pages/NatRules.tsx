@@ -24,49 +24,18 @@ export default function NatRules() {
   const { data } = useGetNatRulesQuery();
   const [createNatRule] = useCreateNatRuleMutation();
   const [updateNatRule] = useUpdateNatRuleMutation();
-  const [deleteNatRule, { isError: isDeletingError }] =
-    useDeleteNatRuleMutation();
+  const [deleteNatRule] = useDeleteNatRuleMutation();
+
+  const [activeFilter, setActiveFilter] = useState<NatFilter>("all");
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<NatRule | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!data) return;
     const payload = data as ApiSuccess<NatRulesPayload>;
     dispatch(natRulesSliceReducers.setNatRules(payload.data.natRules));
   }, [data, dispatch]);
-
-  const [activeFilter, setActiveFilter] = useState<NatFilter>("all");
-
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingRule, setEditingRule] = useState<NatRule | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
-  const handleCreateNatRule = async function (data: CreateNatRuleBody) {
-    try {
-      const res = await createNatRule(data).unwrap();
-      if (res.statusCode === 201) {
-        const { data } = res as ApiSuccess<{ natRule: NatRule }>;
-        return data.natRule;
-      }
-    } catch (error) {}
-  };
-
-  const handleUpdateNatRule = async function (
-    id: string,
-    data: Partial<CreateNatRuleBody>,
-  ) {
-    try {
-      const res = await updateNatRule({ id, ...data }).unwrap();
-      if (res.statusCode === 200) {
-        const { data } = res as ApiSuccess<{ natRule: NatRule }>;
-        return data.natRule;
-      }
-    } catch (error) {}
-  };
-
-  const handleDeleteNatRuleApi = async function (id: string) {
-    try {
-      return await deleteNatRule(id).unwrap();
-    } catch (error) {}
-  };
 
   const handleNew = useCallback(() => {
     setEditingRule(null);
@@ -81,51 +50,37 @@ export default function NatRules() {
   const handleCloseForm = useCallback(() => setIsFormOpen(false), []);
 
   const handleSuccess = useCallback(
-    async (rule: NatRule, mode: "create" | "edit") => {
-      const payload: CreateNatRuleBody = {
-        type: rule.type,
-        isActive: rule.isActive,
-        priority: rule.priority,
-        sourceIp: rule.sourceIp || null,
-        destinationIp: rule.destinationIp || null,
-        sourcePort: rule.sourcePort || null,
-        destinationPort: rule.destinationPort || null,
-        translatedIp: rule.translatedIp || null,
-        translatedPort: rule.translatedPort || null,
-      };
-
+    async (body: CreateNatRuleBody, mode: "create" | "edit", id?: string) => {
       if (mode === "edit") {
-        const updatedRule = await handleUpdateNatRule(rule.id, payload);
-
-        if (updatedRule === undefined) return;
-        dispatch(natRulesSliceReducers.editNatRule(updatedRule));
+        if (!id) return;
+        const res = await updateNatRule({ id, body }).unwrap();
+        if (res.statusCode !== 200) return;
+        const { data } = res as ApiSuccess<{ natRule: NatRule }>;
+        dispatch(natRulesSliceReducers.editNatRule(data.natRule));
       }
 
       if (mode === "create") {
-        const newRule = await handleCreateNatRule(payload);
-
-        if (newRule === undefined) return;
-        dispatch(natRulesSliceReducers.addNatRule(newRule));
+        const res = await createNatRule(body).unwrap();
+        if (res.statusCode !== 201) return;
+        const { data } = res as ApiSuccess<{ natRule: NatRule }>;
+        dispatch(natRulesSliceReducers.addNatRule(data.natRule));
       }
 
       setIsFormOpen(false);
     },
-    [dispatch],
+    [createNatRule, dispatch, updateNatRule],
   );
 
-  const handleDeleteClick = useCallback(
-    (id: string) => setConfirmDeleteId(id),
-    [],
-  );
+  const handleDeleteClick = useCallback((id: string) => setConfirmDeleteId(id), []);
   const handleDeleteCancel = useCallback(() => setConfirmDeleteId(null), []);
 
   const handleDeleteConfirm = useCallback(
     async (id: string) => {
-      await handleDeleteNatRuleApi(id);
-      if (!isDeletingError) dispatch(natRulesSliceReducers.deleteNatRule(id));
+      await deleteNatRule(id).unwrap();
+      dispatch(natRulesSliceReducers.deleteNatRule(id));
       setConfirmDeleteId(null);
     },
-    [dispatch, isDeletingError],
+    [deleteNatRule, dispatch],
   );
 
   return (
