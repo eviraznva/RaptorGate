@@ -20,10 +20,6 @@ function shortId(id: string) {
   return id.length > 8 ? id.slice(0, 8) + "…" : id;
 }
 
-function fmtDate(iso: string) {
-  return new Date(iso).toISOString().split("T")[0];
-}
-
 function statusColor(status: ZoneInterface["status"]) {
   if (status === "active") return "text-[#10b981]";
   if (status === "missing") return "text-[#f43f5e]";
@@ -33,8 +29,10 @@ function statusColor(status: ZoneInterface["status"]) {
 }
 
 function statusDotColor(status: ZoneInterface["status"]) {
-  if (status === "active") return "bg-[#10b981] shadow-[0_0_8px_rgba(16,185,129,0.85)]";
-  if (status === "missing") return "bg-[#f43f5e] shadow-[0_0_8px_rgba(244,63,94,0.75)]";
+  if (status === "active")
+    return "bg-[#10b981] shadow-[0_0_8px_rgba(16,185,129,0.85)]";
+  if (status === "missing")
+    return "bg-[#f43f5e] shadow-[0_0_8px_rgba(244,63,94,0.75)]";
   if (status === "unknown") return "bg-[#f59e0b]";
 
   return "bg-[#4a4a4a]";
@@ -141,8 +139,10 @@ export default function ZoneInterfacesTable({
                 </span>
               </td>
               <td className="p-4">
-                <span className="text-[#4a4a4a] text-xs">
-                  {fmtDate(zoneInterface.createdAt)}
+                <span
+                  className={`text-[10px] uppercase tracking-[0.14em] ${zoneInterface.sniffed ? "text-[#10b981]" : "text-[#4a4a4a]"}`}
+                >
+                  {zoneInterface.sniffed ? "yes" : "no"}
                 </span>
               </td>
               <td className="p-4">

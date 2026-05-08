@@ -42,6 +42,8 @@ import type { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.j
 import type { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 import type { IConfigSnapshotPushService } from '../ports/config-snapshot-push-service.interface.js';
 import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from '../ports/config-snapshot-push-service.interface.js';
+import type { IFirewallZoneQueryService } from '../ports/firewall-zone-query-service.interface.js';
+import { FIREWALL_ZONE_QUERY_SERVICE_TOKEN } from '../ports/firewall-zone-query-service.interface.js';
 import type { ITokenService } from '../ports/token-service.interface.js';
 import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
 
@@ -83,6 +85,8 @@ export class ApplyConfigSnapshotUseCase {
     private readonly sslBypassRepository: ISslBypassRepository,
     @Inject(DNS_INSPECTION_REPOSITORY_TOKEN)
     private readonly dnsInspectionRepository: IDnsInspectionRepository,
+    @Inject(FIREWALL_ZONE_QUERY_SERVICE_TOKEN)
+    private readonly firewallZoneQueryService: IFirewallZoneQueryService,
   ) {}
 
   async execute(
@@ -98,7 +102,7 @@ export class ApplyConfigSnapshotUseCase {
     const activeRules = await this.rulesRepository.findActive();
     const allUsers = await this.userRepository.findAll();
     const activeZones = await this.zoneRepository.findActive();
-    const allZoneInterfaces = await this.zoneInterfaceRepository.findAll();
+    const allZoneInterfaces = await this.resolveZoneInterfaces();
     const allZonePairs = await this.zonePairRepository.findAll();
     const allCerts = await this.firewallCertificateRepository.findAll();
     const snapshotCerts = allCerts.filter((cert) =>
@@ -229,6 +233,24 @@ export class ApplyConfigSnapshotUseCase {
       createdAt: newConfigSnapshot.getCreatedAt(),
       createdBy: newConfigSnapshot.getCreatedBy(),
     };
+  }
+
+  private async resolveZoneInterfaces() {
+    const saved = await this.zoneInterfaceRepository.findAll();
+    if (saved.length > 0) return saved;
+
+    this.logger.warn({
+      event: 'config_snapshot.zone_interfaces.sync',
+      message:
+        'no zone interfaces in backend, fetching live state from firewall',
+    });
+
+    const live =
+      await this.firewallZoneQueryService.getLiveZoneInterfaces();
+    if (live.length > 0) {
+      await this.zoneInterfaceRepository.overwriteAll(live);
+    }
+    return live;
   }
 
   private resolveTlsInspectionPolicy(payload?: ConfigSnapshotPayload) {

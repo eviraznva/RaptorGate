@@ -15,6 +15,7 @@ interface FormState {
   zoneId: string;
   vlanId: string;
   isActive: boolean;
+  sniffed: boolean;
   ipv4Address: string;
   ipv4Mask: string;
   ipv6Address: string;
@@ -32,6 +33,7 @@ const EMPTY: FormState = {
   zoneId: "",
   vlanId: "",
   isActive: true,
+  sniffed: false,
   ipv4Address: "",
   ipv4Mask: "",
   ipv6Address: "",
@@ -73,6 +75,7 @@ function fromZoneInterface(zi: ZoneInterface): FormState {
     zoneId: zi.zoneId,
     vlanId: zi.vlanId !== null ? String(zi.vlanId) : "",
     isActive: zi.status === "active",
+    sniffed: zi.sniffed,
     ...parsed,
   };
 }
@@ -98,6 +101,7 @@ function toBody(f: FormState): EditZoneInterfaceBody {
     ipv6Address: f.ipv6Address || null,
     ipv6Mask: f.ipv6Mask !== "" ? Number(f.ipv6Mask) : null,
     isActive: f.isActive,
+    sniffed: f.sniffed,
   };
 }
 
@@ -264,6 +268,37 @@ export default function ZoneInterfaceForm({
             </div>
           </div>
 
+          {/* Sniffed */}
+          <div>
+            <label className="block text-[10px] text-[#8a8a8a] uppercase tracking-[0.25em] mb-1.5">
+              Sniffed
+            </label>
+            <div className="flex">
+              <button
+                type="button"
+                onClick={() => setField("sniffed", true)}
+                className={`flex-1 py-2.5 text-[10px] uppercase tracking-[0.2em] border transition-colors ${
+                  form.sniffed
+                    ? "text-[#10b981] border-[#10b981]/40 bg-[#10b981]/10"
+                    : "text-[#4a4a4a] border-[#262626] hover:text-[#8a8a8a]"
+                }`}
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                onClick={() => setField("sniffed", false)}
+                className={`flex-1 py-2.5 text-[10px] uppercase tracking-[0.2em] border-t border-b border-r transition-colors ${
+                  !form.sniffed
+                    ? "text-[#f43f5e] border-[#f43f5e]/40 bg-[#f43f5e]/10"
+                    : "text-[#4a4a4a] border-[#262626] hover:text-[#8a8a8a]"
+                }`}
+              >
+                No
+              </button>
+            </div>
+          </div>
+
           {/* IPv4 */}
           <div>
             <label className="block text-[10px] text-[#8a8a8a] uppercase tracking-[0.25em] mb-1.5">
@@ -371,6 +406,14 @@ export default function ZoneInterfaceForm({
                   <span className="text-[#06b6d4]">VLAN {form.vlanId}</span>
                 </div>
               )}
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-[#4a4a4a]">sniffed</span>
+                <span
+                  className={`text-[10px] uppercase tracking-[0.15em] ${form.sniffed ? "text-[#10b981]" : "text-[#4a4a4a]"}`}
+                >
+                  {form.sniffed ? "yes" : "no"}
+                </span>
+              </div>
             </div>
           </div>
         </form>

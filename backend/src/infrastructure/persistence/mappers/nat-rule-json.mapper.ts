@@ -56,19 +56,56 @@ export class NatRuleJsonMapper {
       updatedAt: new Date(record.updatedAt),
     };
 
-    switch (record.action.$case) {
+    if (!record.action) {
+      throw new NatConfigIsInvalidException('unknown', 'action', 'action is required');
+    }
+
+    const normalizedAction = this.normalizeActionShape(record.action);
+
+    if (!normalizedAction?.$case) {
+      throw new NatConfigIsInvalidException('unknown', 'action', 'action is required');
+    }
+
+    switch (normalizedAction.$case) {
       case 'snat':
-        return NatRule.createSnatRule({ ...base, snat: record.action.snat });
+        return NatRule.createSnatRule({ ...base, snat: normalizedAction.snat });
       case 'dnat':
-        return NatRule.createDnatRule({ ...base, dnat: record.action.dnat });
+        return NatRule.createDnatRule({ ...base, dnat: normalizedAction.dnat });
       case 'pat':
-        return NatRule.createPatRule({ ...base, pat: record.action.pat });
+        return NatRule.createPatRule({ ...base, pat: normalizedAction.pat });
       case 'masquerade':
         return NatRule.createMasqueradeRule({
           ...base,
-          masquerade: record.action.masquerade,
+          masquerade: normalizedAction.masquerade,
         });
+      default:
+        throw new NatConfigIsInvalidException(
+          (normalizedAction as { $case: string }).$case,
+          'action',
+          'unsupported action case',
+        );
     }
+  }
+
+  private static normalizeActionShape(action: any): any {
+    if ('$case' in action) {
+      return action;
+    }
+
+    const keys = Object.keys(action);
+    if (keys.length !== 1) {
+      return undefined;
+    }
+
+    const variant = keys[0];
+    if (!['snat', 'dnat', 'pat', 'masquerade'].includes(variant)) {
+      return undefined;
+    }
+
+    return {
+      $case: variant,
+      [variant]: action[variant],
+    };
   }
 
   private static legacyRecordToDomain(
@@ -146,7 +183,13 @@ export class NatRuleJsonMapper {
     }
   }
 
-  private static toRecordAction(action: NatRuleAction): ProtoNatRuleRecord['action'] {
+  private static toRecordAction(
+    action: NatRuleAction | undefined,
+  ): ProtoNatRuleRecord['action'] {
+    if (!action?.$case) {
+      throw new NatConfigIsInvalidException('unknown', 'action', 'action is required');
+    }
+
     switch (action.$case) {
       case 'snat':
         return {
@@ -179,6 +222,12 @@ export class NatRuleJsonMapper {
             srcPortMax: action.masquerade.srcPortMax?.getValue ?? null,
           },
         };
+      default:
+        throw new NatConfigIsInvalidException(
+          (action as { $case: string }).$case,
+          'action',
+          'unsupported action case',
+        );
     }
   }
 

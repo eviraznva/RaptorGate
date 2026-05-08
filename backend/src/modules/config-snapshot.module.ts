@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from '../application/ports/config-snapshot-push-service.interface.js';
+import { FIREWALL_ZONE_QUERY_SERVICE_TOKEN } from '../application/ports/firewall-zone-query-service.interface.js';
 import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../application/ports/raptor-lang-validation-service.interface.js';
 import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
 import { ConfigSnapshotDiffService } from '../application/services/config-snapshot-diff.service.js';
@@ -33,6 +34,8 @@ import {
   CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN,
   GrpcConfigSnapshotPushService,
 } from '../infrastructure/adapters/grpc-config-snapshot-push.service.js';
+import { FIREWALL_QUERY_GRPC_CLIENT_TOKEN } from '../infrastructure/adapters/grpc-firewall-dns-inspection-query.service.js';
+import { GrpcFirewallZoneQueryService } from '../infrastructure/adapters/grpc-firewall-zone-query.service.js';
 import {
   GrpcRaptorLangValidationService,
   RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
@@ -90,6 +93,39 @@ import { Env } from '../shared/config/env.validation.js';
                 includeDirs: [join(process.cwd(), '..', 'proto')],
               },
               url: grpcUrl,
+            },
+          };
+        },
+        inject: [ConfigService],
+      },
+      {
+        name: FIREWALL_QUERY_GRPC_CLIENT_TOKEN,
+        useFactory: (configService: ConfigService<Env, true>) => {
+          const firewallQuerySocketPath = configService.get(
+            'FIREWALL_QUERY_GRPC_SOCKET_PATH',
+            { infer: true },
+          );
+
+          const resolveGrpcUrl = (path: string): string =>
+            path.startsWith('unix://')
+              ? path
+              : `unix://${join(process.cwd(), path)}`;
+
+          return {
+            transport: Transport.GRPC,
+            options: {
+              package: 'raptorgate.services',
+              protoPath: join(
+                process.cwd(),
+                '..',
+                'proto',
+                'services',
+                'query_service.proto',
+              ),
+              loader: {
+                includeDirs: [join(process.cwd(), '..', 'proto')],
+              },
+              url: resolveGrpcUrl(firewallQuerySocketPath),
             },
           };
         },
@@ -231,6 +267,10 @@ import { Env } from '../shared/config/env.validation.js';
     {
       provide: RAPTOR_LANG_VALIDATION_SERVICE_TOKEN,
       useClass: GrpcRaptorLangValidationService,
+    },
+    {
+      provide: FIREWALL_ZONE_QUERY_SERVICE_TOKEN,
+      useClass: GrpcFirewallZoneQueryService,
     },
     JwtService,
   ],

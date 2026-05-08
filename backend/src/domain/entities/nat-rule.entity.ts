@@ -258,6 +258,8 @@ export class NatRule {
   }
 
   private validate(): void {
+    this.validateActionShape();
+
     if (this.action.$case === 'snat') {
       this.requireText(this.action.snat.srcCidr, 'snat', 'srcCidr');
       this.requireText(this.action.snat.translatedIp, 'snat', 'translatedIp');
@@ -301,6 +303,55 @@ export class NatRule {
       this.action.$case,
       'matchDstPort',
     );
+  }
+
+  private validateActionShape(): void {
+    const action = this.action as
+      | {
+          $case?: string;
+          snat?: unknown;
+          dnat?: unknown;
+          pat?: unknown;
+          masquerade?: unknown;
+        }
+      | undefined;
+
+    if (!action?.$case) {
+      throw new NatConfigIsInvalidException('unknown', 'action', 'action is required');
+    }
+
+    switch (action.$case) {
+      case 'snat':
+        if (!action.snat) {
+          throw new NatConfigIsInvalidException('snat', 'action', 'snat payload is required');
+        }
+        return;
+      case 'dnat':
+        if (!action.dnat) {
+          throw new NatConfigIsInvalidException('dnat', 'action', 'dnat payload is required');
+        }
+        return;
+      case 'pat':
+        if (!action.pat) {
+          throw new NatConfigIsInvalidException('pat', 'action', 'pat payload is required');
+        }
+        return;
+      case 'masquerade':
+        if (!action.masquerade) {
+          throw new NatConfigIsInvalidException(
+            'masquerade',
+            'action',
+            'masquerade payload is required',
+          );
+        }
+        return;
+      default:
+        throw new NatConfigIsInvalidException(
+          action.$case,
+          'action',
+          'unsupported action case',
+        );
+    }
   }
 
   private requireText(

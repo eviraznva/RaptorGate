@@ -15,6 +15,7 @@ export type EditZoneInterfaceBody = {
   ipv6Address: string | null;
   ipv6Mask: number | null;
   isActive: boolean;
+  sniffed: boolean;
 };
 
 export const zoneInterfacesApi = createApi({
