@@ -6,7 +6,7 @@
       "zonePairId": "33333333-3333-4333-8333-333333333333",
       "isActive": true,
       "content": "match auth_state {\n  = unknown: verdict drop\n}",
-      "priority": 0,
+      "priority": 1,
       "createdBy": "00000000-0000-4000-8000-000000000001",
       "createdAt": "2026-04-27T00:00:00.000Z",
       "updatedAt": "2026-04-27T00:00:00.000Z",

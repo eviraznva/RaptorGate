@@ -4,7 +4,7 @@
       "id": "77777777-7777-4777-8777-777777777777",
       "name": "Identity pre-auth portal gate",
       "zone_pair_id": "33333333-3333-4333-8333-333333333333",
-      "priority": 0,
+      "priority": 1,
       "rule_tree": {
         "head": "match auth_state {\n\t= unknown: verdict drop\n}\n"
       }
