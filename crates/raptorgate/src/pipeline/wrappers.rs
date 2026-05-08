@@ -1185,20 +1185,23 @@ impl Stage for SmtpStage {
             dst,
         );
 
-        match disposition {
-            crate::dpi::smtp::BufferingDisposition::Pass => StageOutcome::Continue,
-            crate::dpi::smtp::BufferingDisposition::Hold => {
+        use crate::dpi::smtp::{PacketAction, UnitStatus};
+
+        match disposition.packet {
+            PacketAction::Pass => StageOutcome::Continue,
+            PacketAction::QueueAndHalt => {
                 if let Ok(cloned) = self.clone_packet_context(ctx) {
                     self.tracker.enqueue_packet(&session_id, cloned);
                 }
+                
+                if disposition.unit == UnitStatus::Complete {
+                    tracing::info!("SMTP buffered unit complete, reinjection not yet implemented");
+                    self.tracker.clear_queued_packets(&session_id);
+                }
+                
                 StageOutcome::Halt
             }
-            crate::dpi::smtp::BufferingDisposition::Drop => StageOutcome::Halt,
-            crate::dpi::smtp::BufferingDisposition::BufferedUnitComplete => {
-                tracing::info!("SMTP buffered unit complete, reinjection not yet implemented");
-                self.tracker.clear_queued_packets(&session_id);
-                StageOutcome::Halt
-            }
+            PacketAction::Drop => StageOutcome::Halt,
         }
     }
     
