@@ -42,7 +42,8 @@ use crate::pipeline::wrappers::{
     NatPreroutingStage, PolicyEvalStage, SmtpStage, TcpClassificationStage, TlsPortEnforcementStage,
     ValidationStage,
 };
-use crate::pipeline::{Chain, Stage, StageOutcome};
+use crate::pipeline::{Chain, ExecutionSink, ExecutionStage, Stage};
+use tokio::sync::mpsc;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
@@ -91,7 +92,10 @@ async fn main() {
                                                         MlAlertStage,
                                                         Chain<
                                                             PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
-                                                            Chain<NatPostroutingStage<M>, FtpAlgStage>,
+                                                            Chain<
+                                                                NatPostroutingStage<M>,
+                                                                Chain<FtpAlgStage, ExecutionStage>,
+                                                            >,
                                                         >,
                                                     >,
                                                 >,
@@ -329,6 +333,8 @@ async fn main() {
     let ml_detector: Arc<dyn crate::ml::MlPacketInspector> =
         Arc::new(crate::ml::MlDetector::from_env());
 
+    let (exec_tx, exec_rx) = mpsc::unbounded_channel();
+
     let pipeline: DataPipeline<NetworkInterfaceMonitor> = DataPipeline {
         head: ValidationStage,
         tail: Chain {
@@ -395,8 +401,11 @@ async fn main() {
                                                                     routing_table: Arc::clone(&routing_table),
                                                                     interface_monitor: Arc::clone(&interface_monitor),
                                                                 },
-                                                                tail: FtpAlgStage {
-                                                                    engine: Arc::clone(&nat_engine),
+                                                                tail: Chain {
+                                                                    head: FtpAlgStage {
+                                                                        engine: Arc::clone(&nat_engine),
+                                                                    },
+                                                                    tail: ExecutionStage { tx: exec_tx.clone() },
                                                                 },
                                                             },
                                                         },
@@ -480,6 +489,8 @@ async fn main() {
         .register(Arc::clone(&tun), "TunForwarder")
         .await;
 
+    tokio::spawn(ExecutionSink::new(Arc::clone(&tun), Arc::clone(&metrics_collector), exec_rx).run());
+
     let (sniffer, mut raw_rx) = InterfaceSniffer::with_sniffing(config.pcap_timeout_ms);
     let sniffer = Arc::new(sniffer);
     
@@ -537,8 +548,7 @@ async fn main() {
     while let Some(raw_packet) = raw_rx.recv().await {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {
             let pipeline = pipeline.clone();
-            let tun = Arc::clone(&tun);
-            let metrics_collector = Arc::clone(&metrics_collector);
+            let exec_tx = exec_tx.clone();
             tokio::spawn(async move {
                 if !matches!(
                     &ctx.borrow_sliced_packet().net,
@@ -547,13 +557,7 @@ async fn main() {
                     return;
                 }
 
-                let result: StageOutcome = pipeline.process(&mut ctx).await;
-
-                if matches!(result, StageOutcome::Continue) {
-                    tun.forward(&ctx).await;
-                } else {
-                    metrics_collector.observe_drop();
-                }
+                pipeline.process(&mut ctx, &exec_tx).await;
             });
         }
     }

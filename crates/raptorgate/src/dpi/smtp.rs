@@ -232,6 +232,14 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         }
     }
 
+    pub fn take_queued_packets(&self, id: &TcpIdentifier) -> VecDeque<crate::data_plane::packet_context::PacketContext> {
+        if let Some(mut session) = self.sessions.get_mut(id) {
+            std::mem::take(&mut session.queued_packets)
+        } else {
+            VecDeque::new()
+        }
+    }
+
     fn cleanup_session(&self, should_remove: bool, session: RefMut<'_, TcpIdentifier, SmtpSession>) {
         if should_remove {
             let key = session.key().clone();
@@ -301,9 +309,9 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                 }
             } else {
                 disposition.packet = match session.state {
-                    SessionState::Ready | SessionState::EnvelopeOpen | SessionState::ReciepientSet => PacketAction::QueueAndHalt,
-                    SessionState::Data(DataState::Await354) | SessionState::Data(DataState::Collecting) => PacketAction::QueueAndHalt,
-                    SessionState::Bdat(BdatState::Collecting) => PacketAction::QueueAndHalt,
+                    SessionState::Ready | SessionState::EnvelopeOpen | SessionState::ReciepientSet
+                        | SessionState::Data(DataState::Await354 | DataState::Collecting) |
+                        SessionState::Bdat(BdatState::Collecting) => PacketAction::QueueAndHalt,
                     _ => PacketAction::Pass,
                 };
                 
@@ -1518,5 +1526,114 @@ mod tests {
         tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
 
         assert!(!tracker.sessions.contains_key(&id));
+    }
+
+    #[test]
+    fn buffering_does_not_regress_state_on_replay() {
+        use crate::data_plane::packet_context::PacketContext;
+        use std::sync::Arc;
+        
+        let tracker = SmtpTracker::new(mock_policy_retriever());
+        let id = session_id();
+        let iface: Arc<str> = Arc::from("test0");
+
+        // Server greeting: 220
+        let packet = smtp_packet(&server(), &client(), b"220 h1.test.local ESMTP Postfix (Ubuntu)\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::GreetingReceived));
+
+        // Client EHLO
+        let packet = smtp_packet(&client(), &server(), b"EHLO h2\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+
+        // Server multi-line EHLO response
+        let packet = smtp_packet(&server(), &client(), b"250-h1.test.local\r\n250-PIPELINING\r\n250-SIZE 10240000\r\n250-VRFY\r\n250-ETRN\r\n250-ENHANCEDSTATUSCODES\r\n250-8BITMIME\r\n250-DSN\r\n250-SMTPUTF8\r\n250 CHUNKING\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+
+        // MAIL FROM
+        let mail_packet = smtp_packet(&client(), &server(), b"MAIL FROM:<user1@test.local>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&mail_packet).unwrap();
+        let disp = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disp.packet, PacketAction::QueueAndHalt);
+        tracker.enqueue_packet(&id, PacketContext::from_raw(mail_packet.clone(), iface.clone()).unwrap());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::EnvelopeOpen));
+
+        // Server 250 2.1.0 Ok
+        let packet = smtp_packet(&server(), &client(), b"250 2.1.0 Ok\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::EnvelopeOpen));
+
+        // RCPT TO
+        let rcpt_packet = smtp_packet(&client(), &server(), b"RCPT TO:<user2@test.local>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&rcpt_packet).unwrap();
+        let disp = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disp.packet, PacketAction::QueueAndHalt);
+        tracker.enqueue_packet(&id, PacketContext::from_raw(rcpt_packet.clone(), iface.clone()).unwrap());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::ReciepientSet));
+
+        // Server 250 2.1.5 Ok
+        let packet = smtp_packet(&server(), &client(), b"250 2.1.5 Ok\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::ReciepientSet));
+
+        // DATA
+        let data_packet = smtp_packet(&client(), &server(), b"DATA\r\n");
+        let sliced = SlicedPacket::from_ethernet(&data_packet).unwrap();
+        let disp = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disp.packet, PacketAction::QueueAndHalt);
+        tracker.enqueue_packet(&id, PacketContext::from_raw(data_packet.clone(), iface.clone()).unwrap());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Data(DataState::Await354)));
+
+        // Server 354
+        let packet = smtp_packet(&server(), &client(), b"354 End data with <CR><LF>.<CR><LF>\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Data(DataState::Collecting)));
+
+        // Message body with headers
+        let body_packet = smtp_packet(&client(), &server(), b"Date: Fri, 08 May 2026 14:29:35 +0000\r\nTo: user2@test.local\r\nFrom: user1@test.local\r\nSubject: test Fri, 08 May 2026 14:29:35 +0000\r\nMessage-Id: <20260508142935.002745@h2>\r\nX-Mailer: swaks v20240103.0 jetmore.org/john/code/swaks/\r\n\r\nTest email from h2\r\n\r\n\r\n.\r\n");
+        let sliced = SlicedPacket::from_ethernet(&body_packet).unwrap();
+        let disp = tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        assert_eq!(disp.packet, PacketAction::QueueAndHalt);
+        assert_eq!(disp.unit, UnitStatus::Complete);
+        let batch = tracker.take_queued_packets(&id);
+        tracker.enqueue_packet(&id, PacketContext::from_raw(body_packet.clone(), iface.clone()).unwrap());
+        assert!(!batch.is_empty(), "Queued packets should be retrievable");
+
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Data(DataState::Complete)));
+
+        // Server 250 2.0.0 Ok
+        let packet = smtp_packet(&server(), &client(), b"250 2.0.0 Ok: queued as D5FD480B11\r\n");
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), &id, server(), client());
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::Ready));
+
+        // Get buffered packets
+
+        // Simulate replaying packets through SmtpStage again (the bug)
+        for pkt_ctx in batch {
+            let raw = pkt_ctx.borrow_raw();
+            let sliced = SlicedPacket::from_ethernet(raw).unwrap();
+            tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
+        }
+
+        // BUG: State should NOT regress to TcpEstabilished after replay
+        if let Some(session) = tracker.sessions.get(&id) {
+            let final_state = session.state;
+            assert!(
+                !matches!(final_state, SessionState::TcpEstabilished),
+                "State regressed to TcpEstabilished after replaying buffered packets. Final state: {:?}",
+                final_state
+            );
+        } else {
+            panic!("Session was removed during replay - this indicates the bug where replayed packets are treated as new connection attempts");
+        }
     }
 }

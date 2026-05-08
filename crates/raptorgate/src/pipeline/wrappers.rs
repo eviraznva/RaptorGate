@@ -7,7 +7,7 @@ use dashmap::DashMap;
 use etherparse::{NetSlice, TransportSlice};
 use tokio::sync::Mutex;
 
-use crate::dpi::smtp::SmtpTracker;
+use crate::dpi::smtp::{PacketAction, SmtpTracker, UnitStatus};
 use crate::{
     config::{provider::AppConfigProvider, AppConfig},
     data_plane::{
@@ -22,7 +22,7 @@ use crate::{
     metrics::MetricsCollector,
     ml::{MlPacketInspector, MlPrediction},
     packet_validator::validate,
-    pipeline::{Stage, StageOutcome},
+    pipeline::{ExecutionSender, Stage, StageOutcome},
     policy::engine::PolicyEngine,
     rule_tree::{ArrivalInfo, Verdict},
     zones::{
@@ -48,7 +48,7 @@ impl Stage for ValidationStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         match validate(ctx.borrow_sliced_packet()) {
             Ok(()) => StageOutcome::Continue,
             Err(e) => {
@@ -71,7 +71,7 @@ pub struct MetricsStage {
 }
 
 impl Stage for MetricsStage {
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         self.collector.observe_packet(ctx.borrow_raw().len());
         StageOutcome::Continue
     }
@@ -85,7 +85,7 @@ pub struct LocalOwnershipStage {
 }
 
 impl Stage for LocalOwnershipStage {
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         if packet_is_decrypted(ctx) {
             return StageOutcome::Continue;
         }
@@ -158,7 +158,7 @@ impl Stage for NatPreroutingStage {
         !packet_is_decrypted(ctx)
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let iface = ctx.borrow_src_interface().to_string();
         let mut engine = self.engine.lock().await;
 
@@ -187,7 +187,7 @@ impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
         !packet_is_decrypted(ctx)
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let dst_ip = match &ctx.borrow_sliced_packet().net {
             Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
             Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
@@ -231,7 +231,7 @@ impl Stage for FtpAlgStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let Some(dpi_ctx) = ctx.borrow_dpi_ctx().clone() else {
             return StageOutcome::Continue;
         };
@@ -303,7 +303,7 @@ impl Stage for DnsBlockListStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let domain = match ctx.borrow_dpi_ctx() {
             Some(dpi_ctx) => dpi_ctx.dns_query_name.clone(),
             None => return StageOutcome::Continue,
@@ -348,7 +348,7 @@ impl Stage for DnsTunnelingStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let (domain, qtype) = match ctx.borrow_dpi_ctx() {
             Some(dpi_ctx) => (dpi_ctx.dns_query_name.clone(), dpi_ctx.dns_query_type),
             None => return StageOutcome::Continue,
@@ -407,7 +407,7 @@ impl Stage for DnsEchMitigationStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let domain = match ctx.borrow_dpi_ctx() {
             Some(dpi_ctx) => dpi_ctx.dns_query_name.clone(),
             None => return StageOutcome::Continue,
@@ -443,7 +443,7 @@ impl Stage for IpsStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         ctx.with_dpi_ctx_mut(|dpi| {
             if let Some(dpi) = dpi.as_mut() {
                 dpi.ips_match = None;
@@ -591,7 +591,7 @@ pub struct PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneResolver {
 }
 
 impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneResolver {
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let arrival = ArrivalInfo::from_time(ctx.borrow_arrival_time());
 
         let dst_ip = match &ctx.borrow_sliced_packet().net {
@@ -723,7 +723,7 @@ impl Stage for TcpClassificationStage {
         !packet_is_decrypted(ctx)
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         // ML features z TCP header + rolling flow stats per src_ip.
         populate_ml_tcp_and_flow_stats(ctx, &self.flow_stats);
 
@@ -860,7 +860,7 @@ impl Stage for MlAlertStage {
             )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let features = ctx.borrow_ml_feature_vector().to_f32_array();
 
         match self.detector.inspect_features(features) {
@@ -908,7 +908,7 @@ impl Stage for DpiStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         match self.classifier.inspect_packet(ctx.borrow_sliced_packet()) {
             InspectResult::Done(mut dpi_ctx) => {
                 merge_preserved_dpi_fields(ctx.borrow_dpi_ctx().as_ref(), &mut dpi_ctx);
@@ -985,7 +985,7 @@ impl Stage for TlsPortEnforcementStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let config = self.config_provider.get_config();
 
         let dst_port = match &ctx.borrow_sliced_packet().transport {
@@ -1140,7 +1140,7 @@ impl Stage for SmtpStage {
             Some(TransportSlice::Tcp(_))
         )
     }
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let sliced = ctx.borrow_sliced_packet();
         let Some(TransportSlice::Tcp(tcp)) = &sliced.transport else {
             return StageOutcome::Continue;
@@ -1185,20 +1185,16 @@ impl Stage for SmtpStage {
             dst,
         );
 
-        use crate::dpi::smtp::{PacketAction, UnitStatus};
-
         match disposition.packet {
             PacketAction::Pass => StageOutcome::Continue,
             PacketAction::QueueAndHalt => {
-                if let Ok(cloned) = self.clone_packet_context(ctx) {
-                    self.tracker.enqueue_packet(&session_id, cloned);
-                }
-                
+                self.tracker.enqueue_packet(&session_id, ctx.clone());
+
                 if disposition.unit == UnitStatus::Complete {
-                    tracing::info!("SMTP buffered unit complete, reinjection not yet implemented");
-                    self.tracker.clear_queued_packets(&session_id);
+                    let batch = self.tracker.take_queued_packets(&session_id);
+                    return StageOutcome::ReleaseBatch(batch);
                 }
-                
+
                 StageOutcome::Halt
             }
             PacketAction::Drop => StageOutcome::Halt,
@@ -1207,17 +1203,17 @@ impl Stage for SmtpStage {
     
 }
 
-impl SmtpStage {
-    fn clone_packet_context(&self, ctx: &PacketContext) -> Result<PacketContext, etherparse::err::packet::SliceError> {
-        let raw = ctx.borrow_raw().to_vec();
-        let interface = ctx.borrow_src_interface().clone();
-        let warnings = ctx.borrow_warnings().clone();
-        let arrival = *ctx.borrow_arrival_time();
-        let dpi = ctx.borrow_dpi_ctx().clone();
-        
-        PacketContext::from_raw_full(raw, interface, warnings, arrival, dpi)
-    }
-}
+// impl SmtpStage {
+//     fn clone_packet_context(&self, ctx: &PacketContext) -> Result<PacketContext, etherparse::err::packet::SliceError> {
+//         let raw = ctx.borrow_raw().to_vec();
+//         let interface = ctx.borrow_src_interface().clone();
+//         let warnings = ctx.borrow_warnings().clone();
+//         let arrival = *ctx.borrow_arrival_time();
+//         let dpi = ctx.borrow_dpi_ctx().clone();
+//        
+//         PacketContext::from_raw_full(raw, interface, warnings, arrival, dpi)
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -1331,7 +1327,7 @@ mod tests {
         let mut ctx = tcp_context([192, 168, 1, 10], [10, 0, 0, 1], 80, "eth1");
         let outcome = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(stage.process(&mut ctx));
+            .block_on(stage.process(&mut ctx, &tokio::sync::mpsc::unbounded_channel().0));
 
         assert_eq!(outcome, StageOutcome::Halt);
     }
@@ -1399,7 +1395,7 @@ mod tests {
         let mut ctx = tcp_context([192, 168, 1, 10], [10, 0, 0, 1], 80, "eth1");
         let outcome = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(stage.process(&mut ctx));
+            .block_on(stage.process(&mut ctx, &tokio::sync::mpsc::unbounded_channel().0));
 
         assert_eq!(outcome, StageOutcome::Continue);
     }
@@ -1608,7 +1604,7 @@ mod tests {
         let stage = MlAlertStage::new(detector);
         let mut ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 80, "eth1");
 
-        let outcome = stage.process(&mut ctx).await;
+        let outcome = stage.process(&mut ctx, &tokio::sync::mpsc::unbounded_channel().0).await;
 
         assert!(matches!(outcome, StageOutcome::Continue));
         assert_eq!(ctx.borrow_warnings().len(), 1);
@@ -1622,8 +1618,8 @@ mod tests {
         let stage = MlAlertStage::new(detector);
         let mut ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 80, "eth1");
 
-        assert!(matches!(stage.process(&mut ctx).await, StageOutcome::Continue));
-        assert!(matches!(stage.process(&mut ctx).await, StageOutcome::Continue));
+        assert!(matches!(stage.process(&mut ctx, &tokio::sync::mpsc::unbounded_channel().0).await, StageOutcome::Continue));
+        assert!(matches!(stage.process(&mut ctx, &tokio::sync::mpsc::unbounded_channel().0).await, StageOutcome::Continue));
 
         assert_eq!(ctx.borrow_warnings().len(), 1);
     }
