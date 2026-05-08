@@ -79,14 +79,15 @@ mod tests {
     use ipnet::IpNet;
     use uuid::Uuid;
 
-    use crate::interfaces::{OperState, SystemInterface};
+    use crate::interfaces::{OperState, SystemInterface, SystemInterfaceId};
+    use crate::proto::config::{self, zone_interface};
     use crate::zones::ZoneInterface;
 
     use super::{resolve_egress_for_ip, resolve_zone_for_interface};
 
     fn system_interface(name: &str, addresses: &[&str]) -> SystemInterface {
         SystemInterface {
-            index: 1,
+            index: SystemInterfaceId::from(1),
             name: name.to_string(),
             oper_state: OperState::Up,
             addresses: addresses
@@ -101,10 +102,12 @@ mod tests {
         ZoneInterface::try_from_proto(crate::proto::config::ZoneInterface {
             id: Uuid::now_v7().to_string(),
             zone_id: zone_id.to_string(),
-            interface_name: name.to_string(),
-            vlan_id: None,
             status: crate::proto::config::InterfaceStatus::Active as i32,
             addresses: addresses.iter().map(|address| (*address).to_string()).collect(),
+            kind: Some(zone_interface::Kind::Physical(config::PhysicalInterface {
+                interface_name: name.to_string(),
+            })),
+            sniffed: false,
         })
         .unwrap()
         .1

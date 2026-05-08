@@ -74,7 +74,6 @@ impl TunForwarder {
     }
 }
 
-// TODO: test this once we actually set up a proper test env in vagrant
 #[tonic::async_trait]
 impl ConfigObserver for TunForwarder {
     async fn on_config_change(&self, new_config: &AppConfig) -> Result<()> {

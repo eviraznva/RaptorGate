@@ -19,6 +19,7 @@ import { DeleteAuthenticationProfileUseCase } from '../application/use-cases/del
 import { DeleteLdapProfileUseCase } from '../application/use-cases/delete-ldap-profile.use-case.js';
 import { DeleteRadiusProfileUseCase } from '../application/use-cases/delete-radius-profile.use-case.js';
 import { ExportConfigUseCase } from '../application/use-cases/export-config.use-case.js';
+import { FactoryResetUseCase } from '../application/use-cases/factory-reset.use-case.js';
 import { GetConfigDiffUseCase } from '../application/use-cases/get-config-diff.use-case.js';
 import { GetConfigHistoryUseCase } from '../application/use-cases/get-config-history.use-case.js';
 import { GetIdentityConfigUseCase } from '../application/use-cases/get-identity-config.use-case.js';
@@ -182,6 +183,7 @@ import { SecretModule } from './secret.module.js';
     RollbackConfigUseCase,
     ExportConfigUseCase,
     ImportConfigUseCase,
+    FactoryResetUseCase,
     TestLdapProfileUseCase,
     TestRadiusProfileUseCase,
     UpdateAuthenticationProfileUseCase,
@@ -236,12 +238,12 @@ import { SecretModule } from './secret.module.js';
       useClass: JsonZonePairRepository,
     },
     {
-      provide: ZONE_INTERFACE_REPOSITORY_TOKEN,
-      useClass: JsonZoneInterfaceRepository,
-    },
-    {
       provide: ZONE_REPOSITORY_TOKEN,
       useClass: JsonZoneRepository,
+    },
+    {
+      provide: ZONE_INTERFACE_REPOSITORY_TOKEN,
+      useClass: JsonZoneInterfaceRepository,
     },
     {
       provide: FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,

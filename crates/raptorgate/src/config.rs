@@ -8,7 +8,6 @@ pub mod provider;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub capture_interfaces: Vec<String>,
     pub pcap_timeout_ms: i32,
 
     pub tun_device_name: String,
@@ -73,7 +72,6 @@ pub struct DevConfig {
 impl AppConfig {
     pub fn to_proto(&self) -> proto::AppConfig {
         proto::AppConfig {
-            capture_interfaces: self.capture_interfaces.clone(),
             pcap_timeout_ms: self.pcap_timeout_ms,
             tun_device_name: self.tun_device_name.clone(),
             tun_address: self.tun_address.to_string(),
@@ -98,7 +96,6 @@ impl AppConfig {
 
     pub fn from_proto(proto_config: proto::AppConfig) -> Result<Self> {
         Ok(Self {
-            capture_interfaces: proto_config.capture_interfaces,
             pcap_timeout_ms: proto_config.pcap_timeout_ms,
             tun_device_name: proto_config.tun_device_name,
             tun_address: proto_config
@@ -162,7 +159,6 @@ mod tests {
 
     fn sample_app_config() -> AppConfig {
         AppConfig {
-            capture_interfaces: vec!["eth0".into(), "eth1".into()],
             pcap_timeout_ms: 5000,
             tun_device_name: "tun0".into(),
             tun_address: "10.254.254.1".parse().unwrap(),
@@ -187,7 +183,6 @@ mod tests {
         let config = sample_app_config();
         let roundtrip = AppConfig::from_proto(config.to_proto()).unwrap();
 
-        assert_eq!(roundtrip.capture_interfaces, vec!["eth0", "eth1"]);
         assert_eq!(roundtrip.tun_address.to_string(), "10.254.254.1");
         assert_eq!(roundtrip.pki_dir, "/tmp/pki");
     }
@@ -195,7 +190,6 @@ mod tests {
     #[test]
     fn app_config_json_deserializes() {
         let raw = r#"{
-          "capture_interfaces": ["eth1"],
           "pcap_timeout_ms": 5000,
           "tun_device_name": "tun0",
           "tun_address": "10.254.254.1",
@@ -207,7 +201,6 @@ mod tests {
         }"#;
 
         let config: AppConfig = serde_json::from_str(raw).unwrap();
-        assert_eq!(config.capture_interfaces, vec!["eth1"]);
         assert_eq!(config.tls_inspection_ports, vec![443]);
         assert!(!config.block_tls_on_undeclared_ports);
     }

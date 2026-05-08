@@ -44,7 +44,7 @@ ensure_iptables_rule INPUT -i virbr1 -p tcp --dport 53 -j ACCEPT
 cd "$SCRIPT_DIR/.."
 
 # project name (can be overridden from environment)
-MODEL_NAME="${MODEL_NAME:-raptorgate-cicids2017-v4-focal}"
+MODEL_NAME="${MODEL_NAME:-raptorgate-cicids2017-v5-attacks}"
 MODEL_SRC="${MODEL_SRC:-ml_pipeline/data/models}"
 
 # cd "$SCRIPT_DIR/../backend" && bun run proto:generate || exit 1
@@ -104,7 +104,9 @@ cp -rf ../backend/devCerts/* .router_sync/backend/devCerts/
 rm -rf .router_sync/backend/data && mkdir -p .router_sync/backend/data
 cp -rf ../backend/data/* .router_sync/backend/data/
 cp -rf ../proto/* .router_sync/proto/
-cp -rf ./configs/* .router_sync/ngfw
+if [ -d ./configs ]; then
+  cp -rf ./configs/. .router_sync/ngfw/
+fi
 cp -rf services .router_sync
 cp -rf nginx/* .router_sync/nginx/
 cp -rf logrotate/* .router_sync/logrotate/

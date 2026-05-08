@@ -43,17 +43,13 @@ const envSchema = z.object({
       return val;
     })
     .default([]),
-  // RADIUS provider (Issue 3). Backend laczy sie do FreeRADIUS w labie (192.168.20.30).
   RADIUS_HOST: z.string().min(1).default('192.168.20.30'),
   RADIUS_PORT: z.coerce.number().int().positive().max(65535).default(1812),
   RADIUS_SECRET: z.string().min(1),
   RADIUS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
   RADIUS_RETRIES: z.coerce.number().int().min(0).max(5).default(1),
-  // NAS-IP-Address (RFC 2865 attr 4). Domyslnie adres r1 w sieci 192.168.20.0/24.
   RADIUS_NAS_IP: z.string().min(1).default('192.168.20.254'),
-  // NAS-Identifier (attr 32) i Called-Station-Id (attr 30) — wartosc informacyjna.
   RADIUS_NAS_IDENTIFIER: z.string().min(1).default('raptorgate-backend'),
-  // Lifecycle aktywnej sesji identity (Issue 3, ADR 0003).
   IDENTITY_SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(1800),
   IDENTITY_SESSION_SWEEP_INTERVAL_MS: z.coerce
     .number()
@@ -65,7 +61,6 @@ const envSchema = z.object({
     .int()
     .min(0)
     .default(30_000),
-  // LDAP provider (Issue 4, ADR 0005). Backend laczy sie do slapd w labie (192.168.20.40).
   IDENTITY_LDAP_ENABLED: z
     .union([z.boolean(), z.string()])
     .transform((v) => (typeof v === 'boolean' ? v : v.toLowerCase() === 'true'))
@@ -86,20 +81,19 @@ const envSchema = z.object({
   IDENTITY_LDAP_GROUP_MEMBER_ATTRIBUTE: z.string().min(1).default('memberUid'),
   IDENTITY_LDAP_GROUP_NAME_ATTRIBUTE: z.string().min(1).default('cn'),
   IDENTITY_LDAP_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
-  // Cache grup user -> groups: zywotnosc wpisu, niezalezna od TTL sesji identity.
   IDENTITY_LDAP_GROUP_CACHE_TTL_SECONDS: z.coerce
     .number()
     .int()
     .positive()
     .default(300),
-  // Wybor zrodla grup (Issue 4): docelowo ldap, vsa jako fallback / tryb MVP.
   IDENTITY_GROUP_SOURCE_PRIMARY: z.enum(['ldap', 'vsa']).default('ldap'),
-  // Refresher grup dla aktywnych sesji: pozwala podmienic grupy bez relogowania.
   IDENTITY_GROUP_REFRESH_INTERVAL_MS: z.coerce
     .number()
     .int()
     .min(0)
     .default(60_000),
+  METRICS_WS_PORT: z.coerce.number().positive().default(2000),
+  ALERTS_WS_PORT: z.coerce.number().positive().default(2001),
 }).superRefine((data, ctx) => {
   if (!isValidSecretStoreKey(data.SECRET_STORE_KEY)) {
     ctx.addIssue({

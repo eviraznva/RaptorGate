@@ -1,9 +1,12 @@
 import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
 import { z } from 'zod';
 
+const defaultZoneIdSchema = z.literal('00000000-0000-0000-0000-000000000000');
+const zoneIdSchema = z.union([uuidSchema, defaultZoneIdSchema]);
+
 export const ZoneRecordSchema = z
   .object({
-    id: uuidSchema,
+    id: zoneIdSchema,
     name: z.string().min(1).max(64),
     description: z.string().nullable().optional(),
     isActive: z.boolean(),

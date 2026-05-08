@@ -36,13 +36,13 @@ import {
   type IZonePairRepository,
   ZONE_PAIR_REPOSITORY_TOKEN,
 } from '../../domain/repositories/zone-pair.repository.js';
+import { IdentityConfigJsonMapper } from '../../infrastructure/persistence/mappers/identity-config-json.mapper.js';
 import type { RollbackConfigDto } from '../dtos/rollback-config.dto.js';
 import type { RollbackConfigSnapshotResponseDto } from '../dtos/rollback-config-response.dto.js';
 import {
   CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN,
   type IConfigSnapshotPushService,
 } from '../ports/config-snapshot-push-service.interface.js';
-import { IdentityConfigJsonMapper } from '../../infrastructure/persistence/mappers/identity-config-json.mapper.js';
 import { IdentitySecretReferenceValidatorService } from '../services/identity-secret-reference-validator.service.js';
 
 @Injectable()
@@ -109,6 +109,20 @@ export class RollbackConfigUseCase {
       identityConfig,
     );
     await this.identityConfigRepository.overwrite(identityConfig);
+
+    const currentActiveSnapshot =
+      await this.configSnapshotRepository.findActiveSnapshot();
+    if (
+      currentActiveSnapshot &&
+      currentActiveSnapshot.getId() !== configSnapshot.getId()
+    ) {
+      currentActiveSnapshot.setIsActive(false);
+      await this.configSnapshotRepository.save(currentActiveSnapshot);
+    }
+
+    configSnapshot.setIsActive(true);
+    await this.configSnapshotRepository.save(configSnapshot);
+
     await this.configSnapshotPushService.pushActiveConfigSnapshot(
       configSnapshot,
       'rollback',

@@ -287,6 +287,7 @@ export function mapEventToDocument(event: Event): FirewallEventDocument | null {
         ml_score: e.score,
         ml_threshold: e.threshold,
         model_checksum: undefinedIfEmpty(e.modelChecksum),
+        attack_type: undefinedIfEmpty(e.attackType),
       };
     }
     default:

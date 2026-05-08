@@ -306,6 +306,13 @@ impl Event {
 }
 
 #[derive(Debug, Clone)]
+pub struct RouteInfo {
+    pub destination: String,
+    pub out_interface_index: u32,
+    pub priority: u32,
+}
+
+#[derive(Debug, Clone)]
 pub enum EventKind {
     TcpSessionEstabilished { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
@@ -314,6 +321,8 @@ pub enum EventKind {
     TcpSessionEnteredTimeWait { src: EndpointIdentifier, dst: EndpointIdentifier },
     TunDeviceSwapped { old_device: String, new_device: String, old_address: String, new_address: String },
     SnifferConfigChanged { old_interfaces: Vec<String>, new_interfaces: Vec<String>, old_timeout: Duration, new_timeout: Duration },
+    SnifferReconnecting { iface: String, attempt: u32, next_retry_ms: u64 },
+    SnifferReconnected { iface: String, total_attempts: u32, total_downtime_ms: u64 },
     TlsInterceptStarted { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, tls_version: Option<String> },
     TlsHandshakeComplete { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, alpn: Option<String>, tls_version: Option<String> },
     TlsSessionClosed { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, bytes_up: u64, bytes_down: u64 },
@@ -356,6 +365,7 @@ pub enum EventKind {
         score: f32,
         threshold: f32,
         model_checksum: String,
+        attack_type: String,
         src_ip: String,
         src_port: u16,
         dst_ip: String,
@@ -365,6 +375,10 @@ pub enum EventKind {
         interface: String,
         payload_length: u32,
     },
+    RouteAdded { route: RouteInfo },
+    RouteModified { old_route: RouteInfo, new_route: RouteInfo },
+    RouteDeleted { route: RouteInfo },
+    PolicyWarning { message: String, verdict: &'static str },
     EventBusConnectedEvent {}
 }
 
@@ -379,6 +393,8 @@ impl EventKind {
             | E::TcpSessionEnteredTimeWait { .. }
             | E::TunDeviceSwapped { .. }
             | E::SnifferConfigChanged { .. }
+            | E::SnifferReconnecting { .. }
+            | E::SnifferReconnected { .. }
             | E::TlsInterceptStarted { .. }
             | E::TlsHandshakeComplete { .. }
             | E::TlsSessionClosed { .. }
@@ -398,6 +414,10 @@ impl EventKind {
             | E::InterfaceRenamed { .. }
             | E::IpsSignatureMatched { .. }
             | E::MlThreatDetected { .. }
+            | E::RouteAdded { .. }
+            | E::RouteModified { .. }
+            | E::RouteDeleted { .. }
+            | E::PolicyWarning { .. }
             | E::EventBusConnectedEvent { .. } => true,
         }
     }
@@ -466,6 +486,16 @@ impl From<EventKind> for proto::EventKind {
                         new_interfaces,
                         old_timeout: Some(duration_to_proto(old_timeout)),
                         new_timeout: Some(duration_to_proto(new_timeout)),
+                    }),
+                EventKind::SnifferReconnecting { iface, attempt, next_retry_ms } =>
+                    Item::PolicyWarning(proto::PolicyWarningEvent {
+                        message: format!("sniffer reconnecting: iface={iface}, attempt={attempt}, next_retry_ms={next_retry_ms}"),
+                        verdict: "sniffer_reconnecting".to_string(),
+                    }),
+                EventKind::SnifferReconnected { iface, total_attempts, total_downtime_ms } =>
+                    Item::PolicyWarning(proto::PolicyWarningEvent {
+                        message: format!("sniffer reconnected: iface={iface}, total_attempts={total_attempts}, total_downtime_ms={total_downtime_ms}"),
+                        verdict: "sniffer_reconnected".to_string(),
                     }),
                 EventKind::TlsInterceptStarted { peer, dst, sni, tls_version } =>
                     Item::TlsInterceptStarted(proto::TlsInterceptStartedEvent {
@@ -668,6 +698,7 @@ impl From<EventKind> for proto::EventKind {
                     score,
                     threshold,
                     model_checksum,
+                    attack_type,
                     src_ip,
                     src_port,
                     dst_ip,
@@ -680,6 +711,7 @@ impl From<EventKind> for proto::EventKind {
                     score,
                     threshold,
                     model_checksum,
+                    attack_type,
                     src_ip,
                     src_port: u32::from(src_port),
                     dst_ip,
@@ -689,6 +721,40 @@ impl From<EventKind> for proto::EventKind {
                     interface,
                     payload_length,
                 }),
+                EventKind::RouteAdded { route } =>
+                    Item::RouteAdded(proto::RouteAddedEvent {
+                        route: Some(proto::Route {
+                            destination: route.destination,
+                            out_interface_index: route.out_interface_index,
+                            priority: route.priority,
+                        }),
+                    }),
+                EventKind::RouteModified { old_route, new_route } =>
+                    Item::RouteModified(proto::RouteModifiedEvent {
+                        old_route: Some(proto::Route {
+                            destination: old_route.destination,
+                            out_interface_index: old_route.out_interface_index,
+                            priority: old_route.priority,
+                        }),
+                        new_route: Some(proto::Route {
+                            destination: new_route.destination,
+                            out_interface_index: new_route.out_interface_index,
+                            priority: new_route.priority,
+                        }),
+                    }),
+                EventKind::RouteDeleted { route } =>
+                    Item::RouteDeleted(proto::RouteDeletedEvent {
+                        route: Some(proto::Route {
+                            destination: route.destination,
+                            out_interface_index: route.out_interface_index,
+                            priority: route.priority,
+                        }),
+                    }),
+                EventKind::PolicyWarning { message, verdict } =>
+                    Item::PolicyWarning(proto::PolicyWarningEvent {
+                        message,
+                        verdict: verdict.to_string(),
+                    }),
                 EventKind::EventBusConnectedEvent { .. } => Item::EventBusConnected(proto::EventBusConnectedEvent {})
             }),
         }

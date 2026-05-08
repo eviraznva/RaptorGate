@@ -4,19 +4,13 @@ import type { FirewallEvent } from "../types/firewall/FirewallEvent";
 
 const MAX_EVENTS = 100;
 
-function getRealtimeUrl(): string {
-  const apiUrl = import.meta.env.RAPTOR_GATE_API_URL ?? window.location.origin;
-  const normalizedApiUrl = apiUrl.replace(/\/$/, "");
-
-  if (normalizedApiUrl === "/api") {
-    return `${window.location.origin}/realtime`;
+function resolveAlertsUrl(): { url: string; path: string } {
+  const envUrl = import.meta.env.RAPTOR_GATE_ALERTS_WS_URL;
+  if (envUrl) {
+    const u = new URL(envUrl);
+    return { url: `${u.origin}/alerts`, path: `${u.pathname}/socket.io`.replace(/\/+/g, "/") };
   }
-
-  if (normalizedApiUrl.endsWith("/api")) {
-    return `${normalizedApiUrl.slice(0, -4)}/realtime`;
-  }
-
-  return `${normalizedApiUrl}/realtime`;
+  return { url: `${window.location.origin}/alerts`, path: "/alerts/socket.io" };
 }
 
 export function useFirewallEvents() {
@@ -24,7 +18,9 @@ export function useFirewallEvents() {
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    const socket = io(getRealtimeUrl(), {
+    const { url, path } = resolveAlertsUrl();
+    const socket = io(url, {
+      path,
       withCredentials: true,
       transports: ["websocket"],
     });

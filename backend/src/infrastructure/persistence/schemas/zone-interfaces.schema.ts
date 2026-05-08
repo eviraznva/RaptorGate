@@ -14,8 +14,10 @@ export const ZoneInterfaceRecordSchema = z
     zoneId: zoneInterfaceZoneIdSchema,
     interfaceName: z.string().min(1).max(64),
     vlanId: z.number().int().nullable(),
-    status: z.enum(['unspecified', 'active', 'inactive', 'missing', 'unknown']).default('unspecified'),
-    addresses: z.array(z.string()).default([]),
+    status: z.enum(['unspecified', 'active', 'inactive', 'missing', 'unknown']),
+    addresses: z.array(z.string()),
+    sniffed: z.boolean(),
+    parentInterfaceId: z.string().nullable(),
     createdAt: isoDateTimeSchema,
   })
   .strict();

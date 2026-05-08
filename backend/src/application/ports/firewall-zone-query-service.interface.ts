@@ -16,7 +16,7 @@ export interface IFirewallZoneQueryService {
   getZoneInterface(id: string): Promise<ZoneInterface | null>;
   getLiveZoneInterfaces(): Promise<ZoneInterface[]>;
   setInterfaceState(id: string, isActive: boolean): Promise<void>;
-  updateZoneInterfaceProperties(
+  updatePhysicalInterfaceProperties(
     input: UpdateZoneInterfacePropertiesInput,
   ): Promise<void>;
   getZonePairs(): Promise<ZonePair[]>;

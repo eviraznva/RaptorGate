@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use derive_more::Display;
-use futures::stream::StreamExt;
+use derive_more::{Display, From, Into};
 use futures::TryStreamExt;
 use ipnet::IpNet;
 use netlink_packet_route::RouteNetlinkMessage;
@@ -18,13 +17,13 @@ use netlink_packet_route::{
         State as LinkState,
     },
 };
-use rtnetlink::MulticastGroup;
-use rtnetlink::packet_core::NetlinkPayload;
 use thiserror::Error;
 use tokio::select;
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use crate::events::{self, Event, EventKind};
+use crate::netlink::listener::NetlinkListener;
 
 #[derive(Debug, Error)]
 pub enum NetworkInterfaceMonitorError {
@@ -34,9 +33,10 @@ pub enum NetworkInterfaceMonitorError {
     LinkDump(#[source] rtnetlink::Error),
     #[error("failed to read address dump from netlink")]
     AddressDump(#[source] rtnetlink::Error),
-    #[error("failed to open netlink multicast connection")]
-    MulticastConnection(#[source] std::io::Error),
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, Hash, From, Into)]
+pub struct SystemInterfaceId(u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
 pub enum OperState {
@@ -50,7 +50,7 @@ pub enum OperState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemInterface {
-    pub index: u32,
+    pub index: SystemInterfaceId,
     pub name: String,
     pub oper_state: OperState,
     pub addresses: Vec<IpNet>,
@@ -60,6 +60,7 @@ pub struct SystemInterface {
 #[cfg_attr(test, mockall::automock)]
 pub trait InterfaceMonitor: Send + Sync {
     fn get(&self, name: &str) -> Option<SystemInterface>;
+    fn get_by_index(&self, index: SystemInterfaceId) -> Option<SystemInterface>;
     fn snapshot(&self) -> HashMap<String, SystemInterface>;
 }
 
@@ -69,7 +70,10 @@ pub struct NetworkInterfaceMonitor {
 }
 
 impl NetworkInterfaceMonitor {
-    pub async fn new(cancel: CancellationToken) -> Result<Self, NetworkInterfaceMonitorError> {
+    pub async fn new(
+        cancel: CancellationToken,
+        listener: &NetlinkListener,
+    ) -> Result<Self, NetworkInterfaceMonitorError> {
         let (connection, handle, _) =
             rtnetlink::new_connection().map_err(NetworkInterfaceMonitorError::Connection)?;
         tokio::spawn(connection);
@@ -94,7 +98,7 @@ impl NetworkInterfaceMonitor {
             .map_err(NetworkInterfaceMonitorError::AddressDump)?
         {
             if let Some(parsed) = parse_address(&address)
-                && let Some(interface) = interfaces_by_index.get_mut(&address.header.index)
+                && let Some(interface) = interfaces_by_index.get_mut(&SystemInterfaceId::from(address.header.index))
                     && !interface.addresses.contains(&parsed) {
                         interface.addresses.push(parsed);
                     }
@@ -106,21 +110,13 @@ impl NetworkInterfaceMonitor {
         }
 
         let monitor = Self { interfaces: Arc::new(interfaces) };
-        monitor.spawn_live_updates(cancel)?;
+        monitor.spawn_live_updates(cancel, listener);
         Ok(monitor)
     }
 
-    fn spawn_live_updates(&self, cancel: CancellationToken) -> Result<(), NetworkInterfaceMonitorError> {
-        let groups = [
-            MulticastGroup::Link,
-            MulticastGroup::Ipv4Ifaddr,
-            MulticastGroup::Ipv6Ifaddr,
-        ];
-        let (connection, _handle, mut messages) = rtnetlink::new_multicast_connection(&groups)
-            .map_err(NetworkInterfaceMonitorError::MulticastConnection)?;
+    fn spawn_live_updates(&self, cancel: CancellationToken, listener: &NetlinkListener) {
+        let mut rx = listener.subscribe();
         let monitor = self.clone();
-
-        tokio::spawn(connection);
 
         tokio::spawn(async move {
             loop {
@@ -128,26 +124,33 @@ impl NetworkInterfaceMonitor {
                     _ = cancel.cancelled() => {
                         break;
                     }
-                    msg = messages.next() => {
-                        let Some((message, _addr)) = msg else {
-                            break;
-                        };
-
-                        if let NetlinkPayload::InnerMessage(inner) = message.payload {
-                            monitor.handle_route_message(inner);
+                    msg = rx.recv() => {
+                        match msg {
+                            Ok(inner) => {
+                                monitor.handle_route_message(inner);
+                            }
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!(missed_messages = n, "NetworkInterfaceMonitor subscriber lagged");
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                tracing::error!("NetlinkListener broadcast channel closed, monitor stopping live updates");
+                                break;
+                            }
                         }
                     }
                 }
             }
         });
-
-        Ok(())
     }
 }
 
 impl InterfaceMonitor for NetworkInterfaceMonitor {
     fn get(&self, name: &str) -> Option<SystemInterface> {
         self.interfaces.get(name).map(|entry| entry.value().clone())
+    }
+
+    fn get_by_index(&self, index: SystemInterfaceId) -> Option<SystemInterface> {
+        self.find_by_index(index).map(|(_, interface)| interface)
     }
 
     fn snapshot(&self) -> HashMap<String, SystemInterface> {
@@ -204,7 +207,7 @@ impl NetworkInterfaceMonitor {
     }
 
     fn remove_link(&self, link: &LinkMessage) {
-        let index = link.header.index;
+        let index = SystemInterfaceId::from(link.header.index);
         if let Some((name, interface)) = self.find_by_index(index) {
             self.interfaces.remove(&name);
             self.maybe_emit_state_event(Some(&interface), None);
@@ -216,7 +219,7 @@ impl NetworkInterfaceMonitor {
             return;
         };
 
-        let Some((name, mut interface)) = self.find_by_index(address.header.index) else {
+        let Some((name, mut interface)) = self.find_by_index(SystemInterfaceId::from(address.header.index)) else {
             return;
         };
 
@@ -234,11 +237,10 @@ impl NetworkInterfaceMonitor {
         self.maybe_emit_state_event(Some(&old), Some(&interface));
     }
 
-    fn find_by_index(&self, index: u32) -> Option<(String, SystemInterface)> {
+    fn find_by_index(&self, index: SystemInterfaceId) -> Option<(String, SystemInterface)> {
         self.interfaces
             .iter()
             .find(|entry| entry.value().index == index)
-            .inspect(|entry| if entry.name == "dummy-rename" { tracing::info!("DUMMY-RENAME found") })
             .map(|entry| (entry.key().clone(), entry.value().clone()))
     }
 
@@ -279,9 +281,9 @@ impl NetworkInterfaceMonitor {
         }
     }
 
-    fn emit_rename_event(&self, interface_index: u32, old_name: &str, new_name: &str, current: &SystemInterface) {
+    fn emit_rename_event(&self, interface_index: SystemInterfaceId, old_name: &str, new_name: &str, current: &SystemInterface) {
         events::emit(Event::new(EventKind::InterfaceRenamed {
-            interface_index,
+            interface_index: interface_index.into(),
             old_interface_name: old_name.to_string(),
             new_interface_name: new_name.to_string(),
             status: Self::status_from_interface(Some(current)),
@@ -300,7 +302,7 @@ fn parse_link(message: &LinkMessage) -> Option<SystemInterface> {
     let vlan_id = message.attributes.iter().find_map(link_vlan_id);
 
     Some(SystemInterface {
-        index: message.header.index,
+        index: message.header.index.into(),
         name,
         oper_state,
         addresses: Vec::new(),
@@ -368,13 +370,13 @@ mod tests {
     use ipnet::IpNet;
     use mockall::predicate::eq;
 
-    use super::{InterfaceMonitor, MockInterfaceMonitor, NetworkInterfaceMonitor, OperState, SystemInterface};
+    use super::{InterfaceMonitor, MockInterfaceMonitor, NetworkInterfaceMonitor, OperState, SystemInterface, SystemInterfaceId};
 
     #[test]
     fn mock_interface_monitor_get_contract() {
         let mut monitor = MockInterfaceMonitor::new();
         let expected = SystemInterface {
-            index: 2,
+            index: SystemInterfaceId::from(2),
             name: "eth0".to_string(),
             oper_state: OperState::Up,
             addresses: vec!["192.168.10.10/24".parse::<IpNet>().expect("valid CIDR")],
@@ -393,6 +395,28 @@ mod tests {
     }
 
     #[test]
+    fn mock_interface_monitor_get_by_index_contract() {
+        let mut monitor = MockInterfaceMonitor::new();
+        let expected = SystemInterface {
+            index: SystemInterfaceId::from(2),
+            name: "eth0".to_string(),
+            oper_state: OperState::Up,
+            addresses: vec![],
+            vlan_id: None,
+        };
+
+        monitor
+            .expect_get_by_index()
+            .with(eq(SystemInterfaceId::from(2)))
+            .times(1)
+            .return_once(move |_| Some(expected));
+
+        let result = monitor.get_by_index(SystemInterfaceId::from(2));
+        assert!(result.is_some());
+        assert_eq!(result.expect("interface exists").index, SystemInterfaceId::from(2));
+    }
+
+    #[test]
     fn mock_interface_monitor_snapshot_contract() {
         let mut monitor = MockInterfaceMonitor::new();
 
@@ -400,7 +424,7 @@ mod tests {
             HashMap::from([(
                 "eth1".to_string(),
                 SystemInterface {
-                    index: 3,
+                    index: SystemInterfaceId::from(3),
                     name: "eth1".to_string(),
                     oper_state: OperState::Down,
                     addresses: vec![],
@@ -436,7 +460,7 @@ mod tests {
     #[test]
     fn status_from_interface_maps_oper_states() {
         let up = SystemInterface {
-            index: 1,
+            index: SystemInterfaceId::from(1),
             name: "eth1".to_string(),
             oper_state: OperState::Up,
             addresses: vec![],
@@ -455,5 +479,34 @@ mod tests {
         assert_eq!(NetworkInterfaceMonitor::status_from_interface(Some(&up)), "active");
         assert_eq!(NetworkInterfaceMonitor::status_from_interface(Some(&down)), "inactive");
         assert_eq!(NetworkInterfaceMonitor::status_from_interface(Some(&unknown)), "unknown");
+    }
+
+    #[test]
+    fn test_monitor_state_update_logic() {
+        let monitor = NetworkInterfaceMonitor {
+            interfaces: std::sync::Arc::new(dashmap::DashMap::new()),
+        };
+        
+        let interface = SystemInterface {
+            index: SystemInterfaceId::from(10),
+            name: "test0".to_string(),
+            oper_state: OperState::Up,
+            addresses: vec![],
+            vlan_id: None,
+        };
+        
+        // Test upsert_link directly to avoid complex Netlink message construction in unit tests
+        monitor.upsert_link(interface.clone());
+        
+        let retrieved = monitor.get("test0").expect("interface should exist");
+        assert_eq!(retrieved.index, SystemInterfaceId::from(10));
+        assert_eq!(retrieved.oper_state, OperState::Up);
+        
+        // Test remove_link logic
+        let mut del_link = netlink_packet_route::link::LinkMessage::default();
+        del_link.header.index = 10;
+        monitor.remove_link(&del_link);
+        
+        assert!(monitor.get("test0").is_none());
     }
 }

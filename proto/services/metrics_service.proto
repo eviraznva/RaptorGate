@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package raptorgate.services;
+
+import "google/protobuf/timestamp.proto";
+
+service FirewallMetricsService {
+  rpc StreamMetrics(StreamMetricsRequest) returns (stream RealtimeMetric);
+}
+
+message StreamMetricsRequest {
+  optional uint64 interval_ms = 1;
+}
+
+message RealtimeMetric {
+  string name = 1;
+  double value = 2;
+  string unit = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}

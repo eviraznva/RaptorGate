@@ -4,8 +4,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{proto::config::Rule, rule_tree::RuleTree, zones::ZonePairId};
-pub use crate::rule_tree::{parsing::{RaptorlangError, parse_rule_tree}};
+pub use crate::rule_tree::parsing::{RaptorlangError, parse_rule_tree};
 
+pub mod engine;
 pub mod policy_evaluator;
 pub mod provider;
 pub mod nat;
@@ -57,7 +58,7 @@ impl Policy {
     }
 }
 
-use crate::integrity::foreign_keys;
+use crate::validation::foreign_keys;
 foreign_keys!(Policy { zone_pair_id: ZonePairId });
 
 #[cfg(test)]
@@ -70,26 +71,6 @@ mod tests {
         "Identity admin management access",
         "Identity authenticated app access",
     ];
-
-    #[derive(Deserialize)]
-    struct VagrantPolicyFile {
-        items: Vec<crate::disk_store::SavedProperty<Policy>>,
-    }
-
-    #[test]
-    fn vagrant_identity_seed_policies_parse() {
-        let raw = include_str!("../../../vagrant/configs/policies.json");
-        let parsed: VagrantPolicyFile = serde_json::from_str(raw).unwrap();
-        let names = parsed
-            .items
-            .iter()
-            .map(|item| item.contents.name.as_str())
-            .collect::<Vec<_>>();
-
-        for expected in EXPECTED_IDENTITY_RULES {
-            assert!(names.contains(&expected));
-        }
-    }
 
     #[test]
     fn backend_identity_seed_rules_parse() {

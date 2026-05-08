@@ -11,6 +11,7 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { apiReference } from "@scalar/nestjs-api-reference";
 import cookieParser from "cookie-parser";
 import { AppModule } from "./app.module.js";
+import { MultiPortSocketIoAdapter } from "./infrastructure/websocket/multi-port-socket-io.adapter.js";
 import type { Env } from "./shared/config/env.validation.js";
 import {
   DailyFileLogger,
@@ -157,6 +158,13 @@ async function bootstrap() {
     }),
   );
 
+  const metricsWsPort = configService.get("METRICS_WS_PORT", { infer: true });
+  const alertsWsPort = configService.get("ALERTS_WS_PORT", { infer: true });
+
+  app.useWebSocketAdapter(
+    new MultiPortSocketIoAdapter(app, httpsOptions),
+  );
+
   await app.startAllMicroservices();
 
   logger.log(`gRPC server listening on ${grpcUrl}`);
@@ -167,6 +175,8 @@ async function bootstrap() {
   logger.log(`HTTP server listening on https://localhost:${httpPort}`);
   logger.log(`API: https://localhost:${httpPort}/api`);
   logger.log(`Docs: https://localhost:${httpPort}/reference`);
+  logger.log(`Metrics WS: wss://localhost:${metricsWsPort}/metrics`);
+  logger.log(`Alerts WS: wss://localhost:${alertsWsPort}/alerts`);
 }
 
 bootstrap();
