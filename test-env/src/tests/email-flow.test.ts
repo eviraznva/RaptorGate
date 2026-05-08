@@ -48,7 +48,7 @@ describe("Email Flow", () => {
 				bundle: buildPermissiveSnapshot(),
 			},
 		}).run();
-
+	
 		await performCommand({
 			host: "h2",
 			command:
@@ -56,7 +56,7 @@ describe("Email Flow", () => {
 		})
 			.expectOutput([/250/])
 			.run();
-
+	
 		await performCommand({
 			host: "h1",
 			command: "find /var/mail/vmail/test.local/user2 -type f -name '*' | head -1",
@@ -87,15 +87,15 @@ describe("Email Flow", () => {
 			command:
 				"swaks --to user2@test.local --from user1@test.local --server 192.168.10.10 --body 'Test email from h2'",
 		})
-			.printEvents()
 			.expectOutput([/250/])
 			.expectEvents([
 				{ kind: "smtpSessionStateChanged", match: { newState: "GreetingReceived" } },
 				{ kind: "smtpSessionStateChanged", match: { newState: "Ready" } },
-				{ kind: "smtpSessionStateChanged", match: { newState: "Ready" } },
 				{ kind: "smtpSessionStateChanged", match: { newState: "EnvelopeOpen" } },
 				{ kind: "smtpSessionStateChanged", match: { newState: "ReciepientSet" } },
-				{ kind: "smtpSessionStateChanged", match: { newState: "DataPhase" } },
+				{ kind: "smtpSessionStateChanged", match: { newState: "Data(Await354)" } },
+				{ kind: "smtpSessionStateChanged", match: { newState: "Data(Collecting)" } },
+				{ kind: "smtpSessionStateChanged", match: { newState: "Data(Complete)" } },
 				{ kind: "smtpSessionStateChanged", match: { newState: "Ready" } },
 			])
 			.run();

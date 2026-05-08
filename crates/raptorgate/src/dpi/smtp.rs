@@ -135,7 +135,7 @@ impl SessionState {
                         Err(())
                     }
                     smtp_proto::Request::Rset => Ok(Some(SessionState::Ready)),
-                    smtp_proto::Request::Quit => Err(()),
+                    smtp_proto::Request::Quit => Ok(None),
                 }
             }
         }
@@ -324,6 +324,7 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                             let completed = receiver.ingest(&mut bytes, &mut session.current_message);
                             if completed {
                                 session.state = SessionState::Data(DataState::Complete);
+                                session.emit_state_changed();
                                 disposition.packet = PacketAction::QueueAndHalt;
                                 disposition.unit = UnitStatus::Complete;
                             } else {
@@ -355,8 +356,9 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                     match session.request_receiver.ingest(&mut bytes) {
                         Ok(request) => {
                             tracing::debug!(request=?request, "Smtp Received received request");
+                            let is_quit = matches!(&request, smtp_proto::Request::Quit);
                             let completes_buffered_unit = matches!(
-                                request,
+                                &request,
                                 smtp_proto::Request::Mail { .. }
                                     | smtp_proto::Request::Rcpt { .. }
                                     | smtp_proto::Request::Data
@@ -394,6 +396,13 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                             if session.apply_transition_result(result).is_err() {
                                 should_remove = true;
                                 break;
+                            }
+
+                            session.request_receiver = RequestReceiver::default();
+
+                            if is_quit {
+                                disposition.packet = PacketAction::Pass;
+                                should_remove = true;
                             }
 
                             if disposition.packet == PacketAction::QueueAndHalt && completes_buffered_unit {
@@ -602,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_recipients() {
+    fn multiple_recipients_state() {
         let state = SessionState::ReciepientSet;
         let to = RcptTo { address: "recipient2@example.com", ..Default::default() };
         assert_eq!(state.transition(req(Request::Rcpt { to })), Ok(None));
@@ -653,7 +662,7 @@ mod tests {
     #[test]
     fn quit_terminates_session() {
         let state = SessionState::Ready;
-        assert_eq!(state.transition(req(Request::Quit)), Err(()));
+        assert_eq!(state.transition(req(Request::Quit)), Ok(None));
     }
 
     #[test]
@@ -848,7 +857,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_happy_path_smtp_conversation() {
+    fn happy_path_smtp_conversation() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -902,7 +911,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_first_packet_creates_session() {
+    fn first_packet_creates_session() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -917,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_subsequent_packets_use_existing_session() {
+    fn subsequent_packets_use_existing_session() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -936,7 +945,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_different_endpoints_create_separate_sessions() {
+    fn different_endpoints_create_separate_sessions() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
 
         let client1 = EndpointIdentifier {
@@ -969,7 +978,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_session_identified_regardless_of_direction() {
+    fn session_identified_regardless_of_direction() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -988,7 +997,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_invalid_ehlo_before_greeting_removes_session() {
+    fn invalid_ehlo_before_greeting_removes_session() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1000,7 +1009,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_invalid_mail_without_ehlo_removes_session() {
+    fn invalid_mail_without_ehlo_removes_session() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1016,7 +1025,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_quit_removes_session() {
+    fn quit_removes_session() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1036,7 +1045,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_starttls_removes_session() {
+    fn starttls_removes_session() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1056,7 +1065,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_rset_resets_to_ready() {
+    fn rset_resets_to_ready() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1087,7 +1096,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_multiple_recipients() {
+    fn multiple_recipients() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1125,7 +1134,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_multiple_concurrent_sessions() {
+    fn multiple_concurrent_sessions() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
 
         let clients: Vec<EndpointIdentifier> = (1u16..=3u16).map(|i| EndpointIdentifier {
@@ -1156,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_out_of_order_ehlo_before_greeting() {
+    fn out_of_order_ehlo_before_greeting() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1168,7 +1177,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_fragmented_smtp_command() {
+    fn fragmented_smtp_command() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1190,7 +1199,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_helo_instead_of_ehlo() {
+    fn helo_instead_of_ehlo() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1206,7 +1215,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_buffering_disposition_server_packets_pass() {
+    fn buffering_disposition_server_packets_pass() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1228,7 +1237,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_buffering_disposition_client_packets_hold() {
+    fn buffering_disposition_client_packets_hold() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1252,7 +1261,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_buffering_disposition_data_complete() {
+    fn buffering_disposition_data_complete() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1289,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_transaction_state_captured() {
+    fn transaction_state_captured() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1329,7 +1338,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_rset_clears_transaction_state() {
+    fn rset_clears_transaction_state() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1364,7 +1373,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_bdat_multi_chunk() {
+    fn bdat_multi_chunk() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1398,7 +1407,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_completion_packet_enqueued() {
+    fn completion_packet_enqueued() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1435,7 +1444,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_fragmented_mail_from_buffered() {
+    fn fragmented_mail_from_buffered() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1460,7 +1469,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_lhlo_command() {
+    fn lhlo_command() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1476,7 +1485,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_bdat_instead_of_data() {
+    fn bdat_instead_of_data() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1504,7 +1513,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_noop_command() {
+    fn noop_command() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
@@ -1524,7 +1533,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_malformed_command_removes_session() {
+    fn malformed_command_removes_session() {
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
 
