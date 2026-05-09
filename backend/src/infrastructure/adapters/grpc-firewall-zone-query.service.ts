@@ -227,7 +227,7 @@ export class GrpcFirewallZoneQueryService
         : "";
     const vlanId =
       zoneInterface.kind?.$case === "vlan"
-        ? zoneInterface.kind.vlan.vlanId ?? null
+        ? (zoneInterface.kind.vlan.vlanId ?? null)
         : null;
     const parentInterfaceId =
       zoneInterface.kind?.$case === "vlan"

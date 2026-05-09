@@ -6,6 +6,15 @@ import {
   useUpdateRuleMutation,
   type CreateRuleBody,
 } from "../../services/rules";
+import { useAppDispatch, useAppSelector } from "../../app/hooks";
+import {
+  useGetZonePairsQuery,
+  type ZonePairsPayload,
+} from "../../services/zonePairs";
+import { setZonePairs } from "../../features/zonePairsSlice";
+import { Icon } from "@iconify/react";
+import { useGetZonesQuery, type ZonesPayload } from "../../services/zones";
+import { setZones } from "../../features/zonesSlice";
 
 interface RuleFormProps {
   rule: Rule | null;
@@ -28,6 +37,12 @@ interface FormErrors {
   priority?: string;
   zonePairId?: string;
   content?: string;
+}
+
+interface ZonePairSelectOption {
+  zonePairId: string;
+  dstZoneName: string;
+  srcZoneName: string;
 }
 
 const UUID_RE =
@@ -57,24 +72,38 @@ function validate(f: FormState): FormErrors {
   const e: FormErrors = {};
   if (!f.name.trim()) e.name = "Required";
   else if (f.name.length > 128) e.name = "Max 128 chars";
+
   const p = Number(f.priority);
+
   if (!f.priority || isNaN(p) || !Number.isInteger(p) || p < 1 || p > 100)
     e.priority = "Integer 1–100";
+
   if (!f.zonePairId.trim()) e.zonePairId = "Required";
   else if (!UUID_RE.test(f.zonePairId.trim())) e.zonePairId = "Invalid UUID";
+
   if (!f.content.trim()) e.content = "Required";
   return e;
 }
 
 export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
+  const zonePairs = useAppSelector((store) => store.zonePairs);
+  const zones = useAppSelector((store) => store.zones);
+  const disptach = useAppDispatch();
+
   const isEditMode = rule !== null;
   const [form, setForm] = useState<FormState>(EMPTY);
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [zonePairOptions, setZonePairOptions] = useState<
+    ZonePairSelectOption[]
+  >([]);
 
   const [createRule, { isLoading: creating }] = useCreateRuleMutation();
   const [updateRule, { isLoading: updating }] = useUpdateRuleMutation();
   const isSubmitting = creating || updating;
+
+  const { data: zonePairsData } = useGetZonePairsQuery();
+  const { data: zonesData } = useGetZonesQuery();
 
   useEffect(() => {
     if (isOpen) {
@@ -84,20 +113,60 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
     }
   }, [isOpen, rule]);
 
+  useEffect(() => {
+    if (!zonePairsData) return;
+
+    const zonePairs = zonePairsData as ApiSuccess<ZonePairsPayload>;
+    disptach(setZonePairs(zonePairs.data.zonePairs));
+  }, [zonePairsData, disptach]);
+
+  useEffect(() => {
+    if (!zonesData) return;
+
+    const zones = zonesData as ApiSuccess<ZonesPayload>;
+    disptach(setZones(zones.data.zones));
+  }, [zonesData, disptach]);
+
+  useEffect(() => {
+    const zonePairOptions = zonePairs.zonePairs.map((zonePair) => {
+      const dstZone = zones.zones.find((z) => z.id === zonePair.dstZoneId);
+      const srcZone = zones.zones.find((z) => z.id === zonePair.srcZoneId);
+
+      return {
+        zonePairId: zonePair.id,
+        dstZoneName: dstZone ? dstZone.name : "Unknown Zone",
+        srcZoneName: srcZone ? srcZone.name : "Unknown Zone",
+      };
+    });
+
+    console.log(zonePairOptions);
+
+    setZonePairOptions(zonePairOptions);
+  }, [zonePairs, zones]);
+
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
+
     if (errors[key as keyof FormErrors]) {
       setErrors((prev) => ({ ...prev, [key]: undefined }));
     }
   }
 
+  const handleSelectZonePair = function (
+    e: React.ChangeEvent<HTMLSelectElement>,
+  ) {
+    setField("zonePairId", e.target.value);
+  };
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const errs = validate(form);
+
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       return;
     }
+
     setSubmitError(null);
 
     const body: CreateRuleBody = {
@@ -112,20 +181,25 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
     try {
       if (isEditMode) {
         const result = await updateRule({ id: rule.id, ...body });
+
         if ("error" in result) {
           const err = result.error as { data?: { message?: string } };
           setSubmitError(err?.data?.message ?? "Update failed");
+
           return;
         }
+
         const payload = result.data as ApiSuccess<Rule>;
         onSuccess(payload.data, "edit");
       } else {
         const result = await createRule(body);
+
         if ("error" in result) {
           const err = result.error as { data?: { message?: string } };
           setSubmitError(err?.data?.message ?? "Create failed");
           return;
         }
+
         const payload = result.data as ApiSuccess<{ rule: Rule }>;
         onSuccess(payload.data.rule, "create");
       }
@@ -252,20 +326,27 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
             <label className="block text-[10px] text-[#8a8a8a] uppercase tracking-[0.25em] mb-1.5">
               Zone Pair ID <span className="text-[#f43f5e]">*</span>
             </label>
-            <input
-              className="input text-sm font-mono"
-              type="text"
+            <select
+              onChange={(e) => {
+                handleSelectZonePair(e);
+              }}
               value={form.zonePairId}
-              onChange={(e) => setField("zonePairId", e.target.value)}
-              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-              spellCheck={false}
-            />
+              className="input text-sm mt-2"
+              defaultValue="Select Zone Pair"
+            >
+              {zonePairOptions.map((zonePair) => (
+                <option key={zonePair.zonePairId} value={zonePair.zonePairId}>
+                  {`${zonePair.srcZoneName} => ${zonePair.dstZoneName}`}
+                </option>
+              ))}
+            </select>
             {errors.zonePairId ? (
               <p className="text-[10px] text-[#f43f5e] mt-1 tracking-wider">
                 {errors.zonePairId}
               </p>
             ) : (
-              form.zonePairId && UUID_RE.test(form.zonePairId.trim()) && (
+              form.zonePairId &&
+              UUID_RE.test(form.zonePairId.trim()) && (
                 <p className="text-[10px] text-[#10b981] mt-1 tracking-wider">
                   Valid UUID
                 </p>
