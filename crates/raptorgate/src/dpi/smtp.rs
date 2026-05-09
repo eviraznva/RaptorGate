@@ -1,7 +1,7 @@
 use dashmap::{DashMap, mapref::one::RefMut};
 use etherparse::TransportSlice;
 use smtp_proto::{request::receiver::{RequestReceiver, DataReceiver, BdatReceiver}, response::parser::ResponseReceiver};
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Display};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -32,22 +32,43 @@ impl SmtpPolicyEvaluator {
         let message = &session.current_message;
 
         for policy in policies {
-            if !policy.sender.is_match(sender.as_bytes()) {
+            if !Self::evaluate_field(&policy.sender, sender.as_bytes()) {
                 return false;
             }
 
             for recipient in recipients {
-                if !policy.recipient.is_match(recipient.as_bytes()) {
+                if !Self::evaluate_field(&policy.recipient, recipient.as_bytes()) {
                     return false;
                 }
             }
 
-            if !policy.message.is_match(message) {
+            if !Self::evaluate_field(&policy.message, message) {
                 return false;
             }
         }
 
         true
+    }
+
+    fn evaluate_field(matches: &[crate::policy::SmtpMatch], input: &[u8]) -> bool {
+        use crate::policy::SmtpMatchAction;
+        
+        if matches.is_empty() {
+            return true;
+        }
+
+        let allow_matchers: Vec<_> = matches.iter().filter(|m| m.on_match == SmtpMatchAction::Allow).collect();
+        let deny_matchers: Vec<_> = matches.iter().filter(|m| m.on_match == SmtpMatchAction::Deny).collect();
+
+        if allow_matchers.is_empty() {
+            return false;
+        }
+
+        if deny_matchers.iter().any(|m| m.regex.is_match(input)) {
+            return false;
+        }
+
+        allow_matchers.iter().all(|m| m.regex.is_match(input))
     }
 }
 
@@ -198,6 +219,28 @@ struct SmtpSession {
     client_seq: Option<TcpSeqSnapshot>,
     server_seq: Option<TcpSeqSnapshot>,
     rst_packets: Vec<Vec<u8>>,
+}
+
+impl std::fmt::Debug for SmtpSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SmtpSession")
+            .field("state", &self.state)
+            .field("client", &self.client)
+            .field("server", &self.server)
+            .field("policies", &self.policies)
+            .field("request_receiver", &"RequestReceiver")
+            .field("response_receiver", &"ResponseReceiver")
+            .field("queued_packets", &self.queued_packets)
+            .field("current_sender", &self.current_sender)
+            .field("current_recipients", &self.current_recipients)
+            .field("current_message", &self.current_message.len())
+            .field("data_receiver", &self.data_receiver.is_some())
+            .field("bdat_receiver", &self.bdat_receiver.is_some())
+            .field("client_seq", &self.client_seq)
+            .field("server_seq", &self.server_seq)
+            .field("rst_packets", &self.rst_packets.len())
+            .finish()
+    }
 }
 
 impl SmtpSession {
@@ -532,39 +575,40 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
             }
 
             // Evaluate SMTP policies when buffered unit completes
-            if disposition.unit == UnitStatus::Complete {
-                if let Some(ref policies) = session.policies {
-                    let allowed = SmtpPolicyEvaluator::evaluate(&session, &policies.client_to_server);
-                    if !allowed {
-                        // Denial: drop queued packets, generate RSTs, remove session
-                        session.queued_packets.clear();
-                        disposition.packet = PacketAction::Drop;
+            if disposition.unit == UnitStatus::Complete && let Some(ref policies) = session.policies {
+                let allowed = SmtpPolicyEvaluator::evaluate(&session, &policies.client_to_server);
+                if !allowed {
+                    tracing::debug!(session=?*session, "Denied SMTP session");
+                    // Denial: drop queued packets, generate RSTs, remove session
+                    session.queued_packets.clear();
+                    disposition.packet = PacketAction::Drop;
+                    
+                    // Generate RST packets
+                    if let (Some(client_seq), Some(server_seq), Some(client), Some(server)) = 
+                        (&session.client_seq, &session.server_seq, &session.client, &session.server) {
                         
-                        // Generate RST packets
-                        if let (Some(client_seq), Some(server_seq), Some(client), Some(server)) = 
-                            (&session.client_seq, &session.server_seq, &session.client, &session.server) {
-                            
-                            let client_seq = client_seq.clone();
-                            let server_seq = server_seq.clone();
-                            let client = client.clone();
-                            let server = server.clone();
-                            
-                            // RST toward server (using client sequence)
-                            if let Some(rst_to_server) = Self::build_rst_packet(&client_seq, &server) {
-                                session.rst_packets.push(rst_to_server);
-                                tracing::debug!("Generated RST toward server");
-                            }
-                            
-                            // RST toward client (using server sequence)
-                            if let Some(rst_to_client) = Self::build_rst_packet(&server_seq, &client) {
-                                session.rst_packets.push(rst_to_client);
-                                tracing::debug!("Generated RST toward client");
-                            }
+                        let client_seq = client_seq.clone();
+                        let server_seq = server_seq.clone();
+                        let client = client.clone();
+                        let server = server.clone();
+                        
+                        // RST toward server (using client sequence)
+                        if let Some(rst_to_server) = Self::build_rst_packet(&client_seq, &server) {
+                            session.rst_packets.push(rst_to_server);
+                            tracing::debug!("Generated RST toward server");
                         }
                         
-                        should_remove = true;
+                        // RST toward client (using server sequence)
+                        if let Some(rst_to_client) = Self::build_rst_packet(&server_seq, &client) {
+                            session.rst_packets.push(rst_to_client);
+                            tracing::debug!("Generated RST toward client");
+                        }
                     }
+                    
+                    should_remove = true;
                 }
+
+                tracing::debug!(session=?*session, "Allowed SMTP package");
             }
 
             self.cleanup_session(should_remove, session);
@@ -1804,3 +1848,4 @@ mod tests {
         }
     }
 }
+

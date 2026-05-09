@@ -33,35 +33,74 @@ pub struct Policy {
     pub smtp_policy: SmtpPolicy,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SmtpMatchAction {
+    Allow,
+    Deny,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmtpMatch {
+    #[serde(with = "serde_regex")]
+    pub regex: Regex,
+    pub on_match: SmtpMatchAction,
+}
+
+mod serde_regex {
+    use regex::bytes::Regex;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(regex: &Regex, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        regex.as_str().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Regex, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Regex::new(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmtpPolicy {
-    #[serde(with = "serde_regex")]
-    pub sender: Regex,
-    #[serde(with = "serde_regex")]
-    pub recipient: Regex,
-    #[serde(with = "serde_regex")]
-    pub message: Regex
+    pub sender: Vec<SmtpMatch>,
+    pub recipient: Vec<SmtpMatch>,
+    pub message: Vec<SmtpMatch>,
 }
 
 impl SmtpPolicy {
     pub fn default() -> Self {
         Self {
-            sender: Regex::new("$^").unwrap(),
-            recipient: Regex::new("$^").unwrap(),
-            message: Regex::new("$^").unwrap(),
+            sender: vec![],
+            recipient: vec![],
+            message: vec![],
         }
     }
 
     #[cfg(test)]
     pub fn permissive() -> Self {
         Self {
-            sender: Regex::new(".*").unwrap(),
-            recipient: Regex::new(".*").unwrap(),
-            message: Regex::new(".*").unwrap(),
+            sender: vec![SmtpMatch {
+                regex: Regex::new(".*").unwrap(),
+                on_match: SmtpMatchAction::Allow,
+            }],
+            recipient: vec![SmtpMatch {
+                regex: Regex::new(".*").unwrap(),
+                on_match: SmtpMatchAction::Allow,
+            }],
+            message: vec![SmtpMatch {
+                regex: Regex::new(".*").unwrap(),
+                on_match: SmtpMatchAction::Allow,
+            }],
         }
     }
-
 }
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct PolicyId(Uuid);
 
@@ -70,28 +109,28 @@ impl Policy {
         let head = parse_rule_tree(&value.content)?;
         
         let smtp_policy = if let Some(matchers) = value.smtp_matchers {
-            let sender = if matchers.smtp_sender.is_empty() {
-                Regex::new("$^").unwrap()
-            } else {
-                Regex::new(&matchers.smtp_sender)
-                    .map_err(|e| anyhow::anyhow!("Invalid smtp_sender regex: {}", e))?
-            };
+            use crate::proto::config::SmtpMatchAction as ProtoAction;
             
-            let recipient = if matchers.smtp_recipient.is_empty() {
-                Regex::new("$^").unwrap()
-            } else {
-                Regex::new(&matchers.smtp_recipient)
-                    .map_err(|e| anyhow::anyhow!("Invalid smtp_recipient regex: {}", e))?
+            let parse_match_list = |list: Vec<crate::proto::config::SmtpMatch>, field_name: &str| -> Result<Vec<SmtpMatch>, anyhow::Error> {
+                list.into_iter()
+                    .map(|m| {
+                        let action = match ProtoAction::try_from(m.on_match) {
+                            Ok(ProtoAction::Allow) => crate::policy::SmtpMatchAction::Allow,
+                            Ok(ProtoAction::Deny) => crate::policy::SmtpMatchAction::Deny,
+                            _ => return Err(anyhow::anyhow!("Invalid {} action: must be ALLOW or DENY", field_name)),
+                        };
+                        let regex = Regex::new(&m.regex)
+                            .map_err(|e| anyhow::anyhow!("Invalid {} regex: {}", field_name, e))?;
+                        Ok(SmtpMatch { regex, on_match: action })
+                    })
+                    .collect()
             };
-            
-            let message = if matchers.smtp_message.is_empty() {
-                Regex::new("$^").unwrap()
-            } else {
-                Regex::new(&matchers.smtp_message)
-                    .map_err(|e| anyhow::anyhow!("Invalid smtp_message regex: {}", e))?
-            };
-            
-            SmtpPolicy { sender, recipient, message }
+
+            SmtpPolicy {
+                sender: parse_match_list(matchers.sender, "smtp_sender")?,
+                recipient: parse_match_list(matchers.recipient, "smtp_recipient")?,
+                message: parse_match_list(matchers.message, "smtp_message")?,
+            }
         } else {
             SmtpPolicy::default()
         };
@@ -107,20 +146,30 @@ impl Policy {
     }
 
     pub fn into_rule(&self, id: PolicyId) -> Rule {
-        let smtp_matchers = {
-            let sender_pattern = self.smtp_policy.sender.as_str();
-            let recipient_pattern = self.smtp_policy.recipient.as_str();
-            let message_pattern = self.smtp_policy.message.as_str();
+        let is_empty = self.smtp_policy.sender.is_empty()
+            && self.smtp_policy.recipient.is_empty()
+            && self.smtp_policy.message.is_empty();
+
+        let smtp_matchers = if is_empty {
+            None
+        } else {
+            use crate::proto::config::SmtpMatchAction as ProtoAction;
             
-            if sender_pattern == "$^" && recipient_pattern == "$^" && message_pattern == "$^" {
-                None
-            } else {
-                Some(crate::proto::config::SmtpMatchers {
-                    smtp_sender: sender_pattern.to_string(),
-                    smtp_recipient: recipient_pattern.to_string(),
-                    smtp_message: message_pattern.to_string(),
-                })
-            }
+            let to_proto_match = |m: &SmtpMatch| -> crate::proto::config::SmtpMatch {
+                crate::proto::config::SmtpMatch {
+                    regex: m.regex.as_str().to_string(),
+                    on_match: match m.on_match {
+                        crate::policy::SmtpMatchAction::Allow => ProtoAction::Allow as i32,
+                        crate::policy::SmtpMatchAction::Deny => ProtoAction::Deny as i32,
+                    },
+                }
+            };
+            
+            Some(crate::proto::config::SmtpMatchers {
+                sender: self.smtp_policy.sender.iter().map(to_proto_match).collect(),
+                recipient: self.smtp_policy.recipient.iter().map(to_proto_match).collect(),
+                message: self.smtp_policy.message.iter().map(to_proto_match).collect(),
+            })
         };
         
         Rule {

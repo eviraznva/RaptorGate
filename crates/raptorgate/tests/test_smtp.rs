@@ -7,7 +7,7 @@ use ngfw::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
 use ngfw::dpi::smtp::SmtpTracker;
 use ngfw::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use ngfw::policy::provider::DiskPolicyProvider;
-use ngfw::policy::{Policy, PolicyId, SmtpPolicy};
+use ngfw::policy::{Policy, PolicyId, SmtpPolicy, SmtpMatch, SmtpMatchAction};
 use ngfw::rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
 use ngfw::zones::resolver::ZoneResolver;
 use ngfw::zones::{DefaultPolicy, DirectionalZonePairs, ResolvedZonePair, ZonePairId};
@@ -162,217 +162,213 @@ fn smtp_packet(src: &EndpointIdentifier, dst: &EndpointIdentifier, payload: &[u8
 
 #[test]
 fn sender_filter_internal_to_external() {
-    let fixture = SmtpTestFixture::with_policies(vec![(
-        internal_zone_pair_id(),
-        SmtpPolicy {
-            sender: Regex::new(".*@gmail\\.com").unwrap(),
-            recipient: Regex::new("$^").unwrap(),
-            message: Regex::new("$^").unwrap(),
-        },
-    )]);
+    let mut policy = SmtpPolicy::default();
+    policy.sender.push(SmtpMatch {
+        regex: Regex::new(".*@gmail\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
+    let fixture = SmtpTestFixture::with_policies(vec![(internal_zone_pair_id(), policy)]);
 
     let session = fixture.simulate_session("10.0.0.10", "192.168.1.100");
     let policies = fixture.get_policies(&session);
 
     assert_eq!(policies.client_to_server.len(), 1);
-    assert!(policies.client_to_server[0].sender.is_match(b"test@gmail.com"));
-    assert!(!policies.client_to_server[0].sender.is_match(b"test@yahoo.com"));
+    assert!(policies.client_to_server[0].sender[0].regex.is_match(b"test@gmail.com"));
+    assert!(!policies.client_to_server[0].sender[0].regex.is_match(b"test@yahoo.com"));
 }
 
 #[test]
 fn recipient_filter_internal_to_external() {
-    let fixture = SmtpTestFixture::with_policies(vec![(
-        internal_zone_pair_id(),
-        SmtpPolicy {
-            sender: Regex::new("$^").unwrap(),
-            recipient: Regex::new(".*@gmail\\.com").unwrap(),
-            message: Regex::new("$^").unwrap(),
-        },
-    )]);
+    let mut policy = SmtpPolicy::default();
+    policy.recipient.push(SmtpMatch {
+        regex: Regex::new(".*@gmail\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
+    let fixture = SmtpTestFixture::with_policies(vec![(internal_zone_pair_id(), policy)]);
 
     let session = fixture.simulate_session("10.0.0.10", "192.168.1.100");
     let policies = fixture.get_policies(&session);
 
     assert_eq!(policies.client_to_server.len(), 1);
-    assert!(policies.client_to_server[0].recipient.is_match(b"test@gmail.com"));
-    assert!(!policies.client_to_server[0].recipient.is_match(b"test@yahoo.com"));
+    assert!(policies.client_to_server[0].recipient[0].regex.is_match(b"test@gmail.com"));
+    assert!(!policies.client_to_server[0].recipient[0].regex.is_match(b"test@yahoo.com"));
 }
 
 #[test]
 fn sender_and_recipient_filter_internal_to_external() {
-    let fixture = SmtpTestFixture::with_policies(vec![(
-        internal_zone_pair_id(),
-        SmtpPolicy {
-            sender: Regex::new(".*@gmail\\.com").unwrap(),
-            recipient: Regex::new(".*@example\\.com").unwrap(),
-            message: Regex::new("$^").unwrap(),
-        },
-    )]);
+    let mut policy = SmtpPolicy::default();
+    policy.sender.push(SmtpMatch {
+        regex: Regex::new(".*@gmail\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    policy.recipient.push(SmtpMatch {
+        regex: Regex::new(".*@example\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
+    let fixture = SmtpTestFixture::with_policies(vec![(internal_zone_pair_id(), policy)]);
 
     let session = fixture.simulate_session("10.0.0.10", "192.168.1.100");
     let policies = fixture.get_policies(&session);
 
     assert_eq!(policies.client_to_server.len(), 1);
-    assert!(policies.client_to_server[0].sender.is_match(b"test@gmail.com"));
-    assert!(policies.client_to_server[0].recipient.is_match(b"test@example.com"));
+    assert!(policies.client_to_server[0].sender[0].regex.is_match(b"test@gmail.com"));
+    assert!(policies.client_to_server[0].recipient[0].regex.is_match(b"test@example.com"));
 }
 
 #[test]
 fn sender_filter_external_to_internal() {
-    let fixture = SmtpTestFixture::with_policies(vec![(
-        external_zone_pair_id(),
-        SmtpPolicy {
-            sender: Regex::new(".*@gmail\\.com").unwrap(),
-            recipient: Regex::new("$^").unwrap(),
-            message: Regex::new("$^").unwrap(),
-        },
-    )]);
+    let mut policy = SmtpPolicy::default();
+    policy.sender.push(SmtpMatch {
+        regex: Regex::new(".*@gmail\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
+    let fixture = SmtpTestFixture::with_policies(vec![(external_zone_pair_id(), policy)]);
 
     let session = fixture.simulate_session("192.168.1.100", "10.0.0.10");
     let policies = fixture.get_policies(&session);
 
     assert_eq!(policies.client_to_server.len(), 1);
-    assert!(policies.client_to_server[0].sender.is_match(b"test@gmail.com"));
-    assert!(!policies.client_to_server[0].sender.is_match(b"test@yahoo.com"));
+    assert!(policies.client_to_server[0].sender[0].regex.is_match(b"test@gmail.com"));
+    assert!(!policies.client_to_server[0].sender[0].regex.is_match(b"test@yahoo.com"));
 }
 
 #[test]
 fn recipient_filter_external_to_internal() {
-    let fixture = SmtpTestFixture::with_policies(vec![(
-        external_zone_pair_id(),
-        SmtpPolicy {
-            sender: Regex::new("$^").unwrap(),
-            recipient: Regex::new(".*@gmail\\.com").unwrap(),
-            message: Regex::new("$^").unwrap(),
-        },
-    )]);
+    let mut policy = SmtpPolicy::default();
+    policy.recipient.push(SmtpMatch {
+        regex: Regex::new(".*@gmail\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
+    let fixture = SmtpTestFixture::with_policies(vec![(external_zone_pair_id(), policy)]);
 
     let session = fixture.simulate_session("192.168.1.100", "10.0.0.10");
     let policies = fixture.get_policies(&session);
 
     assert_eq!(policies.client_to_server.len(), 1);
-    assert!(policies.client_to_server[0].recipient.is_match(b"test@gmail.com"));
-    assert!(!policies.client_to_server[0].recipient.is_match(b"test@yahoo.com"));
+    assert!(policies.client_to_server[0].recipient[0].regex.is_match(b"test@gmail.com"));
+    assert!(!policies.client_to_server[0].recipient[0].regex.is_match(b"test@yahoo.com"));
 }
 
 #[test]
 fn sender_and_recipient_filter_external_to_internal() {
-    let fixture = SmtpTestFixture::with_policies(vec![(
-        external_zone_pair_id(),
-        SmtpPolicy {
-            sender: Regex::new(".*@gmail\\.com").unwrap(),
-            recipient: Regex::new(".*@example\\.com").unwrap(),
-            message: Regex::new("$^").unwrap(),
-        },
-    )]);
+    let mut policy = SmtpPolicy::default();
+    policy.sender.push(SmtpMatch {
+        regex: Regex::new(".*@gmail\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    policy.recipient.push(SmtpMatch {
+        regex: Regex::new(".*@example\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
+    let fixture = SmtpTestFixture::with_policies(vec![(external_zone_pair_id(), policy)]);
 
     let session = fixture.simulate_session("192.168.1.100", "10.0.0.10");
     let policies = fixture.get_policies(&session);
 
     assert_eq!(policies.client_to_server.len(), 1);
-    assert!(policies.client_to_server[0].sender.is_match(b"test@gmail.com"));
-    assert!(policies.client_to_server[0].recipient.is_match(b"test@example.com"));
+    assert!(policies.client_to_server[0].sender[0].regex.is_match(b"test@gmail.com"));
+    assert!(policies.client_to_server[0].recipient[0].regex.is_match(b"test@example.com"));
 }
 
 #[test]
 fn message_filter_internal_to_external() {
-    let fixture = SmtpTestFixture::with_policies(vec![(
-        internal_zone_pair_id(),
-        SmtpPolicy {
-            sender: Regex::new("$^").unwrap(),
-            recipient: Regex::new("$^").unwrap(),
-            message: Regex::new(".*Hello.*").unwrap(),
-        },
-    )]);
+    let mut policy = SmtpPolicy::default();
+    policy.message.push(SmtpMatch {
+        regex: Regex::new(".*Hello.*").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
+    let fixture = SmtpTestFixture::with_policies(vec![(internal_zone_pair_id(), policy)]);
 
     let session = fixture.simulate_session("10.0.0.10", "192.168.1.100");
     let policies = fixture.get_policies(&session);
 
     assert_eq!(policies.client_to_server.len(), 1);
-    assert!(policies.client_to_server[0].message.is_match(b"Hello world"));
-    assert!(!policies.client_to_server[0].message.is_match(b"Goodbye"));
+    assert!(policies.client_to_server[0].message[0].regex.is_match(b"Hello world"));
+    assert!(!policies.client_to_server[0].message[0].regex.is_match(b"Goodbye"));
 }
 
 #[test]
 fn message_filter_external_to_internal() {
-    let fixture = SmtpTestFixture::with_policies(vec![(
-        external_zone_pair_id(),
-        SmtpPolicy {
-            sender: Regex::new("$^").unwrap(),
-            recipient: Regex::new("$^").unwrap(),
-            message: Regex::new(".*Hello.*").unwrap(),
-        },
-    )]);
+    let mut policy = SmtpPolicy::default();
+    policy.message.push(SmtpMatch {
+        regex: Regex::new(".*Hello.*").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
+    let fixture = SmtpTestFixture::with_policies(vec![(external_zone_pair_id(), policy)]);
 
     let session = fixture.simulate_session("192.168.1.100", "10.0.0.10");
     let policies = fixture.get_policies(&session);
 
     assert_eq!(policies.client_to_server.len(), 1);
-    assert!(policies.client_to_server[0].message.is_match(b"Hello world"));
-    assert!(!policies.client_to_server[0].message.is_match(b"Goodbye"));
+    assert!(policies.client_to_server[0].message[0].regex.is_match(b"Hello world"));
+    assert!(!policies.client_to_server[0].message[0].regex.is_match(b"Goodbye"));
 }
 
 #[test]
 fn multiple_policies_same_zone_pair() {
+    let mut policy1 = SmtpPolicy::default();
+    policy1.sender.push(SmtpMatch {
+        regex: Regex::new(".*@gmail\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
+    let mut policy2 = SmtpPolicy::default();
+    policy2.sender.push(SmtpMatch {
+        regex: Regex::new(".*@yahoo\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
     let fixture = SmtpTestFixture::with_policies(vec![
-        (
-            internal_zone_pair_id(),
-            SmtpPolicy {
-                sender: Regex::new(".*@gmail\\.com").unwrap(),
-                recipient: Regex::new("$^").unwrap(),
-                message: Regex::new("$^").unwrap(),
-            },
-        ),
-        (
-            internal_zone_pair_id(),
-            SmtpPolicy {
-                sender: Regex::new(".*@yahoo\\.com").unwrap(),
-                recipient: Regex::new("$^").unwrap(),
-                message: Regex::new("$^").unwrap(),
-            },
-        ),
+        (internal_zone_pair_id(), policy1),
+        (internal_zone_pair_id(), policy2),
     ]);
 
     let session = fixture.simulate_session("10.0.0.10", "192.168.1.100");
     let policies = fixture.get_policies(&session);
 
     assert_eq!(policies.client_to_server.len(), 2);
-    let has_gmail = policies.client_to_server.iter().any(|p| p.sender.is_match(b"test@gmail.com"));
-    let has_yahoo = policies.client_to_server.iter().any(|p| p.sender.is_match(b"test@yahoo.com"));
+    let has_gmail = policies.client_to_server.iter().any(|p| p.sender.iter().any(|m| m.regex.is_match(b"test@gmail.com")));
+    let has_yahoo = policies.client_to_server.iter().any(|p| p.sender.iter().any(|m| m.regex.is_match(b"test@yahoo.com")));
     assert!(has_gmail);
     assert!(has_yahoo);
 }
 
 #[test]
 fn different_rules_per_zone_pair() {
+    let mut policy1 = SmtpPolicy::default();
+    policy1.recipient.push(SmtpMatch {
+        regex: Regex::new(".*@gmail\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+    
+    let mut policy2 = SmtpPolicy::default();
+    policy2.recipient.push(SmtpMatch {
+        regex: Regex::new(".*@yahoo\\.com").unwrap(),
+        on_match: SmtpMatchAction::Allow,
+    });
+
     let fixture = SmtpTestFixture::with_policies(vec![
-        (
-            internal_zone_pair_id(),
-            SmtpPolicy {
-                sender: Regex::new("$^").unwrap(),
-                recipient: Regex::new(".*@gmail\\.com").unwrap(),
-                message: Regex::new("$^").unwrap(),
-            },
-        ),
-        (
-            external_zone_pair_id(),
-            SmtpPolicy {
-                sender: Regex::new("$^").unwrap(),
-                recipient: Regex::new(".*@yahoo\\.com").unwrap(),
-                message: Regex::new("$^").unwrap(),
-            },
-        ),
+        (internal_zone_pair_id(), policy1),
+        (external_zone_pair_id(), policy2),
     ]);
 
     let session1 = fixture.simulate_session("10.0.0.10", "192.168.1.100");
     let policies1 = fixture.get_policies(&session1);
     assert_eq!(policies1.client_to_server.len(), 1);
-    assert!(policies1.client_to_server[0].recipient.is_match(b"test@gmail.com"));
-    assert!(!policies1.client_to_server[0].recipient.is_match(b"test@yahoo.com"));
+    assert!(policies1.client_to_server[0].recipient[0].regex.is_match(b"test@gmail.com"));
+    assert!(!policies1.client_to_server[0].recipient[0].regex.is_match(b"test@yahoo.com"));
 
     let session2 = fixture.simulate_session("192.168.1.100", "10.0.0.10");
     let policies2 = fixture.get_policies(&session2);
     assert_eq!(policies2.client_to_server.len(), 1);
-    assert!(policies2.client_to_server[0].recipient.is_match(b"test@yahoo.com"));
-    assert!(!policies2.client_to_server[0].recipient.is_match(b"test@gmail.com"));
+    assert!(policies2.client_to_server[0].recipient[0].regex.is_match(b"test@yahoo.com"));
+    assert!(!policies2.client_to_server[0].recipient[0].regex.is_match(b"test@gmail.com"));
 }

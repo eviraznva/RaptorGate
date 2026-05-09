@@ -7,10 +7,21 @@ import "google/protobuf/timestamp.proto";
 
 // ── Reguły RaptorLang ────────────────────────────────────────────────────────
 
+message SmtpMatch {
+  string regex = 1;
+  SmtpMatchAction on_match = 2;
+}
+
+enum SmtpMatchAction {
+  SMTP_MATCH_ACTION_UNSPECIFIED = 0;
+  SMTP_MATCH_ACTION_ALLOW = 1;
+  SMTP_MATCH_ACTION_DENY = 2;
+}
+
 message SmtpMatchers {
-  string smtp_sender    = 1;
-  string smtp_recipient = 2;
-  string smtp_message   = 3;
+  repeated SmtpMatch sender = 1;
+  repeated SmtpMatch recipient = 2;
+  repeated SmtpMatch message = 3;
 }
 
 message Rule {

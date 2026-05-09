@@ -404,6 +404,37 @@ async fn push_active_config_snapshot_raptorlang_error() {
 }
 
 #[tokio::test]
+#[serial(snapshot_bundle)]
+async fn push_active_config_snapshot_invalid_smtp_regex_returns_invalid_argument() {
+    let mut client = connect_snapshot(&shared_server().socket).await;
+    let mut valid = create_valid_bundle("snapshot_invalid_smtp", "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }");
+    
+    valid.rule.smtp_matchers = Some(ngfw::proto::config::SmtpMatchers {
+        sender: vec![ngfw::proto::config::SmtpMatch {
+            regex: "[invalid".to_string(),
+            on_match: ngfw::proto::config::SmtpMatchAction::Allow as i32,
+        }],
+        recipient: vec![],
+        message: vec![],
+    });
+    
+    let broken_bundle = ConfigBundle {
+        rules: vec![valid.rule],
+        zones: vec![valid.src_zone, valid.dst_zone],
+        zone_pairs: vec![valid.zone_pair],
+        ..Default::default()
+    };
+    let (request, _, _) = create_snapshot_request(broken_bundle);
+
+    let response = client.push_active_config_snapshot(request).await;
+
+    assert!(response.is_err());
+    let status = response.unwrap_err();
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert!(status.message().contains("smtp_sender"));
+}
+
+#[tokio::test]
 async fn get_tcp_sessions_returns_empty_tracker_sessions() {
     let mut query_client = connect(&shared_server().socket).await;
 
