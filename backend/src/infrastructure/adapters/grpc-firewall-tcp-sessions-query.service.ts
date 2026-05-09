@@ -1,14 +1,10 @@
-import {
-  Injectable,
-  OnModuleDestroy,
-  OnModuleInit,
-} from '@nestjs/common';
-import { Subscription } from 'rxjs';
+import { Injectable } from '@nestjs/common';
 import type { ConntrackFlowDto, ConntrackFlowStateDto } from '../../application/dtos/conntrack-metrics.dto.js';
 import type { IFirewallTcpSessionsQueryService } from '../../application/ports/firewall-tcp-sessions-query-service.interface.js';
 import {
   TcpSessionEndpoint,
   TcpTrackedSession,
+  type TcpTrackedSessionDetails,
   type TcpTrackedSessionState,
 } from '../../domain/entities/tcp-tracked-session.entity.js';
 import { IpAddress } from '../../domain/value-objects/ip-address.vo.js';
@@ -17,31 +13,20 @@ import { GrpcFirewallConntrackMetricsStreamService } from './grpc-firewall-connt
 
 @Injectable()
 export class GrpcFirewallTcpSessionsQueryService
-  implements IFirewallTcpSessionsQueryService, OnModuleInit, OnModuleDestroy
+  implements IFirewallTcpSessionsQueryService
 {
-  private cachedTcpFlows: ConntrackFlowDto[] = [];
-  private subscription?: Subscription;
-
   constructor(
     private readonly conntrackStream: GrpcFirewallConntrackMetricsStreamService,
   ) {}
 
-  onModuleInit(): void {
-    this.subscription = this.conntrackStream.conntrackMetrics$.subscribe(
-      (update) => {
-        this.cachedTcpFlows = (update.flows ?? []).filter(
-          (flow) => flow.original.protocol === 'tcp' && flow.lifecycle === 'active',
-        );
-      },
-    );
-  }
-
-  onModuleDestroy(): void {
-    this.subscription?.unsubscribe();
-  }
-
   async getTcpSessions(): Promise<TcpTrackedSession[]> {
-    return this.cachedTcpFlows.map((flow) => this.toTcpTrackedSession(flow));
+    const update = await this.conntrackStream.getConntrackMetricsSnapshot();
+
+    return update.flows
+      .filter(
+        (flow) => flow.original.protocol === 'tcp' && flow.lifecycle === 'active',
+      )
+      .map((flow) => this.toTcpTrackedSession(flow));
   }
 
   private toTcpTrackedSession(flow: ConntrackFlowDto): TcpTrackedSession {
@@ -59,7 +44,29 @@ export class GrpcFirewallTcpSessionsQueryService
       endpointA,
       endpointB,
       this.toSessionState(flow.state),
+      this.toSessionDetails(flow),
     );
+  }
+
+  private toSessionDetails(flow: ConntrackFlowDto): TcpTrackedSessionDetails {
+    return {
+      id: flow.id,
+      lifecycle: flow.lifecycle,
+      lastDirection: flow.lastDirection,
+      interfaces: flow.interfaces,
+      mark: flow.mark,
+      statusBits: flow.statusBits,
+      bytesOriginal: flow.bytesOriginal,
+      bytesReply: flow.bytesReply,
+      packetsOriginal: flow.packetsOriginal,
+      packetsReply: flow.packetsReply,
+      createdAt: flow.createdAt,
+      lastSeenAt: flow.lastSeenAt,
+      expiresAt: flow.expiresAt,
+      destroyedAt: flow.destroyedAt,
+      destroyReason: flow.destroyReason,
+      natInfo: flow.natInfo,
+    };
   }
 
   private toSessionState(state: ConntrackFlowStateDto): TcpTrackedSessionState {

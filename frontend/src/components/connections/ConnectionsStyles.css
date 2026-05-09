@@ -361,7 +361,7 @@
 .connections-table-wrap table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 760px;
+  min-width: 1040px;
 }
 
 .connections-table-wrap th {

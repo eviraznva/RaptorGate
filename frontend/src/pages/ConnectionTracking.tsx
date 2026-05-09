@@ -45,11 +45,20 @@ export default function ConnectionTracking() {
       if (normalizedSearch.length === 0) return true;
 
       return [
+        session.id,
         session.endpointA.ip,
         session.endpointA.port,
         session.endpointB.ip,
         session.endpointB.port,
         session.state,
+        session.lifecycle,
+        session.lastDirection,
+        session.interfaces.originalIngress,
+        session.interfaces.originalEgress,
+        session.interfaces.replyIngress,
+        session.interfaces.replyEgress,
+        session.natInfo?.ruleId,
+        session.natInfo?.bindingId,
       ]
         .join(" ")
         .toLowerCase()
