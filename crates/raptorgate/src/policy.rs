@@ -9,7 +9,6 @@ pub use crate::rule_tree::parsing::{RaptorlangError, parse_rule_tree};
 pub mod engine;
 pub mod policy_evaluator;
 pub mod provider;
-pub mod nat;
 
 // tonic::include_proto!("raptorgate.config");
 

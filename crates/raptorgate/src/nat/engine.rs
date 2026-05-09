@@ -1,0 +1,495 @@
+use std::net::IpAddr;
+use std::sync::{Arc, OnceLock, Weak};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use arc_swap::ArcSwap;
+use anyhow::{Result, bail};
+
+use crate::nat::range::NatRange;
+use crate::nat::port_alloc::PortStore;
+use crate::nat::manip::{ManipMask, ManipType};
+use crate::conntrack::tuple::{FlowTuple, Protocol};
+use crate::conntrack::table::{Conntrack, LookupResult};
+use crate::conntrack::observer::{CtObserver, DestroyReason};
+use crate::nat::config::{NatAction, NatProtocol, NatRule, NatRules};
+use crate::conntrack::entry::{ConntrackEntry, CtInfo, CtStatus, NatTransform, TupleManip};
+
+pub struct NatEngine {
+    rules: ArcSwap<Option<Arc<NatRules>>>,
+    port_store: Arc<PortStore>,
+    interface_ips: ArcSwap<HashMap<String, Vec<IpAddr>>>,
+    conntrack: OnceLock<Weak<Conntrack>>,
+    binding_id_seq: AtomicU64,
+    seed_key: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum NatOutcome {
+    /// Pakiet nie pasuje do żadnej reguły / nie wymaga NAT.
+    NoMatch,
+    /// `entry.nat` był już ustawiony — apply'd existing transform.
+    AppliedExisting { binding_id: u64 },
+    /// Nowo utworzony transform (first packet flow).
+    Created { binding_id: u64, rule_id: String },
+}
+
+impl NatEngine {
+    pub fn new(rules: Option<Arc<NatRules>>, interface_ips: HashMap<String, Vec<IpAddr>>) -> Arc<Self> {
+        Arc::new(Self {
+            rules: ArcSwap::from_pointee(rules),
+            port_store: Arc::new(PortStore::new()),
+            interface_ips: ArcSwap::from_pointee(interface_ips),
+            conntrack: OnceLock::new(),
+            binding_id_seq: AtomicU64::new(1),
+            seed_key: rand::random(),
+        })
+    }
+
+    /// PREROUTING: DNAT i PAT
+    pub fn prerouting(&self, packet: &mut [u8], ct: &Arc<ConntrackEntry>, _info: CtInfo, in_interface: &str, in_zone: Option<&str>) -> NatOutcome {
+        self.process_stage(packet, ct, ManipType::Destination, Some(in_interface), None, in_zone, None)
+    }
+
+    /// POSTROUTING: SNAT i MASQUERADE
+    pub fn postrouting(&self, packet: &mut [u8], ct: &Arc<ConntrackEntry>, _info: CtInfo, out_interface: &str, out_zone: Option<&str>) -> NatOutcome {
+        self.process_stage(packet, ct, ManipType::Source, None, Some(out_interface), None, out_zone)
+    }
+
+    fn process_stage(&self,
+        packet: &mut [u8],
+        ct: &Arc<ConntrackEntry>,
+        manip: ManipType,
+        in_interface: Option<&str>,
+        out_interface: Option<&str>,
+        in_zone: Option<&str>,
+        out_zone: Option<&str>) -> NatOutcome {
+
+        if let Some(existing) = ct.nat.lock().clone() {
+            if !self.would_apply_in_stage(&existing, manip) {
+                return NatOutcome::NoMatch;
+            }
+            return self.apply_existing(packet, ct, &existing, manip);
+        }
+
+        let Some(rule) = self.find_matching_rule(ct, manip, in_interface, out_interface, in_zone, out_zone) else {
+            return NatOutcome::NoMatch;
+        };
+
+        let Some(range) = self.range_from_action(rule.action(), out_interface, ct) else {
+            return NatOutcome::NoMatch;
+        };
+
+        let transform = match self.setup_nat(ct, manip, range, rule.id()) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(ct_id = ct.id, rule_id = rule.id(), error = %e, "setup_nat failed");
+                return NatOutcome::NoMatch;
+            }
+        };
+
+        if !self.apply_to_packet(packet, ct, &transform, manip) {
+            return NatOutcome::NoMatch;
+        }
+
+        ct.set_status(match manip {
+            ManipType::Source      => CtStatus::SRC_NAT_DONE,
+            ManipType::Destination => CtStatus::DST_NAT_DONE,
+        });
+
+        NatOutcome::Created { binding_id: transform.binding_id, rule_id: rule.id().to_string() }
+    }
+
+    pub fn attach_conntrack(&self, ct: &Arc<Conntrack>) {
+        let _ = self.conntrack.set(Arc::downgrade(ct));
+    }
+
+    pub fn replace_rules(&self, rules: Option<Arc<NatRules>>) {
+        self.rules.store(Arc::new(rules));
+    }
+
+    pub fn rules(&self) -> Option<Arc<NatRules>> {
+        self.rules.load().as_ref().clone()
+    }
+
+    pub fn port_store(&self) -> &Arc<PortStore> { &self.port_store }
+
+    fn would_apply_in_stage(&self, t: &NatTransform, manip: ManipType) -> bool {
+        match manip {
+            ManipType::Source      => t.has_src_manip(),
+            ManipType::Destination => t.has_dst_manip(),
+        }
+    }
+
+    fn apply_existing(&self, packet: &mut [u8], ct: &Arc<ConntrackEntry>, transform: &NatTransform, manip: ManipType) -> NatOutcome {
+        if !self.apply_to_packet(packet, ct, transform, manip) {
+            return NatOutcome::NoMatch;
+        }
+
+        ct.set_status(match manip {
+            ManipType::Source      => CtStatus::SRC_NAT_DONE,
+            ManipType::Destination => CtStatus::DST_NAT_DONE,
+        });
+
+        NatOutcome::AppliedExisting { binding_id: transform.binding_id }
+    }
+
+    fn apply_to_packet(&self, packet: &mut [u8], ct: &Arc<ConntrackEntry>, transform: &NatTransform, _manip: ManipType) -> bool {
+        let direction = self.detect_direction(ct, packet);
+
+        let (orig_for_apply, translated) = match direction {
+            PacketDirection::Original => {
+                let translated = apply_transform_to_tuple(&ct.original, transform);
+                (ct.original, translated)
+            }
+            PacketDirection::Reply => {
+                let reply = ct.reply.lock().clone();
+                let translated = apply_transform_to_tuple_reply(&reply, transform);
+                (reply, translated)
+            }
+        };
+
+        crate::nat::packet::apply_translation(packet, &orig_for_apply, &translated)
+    }
+
+    /// Direction wykrywany przez parsing pakietu i porównanie z `ct.original`.
+    /// Pipeline (ConntrackInStage) ma już tę informację w `PacketContext` ale
+    /// engine tu jej nie dostaje — recompute z bytes.
+    fn detect_direction(&self, ct: &Arc<ConntrackEntry>, packet: &[u8]) -> PacketDirection {
+        match crate::nat::packet::parse_flow_tuple_from_ethernet(packet) {
+            Some(flow) if flow.src_ip == ct.original.src_ip && flow.dst_ip == ct.original.dst_ip => {
+                PacketDirection::Original
+            }
+            Some(_) => PacketDirection::Reply,
+            None => PacketDirection::Original,
+        }
+    }
+
+    fn find_matching_rule(&self,
+        ct: &Arc<ConntrackEntry>,
+        manip: ManipType,
+        in_interface: Option<&str>,
+        out_interface: Option<&str>,
+        in_zone: Option<&str>,
+        out_zone: Option<&str>) -> Option<Arc<NatRule>> {
+
+        let rules = self.rules.load();
+        let rules = rules.as_ref().as_ref()?;
+
+        let allowed = |action: &NatAction| -> bool {
+            match (manip, action) {
+                (ManipType::Destination, NatAction::Dnat { .. }) => true,
+                (ManipType::Destination, NatAction::Pat  { .. }) => true,
+                (ManipType::Source, NatAction::Snat       { .. }) => true,
+                (ManipType::Source, NatAction::Masquerade { .. }) => true,
+                _ => false,
+            }
+        };
+
+        for rule in rules.rules() {
+            if !allowed(rule.action()) { continue; }
+
+            if let Some(req) = rule.in_interface()  { if in_interface  != Some(req) { continue; } }
+            if let Some(req) = rule.out_interface() { if out_interface != Some(req) { continue; } }
+            if let Some(req) = rule.in_zone()       { if in_zone       != Some(req) { continue; } }
+            if let Some(req) = rule.out_zone()      { if out_zone      != Some(req) { continue; } }
+
+            if !proto_matches(rule.protocol(), ct.original.protocol) { continue; }
+
+            if !port_in_range(rule.match_src_port_range(), ct.original.src_port) { continue; }
+            if !port_in_range(rule.match_dst_port_range(), ct.original.dst_port) { continue; }
+
+            if !flow_matches_action(rule.action(), &ct.original) { continue; }
+
+            return Some(Arc::new(rule.clone()));
+        }
+
+        None
+    }
+
+    fn range_from_action(&self, action: &NatAction, out_interface: Option<&str>, ct: &Arc<ConntrackEntry>) -> Option<NatRange> {
+        match action {
+            NatAction::Snat { translated_ip, src_port_range, .. } => {
+                Some(match src_port_range {
+                    Some((lo, hi)) => NatRange::single_ip_port_range(*translated_ip, *lo, *hi),
+                    None           => NatRange::single_ip_default(*translated_ip),
+                })
+            },
+
+            NatAction::Dnat { translated_ip, .. } => {
+                Some(NatRange::single_ip_port(*translated_ip, ct.original.dst_port))
+            },
+
+            NatAction::Pat { translated_ip, translated_port, .. } => {
+                Some(NatRange::single_ip_port(*translated_ip, *translated_port))
+            },
+
+            NatAction::Masquerade { src_port_range, .. } => {
+                let iface = out_interface?;
+                let ips = self.interface_ips.load();
+                let ip = ips.get(iface)?.iter().find(|ip| ip.is_ipv4()).copied()?;
+
+                Some(match src_port_range {
+                    Some((lo, hi)) => NatRange::single_ip_port_range(ip, *lo, *hi),
+                    None           => NatRange::single_ip_default(ip),
+                })
+            },
+        }
+    }
+
+    pub fn replace_interface_ips(&self, new_ips: HashMap<String, Vec<IpAddr>>) {
+        let old_snapshot = self.interface_ips.load_full();
+
+        let old_ips: HashSet<IpAddr> = old_snapshot.values().flatten().copied().collect();
+        let new_ips_set: HashSet<IpAddr> = new_ips.values().flatten().copied().collect();
+        let removed: HashSet<IpAddr> = old_ips.difference(&new_ips_set).copied().collect();
+
+        self.interface_ips.store(Arc::new(new_ips));
+
+        if removed.is_empty() { return; }
+
+        let Some(conntrack) = self.conntrack() else {
+            tracing::warn!("interface ips changed but conntrack not attached, skipping flush");
+            return;
+        };
+
+        let mut flushed = 0u32;
+
+        for ct in conntrack.iter_entries() {
+            let Some(allocated) = ct.nat.lock().as_ref().and_then(|t| t.allocated_ip) else { continue };
+
+            if removed.contains(&allocated) {
+                conntrack.destroy(&ct, DestroyReason::Manual);
+                flushed += 1;
+            }
+        }
+
+        if flushed > 0 {
+            tracing::info!(removed_ips = removed.len(), flushed_entries = flushed, "masquerade flush after ip change");
+        }
+    }
+
+    fn conntrack(&self) -> Option<Arc<Conntrack>> {
+        self.conntrack.get().and_then(Weak::upgrade)
+    }
+
+    fn setup_nat(&self, ct: &Arc<ConntrackEntry>, manip: ManipType, range: NatRange, rule_id: &str) -> Result<NatTransform> {
+        let proto = ct.original.protocol;
+
+        let mut guard = ct.nat.lock();
+
+        if let Some(existing) = guard.as_ref() {
+            tracing::trace!(ct_id = ct.id, "setup_nat idempotent: returning existing transform");
+            return Ok(existing.clone());
+        }
+
+        let mask = ManipMask::from_type(manip);
+        let seed = self.compute_seed(&ct.original);
+
+        let candidate = self.allocate_unique_tuple(ct, manip, &range, proto, seed)?;
+
+        let manip_tuple = TupleManip { ip: candidate.ip, port: candidate.port };
+
+        let transform = NatTransform {
+            rule_id: rule_id.to_string(),
+            binding_id: ct.id,
+            manip_bits: mask.bits(),
+            src_manip: if mask.contains_src() { Some(manip_tuple.clone()) } else { None },
+            dst_manip: if mask.contains_dst() { Some(manip_tuple.clone()) } else { None },
+            allocated_ip: candidate.alloc_ip,
+            allocated_port: candidate.alloc_port,
+            proto,
+        };
+
+        *guard = Some(transform.clone());
+
+        ct.set_status(match manip {
+            ManipType::Source      => CtStatus::SRC_NAT,
+            ManipType::Destination => CtStatus::DST_NAT,
+        });
+
+        let reply = ct.original.invert();
+        let new_reply = apply_transform_to_tuple(&reply, &transform);
+
+        ct.set_reply_tuple(new_reply);
+
+        tracing::debug!(
+              ct_id = ct.id,
+              rule_id,
+              ?manip,
+              allocated_ip = ?candidate.alloc_ip,
+              allocated_port = ?candidate.alloc_port,
+              "setup_nat installed transform"
+          );
+
+        Ok(transform)
+    }
+
+    fn allocate_unique_tuple(&self, ct: &Arc<ConntrackEntry>, manip: ManipType, range: &NatRange, proto: Protocol, seed: u64) -> Result<Candidate> {
+        const MAX_ATTEMPTS: u32 = 16;
+
+        let original_port = match manip {
+            ManipType::Source      => ct.original.src_port,
+            ManipType::Destination => ct.original.dst_port,
+        };
+
+        for attempt in 0..MAX_ATTEMPTS {
+            let alloc_port = self.port_store.alloc(range, proto, original_port, seed.wrapping_add(attempt as u64));
+
+            let port = match (range.port_specified(), alloc_port) {
+                (true, Some(p)) => Some(p),
+                (true, None) => bail!("port allocator exhausted in range {:?}", range),
+                (false, _) => None,
+            };
+
+            let candidate = Candidate {
+                ip: range.min_ip,
+                port,
+                alloc_ip: port.map(|_| range.min_ip),
+                alloc_port: port,
+            };
+
+            if !self.reply_collides(ct, manip, &candidate) {
+                return Ok(candidate);
+            }
+
+            if let (Some(ip), Some(p)) = (candidate.alloc_ip, candidate.alloc_port) {
+                self.port_store.release(ip, proto, p);
+            }
+
+            tracing::trace!(ct_id = ct.id, attempt, "setup_nat reply collision, retrying");
+        }
+
+        bail!("setup_nat: cannot find unique tuple after {MAX_ATTEMPTS} attempts");
+    }
+
+    fn reply_collides(&self, ct: &Arc<ConntrackEntry>, manip: ManipType, c: &Candidate) -> bool {
+        let Some(conntrack) = self.conntrack() else { return false; };
+
+        let reply = ct.original.invert();
+
+        let probe = match manip {
+            ManipType::Source => FlowTuple {
+                dst_ip: c.ip,
+                dst_port: c.port.unwrap_or(reply.dst_port),
+                ..reply
+            },
+
+            ManipType::Destination => FlowTuple {
+                src_ip: c.ip,
+                src_port: c.port.unwrap_or(reply.src_port),
+                ..reply
+            },
+        };
+
+        matches!(conntrack.lookup(&probe), LookupResult::Found { .. })
+    }
+
+    fn compute_seed(&self, tuple: &FlowTuple) -> u64 {
+        use std::hash::{Hash, Hasher};
+
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+
+        tuple.src_ip.hash(&mut h);
+        tuple.dst_ip.hash(&mut h);
+        self.seed_key.hash(&mut h);
+
+        h.finish()
+    }
+
+    pub(crate) fn next_binding_id(&self) -> u64 {
+        self.binding_id_seq.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+impl CtObserver for NatEngine {
+    fn on_destroy(&self, entry: &ConntrackEntry, _reason: DestroyReason) {
+        let Some(transform) = entry.nat.lock().clone() else { return };
+
+        if let (Some(ip), Some(port)) = (transform.allocated_ip, transform.allocated_port) {
+            self.port_store.release(ip, transform.proto, port);
+            tracing::trace!(ct_id = entry.id, %ip, port, "released port on destroy");
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Candidate {
+    ip: IpAddr,
+    port: Option<u16>,
+    alloc_ip: Option<IpAddr>,
+    alloc_port: Option<u16>,
+}
+
+fn apply_transform_to_tuple(reply: &FlowTuple, t: &NatTransform) -> FlowTuple {
+    let mut out = *reply;
+
+    if t.has_src_manip() {
+        if let Some(m) = &t.src_manip {
+            out.dst_ip = m.ip;
+            if let Some(p) = m.port { out.dst_port = p; }
+        }
+    }
+
+    if t.has_dst_manip() {
+        if let Some(m) = &t.dst_manip {
+            out.src_ip = m.ip;
+            if let Some(p) = m.port { out.src_port = p; }
+        }
+    }
+
+    out
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PacketDirection { Original, Reply }
+
+/// Match port flow vs Optional zakres reguły. None = brak ograniczenia (zawsze pasuje).
+fn port_in_range(range: Option<(u16, u16)>, port: u16) -> bool {
+    match range {
+        None => true,
+        Some((lo, hi)) => port >= lo && port <= hi,
+    }
+}
+
+fn proto_matches(rule_proto: NatProtocol, flow_proto: Protocol) -> bool {
+    match (rule_proto, flow_proto) {
+        (NatProtocol::All, _)              => true,
+        (NatProtocol::Tcp, Protocol::Tcp)  => true,
+        (NatProtocol::Udp, Protocol::Udp)  => true,
+        (NatProtocol::Icmp, Protocol::Icmp) => true,
+        (NatProtocol::Icmp, Protocol::IcmpV6) => true,
+        _ => false,
+    }
+}
+
+fn flow_matches_action(action: &NatAction, flow: &FlowTuple) -> bool {
+    match action {
+        NatAction::Snat { src_cidr, .. } => src_cidr.contains(&flow.src_ip),
+        NatAction::Dnat { dst_cidr, .. } => dst_cidr.contains(&flow.dst_ip),
+        NatAction::Pat  { dst_ip, dst_port, .. } => flow.dst_ip == *dst_ip && flow.dst_port == *dst_port,
+        NatAction::Masquerade { src_cidr, .. } => {
+            src_cidr.map(|c| c.contains(&flow.src_ip)).unwrap_or(true)
+        }
+    }
+}
+
+fn apply_transform_to_tuple_reply(reply: &FlowTuple, t: &NatTransform) -> FlowTuple {
+    let mut out = *reply;
+
+    if t.has_src_manip() {
+        if let Some(m) = &t.src_manip {
+            out.dst_ip = m.ip;
+            if let Some(p) = m.port { out.dst_port = p; }
+        }
+    }
+
+    if t.has_dst_manip() {
+        if let Some(m) = &t.dst_manip {
+            out.src_ip = m.ip;
+            if let Some(p) = m.port { out.src_port = p; }
+        }
+    }
+
+    out
+}

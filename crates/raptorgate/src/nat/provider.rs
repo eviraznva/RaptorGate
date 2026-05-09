@@ -1,10 +1,10 @@
-use std::path::PathBuf;
 use std::sync::Arc;
+use std::path::PathBuf;
 
-use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
+use anyhow::{Context, Result};
 
-use crate::data_plane::nat::config::NatConfig;
+use crate::nat::config::NatConfig;
 use crate::disk_store::SingleDiskStore;
 
 pub struct NatConfigProvider {
@@ -21,6 +21,7 @@ impl NatConfigProvider {
                 tracing::info!("nat config loaded from disk");
                 loaded
             }
+            
             Err(err) => {
                 tracing::warn!(error = %err, "failed to load nat config from disk, using empty config");
                 NatConfig::default()
@@ -36,23 +37,19 @@ impl NatConfigProvider {
     pub async fn swap_config(&self, new_config: NatConfig) -> Result<()> {
         let old = self.config.load_full();
 
-        self.store
-            .save(new_config.clone())
-            .await
-            .context("failed to save new nat config to disk")?;
+        self.store.save(new_config.clone()).await.context("failed to save new nat config to disk")?;
 
-        let verified = self
-            .store
-            .load()
-            .await
-            .context("nat config round-trip verification failed after save");
+        let verified = self.store.load().await.context("nat config round-trip verification failed after save");
 
         match verified {
             Ok(_) => {
                 self.config.store(Arc::new(new_config));
+                
                 tracing::info!("nat config swapped successfully");
+                
                 Ok(())
             }
+            
             Err(err) => {
                 tracing::error!(error = %err, "nat config verification failed, rolling back");
 

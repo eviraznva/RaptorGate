@@ -5,6 +5,8 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use crate::conntrack::observer::{CtObserver, DestroyReason};
+use crate::conntrack::entry::ConntrackEntry;
 use crate::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
 use crate::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
@@ -371,12 +373,6 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
 
     pub fn take_rst_packets(&self, id: &TcpIdentifier) -> Vec<Vec<u8>> {
         self.rst_packets.remove(id).map(|(_, packets)| packets).unwrap_or_default()
-    }
-
-    pub fn on_tcp_session_removed(&self, id: &TcpIdentifier) {
-        self.sessions.remove(id);
-        self.rst_packets.remove(id);
-        self.terminated_sessions.remove(id);
     }
 
     fn cleanup_session(&self, should_remove: bool, session: RefMut<'_, TcpIdentifier, SmtpSession>) {
@@ -754,6 +750,30 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
 
         self.cleanup_session(should_remove, session);
         disposition
+    }
+}
+
+impl<ZR: ZoneResolver> CtObserver for SmtpTracker<ZR> {
+    fn on_destroy(&self, entry: &ConntrackEntry, _reason: DestroyReason) {
+        let original_tuple = &entry.original;
+        let reply_tuple = entry.reply();
+
+        let original_src = EndpointIdentifier {
+            ip: original_tuple.src_ip,
+            port: crate::rule_tree::types::Port::from(original_tuple.src_port),
+        };
+        let original_dst = EndpointIdentifier {
+            ip: original_tuple.dst_ip,
+            port: crate::rule_tree::types::Port::from(original_tuple.dst_port),
+        };
+
+        let id = TcpIdentifier {
+            endpoints: unordered_pair::UnorderedPair::from((original_src, original_dst)),
+        };
+
+        self.sessions.remove(&id);
+        self.rst_packets.remove(&id);
+        self.terminated_sessions.remove(&id);
     }
 }
 
@@ -2187,5 +2207,84 @@ mod tests {
         assert_eq!(body_disp.packet, PacketAction::Drop);
         assert!(!deny_tracker.sessions.contains_key(&deny_id));
         assert_eq!(deny_tracker.take_rst_packets(&deny_id).len(), 2);
+    }
+
+    #[test]
+    fn ct_observer_on_destroy_removes_smtp_state() {
+        use crate::conntrack::entry::ConntrackEntry;
+        use crate::conntrack::tuple::{FlowTuple, Protocol};
+        use crate::conntrack::proto::tcp::TcpProtoState;
+        use crate::conntrack::proto::ProtoState;
+        use crate::conntrack::observer::DestroyReason;
+        use std::time::Duration;
+
+        let tracker = SmtpTracker::new(mock_policy_retriever());
+        let id = session_id();
+
+        prime_smtp_session(&tracker, &id);
+        send_client_packet(&tracker, &id, b"MAIL FROM:<user1@test.local>\r\n");
+
+        assert!(tracker.sessions.contains_key(&id));
+
+        let flow_tuple = FlowTuple::new(
+            client().ip,
+            u16::from(client().port),
+            server().ip,
+            u16::from(server().port),
+            Protocol::Tcp,
+        );
+
+        let entry = ConntrackEntry::new(
+            1,
+            flow_tuple,
+            ProtoState::Tcp(TcpProtoState::default()),
+            Duration::from_secs(30),
+            0,
+        );
+
+        tracker.on_destroy(&entry, DestroyReason::Timeout);
+
+        assert!(!tracker.sessions.contains_key(&id));
+        assert!(!tracker.rst_packets.contains_key(&id));
+        assert!(!tracker.terminated_sessions.contains_key(&id));
+    }
+
+    #[test]
+    fn ct_observer_on_destroy_unrelated_flow_preserves_smtp_state() {
+        use crate::conntrack::entry::ConntrackEntry;
+        use crate::conntrack::tuple::{FlowTuple, Protocol};
+        use crate::conntrack::proto::tcp::TcpProtoState;
+        use crate::conntrack::proto::ProtoState;
+        use crate::conntrack::observer::DestroyReason;
+        use std::time::Duration;
+        use std::net::Ipv4Addr;
+
+        let tracker = SmtpTracker::new(mock_policy_retriever());
+        let id = session_id();
+
+        prime_smtp_session(&tracker, &id);
+        send_client_packet(&tracker, &id, b"MAIL FROM:<user1@test.local>\r\n");
+
+        assert!(tracker.sessions.contains_key(&id));
+
+        let unrelated_flow = FlowTuple::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            12345,
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            80,
+            Protocol::Tcp,
+        );
+
+        let entry = ConntrackEntry::new(
+            2,
+            unrelated_flow,
+            ProtoState::Tcp(TcpProtoState::default()),
+            Duration::from_secs(30),
+            0,
+        );
+
+        tracker.on_destroy(&entry, DestroyReason::Timeout);
+
+        assert!(tracker.sessions.contains_key(&id));
     }
 }

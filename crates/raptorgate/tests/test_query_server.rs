@@ -9,19 +9,18 @@ use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use ngfw::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use ngfw::data_plane::ips::ips::Ips;
 use ngfw::data_plane::ips::provider::IpsConfigProvider;
-use ngfw::data_plane::nat::{NatConfigProvider, NatEngine};
+use ngfw::nat::{NatConfigProvider, NatEngine};
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::proto::config::{InterfaceStatus, Rule, Zone, ZoneInterface, ZonePair};
 use ngfw::proto::services::firewall_config_snapshot_service_client::FirewallConfigSnapshotServiceClient;
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::proto::services::{
-    ActiveConfigSnapshot, ConfigBundle, FactoryResetRequest, GetConfigRequest, GetIpsConfigRequest,
-    GetLiveZoneInterfacesRequest, GetNatConfigRequest, GetPinningBypassRequest,
+    ActiveConfigSnapshot, ConfigBundle, FactoryResetRequest,
+    GetLiveZoneInterfacesRequest, GetPinningBypassRequest,
     GetPinningStatsRequest, GetPoliciesRequest, GetZoneInterfaceRequest,
     GetZoneInterfacesRequest, GetZonePairsRequest, GetZonesRequest,
-    GetTcpSessionsRequest, PushActiveConfigSnapshotRequest, SwapConfigRequest, SwapIpsConfigRequest,
-    SwapNatConfigRequest,
+    GetTcpSessionsRequest, PushActiveConfigSnapshotRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::tls::pinning_detector::PinningConfig;
@@ -174,10 +173,30 @@ fn shared_server() -> &'static SharedServer {
                 let (interface_sniffer, _rx) = ngfw::data_plane::interface_sniffer::InterfaceSniffer::with_sniffing(100);
                 let interface_sniffer = Arc::new(interface_sniffer);
 
+                let proto_reg = {
+                    use ngfw::conntrack::proto::{tcp::TcpHandler, udp::UdpHandler, icmp::IcmpHandler, ProtoRegistry};
+                    use ngfw::conntrack::observer::ObserverRegistry;
+                    
+                    let observers = Arc::new(ObserverRegistry::default());
+                    let mut reg = ProtoRegistry::new();
+                    
+                    reg.register(Arc::new(TcpHandler::new(Arc::clone(&observers))));
+                    reg.register(Arc::new(UdpHandler::new(Arc::clone(&observers))));
+                    reg.register(Arc::new(IcmpHandler::v4()));
+                    reg.register(Arc::new(IcmpHandler::v6()));
+                    
+                    reg
+                };
+                let conntrack_for_test = Arc::new(ngfw::conntrack::table::Conntrack::new(
+                    Arc::new(proto_reg),
+                    ngfw::conntrack::config::ConntrackConfig::default(),
+                ));
+
                 let handler = QueryHandler {
                     tcp_tracker: TcpSessionTracker::new(),
-                    nat_engine: Arc::new(Mutex::new(NatEngine::new(&None, HashMap::new()))),
+                    nat_engine: NatEngine::new(None, HashMap::new()),
                     nat_store,
+                    conntrack: conntrack_for_test,
                     policy_store: Arc::new(policy),
                     policy_engine,
                     zone_store: Arc::new(zones),
@@ -516,13 +535,6 @@ async fn factory_reset_restores_safe_defaults() {
         .into_inner();
     assert_eq!(policies.rules.len(), 1);
     assert_eq!(policies.rules[0].name, "Default policy");
-
-    let nat = query_client
-        .get_nat_config(GetNatConfigRequest {})
-        .await
-        .unwrap()
-        .into_inner();
-    assert!(nat.config.unwrap().items.is_empty());
 }
 
 #[tokio::test]
@@ -801,128 +813,6 @@ async fn fetch_zone_pairs_returns_ok() {
 }
 
 #[tokio::test]
-#[serial(config)]
-async fn swap_config_happy_path_returns_no_error() {
-    let mut client = connect(&shared_server().socket).await;
-
-    client
-        .swap_config(SwapConfigRequest {
-            config: Some(ngfw::proto::config::AppConfig {
-                pcap_timeout_ms: 3000,
-                tun_device_name: "tun99".into(),
-                tun_address: "10.254.254.1".into(),
-                tun_netmask: "255.255.255.0".into(),
-                data_dir: "/tmp".into(),
-                event_socket_path: "./sockets/event.sock".into(),
-                query_socket_path: "/tmp/test-query-shared.sock".into(),
-                pki_dir: "/tmp/pki".into(),
-                ssl_inspection_enabled: false,
-                mitm_listen_addr: "127.0.0.1:8443".into(),
-                control_plane_socket_path: "./sockets/control-plane.sock".into(),
-                server_cert_socket_path: "./sockets/server-cert.sock".into(),
-                ssl_bypass_domains: vec![],
-                tls_inspection_ports: vec![443],
-                block_tls_on_undeclared_ports: false,
-            }),
-        })
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-#[serial(config)]
-async fn get_config_returns_ok() {
-    let mut client = connect(&shared_server().socket).await;
-
-    let swapped = ngfw::proto::config::AppConfig {
-        pcap_timeout_ms: 7000,
-        tun_device_name: "tun42".into(),
-        tun_address: "192.168.1.1".into(),
-        tun_netmask: "255.255.0.0".into(),
-        data_dir: "/tmp".into(),
-        event_socket_path: "./sockets/event.sock".into(),
-        query_socket_path: "/tmp/test-query-shared.sock".into(),
-        pki_dir: "/tmp/pki".into(),
-        ssl_inspection_enabled: false,
-        mitm_listen_addr: "127.0.0.1:8443".into(),
-        control_plane_socket_path: "./sockets/control-plane.sock".into(),
-        server_cert_socket_path: "./sockets/server-cert.sock".into(),
-        ssl_bypass_domains: vec![],
-        tls_inspection_ports: vec![443],
-        block_tls_on_undeclared_ports: false,
-    };
-
-    client
-        .swap_config(SwapConfigRequest {
-            config: Some(swapped.clone()),
-        })
-        .await
-        .unwrap();
-
-    let resp = client.get_config(GetConfigRequest {}).await.unwrap();
-    let inner = resp.into_inner();
-    let config = inner.config.expect("get_config returned no config");
-
-    assert_eq!(config.pcap_timeout_ms, 7000);
-    assert_eq!(config.tun_device_name, "tun42");
-    assert_eq!(config.tun_address, "192.168.1.1");
-    assert_eq!(config.tun_netmask, "255.255.0.0");
-    assert_eq!(config.pki_dir, "/tmp/pki");
-}
-
-#[tokio::test]
-#[serial(ips_config)]
-async fn swap_and_get_ips_config_roundtrip() {
-    let mut client = connect(&shared_server().socket).await;
-
-    let swapped = ngfw::proto::config::IpsConfig {
-        general: Some(ngfw::proto::config::IpsGeneralConfig { enabled: true }),
-        detection: Some(ngfw::proto::config::IpsDetectionConfig {
-            enabled: true,
-            max_payload_bytes: 2048,
-            max_matches_per_packet: 2,
-        }),
-        signatures: vec![ngfw::proto::config::IpsSignatureConfig {
-            id: "sig-http-sqli".into(),
-            name: "HTTP SQLi".into(),
-            enabled: true,
-            category: "sqli".into(),
-            pattern: "(?i)union\\s+select".into(),
-            match_type: ngfw::proto::config::IpsMatchType::Regex as i32,
-            pattern_encoding: ngfw::proto::config::IpsPatternEncoding::Text as i32,
-            case_insensitive: false,
-            severity: ngfw::proto::common::Severity::High as i32,
-            action: ngfw::proto::config::IpsAction::Block as i32,
-            app_protocols: vec![ngfw::proto::config::IpsAppProtocol::Http as i32],
-            src_ports: vec![],
-            dst_ports: vec![80, 8080],
-        }],
-    };
-
-    client
-        .swap_ips_config(SwapIpsConfigRequest {
-            config: Some(swapped.clone()),
-        })
-        .await
-        .unwrap();
-
-    let response = client
-        .get_ips_config(GetIpsConfigRequest {})
-        .await
-        .unwrap()
-        .into_inner();
-    let config = response.config.expect("get_ips_config returned no config");
-
-    assert!(config.general.expect("general").enabled);
-    let detection = config.detection.expect("detection");
-    assert_eq!(detection.max_payload_bytes, 2048);
-    assert_eq!(detection.max_matches_per_packet, 2);
-    assert_eq!(config.signatures.len(), 1);
-    assert_eq!(config.signatures[0].id, "sig-http-sqli");
-    assert_eq!(config.signatures[0].dst_ports, vec![80, 8080]);
-}
-
-#[tokio::test]
 #[serial(pinning)]
 async fn get_pinning_stats_returns_ok() {
     let mut client = connect(&shared_server().socket).await;
@@ -968,64 +858,6 @@ async fn get_pinning_bypass_missing_returns_not_found() {
 }
 
 #[tokio::test]
-#[serial(nat_config)]
-async fn swap_and_get_nat_config_roundtrip() {
-    let mut client = connect(&shared_server().socket).await;
-
-    let swapped = ngfw::proto::config::NatRuleSet {
-        items: vec![ngfw::proto::config::NatRule {
-            id: "dnat-http".into(),
-            r#type: ngfw::proto::common::NatRuleType::Dnat as i32,
-            src_ip: String::new(),
-            dst_ip: "203.0.113.10".into(),
-            src_port: None,
-            dst_port: Some(8080),
-            translated_ip: "192.168.10.10".into(),
-            translated_port: Some(80),
-            priority: 10,
-        }],
-    };
-
-    client
-        .swap_nat_config(SwapNatConfigRequest {
-            config: Some(swapped.clone()),
-        })
-        .await
-        .unwrap();
-
-    let response = client
-        .get_nat_config(GetNatConfigRequest {})
-        .await
-        .unwrap()
-        .into_inner();
-    let config = response.config.expect("get_nat_config returned no config");
-
-    assert_eq!(config.items.len(), 1);
-    assert_eq!(config.items[0].id, "dnat-http");
-    assert_eq!(
-        config.items[0].r#type,
-        ngfw::proto::common::NatRuleType::Dnat as i32
-    );
-    assert_eq!(config.items[0].dst_ip, "203.0.113.10");
-    assert_eq!(config.items[0].dst_port, Some(8080));
-    assert_eq!(config.items[0].translated_ip, "192.168.10.10");
-    assert_eq!(config.items[0].translated_port, Some(80));
-}
-
-#[tokio::test]
-#[serial(nat_config)]
-async fn swap_nat_config_rejects_missing_config() {
-    let mut client = connect(&shared_server().socket).await;
-
-    let err = client
-        .swap_nat_config(SwapNatConfigRequest { config: None })
-        .await
-        .unwrap_err();
-
-    assert_eq!(err.code(), tonic::Code::InvalidArgument);
-}
-
-#[tokio::test]
 #[serial(snapshot_bundle)]
 async fn push_active_config_snapshot_rejects_missing_default_zone() {
     let mut client = connect_snapshot(&shared_server().socket).await;
@@ -1043,24 +875,3 @@ async fn push_active_config_snapshot_rejects_missing_default_zone() {
     assert!(response.message.to_lowercase().contains("default"));
 }
 
-#[tokio::test]
-#[serial(nat_config)]
-async fn swap_nat_config_accepts_empty_rule_set() {
-    let mut client = connect(&shared_server().socket).await;
-
-    client
-        .swap_nat_config(SwapNatConfigRequest {
-            config: Some(ngfw::proto::config::NatRuleSet { items: vec![] }),
-        })
-        .await
-        .unwrap();
-
-    let response = client
-        .get_nat_config(GetNatConfigRequest {})
-        .await
-        .unwrap()
-        .into_inner();
-    let config = response.config.expect("get_nat_config returned no config");
-
-    assert!(config.items.is_empty());
-}
