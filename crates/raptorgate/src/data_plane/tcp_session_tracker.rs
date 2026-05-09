@@ -480,6 +480,11 @@ impl TcpSessionTracker {
 
         Ok(())
     }
+
+
+    pub fn get_session(&self, id: &TcpIdentifier) -> Option<TcpSessionState> {
+        self.sessions.get(id).map(|s| s.state)
+    }
 }
 
 enum PostAction {
@@ -506,10 +511,16 @@ pub enum TcpSessionError {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct TcpIdentifier {
-    endpoints: UnorderedPair<EndpointIdentifier>
+    pub(crate) endpoints: UnorderedPair<EndpointIdentifier>
 }
 
 impl TcpIdentifier {
+    pub fn new(client: EndpointIdentifier, server: EndpointIdentifier) -> Self {
+        Self {
+            endpoints: UnorderedPair::from((client, server)),
+        }
+    }
+
     pub fn endpoints(&self) -> (EndpointIdentifier, EndpointIdentifier) {
         self.endpoints.clone().into_ordered_tuple()
     }

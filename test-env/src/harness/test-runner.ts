@@ -293,7 +293,7 @@ class CommandBuilder {
 				);
 				if (!result.matched) {
 					throw new Error(
-						`Event assertion failed at pattern index ${result.failedAt}. Received ${result.received.length} events.`,
+						`Event assertion failed at pattern index ${result.failedAt}. Received ${result.received.length} events`,
 					);
 				}
 			}

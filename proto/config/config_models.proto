@@ -7,12 +7,30 @@ import "google/protobuf/timestamp.proto";
 
 // ── Reguły RaptorLang ────────────────────────────────────────────────────────
 
+message SmtpMatch {
+  string regex = 1;
+  SmtpMatchAction on_match = 2;
+}
+
+enum SmtpMatchAction {
+  SMTP_MATCH_ACTION_UNSPECIFIED = 0;
+  SMTP_MATCH_ACTION_ALLOW = 1;
+  SMTP_MATCH_ACTION_DENY = 2;
+}
+
+message SmtpMatchers {
+  repeated SmtpMatch sender = 1;
+  repeated SmtpMatch recipient = 2;
+  repeated SmtpMatch message = 3;
+}
+
 message Rule {
   string id           = 1;
   string name         = 2;
   string zone_pair_id = 3;
   uint32 priority     = 4;
   string content      = 5;  // źródło reguły w języku RaptorLang
+  optional SmtpMatchers smtp_matchers = 6;
 }
 
 message RuleSet {
@@ -84,20 +102,59 @@ message ZonePairSet {
 
 // ── NAT ──────────────────────────────────────────────────────────────────────
 
-message NatRule {
-  string              id               = 1;
-  common.NatRuleType  type             = 2;
-  string              src_ip           = 3;
-  string              dst_ip           = 4;
-  optional uint32     src_port         = 5;
-  optional uint32     dst_port         = 6;
-  string              translated_ip    = 7;
-  optional uint32     translated_port  = 8;
-  uint32              priority         = 9;
+message NatRuleSet {
+  repeated NatRule   items   = 1;
 }
 
-message NatRuleSet {
-  repeated NatRule   items   = 2;
+message NatRule {
+  string  id            = 1;
+  uint32  priority      = 2;
+
+  optional string in_interface  = 3;
+  optional string out_interface = 4;
+  optional string in_zone       = 5;
+  optional string out_zone      = 6;
+  common.NatProtocol protocol   = 7;
+
+  // Matchery portów. Wszystkie opcjonalne. Jeśli pusty/nieustawiony — match wszystkiego.
+  // Range inclusive [min, max]. Single port = ustaw min == max.
+  optional uint32 match_src_port_min = 20;
+  optional uint32 match_src_port_max = 21;
+  optional uint32 match_dst_port_min = 22;
+  optional uint32 match_dst_port_max = 23;
+
+  oneof action {
+    SnatRule       snat       = 10;
+    DnatRule       dnat       = 11;
+    PatRule        pat        = 12;
+    MasqueradeRule masquerade = 13;
+  }
+}
+
+message SnatRule {
+  string          src_cidr      = 1;
+  string          translated_ip = 2;
+  optional uint32 src_port_min  = 3;
+  optional uint32 src_port_max  = 4;
+}
+
+message DnatRule {
+  string dst_cidr      = 1;
+  string translated_ip = 2;
+}
+
+message PatRule {
+  string dst_ip          = 1;
+  uint32 dst_port        = 2;
+  string translated_ip   = 3;
+  uint32 translated_port = 4;
+}
+
+message MasqueradeRule {
+  // out_interface w NatRule jest WYMAGANE dla MASQUERADE (walidacja w Rust).
+  optional string src_cidr      = 1;
+  optional uint32 src_port_min  = 2;
+  optional uint32 src_port_max  = 3;
 }
 
 // ── DNS blacklista ────────────────────────────────────────────────────────────

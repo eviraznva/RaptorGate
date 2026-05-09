@@ -32,6 +32,14 @@ pub struct DiskPolicyProvider {
     swapper: Swapper<PolicyId, Policy>,
 }
 
+impl DiskPolicyProvider {
+    pub fn from_policies(policies: HashMap<PolicyId, Policy>, data_dir: std::path::PathBuf) -> Self {
+        Self {
+            swapper: Swapper::new(policies, crate::disk_store::ListDiskStore::new("policies", data_dir)),
+        }
+    }
+}
+
 #[async_trait]
 impl PolicyManager for DiskPolicyProvider {
     async fn swap_policies(&self, new_policies: Vec<(PolicyId, Policy)>) -> Result<(), PolicyProviderError> {
@@ -56,7 +64,8 @@ pub fn default_drop_policy() -> anyhow::Result<(PolicyId, Policy)> {
                 MatchKind::IpVer,
                 Pattern::Wildcard,
                 ArmEnd::Verdict(Verdict::DropWarn("Using default drop all policy".into())
-                )).build()?)
+                )).build()?),
+        smtp_policy: crate::policy::SmtpPolicy::default(),
     };
 
     Ok((Uuid::nil().into(), policy))
@@ -71,7 +80,8 @@ impl DiskPolicyProvider {
                 name: "DEV OVERRIDE".into(),
                 zone_pair_id: Uuid::nil().into(),
                 priority: 0,
-                rule_tree: RuleTree::new(parse_rule_tree(policy_override).expect("COULDNT APPLY DEV POLICY OVERRIDE"))
+                rule_tree: RuleTree::new(parse_rule_tree(policy_override).expect("COULDNT APPLY DEV POLICY OVERRIDE")),
+                smtp_policy: crate::policy::SmtpPolicy::default(),
             };
 
             let policies = HashMap::from([(Uuid::nil().into(), dev_policy)]);

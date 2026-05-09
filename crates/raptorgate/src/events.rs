@@ -313,6 +313,12 @@ pub struct RouteInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct SmtpSessionInfo {
+    pub client: Option<EndpointIdentifier>,
+    pub server: Option<EndpointIdentifier>,
+}
+
+#[derive(Debug, Clone)]
 pub enum EventKind {
     TcpSessionEstabilished { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
@@ -379,7 +385,8 @@ pub enum EventKind {
     RouteModified { old_route: RouteInfo, new_route: RouteInfo },
     RouteDeleted { route: RouteInfo },
     PolicyWarning { message: String, verdict: &'static str },
-    EventBusConnectedEvent {}
+    EventBusConnectedEvent {},
+    SmtpSessionStateChanged { session: SmtpSessionInfo, new_state: String },
 }
 
 impl EventKind {
@@ -418,10 +425,12 @@ impl EventKind {
             | E::RouteModified { .. }
             | E::RouteDeleted { .. }
             | E::PolicyWarning { .. }
-            | E::EventBusConnectedEvent { .. } => true,
+            | E::EventBusConnectedEvent { .. }
+            | E::SmtpSessionStateChanged { .. } => true,
         }
     }
 }
+
 
 fn system_time_to_proto(t: SystemTime) -> Timestamp {
     let dur = t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
@@ -755,11 +764,20 @@ impl From<EventKind> for proto::EventKind {
                         message,
                         verdict: verdict.to_string(),
                     }),
-                EventKind::EventBusConnectedEvent { .. } => Item::EventBusConnected(proto::EventBusConnectedEvent {})
+                EventKind::EventBusConnectedEvent { .. } => Item::EventBusConnected(proto::EventBusConnectedEvent {}),
+                EventKind::SmtpSessionStateChanged { session, new_state } =>
+                    Item::SmtpSessionStateChanged(proto::SmtpSessionStateChangedEvent {
+                        session: Some(proto::SmtpSession {
+                            client: session.client.map(Into::into),
+                            server: session.server.map(Into::into),
+                        }),
+                        new_state,
+                    }),
             }),
         }
     }
 }
+
 
 impl From<Event> for proto::Event {
     fn from(event: Event) -> Self {

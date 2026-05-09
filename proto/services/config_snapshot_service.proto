@@ -45,6 +45,9 @@ syntax = "proto3";
     repeated raptorgate.config.FirewallCertificate firewall_certificates = 10;
     raptorgate.config.IdentityBundle identity = 11;
     raptorgate.config.TlsInspectionPolicy tls_inspection_policy = 12;
+    raptorgate.config.AppConfig app_config = 13;
+    raptorgate.config.DnsInspectionConfig dns_inspection_config = 14;
+    raptorgate.config.IpsConfig ips_config = 15;
   }
 
   message PushActiveConfigSnapshotResponse {

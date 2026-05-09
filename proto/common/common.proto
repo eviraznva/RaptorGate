@@ -21,11 +21,11 @@ enum DefaultPolicy {
   DEFAULT_POLICY_DROP        = 2;
 }
 
-enum NatRuleType {
-  NAT_RULE_TYPE_UNSPECIFIED = 0;
-  NAT_RULE_TYPE_SNAT        = 1;
-  NAT_RULE_TYPE_DNAT        = 2;
-  NAT_RULE_TYPE_PAT         = 3;
+enum NatProtocol {
+  NAT_PROTOCOL_ALL  = 0;
+  NAT_PROTOCOL_TCP  = 1;
+  NAT_PROTOCOL_UDP  = 2;
+  NAT_PROTOCOL_ICMP = 3;
 }
 
 enum CertificateType {
