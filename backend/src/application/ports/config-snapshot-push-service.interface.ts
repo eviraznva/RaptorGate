@@ -4,7 +4,8 @@ export type ConfigSnapshotPushReason =
   | 'apply'
   | 'rollback'
   | 'manual_sync'
-  | 'import';
+  | 'import'
+  | 'decryption_mirror_update';
 
 export interface FactoryResetCommand {
   reason?: string;

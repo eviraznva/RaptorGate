@@ -22,12 +22,14 @@ import { ExportConfigUseCase } from '../application/use-cases/export-config.use-
 import { FactoryResetUseCase } from '../application/use-cases/factory-reset.use-case.js';
 import { GetConfigDiffUseCase } from '../application/use-cases/get-config-diff.use-case.js';
 import { GetConfigHistoryUseCase } from '../application/use-cases/get-config-history.use-case.js';
+import { GetDecryptionMirrorConfigUseCase } from '../application/use-cases/get-decryption-mirror-config.use-case.js';
 import { GetIdentityConfigUseCase } from '../application/use-cases/get-identity-config.use-case.js';
 import { ImportConfigUseCase } from '../application/use-cases/import-config.use-case.js';
 import { RollbackConfigUseCase } from '../application/use-cases/rollback-config.use-case.js';
 import { TestLdapProfileUseCase } from '../application/use-cases/test-ldap-profile.use-case.js';
 import { TestRadiusProfileUseCase } from '../application/use-cases/test-radius-profile.use-case.js';
 import { UpdateAuthenticationProfileUseCase } from '../application/use-cases/update-authentication-profile.use-case.js';
+import { UpdateDecryptionMirrorConfigUseCase } from '../application/use-cases/update-decryption-mirror-config.use-case.js';
 import { UpdateIdentitySettingsUseCase } from '../application/use-cases/update-identity-settings.use-case.js';
 import { UpdateLdapProfileUseCase } from '../application/use-cases/update-ldap-profile.use-case.js';
 import { UpdateRadiusProfileUseCase } from '../application/use-cases/update-radius-profile.use-case.js';
@@ -72,6 +74,7 @@ import { JsonZoneInterfaceRepository } from '../infrastructure/persistence/repos
 import { JsonZoneRepository } from '../infrastructure/persistence/repositories/json-zone.repository.js';
 import { JsonZonePairRepository } from '../infrastructure/persistence/repositories/json-zone-pair.repository.js';
 import { ConfigController } from '../presentation/controllers/config.controller.js';
+import { DecryptionMirrorController } from '../presentation/controllers/decryption-mirror.controller.js';
 import { IdentityConfigController } from '../presentation/controllers/identity-config.controller.js';
 import { Env } from '../shared/config/env.validation.js';
 import { IdentityConfigStoreModule } from './identity-config-store.module.js';
@@ -168,7 +171,7 @@ import { SecretModule } from './secret.module.js';
       },
     ]),
   ],
-  controllers: [ConfigController, IdentityConfigController],
+  controllers: [ConfigController, DecryptionMirrorController, IdentityConfigController],
   providers: [
     ApplyConfigSnapshotUseCase,
     CreateAuthenticationProfileUseCase,
@@ -179,6 +182,7 @@ import { SecretModule } from './secret.module.js';
     DeleteRadiusProfileUseCase,
     GetConfigDiffUseCase,
     GetConfigHistoryUseCase,
+    GetDecryptionMirrorConfigUseCase,
     GetIdentityConfigUseCase,
     RollbackConfigUseCase,
     ExportConfigUseCase,
@@ -187,6 +191,7 @@ import { SecretModule } from './secret.module.js';
     TestLdapProfileUseCase,
     TestRadiusProfileUseCase,
     UpdateAuthenticationProfileUseCase,
+    UpdateDecryptionMirrorConfigUseCase,
     UpdateIdentitySettingsUseCase,
     UpdateLdapProfileUseCase,
     UpdateRadiusProfileUseCase,

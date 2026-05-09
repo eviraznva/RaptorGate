@@ -8,6 +8,7 @@ import { clearUser } from "../../features/userSlice";
 const navItems = [
   { name: "Metrics", path: "/dashboard/metrics" },
   { name: "DNS", path: "/dashboard/dns" },
+  { name: "SSL Mirror", path: "/dashboard/ssl-decryption-mirror" },
   { name: "IPS", path: "/dashboard/ips" },
   { name: "Policy Engine", path: "/dashboard/rules" },
   { name: "Zones", path: "/dashboard/zones" },

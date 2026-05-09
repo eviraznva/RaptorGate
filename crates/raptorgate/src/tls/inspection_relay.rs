@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::dpi::{AppProto, DpiClassifier, DpiContext};
@@ -9,6 +10,7 @@ use crate::events;
 use crate::tls::decrypted_chain::{
     DecryptedTrafficInspector, InspectionDisposition,
 };
+use crate::tls::decryption_mirror::{DecryptionMirror, DecryptionMirrorConfig};
 
 const INSPECT_BUF_CAP: usize = 16_384;
 const CHUNK_SIZE: usize = 8_192;
@@ -38,11 +40,19 @@ pub enum InspectionMode {
 /// Relay z inspekcja DPI/IPS na odszyfrowanym ruchu TLS.
 pub struct InspectionRelay {
     inspector: Arc<dyn DecryptedTrafficInspector>,
+    mirror: Arc<DecryptionMirror>,
 }
 
 impl InspectionRelay {
     pub fn new(inspector: Arc<dyn DecryptedTrafficInspector>) -> Self {
-        Self { inspector }
+        Self {
+            inspector,
+            mirror: Arc::new(DecryptionMirror::start(DecryptionMirrorConfig::default(), CancellationToken::new())),
+        }
+    }
+
+    pub fn with_mirror(inspector: Arc<dyn DecryptedTrafficInspector>, mirror: Arc<DecryptionMirror>) -> Self {
+        Self { inspector, mirror }
     }
 
     /// Bidirectional relay z inspekcją obu kierunków.
@@ -64,6 +74,9 @@ impl InspectionRelay {
         let s2c_meta = meta.clone();
         let inspector_c2s = Arc::clone(&self.inspector);
         let inspector_s2c = Arc::clone(&self.inspector);
+        let mirror_c2s = Arc::clone(&self.mirror);
+        let mirror_s2c = Arc::clone(&self.mirror);
+        let session_id = Uuid::now_v7();
 
         let c2s = tokio::spawn(async move {
             relay_one_direction(
@@ -72,6 +85,8 @@ impl InspectionRelay {
                 Direction::ClientToServer,
                 &c2s_meta,
                 inspector_c2s,
+                mirror_c2s,
+                session_id,
             )
             .await
         });
@@ -82,6 +97,8 @@ impl InspectionRelay {
                 Direction::ServerToClient,
                 &s2c_meta,
                 inspector_s2c,
+                mirror_s2c,
+                session_id,
             )
             .await
         });
@@ -89,6 +106,7 @@ impl InspectionRelay {
         let bytes_up = c2s.await.unwrap_or(0);
         let bytes_down = s2c.await.unwrap_or(0);
         self.inspector.close_session(meta);
+        self.mirror.finish_session(session_id);
 
         (bytes_up, bytes_down)
     }
@@ -101,6 +119,8 @@ async fn relay_one_direction<R, W>(
     direction: Direction,
     meta: &SessionMeta,
     inspector: Arc<dyn DecryptedTrafficInspector>,
+    mirror: Arc<DecryptionMirror>,
+    session_id: Uuid,
 ) -> u64
 where
     R: AsyncRead + Unpin,
@@ -128,7 +148,10 @@ where
                     meta,
                     direction,
                     &*inspector,
+                    &mirror,
+                    session_id,
                     total_bytes,
+                    0,
                 )
                 .await;
             }
@@ -152,7 +175,10 @@ where
                 meta,
                 direction,
                 &*inspector,
+                &mirror,
+                session_id,
                 total_bytes,
+                0,
             )
             .await;
         }
@@ -167,7 +193,10 @@ where
                 meta,
                 direction,
                 &*inspector,
+                &mirror,
+                session_id,
                 total_bytes,
+                0,
             )
             .await;
         }
@@ -209,7 +238,10 @@ async fn flush_buffered_and_continue<R, W>(
     meta: &SessionMeta,
     direction: Direction,
     inspector: &dyn DecryptedTrafficInspector,
+    mirror: &DecryptionMirror,
+    session_id: Uuid,
     mut total_bytes: u64,
+    mut sequence: u64,
 ) -> u64
 where
     R: AsyncRead + Unpin,
@@ -219,6 +251,7 @@ where
     emit_ips_match_event(meta, &decision.ctx, direction);
 
     if matches!(decision.disposition, InspectionDisposition::Drop) {
+        mirror_dropped_payload(mirror, session_id, sequence, direction, meta, &decision.payload);
         let _ = writer.shutdown().await;
         return total_bytes;
     }
@@ -229,9 +262,11 @@ where
         let _ = writer.shutdown().await;
         return total_bytes;
     }
+    mirror.record_data(session_id, sequence, direction, meta, &decision.payload);
+    sequence += 1;
     total_bytes += decision.payload.len() as u64;
 
-    stream_with_inspection(reader, writer, &decision.ctx, meta, direction, inspector, total_bytes).await
+    stream_with_inspection(reader, writer, &decision.ctx, meta, direction, inspector, mirror, session_id, total_bytes, sequence).await
 }
 
 async fn stream_with_inspection<R, W>(
@@ -241,7 +276,10 @@ async fn stream_with_inspection<R, W>(
     meta: &SessionMeta,
     direction: Direction,
     inspector: &dyn DecryptedTrafficInspector,
+    mirror: &DecryptionMirror,
+    session_id: Uuid,
     mut total_bytes: u64,
+    mut sequence: u64,
 ) -> u64
 where
     R: AsyncRead + Unpin,
@@ -267,6 +305,7 @@ where
         emit_ips_match_event(meta, &decision.ctx, direction);
 
         if matches!(decision.disposition, InspectionDisposition::Drop) {
+            mirror_dropped_payload(mirror, session_id, sequence, direction, meta, &decision.payload);
             let _ = writer.shutdown().await;
             return total_bytes;
         }
@@ -280,8 +319,24 @@ where
             let _ = writer.shutdown().await;
             return total_bytes;
         }
+        mirror.record_data(session_id, sequence, direction, meta, &decision.payload);
+        sequence += 1;
         total_bytes += decision.payload.len() as u64;
     }
+}
+
+fn mirror_dropped_payload(
+    mirror: &DecryptionMirror,
+    session_id: Uuid,
+    sequence: u64,
+    direction: Direction,
+    meta: &SessionMeta,
+    payload: &[u8],
+) {
+    if mirror.current_config().forwarded_only {
+        return;
+    }
+    mirror.record_data(session_id, sequence, direction, meta, payload);
 }
 
 fn emit_ips_match_event(
@@ -364,6 +419,7 @@ mod tests {
     use tokio::io::duplex;
     use tokio::time::{timeout, Duration};
     use tonic::async_trait;
+    use crate::tls::decryption_mirror::{DecryptionMirror, DecryptionMirrorConfig};
 
     struct RecordingInspector {
         calls: Mutex<Vec<(Vec<u8>, bool)>>,
@@ -531,6 +587,68 @@ mod tests {
         assert!(!calls.is_empty());
         let (_payload, was_decrypted) = &calls[0];
         assert!(was_decrypted, "DpiContext.decrypted should be true");
+    }
+
+    #[tokio::test]
+    async fn mirror_receives_forwarded_decrypted_payload() {
+        let ips = Arc::new(RecordingInspector::new(InspectionDisposition::Forward));
+        let (mirror, mut rx) = DecryptionMirror::test_channel(DecryptionMirrorConfig {
+            enabled: true,
+            target: Some("collector.local:9000".into()),
+            ..Default::default()
+        });
+        let relay = InspectionRelay::with_mirror(ips, Arc::new(mirror));
+        let meta = test_meta();
+
+        let payload = b"GET /mirror HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let (mut c_w, c_r) = duplex(1024);
+        let (s_w, _s_r) = duplex(1024);
+
+        c_w.write_all(payload).await.unwrap();
+        drop(c_w);
+
+        let (mut empty_w, empty_r) = duplex(64);
+        let (empty_w2, _empty_r2) = duplex(64);
+        empty_w.shutdown().await.unwrap();
+
+        let (up, _down) = relay
+            .relay_bidirectional(c_r, s_w, empty_r, empty_w2, &meta)
+            .await;
+
+        let record = rx.try_recv().unwrap();
+        assert_eq!(up, payload.len() as u64);
+        assert_eq!(record.target(), "collector.local:9000");
+        assert_eq!(record.frame().payload(), payload);
+    }
+
+    #[tokio::test]
+    async fn mirror_does_not_receive_dropped_payload() {
+        let ips = Arc::new(RecordingInspector::new(InspectionDisposition::Drop));
+        let (mirror, mut rx) = DecryptionMirror::test_channel(DecryptionMirrorConfig {
+            enabled: true,
+            target: Some("collector.local:9000".into()),
+            ..Default::default()
+        });
+        let relay = InspectionRelay::with_mirror(ips, Arc::new(mirror));
+        let meta = test_meta();
+
+        let payload = b"GET /blocked HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let (mut c_w, c_r) = duplex(1024);
+        let (s_w, _s_r) = duplex(1024);
+
+        c_w.write_all(payload).await.unwrap();
+        drop(c_w);
+
+        let (mut empty_w, empty_r) = duplex(64);
+        let (empty_w2, _empty_r2) = duplex(64);
+        empty_w.shutdown().await.unwrap();
+
+        let (up, _down) = relay
+            .relay_bidirectional(c_r, s_w, empty_r, empty_w2, &meta)
+            .await;
+
+        assert_eq!(up, 0);
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]

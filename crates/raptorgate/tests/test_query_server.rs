@@ -26,7 +26,7 @@ use ngfw::proto::services::{
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::tls::pinning_detector::PinningConfig;
-use ngfw::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
+use ngfw::tls::{DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
 use ngfw::interfaces::{InterfaceMonitor, NetlinkInterfaceController, OperState, SystemInterface};
 use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
@@ -190,6 +190,7 @@ fn shared_server() -> &'static SharedServer {
                     ips_store,
                     ips,
                     decision_engine: Arc::clone(&decision_engine),
+                    decryption_mirror: Arc::new(DecryptionMirror::start(DecryptionMirrorConfig::default(), CancellationToken::new())),
                     server_key_store,
                     pinning_detector: decision_engine.pinning_detector_arc(),
                     interface_monitor,

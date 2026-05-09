@@ -20,6 +20,17 @@ export interface TlsInspectionPolicyPayload {
   strip_ech_dns: boolean;
   log_ech_attempts: boolean;
   known_pinned_domains: string[];
+  decryption_mirror: DecryptionMirrorConfigPayload;
+}
+
+export interface DecryptionMirrorConfigPayload {
+  enabled: boolean;
+  target_host: string;
+  target_port: number;
+  include_client_to_server: boolean;
+  include_server_to_client: boolean;
+  forwarded_only: boolean;
+  max_session_bytes: number;
 }
 
 export const DEFAULT_TLS_INSPECTION_POLICY: Readonly<TlsInspectionPolicyPayload> =
@@ -29,6 +40,15 @@ export const DEFAULT_TLS_INSPECTION_POLICY: Readonly<TlsInspectionPolicyPayload>
     strip_ech_dns: true,
     log_ech_attempts: true,
     known_pinned_domains: [],
+    decryption_mirror: {
+      enabled: false,
+      target_host: '',
+      target_port: 0,
+      include_client_to_server: true,
+      include_server_to_client: true,
+      forwarded_only: true,
+      max_session_bytes: 16 * 1024 * 1024,
+    },
   };
 
 export function normalizeTlsInspectionPolicy(
@@ -38,6 +58,10 @@ export function normalizeTlsInspectionPolicy(
     ...DEFAULT_TLS_INSPECTION_POLICY,
     ...(policy ?? {}),
     known_pinned_domains: [...(policy?.known_pinned_domains ?? [])],
+    decryption_mirror: {
+      ...DEFAULT_TLS_INSPECTION_POLICY.decryption_mirror,
+      ...(policy?.decryption_mirror ?? {}),
+    },
   };
 }
 

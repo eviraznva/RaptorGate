@@ -49,7 +49,7 @@ use crate::pipeline::{Chain, Stage, StageOutcome};
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
-    CaManager, DecryptedChainInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig,
+    CaManager, DecryptedChainInspector, DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, MitmProxy, MitmProxyConfig,
     PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
 use crate::interfaces::{InterfaceMonitor, NetlinkInterfaceController, NetworkInterfaceMonitor};
@@ -179,6 +179,10 @@ async fn main() {
         Arc::clone(&server_key_store),
         EchTlsPolicy::default(),
         PinningConfig::default(),
+    ));
+    let decryption_mirror = Arc::new(DecryptionMirror::start(
+        DecryptionMirrorConfig::default(),
+        CancellationToken::new(),
     ));
 
     let tcp_session_tracker = TcpSessionTracker::new();
@@ -457,6 +461,7 @@ async fn main() {
                             zone_interface_store: Arc::clone(&zone_interfaces),
                         },
                     )),
+                    decryption_mirror: Arc::clone(&decryption_mirror),
                     cancel: tls_runtime_cancel,
                 };
 
@@ -515,6 +520,7 @@ async fn main() {
             ips_store: Arc::clone(&ips_store),
             ips: Arc::clone(&ips),
             decision_engine: Arc::clone(&decision_engine),
+            decryption_mirror: Arc::clone(&decryption_mirror),
             server_key_store: Arc::clone(&server_key_store),
             pinning_detector: decision_engine.pinning_detector_arc(),
             interface_monitor: Arc::clone(&interface_monitor),
