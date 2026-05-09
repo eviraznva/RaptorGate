@@ -50,7 +50,7 @@ def setup_email_server
     postconf -e 'myorigin = $mydomain'
     postconf -e 'mydestination = localhost'
     postconf -e 'mynetworks = 192.168.10.0/24, 192.168.20.0/24, 127.0.0.0/8'
-    postconf -e 'virtual_mailbox_domains = test.local'
+    postconf -e 'virtual_mailbox_domains = test.local test.remote'
     postconf -e 'virtual_mailbox_base = /var/mail/vmail'
     postconf -e 'virtual_mailbox_maps = hash:/etc/postfix/vmailbox'
     postconf -e 'virtual_uid_maps = static:5000'
@@ -62,11 +62,17 @@ def setup_email_server
 user1@test.local test.local/user1/
 user2@test.local test.local/user2/
 user3@test.local test.local/user3/
+user1@test.remote test.remote/user1/
+user2@test.remote test.remote/user2/
+user3@test.remote test.remote/user3/
+user4@test.remote test.remote/user4/
+user5@test.remote test.remote/user5/
 EOF
     postmap /etc/postfix/vmailbox
 
     useradd -r -u 5000 -g mail -d /var/mail/vmail -s /usr/sbin/nologin -c "Virtual Mail User" vmail || true
     mkdir -p /var/mail/vmail/test.local/{user1,user2,user3}
+    mkdir -p /var/mail/vmail/test.remote/{user1,user2,user3,user4,user5}
     chown -R vmail:mail /var/mail/vmail
     chmod -R 770 /var/mail/vmail
 
@@ -96,6 +102,11 @@ EOF
 user1@test.local:{PLAIN}password1
 user2@test.local:{PLAIN}password2
 user3@test.local:{PLAIN}password3
+user1@test.remote:{PLAIN}password1
+user2@test.remote:{PLAIN}password2
+user3@test.remote:{PLAIN}password3
+user4@test.remote:{PLAIN}password4
+user5@test.remote:{PLAIN}password5
 EOF
     chmod 600 /etc/dovecot/users
 

@@ -4,6 +4,7 @@ import type {
 	ZonePair,
 	ZoneInterface,
 	AppConfig,
+	SmtpMatchers,
 } from "../generated/config/config_models";
 import { DefaultPolicy } from "../generated/common/common";
 import type {
