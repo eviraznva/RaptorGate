@@ -10,7 +10,7 @@ export type CreateNatRuleActionDto =
         srcPortMax?: number | null;
       };
     }
-  | { $case: 'dnat'; dnat: { dstCidr: string; translatedIp: string } }
+  | { $case: 'dnat'; dnat: { dstCidr: string; translatedIp: string; translatedPort?: number | null } }
   | {
       $case: 'pat';
       pat: {

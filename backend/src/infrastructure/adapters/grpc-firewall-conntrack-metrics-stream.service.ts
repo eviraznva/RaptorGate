@@ -100,7 +100,7 @@ export class GrpcFirewallConntrackMetricsStreamService
     return {
       timestamp: this.toTimestamp(update.timestamp),
       summary: update.summary,
-      flows: update.flows.map((flow) => this.toFlowDto(flow)),
+      flows: (update.flows ?? []).map((flow) => this.toFlowDto(flow)),
     };
   }
 

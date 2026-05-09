@@ -125,6 +125,7 @@ function fromRule(r: NatRule): FormState {
         ...state,
         dstCidr: r.action.dnat.dstCidr,
         translatedIp: r.action.dnat.translatedIp,
+        translatedPort: r.action.dnat.translatedPort != null ? String(r.action.dnat.translatedPort) : "",
       };
     case "pat":
       return {
@@ -283,6 +284,7 @@ export default function NatRuleForm({ rule, isOpen, onClose, onSuccess }: NatRul
           dnat: {
             dstCidr: form.dstCidr.trim(),
             translatedIp: form.translatedIp.trim(),
+            translatedPort: toOptionalInt(form.translatedPort),
           },
         };
       case "PAT":
@@ -337,6 +339,9 @@ export default function NatRuleForm({ rule, isOpen, onClose, onSuccess }: NatRul
     if (form.type === "DNAT") {
       newErrors.dstCidr = validateRequired(form.dstCidr);
       newErrors.translatedIp = validateRequired(form.translatedIp);
+      if (form.translatedPort !== "") {
+        newErrors.translatedPort = validatePort(form.translatedPort);
+      }
     }
 
     if (form.type === "PAT") {
@@ -560,6 +565,9 @@ export default function NatRuleForm({ rule, isOpen, onClose, onSuccess }: NatRul
                   </FieldGroup>
                   <FieldGroup label="Translated IP" error={errors.translatedIp}>
                     <input className={`input text-sm font-mono ${errors.translatedIp ? "border-[#f43f5e]" : ""}`} value={form.translatedIp} onChange={(e) => setField("translatedIp", e.target.value)} placeholder="10.0.0.10" autoComplete="off" />
+                  </FieldGroup>
+                  <FieldGroup label="Translated Port" optional error={errors.translatedPort}>
+                    <input className={`input text-sm font-mono ${errors.translatedPort ? "border-[#f43f5e]" : ""}`} type="number" min={1} max={65535} value={form.translatedPort} onChange={(e) => setField("translatedPort", e.target.value)} placeholder="80" />
                   </FieldGroup>
                 </div>
               </div>

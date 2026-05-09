@@ -133,7 +133,10 @@ function ActionCell({ rule }: { rule: NatRule }) {
         <div className="font-mono text-xs">
           <span className="text-[#f5f5f5]">{rule.action.dnat.dstCidr}</span>
           <span className="text-[#4a4a4a]"> → </span>
-          <span className="text-[#f59e0b]">{rule.action.dnat.translatedIp}</span>
+          <span className="text-[#f59e0b]">
+            {rule.action.dnat.translatedIp}
+            {rule.action.dnat.translatedPort != null ? `:${rule.action.dnat.translatedPort}` : ""}
+          </span>
         </div>
       );
     case "pat":

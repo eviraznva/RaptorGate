@@ -113,6 +113,8 @@ pub enum NatConfigRule {
         common: CommonMatchers,
         dst_cidr: String,
         translated_ip: String,
+        #[serde(default)]
+        translated_port: Option<u16>,
     },
     Pat {
         id: String,
@@ -158,12 +160,13 @@ impl NatConfigRule {
                 build_rule(id, *priority, common, action)
             },
             
-            Self::Dnat { id, priority, common, dst_cidr, translated_ip } => {
+            Self::Dnat { id, priority, common, dst_cidr, translated_ip, translated_port } => {
                 let action = NatAction::Dnat {
                     dst_cidr: parse_ipnet(dst_cidr, "dnat.dst_cidr")?,
                     translated_ip: translated_ip.parse::<IpAddr>().with_context(|| format!("invalid dnat.translated_ip: {translated_ip}"))?,
+                    translated_port: *translated_port,
                 };
-                
+
                 build_rule(id, *priority, common, action)
             },
             
@@ -217,12 +220,13 @@ impl NatConfigRule {
                 src_port_max: src_port_range.map(|(_, hi)| hi),
             },
             
-            NatAction::Dnat { dst_cidr, translated_ip } => Self::Dnat {
+            NatAction::Dnat { dst_cidr, translated_ip, translated_port } => Self::Dnat {
                 id: rule.id().to_string(),
                 priority: rule.priority(),
                 common,
                 dst_cidr: dst_cidr.to_string(),
                 translated_ip: translated_ip.to_string(),
+                translated_port: *translated_port,
             },
             
             NatAction::Pat { dst_ip, dst_port, translated_ip, translated_port } => Self::Pat {
@@ -319,6 +323,7 @@ pub enum NatAction {
     Dnat {
         dst_cidr: IpNet,
         translated_ip: IpAddr,
+        translated_port: Option<u16>,
     },
     Pat {
         dst_ip: IpAddr,
@@ -379,6 +384,7 @@ impl NatRule {
             config::nat_rule::Action::Dnat(d) => NatAction::Dnat {
                 dst_cidr: parse_required_net(&d.dst_cidr, "dnat.dst_cidr")?,
                 translated_ip: parse_required_ip(&d.translated_ip, "dnat.translated_ip")?,
+                translated_port: d.translated_port.map(|p| parse_required_port(p, "dnat.translated_port")).transpose()?,
             },
 
             config::nat_rule::Action::Pat(p) => NatAction::Pat {
@@ -425,10 +431,11 @@ impl NatRule {
                 })
             },
 
-            NatAction::Dnat { dst_cidr, translated_ip } => {
+            NatAction::Dnat { dst_cidr, translated_ip, translated_port } => {
                 config::nat_rule::Action::Dnat(config::DnatRule {
                     dst_cidr: dst_cidr.to_string(),
                     translated_ip: translated_ip.to_string(),
+                    translated_port: translated_port.map(|p| u32::from(p)),
                 })
             },
 
@@ -620,5 +627,102 @@ mod tests {
         let back: NatConfigRule = serde_json::from_str(&json).unwrap();
         
         assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn dnat_with_translated_port_maps_to_runtime() {
+        let cfg = NatConfigRule::Dnat {
+            id: "d1".into(),
+            priority: 5,
+            common: CommonMatchers { protocol: NatConfigProtocol::Tcp, ..Default::default() },
+            dst_cidr: "203.0.113.10/32".into(),
+            translated_ip: "10.0.0.10".into(),
+            translated_port: Some(80),
+        };
+
+        let runtime = cfg.to_runtime_rule().unwrap();
+
+        match runtime.action() {
+            NatAction::Dnat { dst_cidr, translated_ip, translated_port } => {
+                assert_eq!(dst_cidr.to_string(), "203.0.113.10/32");
+                assert_eq!(*translated_ip, "10.0.0.10".parse::<IpAddr>().unwrap());
+                assert_eq!(*translated_port, Some(80));
+            }
+            _ => panic!("expected Dnat"),
+        }
+    }
+
+    #[test]
+    fn dnat_without_translated_port_maps_to_runtime() {
+        let cfg = NatConfigRule::Dnat {
+            id: "d2".into(),
+            priority: 5,
+            common: CommonMatchers::default(),
+            dst_cidr: "10.0.0.0/24".into(),
+            translated_ip: "192.168.1.1".into(),
+            translated_port: None,
+        };
+
+        let runtime = cfg.to_runtime_rule().unwrap();
+
+        match runtime.action() {
+            NatAction::Dnat { translated_port, .. } => {
+                assert_eq!(*translated_port, None);
+            }
+            _ => panic!("expected Dnat"),
+        }
+    }
+
+    #[test]
+    fn dnat_serde_roundtrip_with_port() {
+        let cfg = NatConfigRule::Dnat {
+            id: "d3".into(),
+            priority: 10,
+            common: CommonMatchers::default(),
+            dst_cidr: "203.0.113.0/24".into(),
+            translated_ip: "10.0.0.1".into(),
+            translated_port: Some(8080),
+        };
+
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"action\":\"dnat\""));
+        assert!(json.contains("\"translated_port\":8080"));
+
+        let back: NatConfigRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn dnat_serde_roundtrip_without_port() {
+        let cfg = NatConfigRule::Dnat {
+            id: "d4".into(),
+            priority: 10,
+            common: CommonMatchers::default(),
+            dst_cidr: "10.0.0.0/8".into(),
+            translated_ip: "192.168.1.1".into(),
+            translated_port: None,
+        };
+
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: NatConfigRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn dnat_proto_roundtrip_with_port() {
+        let cfg = NatConfigRule::Dnat {
+            id: "d5".into(),
+            priority: 7,
+            common: CommonMatchers { protocol: NatConfigProtocol::Tcp, ..Default::default() },
+            dst_cidr: "1.2.3.4/32".into(),
+            translated_ip: "10.0.0.5".into(),
+            translated_port: Some(443),
+        };
+
+        let runtime = cfg.to_runtime_rule().unwrap();
+        let proto_msg = runtime.into_proto();
+        let back = NatRule::try_from_proto(proto_msg).unwrap();
+
+        assert_eq!(runtime, back);
     }
 }

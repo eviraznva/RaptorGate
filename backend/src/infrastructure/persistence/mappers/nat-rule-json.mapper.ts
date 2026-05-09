@@ -202,7 +202,14 @@ export class NatRuleJsonMapper {
           },
         };
       case 'dnat':
-        return { $case: 'dnat', dnat: action.dnat };
+        return {
+          $case: 'dnat',
+          dnat: {
+            dstCidr: action.dnat.dstCidr,
+            translatedIp: action.dnat.translatedIp,
+            translatedPort: action.dnat.translatedPort?.getValue ?? null,
+          },
+        };
       case 'pat':
         return {
           $case: 'pat',

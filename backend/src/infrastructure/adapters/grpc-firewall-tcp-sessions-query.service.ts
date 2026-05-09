@@ -29,7 +29,7 @@ export class GrpcFirewallTcpSessionsQueryService
   onModuleInit(): void {
     this.subscription = this.conntrackStream.conntrackMetrics$.subscribe(
       (update) => {
-        this.cachedTcpFlows = update.flows.filter(
+        this.cachedTcpFlows = (update.flows ?? []).filter(
           (flow) => flow.original.protocol === 'tcp' && flow.lifecycle === 'active',
         );
       },

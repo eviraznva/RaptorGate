@@ -353,6 +353,7 @@ export class GrpcConfigSnapshotPushService
           dnat: {
             dstCidr: action.dnat.dstCidr,
             translatedIp: action.dnat.translatedIp,
+            translatedPort: action.dnat.translatedPort?.getValue,
           },
         };
       case "pat":

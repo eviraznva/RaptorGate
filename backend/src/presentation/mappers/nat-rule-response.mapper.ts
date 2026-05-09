@@ -38,7 +38,14 @@ export class NatRuleResponseMapper {
           },
         };
       case 'dnat':
-        return { $case: 'dnat', dnat: action.dnat };
+        return {
+          $case: 'dnat',
+          dnat: {
+            dstCidr: action.dnat.dstCidr,
+            translatedIp: action.dnat.translatedIp,
+            translatedPort: action.dnat.translatedPort?.getValue,
+          },
+        };
       case 'pat':
         return {
           $case: 'pat',

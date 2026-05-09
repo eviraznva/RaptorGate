@@ -121,8 +121,9 @@ message SnatRule {
 }
 
 message DnatRule {
-  string dst_cidr      = 1;
-  string translated_ip = 2;
+  string dst_cidr            = 1;
+  string translated_ip       = 2;
+  optional uint32 translated_port = 3;
 }
 
 message PatRule {

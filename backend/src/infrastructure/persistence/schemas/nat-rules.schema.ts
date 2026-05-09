@@ -20,6 +20,7 @@ const snatActionSchema = z.object({
 const dnatActionSchema = z.object({
   dstCidr: z.string().min(1).max(128),
   translatedIp: z.string().min(1).max(64),
+  translatedPort: portSchema.nullable().optional(),
 });
 
 const patActionSchema = z.object({

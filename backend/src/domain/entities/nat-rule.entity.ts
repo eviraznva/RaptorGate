@@ -13,6 +13,7 @@ export interface SnatRuleAction {
 export interface DnatRuleAction {
   dstCidr: string;
   translatedIp: string;
+  translatedPort?: Port;
 }
 
 export interface PatRuleAction {
@@ -99,12 +100,19 @@ export class NatRule {
 
   public static createDnatRule(
     props: NatRuleBaseProps & {
-      dnat: { dstCidr: string; translatedIp: string };
+      dnat: { dstCidr: string; translatedIp: string; translatedPort?: number | null };
     },
   ): NatRule {
     return this.createWithAction(props, {
       $case: 'dnat',
-      dnat: props.dnat,
+      dnat: {
+        dstCidr: props.dnat.dstCidr,
+        translatedIp: props.dnat.translatedIp,
+        translatedPort:
+          props.dnat.translatedPort != null
+            ? Port.create(props.dnat.translatedPort)
+            : undefined,
+      },
     });
   }
 

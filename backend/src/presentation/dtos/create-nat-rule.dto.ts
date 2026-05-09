@@ -92,7 +92,7 @@ export class CreateNatRuleDto {
   @ApiProperty({
     example: {
       $case: 'dnat',
-      dnat: { dstCidr: '203.0.113.10/32', translatedIp: '10.0.0.10' },
+      dnat: { dstCidr: '203.0.113.10/32', translatedIp: '10.0.0.10', translatedPort: 80 },
     },
   })
   @IsObject()
