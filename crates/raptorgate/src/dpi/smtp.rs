@@ -1,5 +1,5 @@
 use dashmap::{DashMap, mapref::one::RefMut};
-use etherparse::TransportSlice;
+use etherparse::{PacketBuilder, TransportSlice};
 use smtp_proto::{request::receiver::{RequestReceiver, DataReceiver, BdatReceiver}, response::parser::ResponseReceiver};
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -322,36 +322,26 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         }
     }
 
-    fn build_rst_packet(snapshot: &TcpSeqSnapshot, dst: &EndpointIdentifier) -> Option<Vec<u8>> {
+    fn build_rst_packet(src: &TcpSeqSnapshot, dst: &TcpSeqSnapshot) -> Option<Vec<u8>> {
         use std::net::IpAddr;
-        use etherparse::{Ipv4Header, TcpHeader};
-
-        let (src_ip, dst_ip) = match (snapshot.endpoint.ip, dst.ip) {
+        
+        let (src_ip, dst_ip) = match (src.endpoint.ip, dst.endpoint.ip) {
             (IpAddr::V4(src), IpAddr::V4(dst)) => (src, dst),
             _ => return None, // IPv6 not supported for now
         };
+        let builder = PacketBuilder::ethernet2([0; 6], [0; 6])
+            .ipv4(src_ip.octets(), dst_ip.octets(), 64)
+            .tcp(
+                u16::from(src.endpoint.port),
+                u16::from(dst.endpoint.port),
+                src.next_seq,
+                0,
+            )
+            .ack(dst.next_seq)
+            .rst();
 
-        let mut tcp_header = TcpHeader::new(
-            u16::from(snapshot.endpoint.port),
-            u16::from(dst.port),
-            snapshot.next_seq,
-            0,
-        );
-        tcp_header.rst = true;
-
-        let ip_header = Ipv4Header::new(
-            tcp_header.header_len_u16(),
-            64,
-            etherparse::IpNumber::TCP,
-            src_ip.octets(),
-            dst_ip.octets(),
-        ).ok()?;
-
-        let mut packet = Vec::new();
-        packet.extend_from_slice(&[0u8; 14]); // Ethernet header placeholder
-        ip_header.write(&mut packet).ok()?;
-        tcp_header.write(&mut packet).ok()?;
-
+        let mut packet = Vec::with_capacity(builder.size(0));
+        builder.write(&mut packet, &[]).ok()?;
         Some(packet)
     }
 
@@ -686,10 +676,10 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                         if let (Some(client_seq), Some(server), Some(server_seq), Some(client)) =
                             (&session.client_seq, &session.server, &session.server_seq, &session.client)
                         {
-                            if let Some(rst_to_server) = Self::build_rst_packet(client_seq, server) {
+                            if let Some(rst_to_server) = Self::build_rst_packet(client_seq, server_seq) {
                                 rst_packets.push(rst_to_server);
                             }
-                            if let Some(rst_to_client) = Self::build_rst_packet(server_seq, client) {
+                            if let Some(rst_to_client) = Self::build_rst_packet(server_seq, client_seq) {
                                 rst_packets.push(rst_to_client);
                             }
                         }
@@ -770,6 +760,8 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::packet_validator::validate;
+    use etherparse::{NetSlice, SlicedPacket, TransportSlice};
     use smtp_proto::{MailFrom, RcptTo, Request};
 
     fn req(r: Request<&str>) -> SessionTransition<'_> {
@@ -1035,7 +1027,7 @@ mod tests {
 
     use std::net::{IpAddr, Ipv4Addr};
     use std::collections::HashMap;
-    use etherparse::{PacketBuilder, SlicedPacket};
+    use etherparse::PacketBuilder;
     use unordered_pair::UnorderedPair;
     use crate::data_plane::tcp_session_tracker::TcpIdentifier;
     use crate::zones::{DefaultPolicy, DirectionalZonePairs, ResolvedZonePair, ZonePairId};
@@ -1184,6 +1176,41 @@ mod tests {
         let packet = smtp_packet(&server(), &client(), payload);
         let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
         tracker.on_new_packet(sliced.transport.unwrap(), id, server(), client());
+    }
+
+    fn assert_valid_rst_packet(
+        raw: &[u8],
+        src: &EndpointIdentifier,
+        dst: &EndpointIdentifier,
+        expected_seq: u32,
+        expected_ack: u32,
+    ) {
+        let sliced = SlicedPacket::from_ethernet(raw).unwrap();
+        assert!(validate(&sliced).is_ok(), "RST packet failed validation: {:?}", sliced);
+
+        let Some(NetSlice::Ipv4(ipv4)) = sliced.net else {
+            panic!("expected IPv4 packet");
+        };
+        let Some(TransportSlice::Tcp(tcp)) = sliced.transport else {
+            panic!("expected TCP packet");
+        };
+
+        let IpAddr::V4(src_ip) = src.ip else {
+            panic!("expected IPv4 source");
+        };
+        let IpAddr::V4(dst_ip) = dst.ip else {
+            panic!("expected IPv4 destination");
+        };
+
+        assert_eq!(ipv4.header().source_addr(), src_ip);
+        assert_eq!(ipv4.header().destination_addr(), dst_ip);
+        assert_eq!(tcp.source_port(), u16::from(src.port));
+        assert_eq!(tcp.destination_port(), u16::from(dst.port));
+        assert!(tcp.rst());
+        assert!(tcp.ack());
+        assert_eq!(tcp.sequence_number(), expected_seq);
+        assert_eq!(tcp.acknowledgment_number(), expected_ack);
+        assert!(tcp.payload().is_empty());
     }
 
     fn prime_smtp_session(tracker: &SmtpTracker<MockZoneResolver>, id: &TcpIdentifier) {
@@ -2001,6 +2028,10 @@ mod tests {
     fn sender_policy_allows_local_sender_and_denies_remote_sender() {
         let mut policy = SmtpPolicy::default();
         policy.sender.push(smtp_match(".*@test\\.local", SmtpMatchAction::Allow));
+        let greeting_len = b"220 mail.example.com ESMTP\r\n".len() as u32;
+        let mail_len = b"MAIL FROM:<user1@test.remote>\r\n".len() as u32;
+        let client_seq = 1000 + mail_len;
+        let server_seq = 1000 + greeting_len;
 
         let allow_tracker = SmtpTracker::new(mock_policy_retriever_with_policies(vec![policy.clone()]));
         let allow_id = session_id();
@@ -2019,7 +2050,10 @@ mod tests {
         let deny_disp = send_client_packet(&deny_tracker, &deny_id, b"MAIL FROM:<user1@test.remote>\r\n");
         assert_eq!(deny_disp.packet, PacketAction::Drop);
         assert!(!deny_tracker.sessions.contains_key(&deny_id));
-        assert_eq!(deny_tracker.take_rst_packets(&deny_id).len(), 2);
+        let rst_packets = deny_tracker.take_rst_packets(&deny_id);
+        assert_eq!(rst_packets.len(), 2);
+        assert_valid_rst_packet(&rst_packets[0], &client(), &server(), client_seq, server_seq);
+        assert_valid_rst_packet(&rst_packets[1], &server(), &client(), server_seq, client_seq);
     }
 
     #[test]
