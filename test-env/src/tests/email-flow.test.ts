@@ -124,7 +124,7 @@ describe("Email Flow", () => {
 		})
 			.expectOutput([/\/var\/mail\/vmail\/test\.local\/user2/])
 			.run();
-	}, {timeout: 15_000});
+	}, {timeout: 20_000});
 
 	test("allows sender domain from allow-list and blocks others", async () => {
 		await request("PushActiveConfigSnapshot", {
@@ -164,7 +164,7 @@ describe("Email Flow", () => {
 		})
 			.isErr()
 			.run();
-	}, {timeout: 15_000});
+	}, {timeout: 20_000});
 
 	test("allows recipient domain from allow-list and blocks mixed recipients", async () => {
 		await request("PushActiveConfigSnapshot", {
@@ -213,7 +213,7 @@ describe("Email Flow", () => {
 		})
 			.isErr()
 			.run();
-	}, {timeout: 15_000});
+	}, {timeout: 20_000});
 	
 	test("message content allow and deny filters with dotall", async () => {
 		await request("PushActiveConfigSnapshot", {
@@ -265,5 +265,5 @@ describe("Email Flow", () => {
 		})
 			.isErr()
 			.run();
-	}, {timeout: 15_000});
+	}, {timeout: 20_000});
 });

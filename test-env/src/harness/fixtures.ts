@@ -116,8 +116,16 @@ export function createDefaultSnapshotBundle(
 		sslBypassList: overrides?.sslBypassList ?? [],
 		ipsSignatures: overrides?.ipsSignatures ?? [],
 		firewallCertificates: overrides?.firewallCertificates ?? [],
+		appConfig: overrides?.appConfig ?? { ...DEFAULT_APP_CONFIG },
 		...(overrides?.mlModel ? { mlModel: overrides.mlModel } : {}),
 		...(overrides?.identity ? { identity: overrides.identity } : {}),
+		...(overrides?.dnsInspectionConfig
+			? { dnsInspectionConfig: overrides.dnsInspectionConfig }
+			: {}),
+		...(overrides?.ipsConfig ? { ipsConfig: overrides.ipsConfig } : {}),
+		...(overrides?.tlsInspectionPolicy
+			? { tlsInspectionPolicy: overrides.tlsInspectionPolicy }
+			: {}),
 	};
 }
 
@@ -196,19 +204,9 @@ export function createVlanZoneBundle(rules: Rule[]): ConfigBundle {
 }
 
 export async function resetFirewallState(
-	client: FirewallQueryServiceClient,
+	_client: FirewallQueryServiceClient,
 	snapshotClient: FirewallConfigSnapshotServiceClient,
 ): Promise<void> {
-	await new Promise<void>((resolve, reject) => {
-		client.swapConfig(
-			{ config: DEFAULT_APP_CONFIG },
-			(err: Error | null) => {
-				if (err) reject(err);
-				else resolve();
-			},
-		);
-	});
-
 	await new Promise<void>((resolve, reject) => {
 		snapshotClient.pushActiveConfigSnapshot(
 			{
