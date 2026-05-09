@@ -1197,7 +1197,26 @@ impl Stage for SmtpStage {
 
                 StageOutcome::Halt
             }
-            PacketAction::Drop => StageOutcome::Halt,
+            PacketAction::Drop => {
+                // Check if there are RST packets to inject
+                let rst_packets = self.tracker.take_rst_packets(&session_id);
+                if !rst_packets.is_empty() {
+                    let interface = ctx.borrow_src_interface().clone();
+                    let mut rst_contexts = Vec::new();
+                    
+                    for rst_raw in rst_packets {
+                        if let Ok(rst_ctx) = crate::data_plane::packet_context::PacketContext::from_raw(rst_raw, interface.clone()) {
+                            rst_contexts.push(rst_ctx);
+                        }
+                    }
+                    
+                    if !rst_contexts.is_empty() {
+                        return StageOutcome::ReleaseBatch(rst_contexts.into());
+                    }
+                }
+                
+                StageOutcome::Halt
+            }
         }
     }
     

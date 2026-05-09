@@ -9,7 +9,47 @@ use crate::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
 use crate::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
 use crate::interfaces::NetworkInterfaceMonitor;
+use crate::policy::SmtpPolicy;
 use crate::zones::resolver::{RoutingZoneResolver, ZoneResolver};
+
+#[derive(Clone, Debug)]
+pub(crate) struct TcpSeqSnapshot {
+    pub endpoint: EndpointIdentifier,
+    pub seq: u32,
+    pub next_seq: u32,
+}
+
+pub(crate) struct SmtpPolicyEvaluator;
+
+impl SmtpPolicyEvaluator {
+    pub fn evaluate(session: &SmtpSession, policies: &[SmtpPolicy]) -> bool {
+        if policies.is_empty() {
+            return false;
+        }
+
+        let sender = session.current_sender.as_deref().unwrap_or("");
+        let recipients = &session.current_recipients;
+        let message = &session.current_message;
+
+        for policy in policies {
+            if !policy.sender.is_match(sender.as_bytes()) {
+                return false;
+            }
+
+            for recipient in recipients {
+                if !policy.recipient.is_match(recipient.as_bytes()) {
+                    return false;
+                }
+            }
+
+            if !policy.message.is_match(message) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum DataState {
@@ -155,6 +195,9 @@ struct SmtpSession {
     current_message: Vec<u8>,
     data_receiver: Option<DataReceiver>,
     bdat_receiver: Option<BdatReceiver>,
+    client_seq: Option<TcpSeqSnapshot>,
+    server_seq: Option<TcpSeqSnapshot>,
+    rst_packets: Vec<Vec<u8>>,
 }
 
 impl SmtpSession {
@@ -216,6 +259,39 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         }
     }
 
+    fn build_rst_packet(snapshot: &TcpSeqSnapshot, dst: &EndpointIdentifier) -> Option<Vec<u8>> {
+        use std::net::IpAddr;
+        use etherparse::{Ipv4Header, TcpHeader};
+
+        let (src_ip, dst_ip) = match (snapshot.endpoint.ip, dst.ip) {
+            (IpAddr::V4(src), IpAddr::V4(dst)) => (src, dst),
+            _ => return None, // IPv6 not supported for now
+        };
+
+        let mut tcp_header = TcpHeader::new(
+            u16::from(snapshot.endpoint.port),
+            u16::from(dst.port),
+            snapshot.next_seq,
+            0,
+        );
+        tcp_header.rst = true;
+
+        let ip_header = Ipv4Header::new(
+            tcp_header.header_len_u16(),
+            64,
+            etherparse::IpNumber::TCP,
+            src_ip.octets(),
+            dst_ip.octets(),
+        ).ok()?;
+
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&[0u8; 14]); // Ethernet header placeholder
+        ip_header.write(&mut packet).ok()?;
+        tcp_header.write(&mut packet).ok()?;
+
+        Some(packet)
+    }
+
     pub fn get_session_policies(&self, id: &TcpIdentifier) -> Option<SmtpSessionPolicies> {
         self.sessions.get(id).and_then(|s| s.policies.clone())
     }
@@ -238,6 +314,20 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         } else {
             VecDeque::new()
         }
+    }
+
+    pub fn take_rst_packets(&self, id: &TcpIdentifier) -> Vec<Vec<u8>> {
+        if let Some(mut session) = self.sessions.get_mut(id) {
+            std::mem::take(&mut session.rst_packets)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Cleanup entrypoint for future TCP session removal integration.
+    /// Called when a TCP session is removed to clean up associated SMTP state.
+    pub fn on_tcp_session_removed(&self, id: &TcpIdentifier) {
+        self.sessions.remove(id);
     }
 
     fn cleanup_session(&self, should_remove: bool, session: RefMut<'_, TcpIdentifier, SmtpSession>) {
@@ -276,6 +366,9 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
             current_message: Vec::new(),
             data_receiver: None,
             bdat_receiver: None,
+            client_seq: None,
+            server_seq: None,
+            rst_packets: Vec::new(),
         });
 
         let mut should_remove = false; // need this since dashmap deadlocks when removing an entry without dropping
@@ -284,8 +377,24 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
             unit: UnitStatus::Incomplete,
         };
 
+        // Update TCP sequence snapshot for this direction
+        let payload_len = tcp.payload().len() as u32;
+        let seq = tcp.sequence_number();
+        let next_seq = seq.wrapping_add(payload_len);
+        let snapshot = TcpSeqSnapshot {
+            endpoint: src.clone(),
+            seq,
+            next_seq,
+        };
+
         let is_from_client = session.client.as_ref().is_some_and(|c| *c == src);
         let is_from_server = session.server.as_ref().is_some_and(|s| *s == src);
+
+        if is_from_client {
+            session.client_seq = Some(snapshot);
+        } else if is_from_server {
+            session.server_seq = Some(snapshot);
+        }
 
         if is_from_client || is_from_server {
             if is_from_server {
@@ -418,6 +527,42 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                             should_remove = true;
                             break;
                         }
+                    }
+                }
+            }
+
+            // Evaluate SMTP policies when buffered unit completes
+            if disposition.unit == UnitStatus::Complete {
+                if let Some(ref policies) = session.policies {
+                    let allowed = SmtpPolicyEvaluator::evaluate(&session, &policies.client_to_server);
+                    if !allowed {
+                        // Denial: drop queued packets, generate RSTs, remove session
+                        session.queued_packets.clear();
+                        disposition.packet = PacketAction::Drop;
+                        
+                        // Generate RST packets
+                        if let (Some(client_seq), Some(server_seq), Some(client), Some(server)) = 
+                            (&session.client_seq, &session.server_seq, &session.client, &session.server) {
+                            
+                            let client_seq = client_seq.clone();
+                            let server_seq = server_seq.clone();
+                            let client = client.clone();
+                            let server = server.clone();
+                            
+                            // RST toward server (using client sequence)
+                            if let Some(rst_to_server) = Self::build_rst_packet(&client_seq, &server) {
+                                session.rst_packets.push(rst_to_server);
+                                tracing::debug!("Generated RST toward server");
+                            }
+                            
+                            // RST toward client (using server sequence)
+                            if let Some(rst_to_client) = Self::build_rst_packet(&server_seq, &client) {
+                                session.rst_packets.push(rst_to_client);
+                                tracing::debug!("Generated RST toward client");
+                            }
+                        }
+                        
+                        should_remove = true;
                     }
                 }
             }
@@ -799,7 +944,7 @@ mod tests {
                 .build()
                 .unwrap(),
             ),
-            smtp_policy: crate::policy::SmtpPolicy::default(),
+            smtp_policy: crate::policy::SmtpPolicy::permissive(),
         };
 
         let mut policy_map = HashMap::new();

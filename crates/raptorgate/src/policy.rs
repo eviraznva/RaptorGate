@@ -1,7 +1,6 @@
 use derive_more::{Display, From, Into};
 use regex::bytes::Regex;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{proto::config::Rule, rule_tree::RuleTree, zones::ZonePairId};
@@ -53,6 +52,15 @@ impl SmtpPolicy {
         }
     }
 
+    #[cfg(test)]
+    pub fn permissive() -> Self {
+        Self {
+            sender: Regex::new(".*").unwrap(),
+            recipient: Regex::new(".*").unwrap(),
+            message: Regex::new(".*").unwrap(),
+        }
+    }
+
 }
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Into, Deserialize, Serialize, Display)]
 pub struct PolicyId(Uuid);
@@ -60,24 +68,68 @@ pub struct PolicyId(Uuid);
 impl Policy {
     pub fn try_from_rule(value: Rule) -> Result<(PolicyId, Self), anyhow::Error> {
         let head = parse_rule_tree(&value.content)?;
+        
+        let smtp_policy = if let Some(matchers) = value.smtp_matchers {
+            let sender = if matchers.smtp_sender.is_empty() {
+                Regex::new("$^").unwrap()
+            } else {
+                Regex::new(&matchers.smtp_sender)
+                    .map_err(|e| anyhow::anyhow!("Invalid smtp_sender regex: {}", e))?
+            };
+            
+            let recipient = if matchers.smtp_recipient.is_empty() {
+                Regex::new("$^").unwrap()
+            } else {
+                Regex::new(&matchers.smtp_recipient)
+                    .map_err(|e| anyhow::anyhow!("Invalid smtp_recipient regex: {}", e))?
+            };
+            
+            let message = if matchers.smtp_message.is_empty() {
+                Regex::new("$^").unwrap()
+            } else {
+                Regex::new(&matchers.smtp_message)
+                    .map_err(|e| anyhow::anyhow!("Invalid smtp_message regex: {}", e))?
+            };
+            
+            SmtpPolicy { sender, recipient, message }
+        } else {
+            SmtpPolicy::default()
+        };
+        
         Ok((PolicyId(value.id.try_into()?),
         Policy {
-            // id: PolicyId(value.id.try_into()?),
             name: value.name.clone(),
             zone_pair_id: ZonePairId::from(Uuid::parse_str(&value.zone_pair_id)?),
             priority: value.priority,
-            rule_tree: RuleTree::new(head), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
-            smtp_policy: SmtpPolicy::default()
+            rule_tree: RuleTree::new(head),
+            smtp_policy,
         }))
     }
 
     pub fn into_rule(&self, id: PolicyId) -> Rule {
+        let smtp_matchers = {
+            let sender_pattern = self.smtp_policy.sender.as_str();
+            let recipient_pattern = self.smtp_policy.recipient.as_str();
+            let message_pattern = self.smtp_policy.message.as_str();
+            
+            if sender_pattern == "$^" && recipient_pattern == "$^" && message_pattern == "$^" {
+                None
+            } else {
+                Some(crate::proto::config::SmtpMatchers {
+                    smtp_sender: sender_pattern.to_string(),
+                    smtp_recipient: recipient_pattern.to_string(),
+                    smtp_message: message_pattern.to_string(),
+                })
+            }
+        };
+        
         Rule {
             id: Uuid::from(id).into(),
             name: self.name.clone(),
             zone_pair_id: Uuid::from(self.zone_pair_id.clone()).into(),
             priority: self.priority,
-            content: self.rule_tree.to_string(), // TODO: jak api wroci to dac tu Match i wyjebac RuleTree
+            content: self.rule_tree.to_string(),
+            smtp_matchers,
         }
     }
 }

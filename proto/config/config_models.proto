@@ -7,12 +7,19 @@ import "google/protobuf/timestamp.proto";
 
 // ── Reguły RaptorLang ────────────────────────────────────────────────────────
 
+message SmtpMatchers {
+  string smtp_sender    = 1;
+  string smtp_recipient = 2;
+  string smtp_message   = 3;
+}
+
 message Rule {
   string id           = 1;
   string name         = 2;
   string zone_pair_id = 3;
   uint32 priority     = 4;
   string content      = 5;  // źródło reguły w języku RaptorLang
+  optional SmtpMatchers smtp_matchers = 6;
 }
 
 message RuleSet {

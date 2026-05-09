@@ -85,13 +85,13 @@ async fn main() {
                                         Chain<
                                             NatPreroutingStage,
                                             Chain<
-                                                SmtpStage,
+                                                TcpClassificationStage,
                                                 Chain<
-                                                    TcpClassificationStage,
+                                                    MlAlertStage,
                                                     Chain<
-                                                        MlAlertStage,
+                                                        PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
                                                         Chain<
-                                                            PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
+                                                            SmtpStage,
                                                             Chain<
                                                                 NatPostroutingStage<M>,
                                                                 Chain<FtpAlgStage, ExecutionStage>,
@@ -378,22 +378,22 @@ async fn main() {
                                                 engine: Arc::clone(&nat_engine),
                                             },
                                             tail: Chain {
-                                                head: SmtpStage {
-                                                    tracker: Arc::clone(&smtp_tracker),
-                                                    tcp_tracker: Arc::clone(&tcp_session_tracker),
+                                                head: TcpClassificationStage {
+                                                    tracker: Arc::clone(&tcp_session_tracker),
+                                                    flow_stats: Arc::clone(&ml_flow_stats),
                                                 },
                                                 tail: Chain {
-                                                    head: TcpClassificationStage {
-                                                        tracker: Arc::clone(&tcp_session_tracker),
-                                                        flow_stats: Arc::clone(&ml_flow_stats),
-                                                    },
+                                                    head: MlAlertStage::new(Arc::clone(&ml_detector)),
                                                     tail: Chain {
-                                                        head: MlAlertStage::new(Arc::clone(&ml_detector)),
+                                                        head: PolicyEvalStage {
+                                                            policy_engine: Arc::clone(&policy_engine),
+                                                            zone_resolver: Arc::clone(&zone_resolver),
+                                                            dnssec: Some(dnssec_provider),
+                                                        },
                                                         tail: Chain {
-                                                            head: PolicyEvalStage {
-                                                                policy_engine: Arc::clone(&policy_engine),
-                                                                zone_resolver: Arc::clone(&zone_resolver),
-                                                                dnssec: Some(dnssec_provider),
+                                                            head: SmtpStage {
+                                                                tracker: Arc::clone(&smtp_tracker),
+                                                                tcp_tracker: Arc::clone(&tcp_session_tracker),
                                                             },
                                                             tail: Chain {
                                                                 head: NatPostroutingStage {

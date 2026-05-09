@@ -282,6 +282,7 @@ fn create_valid_bundle(rule_name: &str, content: &str) -> ValidBundle {
         zone_pair_id: zone_pair.id.clone(),
         priority: 0,
         content: content.to_string(),
+        smtp_matchers: None,
     };
 
     let bundle = ConfigBundle {
