@@ -13,6 +13,7 @@ export class TcpTrackedSessionResponseMapper {
       endpointA: this.endpointToDto(tcpTrackedSession.getEndpointA()),
       endpointB: this.endpointToDto(tcpTrackedSession.getEndpointB()),
       state: tcpTrackedSession.getState(),
+      ...tcpTrackedSession.getDetails(),
     };
   }
 

@@ -148,6 +148,32 @@ describe("GrpcFirewallConntrackMetricsStreamService", () => {
     });
   });
 
+  it("returns conntrack metric snapshot from first stream update", async () => {
+    client.streamConntrackMetrics.mockReturnValue(of(update));
+
+    service.onModuleInit();
+
+    const dto = await service.getConntrackMetricsSnapshot();
+
+    expect(client.streamConntrackMetrics).toHaveBeenCalledTimes(2);
+    expect(client.streamConntrackMetrics).toHaveBeenLastCalledWith({
+      intervalMs: 1000,
+      includeDestroyed: true,
+    });
+    expect(dto.flows[0]).toMatchObject({
+      id: "42",
+      lifecycle: "active",
+      state: "established",
+      original: {
+        srcIp: "10.0.0.1",
+        srcPort: 12345,
+        dstIp: "1.1.1.1",
+        dstPort: 443,
+        protocol: "tcp",
+      },
+    });
+  });
+
   it("reconnects after stream error", () => {
     jest.useFakeTimers();
     client.streamConntrackMetrics.mockReturnValue(

@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import type { ClientGrpc } from "@nestjs/microservices";
-import { Subject, Subscription } from "rxjs";
+import { firstValueFrom, Subject, Subscription, take, timeout } from "rxjs";
 import type {
   ConntrackDestroyReasonDto,
   ConntrackDirectionDto,
@@ -29,6 +29,7 @@ import { FIREWALL_METRICS_GRPC_CLIENT_TOKEN } from "./grpc-firewall-metrics-stre
 
 const INITIAL_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 30_000;
+const SNAPSHOT_TIMEOUT_MS = 5_000;
 
 @Injectable()
 export class GrpcFirewallConntrackMetricsStreamService
@@ -60,6 +61,18 @@ export class GrpcFirewallConntrackMetricsStreamService
   onModuleDestroy(): void {
     this.active = false;
     this.streamSubscription?.unsubscribe();
+  }
+
+  async getConntrackMetricsSnapshot(): Promise<ConntrackMetricsUpdateDto> {
+    const stream = this.metricsClient.streamConntrackMetrics({
+      intervalMs: 1000,
+      includeDestroyed: true,
+    });
+    const update = await firstValueFrom(
+      stream.pipe(take(1), timeout({ first: SNAPSHOT_TIMEOUT_MS })),
+    );
+
+    return this.toDto(update);
   }
 
   private connect(): void {
