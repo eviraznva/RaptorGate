@@ -1,150 +1,104 @@
-import { describe, expect, it, jest } from '@jest/globals';
-import { ServiceUnavailableException } from '@nestjs/common';
-import type { ClientGrpc } from '@nestjs/microservices';
-import { of, throwError } from 'rxjs';
-import { TcpTrackedSessionState } from '../grpc/generated/services/query_service.js';
+import { describe, expect, it } from '@jest/globals';
+import { Subject } from 'rxjs';
+import type { ConntrackMetricsUpdateDto } from '../../application/dtos/conntrack-metrics.dto.js';
+import type { GrpcFirewallConntrackMetricsStreamService } from './grpc-firewall-conntrack-metrics-stream.service.js';
 import { GrpcFirewallTcpSessionsQueryService } from './grpc-firewall-tcp-sessions-query.service.js';
 
-const createService = (client: { getTcpSessions: jest.Mock }) => {
-  const service = new GrpcFirewallTcpSessionsQueryService({
-    getService: jest.fn().mockReturnValue(client),
-  } as unknown as ClientGrpc);
+const createService = () => {
+  const subject = new Subject<ConntrackMetricsUpdateDto>();
+  const mockStream = {
+    conntrackMetrics$: subject.asObservable(),
+  } as unknown as GrpcFirewallConntrackMetricsStreamService;
 
+  const service = new GrpcFirewallTcpSessionsQueryService(mockStream);
   service.onModuleInit();
 
-  return service;
+  return { service, subject };
+};
+
+const makeFlow = (overrides: Record<string, unknown> = {}) => ({
+  id: '1',
+  lifecycle: 'active' as const,
+  state: 'established' as const,
+  lastDirection: 'original' as const,
+  original: { srcIp: '192.168.1.10', srcPort: 52341, dstIp: '10.0.0.20', dstPort: 443, protocol: 'tcp' as const },
+  reply: { srcIp: '10.0.0.20', srcPort: 443, dstIp: '192.168.1.10', dstPort: 52341, protocol: 'tcp' as const },
+  interfaces: { originalIngress: '', originalEgress: '', replyIngress: '', replyEgress: '' },
+  mark: 0,
+  statusBits: 0,
+  bytesOriginal: 0,
+  bytesReply: 0,
+  packetsOriginal: 0,
+  packetsReply: 0,
+  createdAt: new Date().toISOString(),
+  lastSeenAt: new Date().toISOString(),
+  expiresAt: new Date().toISOString(),
+  destroyReason: 'unspecified' as const,
+  ...overrides,
+});
+
+const emit = (subject: Subject<ConntrackMetricsUpdateDto>, flows: ReturnType<typeof makeFlow>[]) => {
+  subject.next({ timestamp: new Date().toISOString(), flows });
 };
 
 describe('GrpcFirewallTcpSessionsQueryService', () => {
-  it('calls getTcpSessions and maps sessions to domain entities', async () => {
-    const client = {
-      getTcpSessions: jest.fn(() =>
-        of({
-          sessions: [
-            {
-              endpointA: { ip: '192.168.1.10', port: 52341 },
-              endpointB: { ip: '10.0.0.20', port: 443 },
-              state:
-                TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_ESTABLISHED,
-            },
-          ],
-        }),
-      ),
-    };
-    const service = createService(client);
+  it('returns TCP flows from cached conntrack metrics', async () => {
+    const { service, subject } = createService();
+
+    emit(subject, [makeFlow()]);
 
     const sessions = await service.getTcpSessions();
 
-    expect(client.getTcpSessions).toHaveBeenCalledWith({});
     expect(sessions).toHaveLength(1);
-    expect(sessions[0].getEndpointA().getIpAddress().getValue).toBe(
-      '192.168.1.10',
-    );
+    expect(sessions[0].getEndpointA().getIpAddress().getValue).toBe('192.168.1.10');
     expect(sessions[0].getEndpointA().getPort().getValue).toBe(52341);
-    expect(sessions[0].getEndpointB().getIpAddress().getValue).toBe(
-      '10.0.0.20',
-    );
+    expect(sessions[0].getEndpointB().getIpAddress().getValue).toBe('10.0.0.20');
     expect(sessions[0].getEndpointB().getPort().getValue).toBe(443);
     expect(sessions[0].getState()).toBe('established');
   });
 
-  it('maps every known TCP tracked session state', async () => {
-    const client = {
-      getTcpSessions: jest.fn(() =>
-        of({
-          sessions: [
-            [
-              TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_UNSPECIFIED,
-              'unspecified',
-            ],
-            [
-              TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_SYN_SENT,
-              'syn_sent',
-            ],
-            [
-              TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_SYN_ACK_RECEIVED,
-              'syn_ack_received',
-            ],
-            [
-              TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_ESTABLISHED,
-              'established',
-            ],
-            [
-              TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_FIN_SENT,
-              'fin_sent',
-            ],
-            [
-              TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_ACK_SENT,
-              'ack_sent',
-            ],
-            [
-              TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_ACK_FIN_SENT,
-              'ack_fin_sent',
-            ],
-            [
-              TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_TIME_WAIT,
-              'time_wait',
-            ],
-            [
-              TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_CLOSED,
-              'closed',
-            ],
-            [TcpTrackedSessionState.UNRECOGNIZED, 'unknown'],
-          ].map(([state]) => ({
-            endpointA: { ip: '192.168.1.10', port: 52341 },
-            endpointB: { ip: '10.0.0.20', port: 443 },
-            state,
-          })),
-        }),
-      ),
-    };
-    const service = createService(client);
+  it('filters out non-TCP flows', async () => {
+    const { service, subject } = createService();
+
+    emit(subject, [
+      makeFlow({
+        original: { srcIp: '10.0.0.1', srcPort: 53, dstIp: '10.0.0.2', dstPort: 53, protocol: 'udp' },
+        reply: { srcIp: '10.0.0.2', srcPort: 53, dstIp: '10.0.0.1', dstPort: 53, protocol: 'udp' },
+      }),
+    ]);
 
     const sessions = await service.getTcpSessions();
+    expect(sessions).toHaveLength(0);
+  });
 
-    expect(sessions.map((session) => session.getState())).toEqual([
-      'unspecified',
+  it('filters out destroyed flows', async () => {
+    const { service, subject } = createService();
+
+    emit(subject, [makeFlow({ lifecycle: 'destroyed', destroyReason: 'timeout' })]);
+
+    const sessions = await service.getTcpSessions();
+    expect(sessions).toHaveLength(0);
+  });
+
+  it('maps conntrack flow states to TCP session states', async () => {
+    const { service, subject } = createService();
+
+    const states = ['new', 'established', 'related', 'invalid', 'unspecified'] as const;
+    emit(subject, states.map((state) => makeFlow({ state })));
+
+    const sessions = await service.getTcpSessions();
+    expect(sessions.map((s) => s.getState())).toEqual([
       'syn_sent',
-      'syn_ack_received',
       'established',
-      'fin_sent',
-      'ack_sent',
-      'ack_fin_sent',
-      'time_wait',
-      'closed',
+      'established',
       'unknown',
+      'unspecified',
     ]);
   });
 
-  it('throws ServiceUnavailableException when grpc call fails', async () => {
-    const client = {
-      getTcpSessions: jest.fn(() => throwError(() => new Error('offline'))),
-    };
-    const service = createService(client);
-
-    await expect(service.getTcpSessions()).rejects.toThrow(
-      ServiceUnavailableException,
-    );
-  });
-
-  it('throws ServiceUnavailableException when grpc session has missing endpoint', async () => {
-    const client = {
-      getTcpSessions: jest.fn(() =>
-        of({
-          sessions: [
-            {
-              endpointA: { ip: '192.168.1.10', port: 52341 },
-              state:
-                TcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_ESTABLISHED,
-            },
-          ],
-        }),
-      ),
-    };
-    const service = createService(client);
-
-    await expect(service.getTcpSessions()).rejects.toThrow(
-      ServiceUnavailableException,
-    );
+  it('returns empty array when no metrics received yet', async () => {
+    const { service } = createService();
+    const sessions = await service.getTcpSessions();
+    expect(sessions).toHaveLength(0);
   });
 });

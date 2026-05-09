@@ -1,11 +1,10 @@
 import {
-  Inject,
   Injectable,
+  OnModuleDestroy,
   OnModuleInit,
-  ServiceUnavailableException,
 } from '@nestjs/common';
-import type { ClientGrpc } from '@nestjs/microservices';
-import { firstValueFrom } from 'rxjs';
+import { Subscription } from 'rxjs';
+import type { ConntrackFlowDto, ConntrackFlowStateDto } from '../../application/dtos/conntrack-metrics.dto.js';
 import type { IFirewallTcpSessionsQueryService } from '../../application/ports/firewall-tcp-sessions-query-service.interface.js';
 import {
   TcpSessionEndpoint,
@@ -14,102 +13,65 @@ import {
 } from '../../domain/entities/tcp-tracked-session.entity.js';
 import { IpAddress } from '../../domain/value-objects/ip-address.vo.js';
 import { Port } from '../../domain/value-objects/port.vo.js';
-import {
-  FIREWALL_QUERY_SERVICE_NAME,
-  type FirewallQueryServiceClient,
-  type TcpSessionEndpoint as GrpcTcpSessionEndpoint,
-  type TcpTrackedSession as GrpcTcpTrackedSession,
-  TcpTrackedSessionState as GrpcTcpTrackedSessionState,
-} from '../grpc/generated/services/query_service.js';
-
-export const FIREWALL_TCP_SESSIONS_GRPC_CLIENT_TOKEN =
-  'FIREWALL_TCP_SESSIONS_GRPC_CLIENT_TOKEN';
+import { GrpcFirewallConntrackMetricsStreamService } from './grpc-firewall-conntrack-metrics-stream.service.js';
 
 @Injectable()
 export class GrpcFirewallTcpSessionsQueryService
-  implements IFirewallTcpSessionsQueryService, OnModuleInit
+  implements IFirewallTcpSessionsQueryService, OnModuleInit, OnModuleDestroy
 {
-  private firewallQueryClient: FirewallQueryServiceClient;
+  private cachedTcpFlows: ConntrackFlowDto[] = [];
+  private subscription?: Subscription;
 
   constructor(
-    @Inject(FIREWALL_TCP_SESSIONS_GRPC_CLIENT_TOKEN)
-    private readonly grpcClient: ClientGrpc,
+    private readonly conntrackStream: GrpcFirewallConntrackMetricsStreamService,
   ) {}
 
   onModuleInit(): void {
-    this.firewallQueryClient =
-      this.grpcClient.getService<FirewallQueryServiceClient>(
-        FIREWALL_QUERY_SERVICE_NAME,
-      );
+    this.subscription = this.conntrackStream.conntrackMetrics$.subscribe(
+      (update) => {
+        this.cachedTcpFlows = update.flows.filter(
+          (flow) => flow.original.protocol === 'tcp' && flow.lifecycle === 'active',
+        );
+      },
+    );
+  }
+
+  onModuleDestroy(): void {
+    this.subscription?.unsubscribe();
   }
 
   async getTcpSessions(): Promise<TcpTrackedSession[]> {
-    try {
-      const response = await firstValueFrom(
-        this.firewallQueryClient.getTcpSessions({}),
-      );
-
-      return response.sessions.map((session) =>
-        this.toTcpTrackedSessionEntity(session),
-      );
-    } catch (error) {
-      const reason =
-        error instanceof Error ? error.message : 'Unknown gRPC error';
-
-      throw new ServiceUnavailableException(
-        `Firewall query service failed to get TCP sessions. ${reason}`,
-      );
-    }
+    return this.cachedTcpFlows.map((flow) => this.toTcpTrackedSession(flow));
   }
 
-  private toTcpTrackedSessionEntity(
-    session: GrpcTcpTrackedSession,
-  ): TcpTrackedSession {
-    if (!session.endpointA || !session.endpointB) {
-      throw new ServiceUnavailableException(
-        'Firewall query service returned TCP session without endpoints.',
-      );
-    }
+  private toTcpTrackedSession(flow: ConntrackFlowDto): TcpTrackedSession {
+    const endpointA = TcpSessionEndpoint.create(
+      IpAddress.create(flow.original.srcIp),
+      Port.create(flow.original.srcPort),
+    );
+
+    const endpointB = TcpSessionEndpoint.create(
+      IpAddress.create(flow.original.dstIp),
+      Port.create(flow.original.dstPort),
+    );
 
     return TcpTrackedSession.create(
-      this.toTcpSessionEndpointEntity(session.endpointA),
-      this.toTcpSessionEndpointEntity(session.endpointB),
-      this.toTcpTrackedSessionState(session.state),
+      endpointA,
+      endpointB,
+      this.toSessionState(flow.state),
     );
   }
 
-  private toTcpSessionEndpointEntity(
-    endpoint: GrpcTcpSessionEndpoint,
-  ): TcpSessionEndpoint {
-    return TcpSessionEndpoint.create(
-      IpAddress.create(endpoint.ip),
-      Port.create(endpoint.port),
-    );
-  }
-
-  private toTcpTrackedSessionState(
-    state: GrpcTcpTrackedSessionState,
-  ): TcpTrackedSessionState {
+  private toSessionState(state: ConntrackFlowStateDto): TcpTrackedSessionState {
     switch (state) {
-      case GrpcTcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_SYN_SENT:
+      case 'new':
         return 'syn_sent';
-      case GrpcTcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_SYN_ACK_RECEIVED:
-        return 'syn_ack_received';
-      case GrpcTcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_ESTABLISHED:
+      case 'established':
         return 'established';
-      case GrpcTcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_FIN_SENT:
-        return 'fin_sent';
-      case GrpcTcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_ACK_SENT:
-        return 'ack_sent';
-      case GrpcTcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_ACK_FIN_SENT:
-        return 'ack_fin_sent';
-      case GrpcTcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_TIME_WAIT:
-        return 'time_wait';
-      case GrpcTcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_CLOSED:
-        return 'closed';
-      case GrpcTcpTrackedSessionState.UNRECOGNIZED:
+      case 'related':
+        return 'established';
+      case 'invalid':
         return 'unknown';
-      case GrpcTcpTrackedSessionState.TCP_TRACKED_SESSION_STATE_UNSPECIFIED:
       default:
         return 'unspecified';
     }

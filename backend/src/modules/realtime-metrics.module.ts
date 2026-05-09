@@ -53,5 +53,6 @@ import type { Env } from "../shared/config/env.validation.js";
     GrpcFirewallConntrackMetricsStreamService,
     MetricsGateway,
   ],
+  exports: [GrpcFirewallConntrackMetricsStreamService],
 })
 export class RealtimeMetricsModule {}
