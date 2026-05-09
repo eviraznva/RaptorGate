@@ -1,7 +1,7 @@
 use dashmap::{DashMap, mapref::one::RefMut};
 use etherparse::TransportSlice;
 use smtp_proto::{request::receiver::{RequestReceiver, DataReceiver, BdatReceiver}, response::parser::ResponseReceiver};
-use std::{borrow::Cow, fmt::Display};
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use crate::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
 use crate::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
 use crate::interfaces::NetworkInterfaceMonitor;
-use crate::policy::SmtpPolicy;
+use crate::policy::{SmtpMatch, SmtpMatchAction, SmtpPolicy};
 use crate::zones::resolver::{RoutingZoneResolver, ZoneResolver};
 
 #[derive(Clone, Debug)]
@@ -19,56 +19,74 @@ pub(crate) struct TcpSeqSnapshot {
     pub next_seq: u32,
 }
 
+#[derive(Clone, Debug)]
+struct TerminatedSmtpSession {
+    client: EndpointIdentifier,
+    server: EndpointIdentifier,
+}
+
 pub(crate) struct SmtpPolicyEvaluator;
 
+#[derive(Clone, Copy, Debug)]
+enum SmtpEvaluationPhase {
+    Sender,
+    Recipients,
+    Message,
+}
+
 impl SmtpPolicyEvaluator {
-    pub fn evaluate(session: &SmtpSession, policies: &[SmtpPolicy]) -> bool {
+    fn evaluate_sender(session: &SmtpSession, policies: &[SmtpPolicy]) -> bool {
+        let sender = session.current_sender.as_deref().unwrap_or("");
+        Self::evaluate_policies(policies, |policy| Self::evaluate_field(&policy.sender, sender.as_bytes()))
+    }
+
+    fn evaluate_recipients(session: &SmtpSession, policies: &[SmtpPolicy]) -> bool {
+        Self::evaluate_policies(policies, |policy| {
+            session
+                .current_recipients
+                .iter()
+                .all(|recipient| Self::evaluate_field(&policy.recipient, recipient.as_bytes()))
+        })
+    }
+
+    fn evaluate_message(session: &SmtpSession, policies: &[SmtpPolicy]) -> bool {
+        Self::evaluate_policies(policies, |policy| Self::evaluate_field(&policy.message, &session.current_message))
+    }
+
+    fn evaluate_policies<F>(policies: &[SmtpPolicy], mut predicate: F) -> bool
+    where
+        F: FnMut(&SmtpPolicy) -> bool,
+    {
         if policies.is_empty() {
             return false;
         }
 
-        let sender = session.current_sender.as_deref().unwrap_or("");
-        let recipients = &session.current_recipients;
-        let message = &session.current_message;
-
-        for policy in policies {
-            if !Self::evaluate_field(&policy.sender, sender.as_bytes()) {
-                return false;
-            }
-
-            for recipient in recipients {
-                if !Self::evaluate_field(&policy.recipient, recipient.as_bytes()) {
-                    return false;
-                }
-            }
-
-            if !Self::evaluate_field(&policy.message, message) {
-                return false;
-            }
-        }
-
-        true
+        policies.iter().all(|policy| predicate(policy))
     }
 
-    fn evaluate_field(matches: &[crate::policy::SmtpMatch], input: &[u8]) -> bool {
-        use crate::policy::SmtpMatchAction;
-        
+    fn evaluate_field(matches: &[SmtpMatch], input: &[u8]) -> bool {
         if matches.is_empty() {
             return true;
         }
 
-        let allow_matchers: Vec<_> = matches.iter().filter(|m| m.on_match == SmtpMatchAction::Allow).collect();
-        let deny_matchers: Vec<_> = matches.iter().filter(|m| m.on_match == SmtpMatchAction::Deny).collect();
+        let mut has_allow = false;
+        let mut allow_matched = true;
 
-        if allow_matchers.is_empty() {
-            return false;
+        for matcher in matches {
+            match matcher.on_match {
+                SmtpMatchAction::Allow => {
+                    has_allow = true;
+                    allow_matched &= matcher.regex.is_match(input);
+                }
+                SmtpMatchAction::Deny => {
+                    if matcher.regex.is_match(input) {
+                        return false;
+                    }
+                }
+            }
         }
 
-        if deny_matchers.iter().any(|m| m.regex.is_match(input)) {
-            return false;
-        }
-
-        allow_matchers.iter().all(|m| m.regex.is_match(input))
+        !has_allow || allow_matched
     }
 }
 
@@ -218,7 +236,6 @@ struct SmtpSession {
     bdat_receiver: Option<BdatReceiver>,
     client_seq: Option<TcpSeqSnapshot>,
     server_seq: Option<TcpSeqSnapshot>,
-    rst_packets: Vec<Vec<u8>>,
 }
 
 impl std::fmt::Debug for SmtpSession {
@@ -238,7 +255,6 @@ impl std::fmt::Debug for SmtpSession {
             .field("bdat_receiver", &self.bdat_receiver.is_some())
             .field("client_seq", &self.client_seq)
             .field("server_seq", &self.server_seq)
-            .field("rst_packets", &self.rst_packets.len())
             .finish()
     }
 }
@@ -290,7 +306,9 @@ impl SmtpSession {
 }
 
 pub struct SmtpTracker<ZR = RoutingZoneResolver<NetworkInterfaceMonitor>> {
-    pub(crate) sessions: DashMap<TcpIdentifier, SmtpSession>,
+    sessions: DashMap<TcpIdentifier, SmtpSession>,
+    rst_packets: DashMap<TcpIdentifier, Vec<Vec<u8>>>,
+    terminated_sessions: DashMap<TcpIdentifier, TerminatedSmtpSession>,
     policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
 }
 
@@ -298,6 +316,8 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
     pub fn new(policy_retriever: Arc<SmtpPolicyRetriever<ZR>>) -> Self {
         SmtpTracker {
             sessions: DashMap::new(),
+            rst_packets: DashMap::new(),
+            terminated_sessions: DashMap::new(),
             policy_retriever,
         }
     }
@@ -360,17 +380,13 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
     }
 
     pub fn take_rst_packets(&self, id: &TcpIdentifier) -> Vec<Vec<u8>> {
-        if let Some(mut session) = self.sessions.get_mut(id) {
-            std::mem::take(&mut session.rst_packets)
-        } else {
-            Vec::new()
-        }
+        self.rst_packets.remove(id).map(|(_, packets)| packets).unwrap_or_default()
     }
 
-    /// Cleanup entrypoint for future TCP session removal integration.
-    /// Called when a TCP session is removed to clean up associated SMTP state.
     pub fn on_tcp_session_removed(&self, id: &TcpIdentifier) {
         self.sessions.remove(id);
+        self.rst_packets.remove(id);
+        self.terminated_sessions.remove(id);
     }
 
     fn cleanup_session(&self, should_remove: bool, session: RefMut<'_, TcpIdentifier, SmtpSession>) {
@@ -379,6 +395,60 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
             drop(session);
             self.sessions.remove(&key);
         }
+    }
+
+    fn store_rst_packets(&self, id: &TcpIdentifier, packets: Vec<Vec<u8>>) {
+        if packets.is_empty() {
+            return;
+        }
+
+        self.rst_packets.entry(id.clone()).or_default().extend(packets);
+    }
+
+    fn mark_session_terminated(
+        &self,
+        id: &TcpIdentifier,
+        client: &EndpointIdentifier,
+        server: &EndpointIdentifier,
+    ) {
+        self.terminated_sessions.insert(
+            id.clone(),
+            TerminatedSmtpSession {
+                client: client.clone(),
+                server: server.clone(),
+            },
+        );
+    }
+
+    fn maybe_clear_terminated_session(
+        &self,
+        id: &TcpIdentifier,
+        src: &EndpointIdentifier,
+        dst: &EndpointIdentifier,
+        payload: &[u8],
+    ) -> bool {
+        let Some(terminated) = self.terminated_sessions.get(id) else {
+            return false;
+        };
+
+        if terminated.server != *src || terminated.client != *dst {
+            return true;
+        }
+
+        let mut bytes = payload.iter();
+        let is_greeting = matches!(
+            ResponseReceiver::default().parse(&mut bytes),
+            Ok(response) if response.code == 220
+        );
+
+        drop(terminated);
+
+        if is_greeting {
+            self.terminated_sessions.remove(id);
+            return false;
+        }
+
+        true
     }
 
     #[allow(clippy::too_many_lines)]
@@ -396,6 +466,13 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
             }
         };
 
+        if self.maybe_clear_terminated_session(session, &src, &dst, tcp.payload()) {
+            return BufferingDisposition {
+                packet: PacketAction::Drop,
+                unit: UnitStatus::Incomplete,
+            };
+        }
+
         let mut session = self.sessions.entry(session.clone()).or_insert(SmtpSession {
             state: SessionState::TcpEstabilished,
             client: None,
@@ -411,7 +488,6 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
             bdat_receiver: None,
             client_seq: None,
             server_seq: None,
-            rst_packets: Vec::new(),
         });
 
         let mut should_remove = false; // need this since dashmap deadlocks when removing an entry without dropping
@@ -434,12 +510,14 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         let is_from_server = session.server.as_ref().is_some_and(|s| *s == src);
 
         if is_from_client {
-            session.client_seq = Some(snapshot);
+            session.client_seq = Some(snapshot.clone());
         } else if is_from_server {
-            session.server_seq = Some(snapshot);
+            session.server_seq = Some(snapshot.clone());
         }
 
         if is_from_client || is_from_server {
+            let mut evaluation_phase = None;
+
             if is_from_server {
                 disposition.packet = PacketAction::Pass;
                 let mut bytes = tcp.payload().iter();
@@ -479,6 +557,7 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                                 session.emit_state_changed();
                                 disposition.packet = PacketAction::QueueAndHalt;
                                 disposition.unit = UnitStatus::Complete;
+                                evaluation_phase = Some(SmtpEvaluationPhase::Message);
                             } else {
                                 session.data_receiver = Some(receiver);
                             }
@@ -495,6 +574,7 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                                     session.state = SessionState::Bdat(BdatState::Complete);
                                     disposition.packet = PacketAction::QueueAndHalt;
                                     disposition.unit = UnitStatus::Complete;
+                                    evaluation_phase = Some(SmtpEvaluationPhase::Message);
                                 } else {
                                     session.state = SessionState::ReciepientSet;
                                 }
@@ -516,6 +596,11 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                                     | smtp_proto::Request::Data
                                     | smtp_proto::Request::Rset
                             );
+                            evaluation_phase = match &request {
+                                smtp_proto::Request::Mail { .. } => Some(SmtpEvaluationPhase::Sender),
+                                smtp_proto::Request::Rcpt { .. } => Some(SmtpEvaluationPhase::Recipients),
+                                _ => None,
+                            };
                             let bdat_params = match &request {
                                 smtp_proto::Request::Bdat { chunk_size, is_last } => Some((*chunk_size, *is_last)),
                                 _ => None,
@@ -574,41 +659,46 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                 }
             }
 
-            // Evaluate SMTP policies when buffered unit completes
-            if disposition.unit == UnitStatus::Complete && let Some(ref policies) = session.policies {
-                let allowed = SmtpPolicyEvaluator::evaluate(&session, &policies.client_to_server);
-                if !allowed {
-                    tracing::debug!(session=?*session, "Denied SMTP session");
-                    // Denial: drop queued packets, generate RSTs, remove session
-                    session.queued_packets.clear();
-                    disposition.packet = PacketAction::Drop;
-                    
-                    // Generate RST packets
-                    if let (Some(client_seq), Some(server_seq), Some(client), Some(server)) = 
-                        (&session.client_seq, &session.server_seq, &session.client, &session.server) {
-                        
-                        let client_seq = client_seq.clone();
-                        let server_seq = server_seq.clone();
-                        let client = client.clone();
-                        let server = server.clone();
-                        
-                        // RST toward server (using client sequence)
-                        if let Some(rst_to_server) = Self::build_rst_packet(&client_seq, &server) {
-                            session.rst_packets.push(rst_to_server);
-                            tracing::debug!("Generated RST toward server");
+            if disposition.unit == UnitStatus::Complete && let Some(phase) = evaluation_phase {
+                if let Some(ref policies) = session.policies {
+                    let allowed = match phase {
+                        SmtpEvaluationPhase::Sender => {
+                            SmtpPolicyEvaluator::evaluate_sender(&session, &policies.client_to_server)
                         }
-                        
-                        // RST toward client (using server sequence)
-                        if let Some(rst_to_client) = Self::build_rst_packet(&server_seq, &client) {
-                            session.rst_packets.push(rst_to_client);
-                            tracing::debug!("Generated RST toward client");
+                        SmtpEvaluationPhase::Recipients => {
+                            SmtpPolicyEvaluator::evaluate_recipients(&session, &policies.client_to_server)
                         }
-                    }
-                    
-                    should_remove = true;
-                }
+                        SmtpEvaluationPhase::Message => {
+                            SmtpPolicyEvaluator::evaluate_message(&session, &policies.client_to_server)
+                        }
+                    };
 
-                tracing::debug!(session=?*session, "Allowed SMTP package");
+                    if !allowed {
+                        tracing::debug!(phase = ?phase, session=?*session, "Denied SMTP session");
+                        session.queued_packets.clear();
+                        disposition.packet = PacketAction::Drop;
+
+                        if let (Some(client), Some(server)) = (&session.client, &session.server) {
+                            self.mark_session_terminated(session.key(), client, server);
+                        }
+
+                        let mut rst_packets = Vec::new();
+                        if let (Some(client_seq), Some(server), Some(server_seq), Some(client)) =
+                            (&session.client_seq, &session.server, &session.server_seq, &session.client)
+                        {
+                            if let Some(rst_to_server) = Self::build_rst_packet(client_seq, server) {
+                                rst_packets.push(rst_to_server);
+                            }
+                            if let Some(rst_to_client) = Self::build_rst_packet(server_seq, client) {
+                                rst_packets.push(rst_to_client);
+                            }
+                        }
+                        self.store_rst_packets(session.key(), rst_packets);
+                        should_remove = true;
+                    } else {
+                        tracing::debug!(phase = ?phase, session=?*session, "Allowed SMTP session");
+                    }
+                }
             }
 
             self.cleanup_session(should_remove, session);
@@ -622,6 +712,9 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
 
                 session.server = Some(src.clone());
                 session.client = Some(dst.clone());
+                if session.server_seq.is_none() {
+                    session.server_seq = Some(snapshot.clone());
+                }
                 session.policies = Some(self.policy_retriever.retrieve(dst.ip, src.ip));
                 session.request_receiver = RequestReceiver::default();
                 if session.apply_transition(SessionTransition::Response(response)).is_err() {
@@ -643,6 +736,9 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                         let result = current_state.transition(SessionTransition::Request(request));
                         session.client = Some(src.clone());
                         session.server = Some(dst.clone());
+                        if session.client_seq.is_none() {
+                            session.client_seq = Some(snapshot.clone());
+                        }
                         session.policies = Some(self.policy_retriever.retrieve(src.ip, dst.ip));
                         session.response_receiver = ResponseReceiver::default();
                         if session.apply_transition_result(result).is_err() {
@@ -653,6 +749,9 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
                         session.policies = Some(self.policy_retriever.retrieve(src.ip, dst.ip));
                         session.client = Some(src);
                         session.server = Some(dst);
+                        if session.client_seq.is_none() {
+                            session.client_seq = Some(snapshot);
+                        }
                         session.response_receiver = ResponseReceiver::default();
                         disposition.packet = PacketAction::QueueAndHalt;
                     }
@@ -966,7 +1065,14 @@ mod tests {
         }
     }
 
-    fn mock_policy_retriever() -> Arc<SmtpPolicyRetriever<MockZoneResolver>> {
+    fn smtp_match(regex: &str, on_match: SmtpMatchAction) -> SmtpMatch {
+        SmtpMatch {
+            regex: regex::bytes::Regex::new(regex).unwrap(),
+            on_match,
+        }
+    }
+
+    fn mock_policy_retriever_with_policies(policies: Vec<SmtpPolicy>) -> Arc<SmtpPolicyRetriever<MockZoneResolver>> {
         use crate::policy::provider::DiskPolicyProvider;
         use crate::rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
         use std::path::PathBuf;
@@ -974,25 +1080,26 @@ mod tests {
         let zone_pair_id = ZonePairId::from(Uuid::from_u128(1001));
         let zone_resolver = Arc::new(MockZoneResolver { zone_pair_id: zone_pair_id.clone() });
 
-        let policy_id = PolicyId::from(Uuid::from_u128(2001));
-        let policy = Policy {
-            name: "test-policy".into(),
-            zone_pair_id,
-            priority: 0,
-            rule_tree: RuleTree::new(
-                MatchBuilder::with_arm(
-                    MatchKind::IpVer,
-                    Pattern::Wildcard,
-                    ArmEnd::Verdict(Verdict::Allow),
-                )
-                .build()
-                .unwrap(),
-            ),
-            smtp_policy: crate::policy::SmtpPolicy::permissive(),
-        };
-
         let mut policy_map = HashMap::new();
-        policy_map.insert(policy_id, policy);
+        for (index, smtp_policy) in policies.into_iter().enumerate() {
+            let policy_id = PolicyId::from(Uuid::from_u128(2001 + index as u128));
+            let policy = Policy {
+                name: format!("test-policy-{index}"),
+                zone_pair_id: zone_pair_id.clone(),
+                priority: index as u32,
+                rule_tree: RuleTree::new(
+                    MatchBuilder::with_arm(
+                        MatchKind::IpVer,
+                        Pattern::Wildcard,
+                        ArmEnd::Verdict(Verdict::Allow),
+                    )
+                    .build()
+                    .unwrap(),
+                ),
+                smtp_policy,
+            };
+            policy_map.insert(policy_id, policy);
+        }
 
         let policy_provider = Arc::new(DiskPolicyProvider::from_policies(
             policy_map,
@@ -1000,6 +1107,10 @@ mod tests {
         ));
 
         Arc::new(SmtpPolicyRetriever::new(zone_resolver, policy_provider))
+    }
+
+    fn mock_policy_retriever() -> Arc<SmtpPolicyRetriever<MockZoneResolver>> {
+        mock_policy_retriever_with_policies(vec![SmtpPolicy::permissive()])
     }
 
     fn client() -> EndpointIdentifier {
@@ -1017,8 +1128,18 @@ mod tests {
     }
 
     fn session_id() -> TcpIdentifier {
+        session_id_with_client_port(54321)
+    }
+
+    fn session_id_with_client_port(port: u16) -> TcpIdentifier {
+        let client = EndpointIdentifier {
+            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            port: crate::rule_tree::types::Port::from(port),
+        };
+        let server = server();
+
         TcpIdentifier {
-            endpoints: UnorderedPair::from((client(), server())),
+            endpoints: UnorderedPair::from((client, server)),
         }
     }
 
@@ -1043,6 +1164,34 @@ mod tests {
 
     fn get_session_state<ZR: ZoneResolver>(tracker: &SmtpTracker<ZR>, id: &TcpIdentifier) -> Option<SessionState> {
         tracker.sessions.get(id).map(|s| s.state)
+    }
+
+    fn send_client_packet(
+        tracker: &SmtpTracker<MockZoneResolver>,
+        id: &TcpIdentifier,
+        payload: &[u8],
+    ) -> BufferingDisposition {
+        let packet = smtp_packet(&client(), &server(), payload);
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), id, client(), server())
+    }
+
+    fn send_server_packet(
+        tracker: &SmtpTracker<MockZoneResolver>,
+        id: &TcpIdentifier,
+        payload: &[u8],
+    ) {
+        let packet = smtp_packet(&server(), &client(), payload);
+        let sliced = SlicedPacket::from_ethernet(&packet).unwrap();
+        tracker.on_new_packet(sliced.transport.unwrap(), id, server(), client());
+    }
+
+    fn prime_smtp_session(tracker: &SmtpTracker<MockZoneResolver>, id: &TcpIdentifier) {
+        send_server_packet(tracker, id, b"220 mail.example.com ESMTP\r\n");
+        assert_eq!(get_session_state(tracker, id), Some(SessionState::GreetingReceived));
+
+        send_client_packet(tracker, id, b"EHLO client.example.com\r\n");
+        assert_eq!(get_session_state(tracker, id), Some(SessionState::Ready));
     }
 
     #[test]
@@ -1847,5 +1996,162 @@ mod tests {
             panic!("Session was removed during replay - this indicates the bug where replayed packets are treated as new connection attempts");
         }
     }
-}
 
+    #[test]
+    fn sender_policy_allows_local_sender_and_denies_remote_sender() {
+        let mut policy = SmtpPolicy::default();
+        policy.sender.push(smtp_match(".*@test\\.local", SmtpMatchAction::Allow));
+
+        let allow_tracker = SmtpTracker::new(mock_policy_retriever_with_policies(vec![policy.clone()]));
+        let allow_id = session_id();
+        prime_smtp_session(&allow_tracker, &allow_id);
+
+        let allow_disp = send_client_packet(&allow_tracker, &allow_id, b"MAIL FROM:<user1@test.local>\r\n");
+        assert_eq!(allow_disp.packet, PacketAction::QueueAndHalt);
+        assert_eq!(allow_disp.unit, UnitStatus::Complete);
+        assert_eq!(get_session_state(&allow_tracker, &allow_id), Some(SessionState::EnvelopeOpen));
+        assert!(allow_tracker.take_rst_packets(&allow_id).is_empty());
+
+        let deny_tracker = SmtpTracker::new(mock_policy_retriever_with_policies(vec![policy]));
+        let deny_id = session_id();
+        prime_smtp_session(&deny_tracker, &deny_id);
+
+        let deny_disp = send_client_packet(&deny_tracker, &deny_id, b"MAIL FROM:<user1@test.remote>\r\n");
+        assert_eq!(deny_disp.packet, PacketAction::Drop);
+        assert!(!deny_tracker.sessions.contains_key(&deny_id));
+        assert_eq!(deny_tracker.take_rst_packets(&deny_id).len(), 2);
+    }
+
+    #[test]
+    fn denied_sender_session_stays_terminated_until_new_greeting() {
+        let mut policy = SmtpPolicy::default();
+        policy.sender.push(smtp_match(".*@test\\.local", SmtpMatchAction::Allow));
+
+        let tracker = SmtpTracker::new(mock_policy_retriever_with_policies(vec![policy]));
+        let id = session_id();
+        prime_smtp_session(&tracker, &id);
+
+        let deny_disp = send_client_packet(&tracker, &id, b"MAIL FROM:<user1@test.remote>\r\n");
+        assert_eq!(deny_disp.packet, PacketAction::Drop);
+        assert!(!tracker.sessions.contains_key(&id));
+
+        send_server_packet(&tracker, &id, b"250 2.1.0 Ok\r\n");
+        assert!(!tracker.sessions.contains_key(&id));
+
+        let rcpt_disp = send_client_packet(&tracker, &id, b"RCPT TO:<user1@test.local>\r\n");
+        assert_eq!(rcpt_disp.packet, PacketAction::Drop);
+        assert!(!tracker.sessions.contains_key(&id));
+
+        send_server_packet(&tracker, &id, b"220 mail.example.com ESMTP\r\n");
+        assert_eq!(get_session_state(&tracker, &id), Some(SessionState::GreetingReceived));
+    }
+
+    #[test]
+    fn recipient_policy_allows_local_recipient_and_blocks_remote_recipient() {
+        let mut policy = SmtpPolicy::default();
+        policy.recipient.push(smtp_match(".*@test\\.local", SmtpMatchAction::Allow));
+
+        let allow_tracker = SmtpTracker::new(mock_policy_retriever_with_policies(vec![policy.clone()]));
+        let allow_id = session_id();
+        prime_smtp_session(&allow_tracker, &allow_id);
+
+        let mail_disp = send_client_packet(&allow_tracker, &allow_id, b"MAIL FROM:<user4@test.remote>\r\n");
+        assert_eq!(mail_disp.packet, PacketAction::QueueAndHalt);
+        send_server_packet(&allow_tracker, &allow_id, b"250 2.1.0 Ok\r\n");
+
+        let rcpt_disp = send_client_packet(&allow_tracker, &allow_id, b"RCPT TO:<user2@test.local>\r\n");
+        assert_eq!(rcpt_disp.packet, PacketAction::QueueAndHalt);
+        assert_eq!(get_session_state(&allow_tracker, &allow_id), Some(SessionState::ReciepientSet));
+        assert!(allow_tracker.take_rst_packets(&allow_id).is_empty());
+
+        let deny_tracker = SmtpTracker::new(mock_policy_retriever_with_policies(vec![policy.clone()]));
+        let deny_id = session_id();
+        prime_smtp_session(&deny_tracker, &deny_id);
+
+        let mail_disp = send_client_packet(&deny_tracker, &deny_id, b"MAIL FROM:<user1@test.local>\r\n");
+        assert_eq!(mail_disp.packet, PacketAction::QueueAndHalt);
+        send_server_packet(&deny_tracker, &deny_id, b"250 2.1.0 Ok\r\n");
+
+        let deny_disp = send_client_packet(&deny_tracker, &deny_id, b"RCPT TO:<user4@test.remote>\r\n");
+        assert_eq!(deny_disp.packet, PacketAction::Drop);
+        assert!(!deny_tracker.sessions.contains_key(&deny_id));
+        assert_eq!(deny_tracker.take_rst_packets(&deny_id).len(), 2);
+
+        let mixed_tracker = SmtpTracker::new(mock_policy_retriever_with_policies(vec![policy]));
+        let mixed_id = session_id();
+        prime_smtp_session(&mixed_tracker, &mixed_id);
+
+        let mail_disp = send_client_packet(&mixed_tracker, &mixed_id, b"MAIL FROM:<user1@test.local>\r\n");
+        assert_eq!(mail_disp.packet, PacketAction::QueueAndHalt);
+        send_server_packet(&mixed_tracker, &mixed_id, b"250 2.1.0 Ok\r\n");
+
+        let first_rcpt = send_client_packet(&mixed_tracker, &mixed_id, b"RCPT TO:<user2@test.local>\r\n");
+        assert_eq!(first_rcpt.packet, PacketAction::QueueAndHalt);
+        assert_eq!(get_session_state(&mixed_tracker, &mixed_id), Some(SessionState::ReciepientSet));
+
+        let mixed_disp = send_client_packet(&mixed_tracker, &mixed_id, b"RCPT TO:<user4@test.remote>\r\n");
+        assert_eq!(mixed_disp.packet, PacketAction::Drop);
+        assert!(!mixed_tracker.sessions.contains_key(&mixed_id));
+        assert_eq!(mixed_tracker.take_rst_packets(&mixed_id).len(), 2);
+    }
+
+    #[test]
+    fn message_policy_allows_hello_and_denies_world() {
+        let mut policy = SmtpPolicy::default();
+        policy.message.push(smtp_match("(?s).*hello.*", SmtpMatchAction::Allow));
+        policy.message.push(smtp_match("(?s).*world.*", SmtpMatchAction::Deny));
+
+        let allow_tracker = SmtpTracker::new(mock_policy_retriever_with_policies(vec![policy.clone()]));
+        let allow_id = session_id();
+        prime_smtp_session(&allow_tracker, &allow_id);
+
+        let mail_disp = send_client_packet(&allow_tracker, &allow_id, b"MAIL FROM:<user1@test.local>\r\n");
+        assert_eq!(mail_disp.packet, PacketAction::QueueAndHalt);
+        send_server_packet(&allow_tracker, &allow_id, b"250 2.1.0 Ok\r\n");
+
+        let rcpt_disp = send_client_packet(&allow_tracker, &allow_id, b"RCPT TO:<user2@test.local>\r\n");
+        assert_eq!(rcpt_disp.packet, PacketAction::QueueAndHalt);
+        send_server_packet(&allow_tracker, &allow_id, b"250 2.1.5 Ok\r\n");
+
+        let data_disp = send_client_packet(&allow_tracker, &allow_id, b"DATA\r\n");
+        assert_eq!(data_disp.packet, PacketAction::QueueAndHalt);
+        send_server_packet(&allow_tracker, &allow_id, b"354 End data with <CR><LF>.<CR><LF>\r\n");
+
+        let body_disp = send_client_packet(
+            &allow_tracker,
+            &allow_id,
+            b"Date: Fri, 09 May 2026 12:49:56 +0000\r\nTo: user2@test.local\r\nFrom: user1@test.local\r\nSubject: test\r\n\r\nhello there\r\n.\r\n",
+        );
+        assert_eq!(body_disp.packet, PacketAction::QueueAndHalt);
+        assert_eq!(body_disp.unit, UnitStatus::Complete);
+        assert!(allow_tracker.take_rst_packets(&allow_id).is_empty());
+
+        send_server_packet(&allow_tracker, &allow_id, b"250 2.0.0 Ok\r\n");
+        assert_eq!(get_session_state(&allow_tracker, &allow_id), Some(SessionState::Ready));
+
+        let deny_tracker = SmtpTracker::new(mock_policy_retriever_with_policies(vec![policy]));
+        let deny_id = session_id();
+        prime_smtp_session(&deny_tracker, &deny_id);
+
+        let mail_disp = send_client_packet(&deny_tracker, &deny_id, b"MAIL FROM:<user1@test.local>\r\n");
+        assert_eq!(mail_disp.packet, PacketAction::QueueAndHalt);
+        send_server_packet(&deny_tracker, &deny_id, b"250 2.1.0 Ok\r\n");
+
+        let rcpt_disp = send_client_packet(&deny_tracker, &deny_id, b"RCPT TO:<user2@test.local>\r\n");
+        assert_eq!(rcpt_disp.packet, PacketAction::QueueAndHalt);
+        send_server_packet(&deny_tracker, &deny_id, b"250 2.1.5 Ok\r\n");
+
+        let data_disp = send_client_packet(&deny_tracker, &deny_id, b"DATA\r\n");
+        assert_eq!(data_disp.packet, PacketAction::QueueAndHalt);
+        send_server_packet(&deny_tracker, &deny_id, b"354 End data with <CR><LF>.<CR><LF>\r\n");
+
+        let body_disp = send_client_packet(
+            &deny_tracker,
+            &deny_id,
+            b"Date: Fri, 09 May 2026 12:49:56 +0000\r\nTo: user2@test.local\r\nFrom: user1@test.local\r\nSubject: test\r\n\r\nhello world\r\n.\r\n",
+        );
+        assert_eq!(body_disp.packet, PacketAction::Drop);
+        assert!(!deny_tracker.sessions.contains_key(&deny_id));
+        assert_eq!(deny_tracker.take_rst_packets(&deny_id).len(), 2);
+    }
+}

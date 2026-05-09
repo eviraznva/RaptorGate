@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use etherparse::{PacketBuilder, SlicedPacket};
@@ -55,8 +55,6 @@ impl ZoneResolver for MockZoneResolver {
 
 struct SmtpTestFixture {
     tracker: Arc<SmtpTracker<MockZoneResolver>>,
-    internal_zone_pair_id: ZonePairId,
-    external_zone_pair_id: ZonePairId,
 }
 
 fn internal_zone_pair_id() -> ZonePairId {
@@ -112,8 +110,6 @@ impl SmtpTestFixture {
 
         Self {
             tracker,
-            internal_zone_pair_id,
-            external_zone_pair_id,
         }
     }
 
