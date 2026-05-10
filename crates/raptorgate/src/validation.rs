@@ -224,6 +224,7 @@ mod tests {
             zone_pair_id: ZonePairId::from(zone_pair_id),
             priority: 1,
             rule_tree: RuleTree::new(head),
+            smtp_policy: crate::policy::SmtpPolicy::default(),
         };
         (policy_id, policy)
     }

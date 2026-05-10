@@ -175,15 +175,15 @@ fn shared_server() -> &'static SharedServer {
                 let proto_reg = {
                     use ngfw::conntrack::proto::{tcp::TcpHandler, udp::UdpHandler, icmp::IcmpHandler, ProtoRegistry};
                     use ngfw::conntrack::observer::ObserverRegistry;
-                    
+
                     let observers = Arc::new(ObserverRegistry::default());
                     let mut reg = ProtoRegistry::new();
-                    
+
                     reg.register(Arc::new(TcpHandler::new(Arc::clone(&observers))));
                     reg.register(Arc::new(UdpHandler::new(Arc::clone(&observers))));
                     reg.register(Arc::new(IcmpHandler::v4()));
                     reg.register(Arc::new(IcmpHandler::v6()));
-                    
+
                     reg
                 };
                 let conntrack_for_test = Arc::new(ngfw::conntrack::table::Conntrack::new(
@@ -300,6 +300,7 @@ fn create_valid_bundle(rule_name: &str, content: &str) -> ValidBundle {
         zone_pair_id: zone_pair.id.clone(),
         priority: 0,
         content: content.to_string(),
+        smtp_matchers: None,
     };
 
     let bundle = ConfigBundle {
@@ -418,6 +419,37 @@ async fn push_active_config_snapshot_raptorlang_error() {
     let response = client.push_active_config_snapshot(request).await;
 
     assert!(response.is_err());
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle)]
+async fn push_active_config_snapshot_invalid_smtp_regex_returns_invalid_argument() {
+    let mut client = connect_snapshot(&shared_server().socket).await;
+    let mut valid = create_valid_bundle("snapshot_invalid_smtp", "match ip_ver { =v4: match protocol { |(=icmp =tcp): verdict allow } =v6: verdict drop }");
+
+    valid.rule.smtp_matchers = Some(ngfw::proto::config::SmtpMatchers {
+        sender: vec![ngfw::proto::config::SmtpMatch {
+            regex: "[invalid".to_string(),
+            on_match: ngfw::proto::config::SmtpMatchAction::Allow as i32,
+        }],
+        recipient: vec![],
+        message: vec![],
+    });
+
+    let broken_bundle = ConfigBundle {
+        rules: vec![valid.rule],
+        zones: vec![valid.src_zone, valid.dst_zone],
+        zone_pairs: vec![valid.zone_pair],
+        ..Default::default()
+    };
+    let (request, _, _) = create_snapshot_request(broken_bundle);
+
+    let response = client.push_active_config_snapshot(request).await;
+
+    assert!(response.is_err());
+    let status = response.unwrap_err();
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert!(status.message().contains("smtp_sender"));
 }
 
 #[tokio::test]

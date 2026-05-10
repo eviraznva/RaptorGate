@@ -7,6 +7,7 @@ use dashmap::DashMap;
 use etherparse::{NetSlice, TransportSlice};
 use tokio::sync::Mutex;
 
+use crate::dpi::smtp::{PacketAction, SmtpTracker, UnitStatus};
 use crate::{
     config::{provider::AppConfigProvider, AppConfig},
     data_plane::{
@@ -21,7 +22,7 @@ use crate::{
     metrics::MetricsCollector,
     ml::{MlPacketInspector, MlPrediction},
     packet_validator::validate,
-    pipeline::{Stage, StageOutcome},
+    pipeline::{ExecutionSender, Stage, StageOutcome},
     policy::engine::PolicyEngine,
     rule_tree::{ArrivalInfo, Verdict},
     zones::{
@@ -48,7 +49,7 @@ impl Stage for ValidationStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         match validate(ctx.borrow_sliced_packet()) {
             Ok(()) => StageOutcome::Continue,
             Err(e) => {
@@ -71,7 +72,7 @@ pub struct MetricsStage {
 }
 
 impl Stage for MetricsStage {
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         self.collector.observe_packet(ctx.borrow_raw().len());
         StageOutcome::Continue
     }
@@ -85,7 +86,7 @@ pub struct LocalOwnershipStage {
 }
 
 impl Stage for LocalOwnershipStage {
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         if packet_is_decrypted(ctx) {
             return StageOutcome::Continue;
         }
@@ -158,7 +159,7 @@ impl Stage for NatPreroutingStage {
         !packet_is_decrypted(ctx) && ctx.ct().is_some()
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
         let info = ctx.ct_info().unwrap_or(crate::conntrack::entry::CtInfo::Established);
         let iface = ctx.borrow_src_interface().to_string();
@@ -187,7 +188,7 @@ impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
         !packet_is_decrypted(ctx) && ctx.ct().is_some()
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
         let info = ctx.ct_info().unwrap_or(crate::conntrack::entry::CtInfo::Established);
 
@@ -231,7 +232,7 @@ impl Stage for FtpAlgStage {
         ctx.ct().is_some() && matches!(ctx.borrow_dpi_ctx(), Some(dpi_ctx) if dpi_ctx.app_proto == Some(AppProto::Ftp) && !dpi_ctx.decrypted)
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
 
         let Some(dpi_ctx) = ctx.borrow_dpi_ctx().clone() else {
@@ -290,7 +291,7 @@ impl Stage for FtpAlgStage {
         if let Some(helper) = self.helpers.lookup(key_proto, key_port) {
             let dir = ctx.ct_direction().unwrap_or(crate::conntrack::tuple::Direction::Original);
             let payload = transport_payload_slice(ctx.borrow_raw());
-            
+
             helper.install_expectations(&ct, payload, dir, &self.conntrack);
         }
 
@@ -325,7 +326,7 @@ impl Stage for DnsBlockListStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let domain = match ctx.borrow_dpi_ctx() {
             Some(dpi_ctx) => dpi_ctx.dns_query_name.clone(),
             None => return StageOutcome::Continue,
@@ -370,7 +371,7 @@ impl Stage for DnsTunnelingStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let (domain, qtype) = match ctx.borrow_dpi_ctx() {
             Some(dpi_ctx) => (dpi_ctx.dns_query_name.clone(), dpi_ctx.dns_query_type),
             None => return StageOutcome::Continue,
@@ -429,7 +430,7 @@ impl Stage for DnsEchMitigationStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let domain = match ctx.borrow_dpi_ctx() {
             Some(dpi_ctx) => dpi_ctx.dns_query_name.clone(),
             None => return StageOutcome::Continue,
@@ -465,7 +466,7 @@ impl Stage for IpsStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         ctx.with_dpi_ctx_mut(|dpi| {
             if let Some(dpi) = dpi.as_mut() {
                 dpi.ips_match = None;
@@ -613,7 +614,7 @@ pub struct PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneResolver {
 }
 
 impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneResolver {
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let arrival = ArrivalInfo::from_time(ctx.borrow_arrival_time());
 
         let dst_ip = match &ctx.borrow_sliced_packet().net {
@@ -745,7 +746,7 @@ impl Stage for TcpClassificationStage {
         !packet_is_decrypted(ctx)
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         // ML features z TCP header + rolling flow stats per src_ip.
         populate_ml_tcp_and_flow_stats(ctx, &self.flow_stats);
 
@@ -882,7 +883,7 @@ impl Stage for MlAlertStage {
             )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let features = ctx.borrow_ml_feature_vector().to_f32_array();
 
         match self.detector.inspect_features(features) {
@@ -930,7 +931,7 @@ impl Stage for DpiStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         match self.classifier.inspect_packet(ctx.borrow_sliced_packet()) {
             InspectResult::Done(mut dpi_ctx) => {
                 merge_preserved_dpi_fields(ctx.borrow_dpi_ctx().as_ref(), &mut dpi_ctx);
@@ -1007,7 +1008,7 @@ impl Stage for TlsPortEnforcementStage {
         )
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let config = self.config_provider.get_config();
 
         let dst_port = match &ctx.borrow_sliced_packet().transport {
@@ -1147,6 +1148,99 @@ fn packet_flow_key(ctx: &PacketContext) -> Option<FlowKey> {
     };
 
     Some(FlowKey::new(src_ip, src_port, dst_ip, dst_port))
+}
+
+#[derive(Clone)]
+pub struct SmtpStage {
+    pub tracker: Arc<SmtpTracker>,
+}
+
+impl Stage for SmtpStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        ctx.ct().is_some() && matches!(
+            ctx.borrow_sliced_packet().transport,
+            Some(TransportSlice::Tcp(_))
+        )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+        let sliced = ctx.borrow_sliced_packet();
+        let Some(TransportSlice::Tcp(tcp)) = &sliced.transport else {
+            return StageOutcome::Continue;
+        };
+
+        let (src, dst) = match &sliced.net {
+            Some(NetSlice::Ipv4(ipv4)) => {
+                let header = ipv4.header();
+                let src = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                    ip: IpAddr::V4(header.source_addr()),
+                    port: crate::rule_tree::types::Port::from(tcp.source_port()),
+                };
+                let dst = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                    ip: IpAddr::V4(header.destination_addr()),
+                    port: crate::rule_tree::types::Port::from(tcp.destination_port()),
+                };
+                (src, dst)
+            }
+            Some(NetSlice::Ipv6(ipv6)) => {
+                let header = ipv6.header();
+                let src = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                    ip: IpAddr::V6(header.source_addr()),
+                    port: crate::rule_tree::types::Port::from(tcp.source_port()),
+                };
+                let dst = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                    ip: IpAddr::V6(header.destination_addr()),
+                    port: crate::rule_tree::types::Port::from(tcp.destination_port()),
+                };
+                (src, dst)
+            }
+            _ => return StageOutcome::Continue,
+        };
+
+        let session_id = crate::data_plane::tcp_session_tracker::TcpIdentifier {
+            endpoints: unordered_pair::UnorderedPair::from((src.clone(), dst.clone())),
+        };
+
+        let disposition = self.tracker.on_new_packet(
+            sliced.transport.clone().expect("this should always have transport"),
+            &session_id,
+            src,
+            dst,
+        );
+
+        match disposition.packet {
+            PacketAction::Pass => StageOutcome::Continue,
+            PacketAction::QueueAndHalt => {
+                self.tracker.enqueue_packet(&session_id, ctx.clone());
+
+                if disposition.unit == UnitStatus::Complete {
+                    let batch = self.tracker.take_queued_packets(&session_id);
+                    return StageOutcome::ReleaseBatch(batch);
+                }
+
+                StageOutcome::Halt
+            }
+            PacketAction::Drop => {
+                let rst_packets = self.tracker.take_rst_packets(&session_id);
+                if !rst_packets.is_empty() {
+                    let interface = ctx.borrow_src_interface().clone();
+                    let mut rst_contexts = Vec::new();
+
+                    for rst_raw in rst_packets {
+                        if let Ok(rst_ctx) = crate::data_plane::packet_context::PacketContext::from_raw(rst_raw, interface.clone()) {
+                            rst_contexts.push(rst_ctx);
+                        }
+                    }
+
+                    if !rst_contexts.is_empty() {
+                        return StageOutcome::ReleaseBatch(rst_contexts.into());
+                    }
+                }
+
+                StageOutcome::Halt
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1339,6 +1433,9 @@ mod tests {
         fn resolve(&self, _src: &str, _dst: std::net::IpAddr) -> Option<crate::zones::ResolvedZonePair> {
             None // Return None to trigger halt in the first test
         }
+        fn resolve_bidirectional(&self, _src: std::net::IpAddr, _dst: std::net::IpAddr) -> crate::zones::DirectionalZonePairs {
+            crate::zones::DirectionalZonePairs { forward: None, reverse: None }
+        }
     }
 
     // #[test]
@@ -1350,12 +1447,12 @@ mod tests {
     //         zone_resolver: Arc::new(MockZoneResolver(zp_id)),
     //         dnssec: None,
     //     };
-    // 
+    //
     //     let mut ctx = tcp_context([192, 168, 1, 10], [10, 0, 0, 1], 80, "eth1");
     //     let outcome = tokio::runtime::Runtime::new()
     //         .unwrap()
     //         .block_on(stage.process(&mut ctx));
-    // 
+    //
     //     assert_eq!(outcome, StageOutcome::Halt);
     // }
 
@@ -1381,6 +1478,7 @@ mod tests {
                 .build()
                 .unwrap(),
             ),
+            smtp_policy: crate::policy::SmtpPolicy::default(),
         };
 
         let mut policies = HashMap::new();
@@ -1398,6 +1496,18 @@ mod tests {
                     default_policy: crate::zones::DefaultPolicy::Drop,
                 })
             }
+            fn resolve_bidirectional(&self, _src: std::net::IpAddr, _dst: std::net::IpAddr) -> crate::zones::DirectionalZonePairs {
+                crate::zones::DirectionalZonePairs {
+                    forward: Some(crate::zones::ResolvedZonePair {
+                        id: self.0.clone(),
+                        default_policy: crate::zones::DefaultPolicy::Drop,
+                    }),
+                    reverse: Some(crate::zones::ResolvedZonePair {
+                        id: self.0.clone(),
+                        default_policy: crate::zones::DefaultPolicy::Drop,
+                    }),
+                }
+            }
         }
 
         let stage = PolicyEvalStage {
@@ -1409,7 +1519,7 @@ mod tests {
         let mut ctx = tcp_context([192, 168, 1, 10], [10, 0, 0, 1], 80, "eth1");
         let outcome = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(stage.process(&mut ctx));
+            .block_on(stage.process(&mut ctx, &tokio::sync::mpsc::unbounded_channel().0));
 
         assert_eq!(outcome, StageOutcome::Continue);
     }
@@ -1618,7 +1728,7 @@ mod tests {
         let stage = MlAlertStage::new(detector);
         let mut ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 80, "eth1");
 
-        let outcome = stage.process(&mut ctx).await;
+        let outcome = stage.process(&mut ctx, &tokio::sync::mpsc::unbounded_channel().0).await;
 
         assert!(matches!(outcome, StageOutcome::Continue));
         assert_eq!(ctx.borrow_warnings().len(), 1);
@@ -1632,8 +1742,8 @@ mod tests {
         let stage = MlAlertStage::new(detector);
         let mut ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 80, "eth1");
 
-        assert!(matches!(stage.process(&mut ctx).await, StageOutcome::Continue));
-        assert!(matches!(stage.process(&mut ctx).await, StageOutcome::Continue));
+        assert!(matches!(stage.process(&mut ctx, &tokio::sync::mpsc::unbounded_channel().0).await, StageOutcome::Continue));
+        assert!(matches!(stage.process(&mut ctx, &tokio::sync::mpsc::unbounded_channel().0).await, StageOutcome::Continue));
 
         assert_eq!(ctx.borrow_warnings().len(), 1);
     }

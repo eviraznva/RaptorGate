@@ -101,9 +101,9 @@ where
             }
         };
 
-        let disposition = match self.pipeline.process(&mut packet_ctx).await {
+        let disposition = match self.pipeline.process(&mut packet_ctx, &tokio::sync::mpsc::unbounded_channel::<crate::pipeline::ExecutionItem>().0).await {
             StageOutcome::Continue => InspectionDisposition::Forward,
-            StageOutcome::Halt => InspectionDisposition::Drop,
+            StageOutcome::Halt | StageOutcome::ReleaseBatch(_) => InspectionDisposition::Drop,
         };
 
         let ctx = packet_ctx
@@ -200,7 +200,7 @@ mod tests {
     struct MarkingStage;
 
     impl Stage for MarkingStage {
-        async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+        async fn process(&self, ctx: &mut PacketContext, _tx: &crate::pipeline::ExecutionSender) -> StageOutcome {
             ctx.with_dpi_ctx_mut(|dpi| {
                 if let Some(dpi) = dpi.as_mut() {
                     dpi.app_proto = Some(crate::dpi::AppProto::Http);

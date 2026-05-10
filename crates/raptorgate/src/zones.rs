@@ -212,6 +212,12 @@ pub struct ResolvedZonePair {
     pub default_policy: DefaultPolicy,
 }
 
+#[derive(Debug, Clone)]
+pub struct DirectionalZonePairs {
+    pub forward: Option<ResolvedZonePair>,
+    pub reverse: Option<ResolvedZonePair>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DefaultPolicy {
     Unspecified,

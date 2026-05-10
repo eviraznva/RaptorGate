@@ -159,7 +159,7 @@ impl NatConfigRule {
                 
                 build_rule(id, *priority, common, action)
             },
-            
+
             Self::Dnat { id, priority, common, dst_cidr, translated_ip, translated_port } => {
                 let action = NatAction::Dnat {
                     dst_cidr: parse_ipnet(dst_cidr, "dnat.dst_cidr")?,
@@ -219,7 +219,7 @@ impl NatConfigRule {
                 src_port_min: src_port_range.map(|(lo, _)| lo),
                 src_port_max: src_port_range.map(|(_, hi)| hi),
             },
-            
+
             NatAction::Dnat { dst_cidr, translated_ip, translated_port } => Self::Dnat {
                 id: rule.id().to_string(),
                 priority: rule.priority(),

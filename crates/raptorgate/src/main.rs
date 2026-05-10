@@ -42,9 +42,10 @@ use crate::pipeline::wrappers::{
     ConntrackConfirmStage, ConntrackInStage, DnsBlockListStage, DnsEchMitigationStage,
     DnsTunnelingStage, DpiStage, FtpAlgStage, IpsStage, L4StateStage, LocalOwnershipStage,
     MetricsStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
-    TlsPortEnforcementStage, ValidationStage,
+    TlsPortEnforcementStage, ValidationStage, SmtpStage,
 };
-use crate::pipeline::{Chain, Stage, StageOutcome};
+use crate::pipeline::{Chain, ExecutionSink, ExecutionStage, Stage, StageOutcome};
+use tokio::sync::mpsc;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
@@ -102,10 +103,16 @@ async fn main() {
                                                     Chain<
                                                         MlAlertStage,
                                                         Chain<
-                                                            PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
+                                                            PolicyEvalStage<zones::resolver::RoutingZoneResolver<M>>,
                                                             Chain<
                                                                 NatPostroutingStage<M>,
-                                                                Chain<FtpAlgStage, ConntrackConfirmStage>,
+                                                                Chain<
+                                                                    FtpAlgStage,
+                                                                    Chain<
+                                                                        SmtpStage,
+                                                                        Chain<ExecutionStage, ConntrackConfirmStage>,
+                                                                    >,
+                                                                >,
                                                             >,
                                                         >,
                                                     >,
@@ -340,6 +347,14 @@ async fn main() {
         Arc::clone(&interface_monitor),
     ));
 
+    let smtp_policy_retriever = Arc::new(crate::dpi::smtp_policy_retriever::SmtpPolicyRetriever::new(
+        Arc::clone(&zone_resolver),
+        Arc::clone(&policy_provider),
+    ));
+
+    let smtp_tracker = Arc::new(crate::dpi::smtp::SmtpTracker::new(Arc::clone(&smtp_policy_retriever)));
+    conntrack.register_observer(Arc::clone(&smtp_tracker) as Arc<dyn crate::conntrack::observer::CtObserver>);
+
     let policy_engine = Arc::new(
         crate::policy::engine::PolicyEngine::from_policies(
             &policy_provider.get_policies(),
@@ -372,7 +387,7 @@ async fn main() {
             None
         }
     };
-    
+
     let nat_engine = NatEngine::new(nat_rules, interface_ips);
 
     // Late binding NatEngine ⇄ Conntrack: attach Weak ref + register observer
@@ -384,7 +399,7 @@ async fn main() {
     let helpers = {
         let mut r = crate::conntrack::helper::HelperRegistry::new();
         r.register(Arc::new(crate::conntrack::helper::ftp::FtpHelper::new()));
-        
+
         Arc::new(r)
     };
 
@@ -393,9 +408,9 @@ async fn main() {
     {
         let nat_engine_for_addr = Arc::clone(&nat_engine);
         let monitor_for_addr = Arc::clone(&interface_monitor);
-        
+
         let mut rx = netlink_listener.subscribe();
-        
+
         let cancel_for_addr = netlink_cancel.clone();
 
         tokio::spawn(async move {
@@ -404,20 +419,20 @@ async fn main() {
             loop {
                 tokio::select! {
                     _ = cancel_for_addr.cancelled() => break,
-                    
+
                     msg = rx.recv() => {
                         match msg {
                             Ok(RouteNetlinkMessage::NewAddress(_)) | Ok(RouteNetlinkMessage::DelAddress(_)) => {
                                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                                
+
                                 let snapshot = monitor_for_addr.snapshot();
-                                
+
                                 let new_ips: HashMap<String, Vec<IpAddr>> = snapshot.into_iter()
                                     .map(|(name, iface)| {
                                         let ips: Vec<IpAddr> = iface.addresses.iter().map(|n| n.addr()).collect();
                                         (name, ips)
                                     }).collect();
-                                
+
                                 nat_engine_for_addr.replace_interface_ips(new_ips);
                             }
                             Ok(_) => {}
@@ -432,7 +447,7 @@ async fn main() {
     // Inicjalizacja providera konfiguracji DNS inspection.
     let dns_inspection_store =
         Arc::new(DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await);
-    
+
     let dns_initial_config = dns_inspection_store.get_config().clone();
 
     let dns_inspection = match DnsInspection::new((*dns_initial_config).clone()) {
@@ -478,6 +493,8 @@ async fn main() {
     ));
     let ml_detector: Arc<dyn crate::ml::MlPacketInspector> =
         Arc::new(crate::ml::MlDetector::from_env());
+
+    let (exec_tx, exec_rx) = mpsc::unbounded_channel();
 
     let pipeline: DataPipeline<NetworkInterfaceMonitor> = DataPipeline {
         head: ValidationStage,
@@ -548,9 +565,17 @@ async fn main() {
                                                                         conntrack: Arc::clone(&conntrack),
                                                                         helpers: Arc::clone(&helpers),
                                                                     },
-                                                                    tail: ConntrackConfirmStage {
-                                                                        ct: Arc::clone(&conntrack),
-                                                                    },
+                                                                    tail: Chain {
+                                                                        head: SmtpStage {
+                                                                            tracker: Arc::clone(&smtp_tracker),
+                                                                        },
+                                                                        tail: Chain {
+                                                                            head: ExecutionStage { tx: exec_tx.clone() },
+                                                                            tail: ConntrackConfirmStage {
+                                                                                ct: Arc::clone(&conntrack),
+                                                                            },
+                                                                        }
+                                                                    }
                                                                 },
                                                             },
                                                         },
@@ -648,6 +673,8 @@ async fn main() {
         .register(Arc::clone(&tun), "TunForwarder")
         .await;
 
+    tokio::spawn(ExecutionSink::new(Arc::clone(&tun), Arc::clone(&metrics_collector), exec_rx).run());
+
     let (sniffer, mut raw_rx) = InterfaceSniffer::with_sniffing(config.pcap_timeout_ms);
     let sniffer = Arc::new(sniffer);
     
@@ -713,6 +740,8 @@ async fn main() {
             let tun = Arc::clone(&tun);
             let metrics_collector = Arc::clone(&metrics_collector);
             let counter = Arc::clone(&pkt_counter);
+            let exec_tx = exec_tx.clone();
+
             tokio::spawn(async move {
                 if !matches!(
                     &ctx.borrow_sliced_packet().net,
@@ -726,7 +755,7 @@ async fn main() {
                     tracing::info!(event = "pipeline.packet.tick", count = n, "pipeline processed packet");
                 }
 
-                let result: StageOutcome = pipeline.process(&mut ctx).await;
+                let result: StageOutcome = pipeline.process(&mut ctx, &exec_tx).await;
 
                 if matches!(result, StageOutcome::Continue) {
                     tun.forward(&ctx).await;

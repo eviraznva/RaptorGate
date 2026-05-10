@@ -34,10 +34,92 @@ def configure_dns_path(iface, dns)
   SHELL
 end
 
-def install_packages()
+def install_dependencies(packages)
   <<-SHELL
-    sudo apt update 
-    sudo apt install -y arping traceroute
+    sudo pkill -f apt-get || true
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y --no-install-recommends #{packages}
+    apt-get install -y arping traceroute
+  SHELL
+end
+
+def setup_email_server
+  <<-SHELL
+    postconf -e 'myhostname = h1.test.local'
+    postconf -e 'mydomain = test.local'
+    postconf -e 'myorigin = $mydomain'
+    postconf -e 'mydestination = localhost'
+    postconf -e 'mynetworks = 192.168.10.0/24, 192.168.20.0/24, 127.0.0.0/8'
+    postconf -e 'virtual_mailbox_domains = test.local test.remote'
+    postconf -e 'virtual_mailbox_base = /var/mail/vmail'
+    postconf -e 'virtual_mailbox_maps = hash:/etc/postfix/vmailbox'
+    postconf -e 'virtual_uid_maps = static:5000'
+    postconf -e 'virtual_gid_maps = static:5000'
+    postconf -e 'smtpd_tls_security_level = none'
+    postconf -e 'smtp_tls_security_level = none'
+
+    cat > /etc/postfix/vmailbox <<EOF
+user1@test.local test.local/user1/
+user2@test.local test.local/user2/
+user3@test.local test.local/user3/
+user1@test.remote test.remote/user1/
+user2@test.remote test.remote/user2/
+user3@test.remote test.remote/user3/
+user4@test.remote test.remote/user4/
+user5@test.remote test.remote/user5/
+EOF
+    postmap /etc/postfix/vmailbox
+
+    useradd -r -u 5000 -g mail -d /var/mail/vmail -s /usr/sbin/nologin -c "Virtual Mail User" vmail || true
+    mkdir -p /var/mail/vmail/test.local/{user1,user2,user3}
+    mkdir -p /var/mail/vmail/test.remote/{user1,user2,user3,user4,user5}
+    chown -R vmail:mail /var/mail/vmail
+    chmod -R 770 /var/mail/vmail
+
+    cat > /etc/dovecot/conf.d/10-auth.conf <<EOF
+disable_plaintext_auth = no
+auth_mechanisms = plain login
+passdb {
+  driver = passwd-file
+  args = scheme=PLAIN username_format=%u /etc/dovecot/users
+}
+userdb {
+  driver = static
+  args = uid=vmail gid=mail home=/var/mail/vmail/%d/%n
+}
+EOF
+
+    cat > /etc/dovecot/conf.d/10-mail.conf <<EOF
+mail_location = maildir:/var/mail/vmail/%d/%n
+mail_privileged_group = mail
+EOF
+
+    cat > /etc/dovecot/conf.d/10-ssl.conf <<EOF
+ssl = no
+EOF
+
+    cat > /etc/dovecot/users <<EOF
+user1@test.local:{PLAIN}password1
+user2@test.local:{PLAIN}password2
+user3@test.local:{PLAIN}password3
+user1@test.remote:{PLAIN}password1
+user2@test.remote:{PLAIN}password2
+user3@test.remote:{PLAIN}password3
+user4@test.remote:{PLAIN}password4
+user5@test.remote:{PLAIN}password5
+EOF
+    chmod 600 /etc/dovecot/users
+
+    systemctl restart postfix
+    systemctl restart dovecot
+    systemctl enable postfix
+    systemctl enable dovecot
+  SHELL
+end
+
+def setup_email_client
+  <<-SHELL
   SHELL
 end
 
@@ -271,10 +353,9 @@ Vagrant.configure("2") do |config|
       netmask: "255.255.255.0",
       libvirt__network_name: "intnet1"
 
-    h1.vm.provision "shell", inline: "printf 'iperf3 iperf3/start_daemon boolean false\n' | debconf-set-selections && DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends hping3 python3 ncat ethtool python3-scapy iperf3"
-
-    h1_provision =
-      configure_interface("eth1", "192.168.10.10", "24", "192.168.10.254") + <<-SHELL
+    h1_provision = install_dependencies("hping3 python3 ncat ethtool python3-scapy postfix dovecot-imapd")
+    h1_provision += setup_email_server
+    h1_provision += configure_interface("eth1", "192.168.10.10", "24", "192.168.10.254") + <<-SHELL
       ip route del default 2>/dev/null || true
       ip route add default via 192.168.10.254
       ethtool -K eth1 tx off
@@ -296,7 +377,8 @@ Vagrant.configure("2") do |config|
       source: "scripts/ml_traffic_probe.py",
       destination: "/tmp/raptorgate-ml-traffic"
 
-    h2_provision = configure_interface("eth1", "192.168.20.10", "24", "192.168.20.254") + <<-SHELL
+    h2_provision = install_dependencies("hping3 python3 ncat ethtool python3-scapy swaks mutt curl")
+    h2_provision += configure_interface("eth1", "192.168.20.10", "24", "192.168.20.254") + <<-SHELL
     # ip route del default 2>/dev/null || true
     # ip route add default via 192.168.20.254
     ip route replace 192.168.10.0/24 via 192.168.20.254 dev eth1
@@ -337,7 +419,7 @@ Vagrant.configure("2") do |config|
     r1_provision = configure_interface("eth1", "192.168.10.254", "24") +
       configure_interface("eth2", "192.168.20.254", "24") +
       configure_interface("eth3", "192.168.56.254", "24") +
-      setup_tun_device + setup_nftables + setup_ngfw_service + setup_observability + install_packages
+      setup_tun_device + setup_nftables + setup_ngfw_service + setup_observability + install_dependencies("arping traceroute")
 
     unless ENV['NO_BACKEND'] == '1'
       r1_provision += setup_backend_service + setup_frontend_service

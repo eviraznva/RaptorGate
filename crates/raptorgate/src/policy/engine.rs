@@ -115,6 +115,7 @@ mod tests {
                 .build()
                 .unwrap(),
             ),
+            smtp_policy: crate::policy::SmtpPolicy::default(),
         }
     }
 

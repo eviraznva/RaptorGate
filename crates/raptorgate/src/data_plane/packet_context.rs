@@ -29,6 +29,18 @@ pub struct PacketContext {
     ct_is_new: bool,
 }
 
+impl Clone for PacketContext {
+    fn clone(&self) -> Self {
+        Self::from_raw_full(
+            self.borrow_raw().clone(),
+            self.borrow_src_interface().clone(),
+            self.borrow_warnings().clone(),
+            *self.borrow_arrival_time(),
+            self.borrow_dpi_ctx().clone(),
+        ).expect("cloning PacketContext should never fail since it's already been parsed once")
+    }
+}
+
 impl PacketContext {
     pub fn from_raw(raw: Vec<u8>, src_interface: Arc<str>) -> Result<Self, packet::SliceError> {
         Self::from_raw_full(

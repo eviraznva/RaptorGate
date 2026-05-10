@@ -56,6 +56,15 @@ rustls-pemfile = "2"
 webpki-roots = "0.26"
 x509-parser = "0.16"
 tract-onnx = "0.21"
+mailparse = "0.16.1"
+smtp-proto = "0.2.1"
+imap-proto = "0.16.7"
+imap-codec = "1.0.0"
+serde_regex = "1.1.0"
+
+parking_lot = "0.12.5"
+time = { version = "0.3.47", features = ["local-offset"] }
+rand = "0.8.6"
 
 parking_lot = "0.12.5"
 time = { version = "0.3.47", features = ["local-offset"] }
@@ -63,6 +72,7 @@ rand = "0.8.6"
 
 [dev-dependencies]
 serial_test = "3.2.0"
+tempfile = "3"
 
 [[bench]]
 name = "ips_match"

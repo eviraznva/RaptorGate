@@ -256,7 +256,7 @@ where
             .filter_map(|entry| {
                 let transform = entry.nat.lock().clone()?;
                 let reply = entry.reply.lock().clone();
-                
+
                 Some(crate::proto::services::NatBinding {
                     binding_id: transform.binding_id,
                     rule_id: transform.rule_id,
