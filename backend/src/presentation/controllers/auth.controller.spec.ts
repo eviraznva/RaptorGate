@@ -1,6 +1,7 @@
 import { RefreshTokenUseCase } from "../../application/use-cases/refresh-token.use-case.js";
 import { LogoutUserUseCase } from "../../application/use-cases/logout-user.use-case.js";
 import { LoginUserUseCase } from "../../application/use-cases/login-user.use-case.js";
+import { RecoverPasswordUseCase } from "../../application/use-cases/recover-password.use-case.js";
 import { AuthController } from "./auth.controller.js";
 import { jest } from "@jest/globals";
 import { TestingModule, Test } from "@nestjs/testing";
@@ -48,6 +49,10 @@ describe("AuthController", () => {
 				},
 				{
 					provide: LogoutUserUseCase,
+					useValue: { execute: jest.fn() },
+				},
+				{
+					provide: RecoverPasswordUseCase,
 					useValue: { execute: jest.fn() },
 				},
 			],

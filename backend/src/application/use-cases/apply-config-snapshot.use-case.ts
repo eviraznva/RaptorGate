@@ -4,6 +4,10 @@ import { ConfigurationSnapshot } from '../../domain/entities/configuration-snaps
 import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
 import type { IConfigSnapshotRepository } from '../../domain/repositories/config-snapshot.repository.js';
 import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
+import type { IDnsInspectionRepository } from '../../domain/repositories/dns-inspection.repository.js';
+import { DNS_INSPECTION_REPOSITORY_TOKEN } from '../../domain/repositories/dns-inspection.repository.js';
+import type { IIpsConfigRepository } from '../../domain/repositories/ips-config.repository.js';
+import { IPS_CONFIG_REPOSITORY_TOKEN } from '../../domain/repositories/ips-config.repository.js';
 import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
 import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
 import type { IPermissionRepository } from '../../domain/repositories/permission.repository.js';
@@ -38,6 +42,8 @@ import type { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.j
 import type { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
 import type { IConfigSnapshotPushService } from '../ports/config-snapshot-push-service.interface.js';
 import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from '../ports/config-snapshot-push-service.interface.js';
+import type { IFirewallZoneQueryService } from '../ports/firewall-zone-query-service.interface.js';
+import { FIREWALL_ZONE_QUERY_SERVICE_TOKEN } from '../ports/firewall-zone-query-service.interface.js';
 import type { ITokenService } from '../ports/token-service.interface.js';
 import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
 
@@ -48,6 +54,8 @@ export class ApplyConfigSnapshotUseCase {
   constructor(
     @Inject(CONFIG_SNAPSHOT_REPOSITORY_TOKEN)
     private readonly configSnapshotRepository: IConfigSnapshotRepository,
+    @Inject(IPS_CONFIG_REPOSITORY_TOKEN)
+    private readonly ipsConfigRepository: IIpsConfigRepository,
     @Inject(NAT_RULES_REPOSITORY_TOKEN)
     private readonly natRulesRepository: INatRulesRepository,
     @Inject(PERMISSION_REPOSITORY_TOKEN)
@@ -75,6 +83,10 @@ export class ApplyConfigSnapshotUseCase {
     private readonly firewallCertificateRepository: IFirewallCertificateRepository,
     @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
     private readonly sslBypassRepository: ISslBypassRepository,
+    @Inject(DNS_INSPECTION_REPOSITORY_TOKEN)
+    private readonly dnsInspectionRepository: IDnsInspectionRepository,
+    @Inject(FIREWALL_ZONE_QUERY_SERVICE_TOKEN)
+    private readonly firewallZoneQueryService: IFirewallZoneQueryService,
   ) {}
 
   async execute(
@@ -84,18 +96,20 @@ export class ApplyConfigSnapshotUseCase {
     if (!claims) throw new AccessTokenIsInvalidException();
 
     const activeNatRules = await this.natRulesRepository.findActive();
+    const ipsConfig = await this.ipsConfigRepository.get();
     // const allRoles = await this.roleRepository.findAll();
     // const allPermisions = await this.permissionRepository.findAll();
     const activeRules = await this.rulesRepository.findActive();
     const allUsers = await this.userRepository.findAll();
     const activeZones = await this.zoneRepository.findActive();
-    const allZoneInterfaces = await this.zoneInterfaceRepository.findAll();
+    const allZoneInterfaces = await this.resolveZoneInterfaces();
     const allZonePairs = await this.zonePairRepository.findAll();
     const allCerts = await this.firewallCertificateRepository.findAll();
     const snapshotCerts = allCerts.filter((cert) =>
       cert.getCertType() === 'TLS_SERVER' ? true : cert.getIsActive(),
     );
     const activeBypass = await this.sslBypassRepository.findActive();
+    const dnsInspectionConfig = await this.dnsInspectionRepository.get();
     const allConfigSnapshots =
       await this.configSnapshotRepository.findAllSnapshots();
     const currentActiveSnapshot = allConfigSnapshots.find((snapshot) =>
@@ -134,11 +148,13 @@ export class ApplyConfigSnapshotUseCase {
         ips_signatures: {
           items: [], // TODO: implement ips signatures repository and add to snapshot
         },
+        ips_config: ipsConfig,
         ml_model: null,
         firewall_certificates: {
           items: [...snapshotCerts],
         },
         tls_inspection_policy: tlsInspectionPolicy,
+        dns_inspection_config: dnsInspectionConfig,
         users: {
           items: [...allUsers],
         },
@@ -217,6 +233,24 @@ export class ApplyConfigSnapshotUseCase {
       createdAt: newConfigSnapshot.getCreatedAt(),
       createdBy: newConfigSnapshot.getCreatedBy(),
     };
+  }
+
+  private async resolveZoneInterfaces() {
+    const saved = await this.zoneInterfaceRepository.findAll();
+    if (saved.length > 0) return saved;
+
+    this.logger.warn({
+      event: 'config_snapshot.zone_interfaces.sync',
+      message:
+        'no zone interfaces in backend, fetching live state from firewall',
+    });
+
+    const live =
+      await this.firewallZoneQueryService.getLiveZoneInterfaces();
+    if (live.length > 0) {
+      await this.zoneInterfaceRepository.overwriteAll(live);
+    }
+    return live;
   }
 
   private resolveTlsInspectionPolicy(payload?: ConfigSnapshotPayload) {

@@ -1,12 +1,18 @@
+import type { NatProtocol } from '../../infrastructure/grpc/generated/common/common.js';
+import type { CreateNatRuleActionDto } from './create-nat-rule.dto.js';
+
 export class EditNatRuleDto {
   id: string;
-  type?: string;
   isActive?: boolean;
-  sourceIp?: string | null;
-  destinationIp?: string | null;
-  sourcePort?: number | null;
-  destinationPort?: number | null;
-  translatedIp?: string | null;
-  translatedPort?: number | null;
   priority?: number;
+  protocol?: NatProtocol;
+  inInterface?: string | null;
+  outInterface?: string | null;
+  inZone?: string | null;
+  outZone?: string | null;
+  matchSrcPortMin?: number | null;
+  matchSrcPortMax?: number | null;
+  matchDstPortMin?: number | null;
+  matchDstPortMax?: number | null;
+  action?: CreateNatRuleActionDto;
 }

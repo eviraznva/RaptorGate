@@ -12,7 +12,7 @@ import {
 
 const TUNNEL_REMOTE_SOCKET = "/resources/ngfw/sockets/event.sock";
 const TUNNEL_LOCAL_PORT = 50052;
-const QUERY_LOCAL_SOCKET = "/tmp/query.sock";
+const QUERY_LOCAL_PORT = 50051;
 const QUERY_REMOTE_SOCKET = "/resources/ngfw/sockets/query.sock";
 const POLL_INTERVAL_MS = 5_000;
 
@@ -112,7 +112,7 @@ async function isNgfwActive(): Promise<boolean> {
 		const { stdout } = await vagrant_ssh("systemctl is-active ngfw");
 
 		console.log(`called run, got ${stdout}`)
-		return stdout.match("active") !== null;
+		return stdout.trim() === "active";
 	} catch {
 		return false;
 	}
@@ -144,9 +144,12 @@ function startSshTunnelProcess(
 			"-o",
 			"StreamLocalBindUnlink=yes",
 			"-o",
+			"ExitOnForwardFailure=yes",
+			"-o",
 			"ServerAliveInterval=15",
 			"-o",
 			"ServerAliveCountMax=3",
+			"-v",
 			mode,
 			mode === "-R"
 				? `${remoteSpec}:localhost:${localSpec}`
@@ -158,7 +161,7 @@ function startSshTunnelProcess(
 	);
 
 	proc.stdout?.on("data", (d) => process.stdout.write(`[tunnel] ${d}`));
-	proc.stderr?.on("data", (d) => process.stderr.write(`[tunnel] ${d}`));
+	proc.stderr?.on("data", (d) => process.stderr.write(`[tunnel-err] ${d}`));
 
 	return proc;
 }
@@ -270,38 +273,27 @@ function createQueryClientLoop(
 ): () => Promise<void> {
 	let queryTunnelProc: ChildProcess | null = null;
 
-	async function cleanupLocalSocket(): Promise<void> {
-		try {
-			const { unlinkSync, existsSync } = await import("node:fs");
-			if (existsSync(QUERY_LOCAL_SOCKET)) {
-				unlinkSync(QUERY_LOCAL_SOCKET);
-			}
-		} catch {
-			/* ignore */
-		}
-	}
-
 	async function loop(): Promise<void> {
 		while (true) {
 			await waitFor(isVmRunning, `${VM_NAME} VM to be running`);
 			await waitFor(generateSshConfig, "SSH config generation");
 			await waitFor(isNgfwActive, "ngfw service to be active");
-			await cleanupLocalSocket();
+			await vagrant_ssh(`sudo chmod 777 ${QUERY_REMOTE_SOCKET}`);
 
 			console.log("[query-tunnel] Establishing forward SSH tunnel ...");
 			queryTunnelProc = startSshTunnelProcess(
 				"-L",
-				QUERY_LOCAL_SOCKET,
+				`0.0.0.0:${QUERY_LOCAL_PORT}`,
 				QUERY_REMOTE_SOCKET,
 			);
 
-			// Wait a moment for the socket file to appear
-			await new Promise((r) => setTimeout(r, 1000));
+			// Wait for SSH to establish the TCP listener
+			await new Promise((r) => setTimeout(r, 2000));
 
 			let queryClient: any = null;
 			try {
 				queryClient = new QueryServiceClient(
-					`unix:${QUERY_LOCAL_SOCKET}`,
+					`localhost:${QUERY_LOCAL_PORT}`,
 					grpc.credentials.createInsecure(),
 				);
 			} catch (err) {
@@ -368,21 +360,30 @@ export function startSshTunnel(
 		if (eventReady && queryReady && !hasFired) {
 			hasFired = true;
 			console.log(
-				"[ssh-tunnel] Both event server and query client are connected — ready!",
+				"[ssh-tunnel] Both tunnels up — verifying gRPC connectivity...",
 			);
 
 			const queryClient =
 				new proto.raptorgate.services.FirewallQueryService(
-					`unix:${QUERY_LOCAL_SOCKET}`,
+					`localhost:${QUERY_LOCAL_PORT}`,
 					grpc.credentials.createInsecure(),
 				);
 
 			const snapshotClient = new SnapshotServiceClient(
-				`unix:${QUERY_LOCAL_SOCKET}`,
+				`localhost:${QUERY_LOCAL_PORT}`,
 				grpc.credentials.createInsecure(),
 			);
 
-			opts.onReady({ eventServer, queryClient, snapshotClient });
+			const deadline = Date.now() + 10_000;
+			queryClient.waitForReady(deadline, (err: Error | null) => {
+				if (err) {
+					console.error("[ssh-tunnel] gRPC channel failed to connect:", err.message);
+					hasFired = false;
+					return;
+				}
+				console.log("[ssh-tunnel] gRPC channel connected — ready!");
+				opts.onReady({ eventServer, queryClient, snapshotClient });
+			});
 		}
 	}
 

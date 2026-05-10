@@ -43,9 +43,7 @@ use crate::proto::services::{
     GetNatBindingsRequest, GetNatBindingsResponse,
     GetPinningBypassRequest, GetPinningBypassResponse, GetPinningStatsRequest,
     GetPinningStatsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest,
-    GetPolicyResponse, GetTcpSessionsRequest, GetTcpSessionsResponse, TcpSessionEndpoint,
-    TcpTrackedSession, TcpTrackedSessionState,
-    GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
+    GetPolicyResponse, GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
     GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse,
     FactoryResetRequest, FactoryResetResponse, GetSystemTimeRequest, GetSystemTimeResponse,
     PushActiveConfigSnapshotRequest, PushActiveConfigSnapshotResponse, SetInterfaceStateRequest,
@@ -116,6 +114,7 @@ where
             .add_service(FirewallQueryServiceServer::new(self.handler.clone()))
             .add_service(FirewallMetricsServiceServer::new(MetricsService::new(
                 Arc::clone(&self.handler.metrics_collector),
+                Arc::clone(&self.handler.conntrack),
             )))
             .add_service(FirewallConfigSnapshotServiceServer::new(self.handler))
             .serve_with_incoming_shutdown(incoming, self.shutdown.cancelled())
@@ -213,29 +212,6 @@ where
         .collect()
 }
 
-fn tcp_endpoint_into_proto(endpoint: EndpointIdentifier) -> TcpSessionEndpoint {
-    TcpSessionEndpoint {
-        ip: endpoint.ip.to_string(),
-        port: u16::from(endpoint.port) as u32,
-    }
-}
-
-fn tcp_session_state_into_proto(state: TcpSessionState) -> TcpTrackedSessionState {
-    match state {
-        TcpSessionState::Handshake(TcpHandshakeState::SynSent) =>
-            TcpTrackedSessionState::SynSent,
-        TcpSessionState::Handshake(TcpHandshakeState::SynAckReceived) =>
-            TcpTrackedSessionState::SynAckReceived,
-        TcpSessionState::Established => TcpTrackedSessionState::Established,
-        TcpSessionState::Closed => TcpTrackedSessionState::Closed,
-        TcpSessionState::Closing(TcpClosingState::FinSent) => TcpTrackedSessionState::FinSent,
-        TcpSessionState::Closing(TcpClosingState::AckSent) => TcpTrackedSessionState::AckSent,
-        TcpSessionState::Closing(TcpClosingState::AckFinSent) =>
-            TcpTrackedSessionState::AckFinSent,
-        TcpSessionState::TimeWait => TcpTrackedSessionState::TimeWait,
-    }
-}
-
 #[tonic::async_trait]
 impl<Swapper, Monitor, Controller> FirewallQueryService for QueryHandler<Swapper, Monitor, Controller>
 where
@@ -243,28 +219,6 @@ where
     Monitor: InterfaceMonitor + Send + Sync + 'static,
     Controller: InterfaceController + Send + Sync + 'static,
 {
-    async fn get_tcp_sessions(
-        &self,
-        _request: Request<GetTcpSessionsRequest>,
-    ) -> Result<Response<GetTcpSessionsResponse>, Status> {
-        let sessions = self
-            .tcp_tracker
-            .get_sessions()
-            .into_iter()
-            .map(|(id, state)| {
-                let (endpoint_a, endpoint_b) = id.endpoints();
-
-                TcpTrackedSession {
-                    endpoint_a: Some(tcp_endpoint_into_proto(endpoint_a)),
-                    endpoint_b: Some(tcp_endpoint_into_proto(endpoint_b)),
-                    state: tcp_session_state_into_proto(state) as i32,
-                }
-            })
-            .collect();
-
-        Ok(Response::new(GetTcpSessionsResponse { sessions }))
-    }
-
     async fn get_policies(
         &self,
         _request: Request<GetPoliciesRequest>,
@@ -302,7 +256,7 @@ where
             .filter_map(|entry| {
                 let transform = entry.nat.lock().clone()?;
                 let reply = entry.reply.lock().clone();
-                
+
                 Some(crate::proto::services::NatBinding {
                     binding_id: transform.binding_id,
                     rule_id: transform.rule_id,

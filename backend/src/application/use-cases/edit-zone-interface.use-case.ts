@@ -106,6 +106,7 @@ export class EditZoneInterfaceUseCase {
           : "inactive",
       addresses,
       savedZoneInterface.getCreatedAt(),
+      dto.sniffed ?? savedZoneInterface.getSniffed(),
     );
 
     await this.zoneInterfaceRepository.save(zoneInterface);

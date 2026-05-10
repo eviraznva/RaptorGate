@@ -6,7 +6,9 @@ import {
 } from '../../../domain/value-objects/config-snapshot-payload.interface.js';
 import { DnsBlacklistFile } from '../schemas/dns-blacklist.schema';
 import { FirewallCertificatesFile } from '../schemas/firewall-certificates.schema';
+import { IpsConfigRecord } from '../schemas/ips-config.schema.js';
 import { IpsSignaturesFile } from '../schemas/ips-signatures.schema';
+import { DnsInspectionRecord } from '../schemas/dns-inspection.schema.js';
 import { NatRulesFile } from '../schemas/nat-rules.schema';
 import { RulesFile } from '../schemas/rules.schema';
 import { SslBypassListFile } from '../schemas/ssl-bypass-list.schema';
@@ -14,7 +16,9 @@ import { UsersFile } from '../schemas/users.schema';
 import { ZoneInterfacesFile } from '../schemas/zone-interfaces.schema';
 import { ZonePairsFile } from '../schemas/zone-pairs.schema';
 import { ZonesFile } from '../schemas/zones.schema';
+import { DnsInspectionJsonMapper } from './dns-inspection-json.mapper.js';
 import { FirewallCertificateJsonMapper } from './firewall-certificate-json.mapper';
+import { IpsConfigJsonMapper } from './ips-config-json.mapper.js';
 import { NatRuleJsonMapper } from './nat-rule-json.mapper';
 import { RuleJsonMapper } from './rule-json.mapper';
 import { SslBypassJsonMapper } from './ssl-bypass-json.mapper';
@@ -35,6 +39,8 @@ export interface ConfigBundlePayloadSchema {
   ml_model: null;
   firewall_certificates: FirewallCertificatesFile;
   tls_inspection_policy?: TlsInspectionPolicyPayload;
+  dns_inspection_config?: DnsInspectionRecord | null;
+  ips_config?: IpsConfigRecord | null;
   users: UsersFile;
   // roles: RolesFile;
   // permissions: PermissionsFile;
@@ -116,6 +122,12 @@ export function mapConfigSnapshotToPayloadRecord(
       tls_inspection_policy: normalizeTlsInspectionPolicy(
         payload.bundle.tls_inspection_policy,
       ),
+      dns_inspection_config: payload.bundle.dns_inspection_config
+        ? DnsInspectionJsonMapper.toRecord(payload.bundle.dns_inspection_config)
+        : null,
+      ips_config: payload.bundle.ips_config
+        ? IpsConfigJsonMapper.toRecord(payload.bundle.ips_config)
+        : null,
       users: {
         items: toUsersFile,
       },
@@ -196,6 +208,12 @@ export function mapConfigBundlePayloadToDomain(
       tls_inspection_policy: normalizeTlsInspectionPolicy(
         payload.bundle.tls_inspection_policy,
       ),
+      dns_inspection_config: payload.bundle.dns_inspection_config
+        ? DnsInspectionJsonMapper.toDomain(payload.bundle.dns_inspection_config)
+        : null,
+      ips_config: payload.bundle.ips_config
+        ? IpsConfigJsonMapper.toDomain(payload.bundle.ips_config)
+        : null,
       users: {
         items: toUsersDomain,
       },

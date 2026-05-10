@@ -1,8 +1,10 @@
+import { DnsInspectionConfig } from '../entities/dns-inspection-config.entity.js';
 import { FirewallCertificate } from '../entities/firewall-certificate.entity.js';
 import { DnsBlacklistEntry } from '../entities/dns-blacklist-entry.entity.js';
 import { SslBypassEntry } from '../entities/ssl-bypass-entry.entity.js';
 import { ZoneInterface } from '../entities/zone-interface.entity.js';
 import { FirewallRule } from '../entities/firewall-rule.entity.js';
+import { IpsConfig } from '../entities/ips-config.entity.js';
 import { IpsSignature } from '../entities/ips-signature.entity.js';
 import { ZonePair } from '../entities/zone-pair.entity.js';
 import { MlModel } from '../entities/ml-model.entity.js';
@@ -49,6 +51,8 @@ export interface ConfigBundlePayload {
   ml_model: MlModel | null;
   firewall_certificates: { items: FirewallCertificate[] };
   tls_inspection_policy?: TlsInspectionPolicyPayload | null;
+  dns_inspection_config?: DnsInspectionConfig | null;
+  ips_config?: IpsConfig | null;
   users: { items: User[] };
   // roles: { items: Role[] };
   // permissions: { items: Permission[] };

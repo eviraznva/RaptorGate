@@ -31,6 +31,7 @@ use crate::{
     },
 };
 use crate::conntrack::table::{Conntrack, ProcessOutcome};
+use crate::conntrack::tuple::Direction;
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 use crate::dpi::AppProto;
@@ -205,6 +206,11 @@ impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
             return StageOutcome::Continue;
         };
 
+        ct.record_egress_interface(
+            ctx.ct_direction().unwrap_or(Direction::Original),
+            &out_iface_sys.name,
+        );
+
         let raw_mut = unsafe {
             let ptr = ctx.borrow_raw().as_ptr() as *mut u8;
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
@@ -285,7 +291,7 @@ impl Stage for FtpAlgStage {
         if let Some(helper) = self.helpers.lookup(key_proto, key_port) {
             let dir = ctx.ct_direction().unwrap_or(crate::conntrack::tuple::Direction::Original);
             let payload = transport_payload_slice(ctx.borrow_raw());
-            
+
             helper.install_expectations(&ct, payload, dir, &self.conntrack);
         }
 
@@ -1156,7 +1162,7 @@ impl Stage for SmtpStage {
             Some(TransportSlice::Tcp(_))
         )
     }
-    
+
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let sliced = ctx.borrow_sliced_packet();
         let Some(TransportSlice::Tcp(tcp)) = &sliced.transport else {
@@ -1219,18 +1225,18 @@ impl Stage for SmtpStage {
                 if !rst_packets.is_empty() {
                     let interface = ctx.borrow_src_interface().clone();
                     let mut rst_contexts = Vec::new();
-                    
+
                     for rst_raw in rst_packets {
                         if let Ok(rst_ctx) = crate::data_plane::packet_context::PacketContext::from_raw(rst_raw, interface.clone()) {
                             rst_contexts.push(rst_ctx);
                         }
                     }
-                    
+
                     if !rst_contexts.is_empty() {
                         return StageOutcome::ReleaseBatch(rst_contexts.into());
                     }
                 }
-                
+
                 StageOutcome::Halt
             }
         }
@@ -1252,6 +1258,7 @@ impl Stage for ConntrackInStage {
 
         match outcome {
             ProcessOutcome::Accept { entry, info, direction, is_new } => {
+                entry.record_ingress_interface(direction, ctx.borrow_src_interface().as_ref());
                 ctx.set_conntrack(entry, info, direction, is_new);
 
                 if is_new {
@@ -1440,12 +1447,12 @@ mod tests {
     //         zone_resolver: Arc::new(MockZoneResolver(zp_id)),
     //         dnssec: None,
     //     };
-    // 
+    //
     //     let mut ctx = tcp_context([192, 168, 1, 10], [10, 0, 0, 1], 80, "eth1");
     //     let outcome = tokio::runtime::Runtime::new()
     //         .unwrap()
     //         .block_on(stage.process(&mut ctx));
-    // 
+    //
     //     assert_eq!(outcome, StageOutcome::Halt);
     // }
 

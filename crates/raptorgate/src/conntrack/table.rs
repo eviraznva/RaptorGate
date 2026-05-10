@@ -1,4 +1,6 @@
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::net::IpAddr;
+use std::sync::{Arc, Weak};
 use arc_swap::ArcSwap;
 use std::time::Instant;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,12 +10,12 @@ use dashmap::{DashMap, mapref::entry::Entry as DashEntry};
 use crate::conntrack::reassembler;
 use crate::conntrack::config::{ConntrackConfig, ConfigError};
 use crate::conntrack::tuple::{Direction, FlowTuple, Protocol};
-use crate::conntrack::entry::{ConntrackEntry, CtInfo, CtStatus};
+use crate::conntrack::entry::{ConntrackEntry, ConntrackInterfacePath, CtInfo, CtStatus};
 use crate::conntrack::expectation::{ExpectationConfig, ExpectationTable};
 use crate::conntrack::proto::{CtVerdict, NewStateOutcome, ProtoRegistry};
 use crate::conntrack::observer::{CtObserver, DestroyReason, ObserverRegistry};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ConntrackMetrics {
     pub created: AtomicU64,         // Ile razy stworzyliśmy nowe entry
     pub confirmed: AtomicU64,       // Ile entry potwierdzono (insert do tabeli)
@@ -23,6 +25,252 @@ pub struct ConntrackMetrics {
     pub lookups: AtomicU64,         // Wszystkie wyszukania
     pub hits: AtomicU64,            // Hity (znaleziony entry)
     pub insert_collisions: AtomicU64, // confirm() przegrał wyścig z innym pakietem
+    flow_registry: parking_lot::RwLock<ConntrackFlowRegistry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConntrackFlowLifecycle {
+    Active,
+    Destroyed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConntrackSummarySnapshot {
+    pub created: u64,
+    pub confirmed: u64,
+    pub destroyed: u64,
+    pub invalid: u64,
+    pub drops_table_full: u64,
+    pub lookups: u64,
+    pub hits: u64,
+    pub insert_collisions: u64,
+    pub active_entries: u64,
+    pub retained_destroyed_entries: u64,
+    pub history_limit: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConntrackFlowSnapshot {
+    pub id: u64,
+    pub lifecycle: ConntrackFlowLifecycle,
+    pub state: CtInfo,
+    pub last_direction: Option<Direction>,
+    pub original: FlowTuple,
+    pub reply: FlowTuple,
+    pub interfaces: ConntrackInterfacePath,
+    pub mark: u32,
+    pub status_bits: u32,
+    pub bytes_orig: u64,
+    pub bytes_reply: u64,
+    pub packets_orig: u64,
+    pub packets_reply: u64,
+    pub created_at: Instant,
+    pub last_seen_at: Instant,
+    pub expires_at: Instant,
+    pub destroyed_at: Option<Instant>,
+    pub destroy_reason: Option<DestroyReason>,
+    pub nat: Option<ConntrackNatSnapshot>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConntrackNatSnapshot {
+    pub rule_id: String,
+    pub binding_id: u64,
+    pub has_src_nat: bool,
+    pub has_dst_nat: bool,
+    pub allocated_ip: Option<IpAddr>,
+    pub allocated_port: Option<u16>,
+    pub src_manip: Option<ConntrackTupleManipSnapshot>,
+    pub dst_manip: Option<ConntrackTupleManipSnapshot>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConntrackTupleManipSnapshot {
+    pub ip: IpAddr,
+    pub port: Option<u16>,
+}
+
+#[derive(Debug)]
+struct ConntrackFlowRegistry {
+    active: HashMap<u64, Weak<ConntrackEntry>>,
+    destroyed: VecDeque<ConntrackFlowSnapshot>,
+    history_limit: usize,
+}
+
+impl Default for ConntrackMetrics {
+    fn default() -> Self { Self::new(100_000) }
+}
+
+impl ConntrackMetrics {
+    pub fn new(flow_history_limit: usize) -> Self {
+        Self {
+            created: AtomicU64::new(0),
+            confirmed: AtomicU64::new(0),
+            destroyed: AtomicU64::new(0),
+            invalid: AtomicU64::new(0),
+            drops_table_full: AtomicU64::new(0),
+            lookups: AtomicU64::new(0),
+            hits: AtomicU64::new(0),
+            insert_collisions: AtomicU64::new(0),
+            flow_registry: parking_lot::RwLock::new(ConntrackFlowRegistry::new(flow_history_limit)),
+        }
+    }
+
+    pub fn register_active_flow(&self, entry: &Arc<ConntrackEntry>) {
+        self.flow_registry.write().active.insert(entry.id, Arc::downgrade(entry));
+    }
+
+    pub fn record_destroyed_flow(&self, entry: &ConntrackEntry, reason: DestroyReason) {
+        let mut registry = self.flow_registry.write();
+        registry.active.remove(&entry.id);
+
+        if registry.history_limit == 0 {
+            return;
+        }
+
+        registry.destroyed.push_back(ConntrackFlowSnapshot::destroyed(entry, reason));
+        registry.trim_destroyed();
+    }
+
+    pub fn set_flow_history_limit(&self, limit: usize) {
+        let mut registry = self.flow_registry.write();
+        registry.history_limit = limit;
+        registry.trim_destroyed();
+    }
+
+    pub fn summary(&self) -> ConntrackSummarySnapshot {
+        let registry = self.flow_registry.read();
+
+        ConntrackSummarySnapshot {
+            created: self.created.load(Ordering::Relaxed),
+            confirmed: self.confirmed.load(Ordering::Relaxed),
+            destroyed: self.destroyed.load(Ordering::Relaxed),
+            invalid: self.invalid.load(Ordering::Relaxed),
+            drops_table_full: self.drops_table_full.load(Ordering::Relaxed),
+            lookups: self.lookups.load(Ordering::Relaxed),
+            hits: self.hits.load(Ordering::Relaxed),
+            insert_collisions: self.insert_collisions.load(Ordering::Relaxed),
+            active_entries: registry.active.len() as u64,
+            retained_destroyed_entries: registry.destroyed.len() as u64,
+            history_limit: registry.history_limit as u64,
+        }
+    }
+
+    pub fn snapshot_flows(
+        &self,
+        max_flows: Option<usize>,
+        include_destroyed: bool,
+    ) -> Vec<ConntrackFlowSnapshot> {
+        let max_flows = max_flows.unwrap_or(usize::MAX);
+        let (active_entries, destroyed_entries) = {
+            let mut registry = self.flow_registry.write();
+            registry.active.retain(|_, entry| entry.strong_count() > 0);
+            let active_entries = registry
+                .active
+                .values()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>();
+            let destroyed_entries = if include_destroyed {
+                registry.destroyed.iter().rev().cloned().collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+
+            (active_entries, destroyed_entries)
+        };
+
+        let mut flows = Vec::with_capacity(active_entries.len().min(max_flows));
+
+        for entry in active_entries {
+            if flows.len() >= max_flows {
+                return flows;
+            }
+
+            flows.push(ConntrackFlowSnapshot::active(&entry));
+        }
+
+        for flow in destroyed_entries {
+            if flows.len() >= max_flows {
+                break;
+            }
+
+            flows.push(flow);
+        }
+
+        flows
+    }
+}
+
+impl ConntrackFlowSnapshot {
+    fn active(entry: &ConntrackEntry) -> Self {
+        Self::from_entry(entry, ConntrackFlowLifecycle::Active, None, None)
+    }
+
+    fn destroyed(entry: &ConntrackEntry, reason: DestroyReason) -> Self {
+        Self::from_entry(entry, ConntrackFlowLifecycle::Destroyed, Some(Instant::now()), Some(reason))
+    }
+
+    fn from_entry(
+        entry: &ConntrackEntry,
+        lifecycle: ConntrackFlowLifecycle,
+        destroyed_at: Option<Instant>,
+        destroy_reason: Option<DestroyReason>,
+    ) -> Self {
+        let nat = entry.nat.lock().as_ref().map(|nat| ConntrackNatSnapshot {
+            rule_id: nat.rule_id.clone(),
+            binding_id: nat.binding_id,
+            has_src_nat: nat.has_src_manip(),
+            has_dst_nat: nat.has_dst_manip(),
+            allocated_ip: nat.allocated_ip,
+            allocated_port: nat.allocated_port,
+            src_manip: nat.src_manip.as_ref().map(|manip| ConntrackTupleManipSnapshot {
+                ip: manip.ip,
+                port: manip.port,
+            }),
+            dst_manip: nat.dst_manip.as_ref().map(|manip| ConntrackTupleManipSnapshot {
+                ip: manip.ip,
+                port: manip.port,
+            }),
+        });
+
+        Self {
+            id: entry.id,
+            lifecycle,
+            state: entry.ct_info(),
+            last_direction: entry.last_direction(),
+            original: entry.original,
+            reply: entry.reply(),
+            interfaces: entry.interface_path(),
+            mark: entry.mark.load(Ordering::Relaxed),
+            status_bits: entry.status().bits(),
+            bytes_orig: entry.bytes_orig.load(Ordering::Relaxed),
+            bytes_reply: entry.bytes_reply.load(Ordering::Relaxed),
+            packets_orig: entry.packets_orig.load(Ordering::Relaxed),
+            packets_reply: entry.packets_reply.load(Ordering::Relaxed),
+            created_at: entry.created_at(),
+            last_seen_at: entry.last_seen_at(),
+            expires_at: entry.expires_at(),
+            destroyed_at,
+            destroy_reason,
+            nat,
+        }
+    }
+}
+
+impl ConntrackFlowRegistry {
+    fn new(history_limit: usize) -> Self {
+        Self {
+            active: HashMap::new(),
+            destroyed: VecDeque::new(),
+            history_limit,
+        }
+    }
+
+    fn trim_destroyed(&mut self) {
+        while self.destroyed.len() > self.history_limit {
+            self.destroyed.pop_front();
+        }
+    }
 }
 
 /// Wartość trzymana pod kluczem `FlowTuple` w `by_tuple`.
@@ -73,6 +321,7 @@ pub struct Conntrack {
 impl Conntrack {
     pub fn new(proto: Arc<ProtoRegistry>, config: ConntrackConfig) -> Self {
         let cap = config.htable_size as usize;
+        let flow_history_max_entries = config.flow_history_max_entries as usize;
 
         Self {
             by_tuple: DashMap::with_capacity(cap),
@@ -80,7 +329,7 @@ impl Conntrack {
             proto,
             observers: Arc::new(ObserverRegistry::default()),
             config: ArcSwap::from_pointee(config),
-            metrics: ConntrackMetrics::default(),
+            metrics: ConntrackMetrics::new(flow_history_max_entries),
             next_id: AtomicU64::new(1),
             reap_cursor: AtomicU64::new(0),
         }
@@ -170,6 +419,7 @@ impl Conntrack {
 
         entry.set_status(CtStatus::CONFIRMED);
         self.metrics.confirmed.fetch_add(1, Ordering::Relaxed);
+        self.metrics.register_active_flow(entry);
 
         self.observers.fire_new(entry);
 
@@ -182,6 +432,7 @@ impl Conntrack {
         }
 
         entry.set_status(CtStatus::DYING);
+        self.metrics.record_destroyed_flow(entry, reason);
 
         if entry.has_status(CtStatus::CONFIRMED) {
             self.by_tuple.remove(&entry.original);
@@ -233,9 +484,11 @@ impl Conntrack {
     
     pub fn reload_config(&self, config: ConntrackConfig) -> Result<(), ConfigError> {
         config.validate()?;
-        
+        let flow_history_max_entries = config.flow_history_max_entries as usize;
+
         self.config.store(Arc::new(config));
-        
+        self.metrics.set_flow_history_limit(flow_history_max_entries);
+
         Ok(())
     }
 
@@ -502,12 +755,16 @@ mod tests {
     }
 
     fn build_ct() -> (Conntrack, Arc<MockHandler>) {
+        build_ct_with_config(ConntrackConfig::default())
+    }
+
+    fn build_ct_with_config(config: ConntrackConfig) -> (Conntrack, Arc<MockHandler>) {
         let handler = Arc::new(MockHandler::new(Protocol::Udp));
 
         let mut registry = ProtoRegistry::new();
         registry.register(handler.clone());
 
-        let ct = Conntrack::new(Arc::new(registry), ConntrackConfig::default());
+        let ct = Conntrack::new(Arc::new(registry), config);
 
         (ct, handler)
     }
@@ -634,6 +891,57 @@ mod tests {
         let v = ct.iter_entries();
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].id, entry.id);
+    }
+
+    #[test]
+    fn metrics_snapshots_active_and_destroyed_flows() {
+        let (ct, _h) = build_ct();
+        let entry = make_entry(&ct, tuple_a());
+
+        entry.record_ingress_interface(Direction::Original, "eth0");
+        assert!(ct.confirm(&entry));
+
+        let active = ct.metrics().snapshot_flows(None, true);
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, entry.id);
+        assert_eq!(active[0].lifecycle, ConntrackFlowLifecycle::Active);
+        assert_eq!(active[0].interfaces.original_ingress.as_deref(), Some("eth0"));
+
+        ct.destroy(&entry, DestroyReason::Timeout);
+
+        let destroyed = ct.metrics().snapshot_flows(None, true);
+        assert_eq!(destroyed.len(), 1);
+        assert_eq!(destroyed[0].id, entry.id);
+        assert_eq!(destroyed[0].lifecycle, ConntrackFlowLifecycle::Destroyed);
+        assert_eq!(destroyed[0].destroy_reason, Some(DestroyReason::Timeout));
+        assert_eq!(ct.metrics().summary().retained_destroyed_entries, 1);
+    }
+
+    #[test]
+    fn metrics_trims_destroyed_flow_history() {
+        let mut config = ConntrackConfig::default();
+        config.flow_history_max_entries = 1;
+        let (ct, _h) = build_ct_with_config(config);
+
+        let first = make_entry(&ct, tuple_a());
+        let second = make_entry(&ct, FlowTuple::new(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            10001,
+            IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)),
+            53,
+            Protocol::Udp,
+        ));
+
+        assert!(ct.confirm(&first));
+        ct.destroy(&first, DestroyReason::Manual);
+        assert!(ct.confirm(&second));
+        ct.destroy(&second, DestroyReason::Timeout);
+
+        let flows = ct.metrics().snapshot_flows(None, true);
+
+        assert_eq!(flows.len(), 1);
+        assert_eq!(flows[0].id, second.id);
+        assert_eq!(flows[0].destroy_reason, Some(DestroyReason::Timeout));
     }
 
     #[test]

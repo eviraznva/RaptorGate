@@ -42,7 +42,7 @@ use crate::pipeline::wrappers::{
     ConntrackConfirmStage, ConntrackInStage, DnsBlockListStage, DnsEchMitigationStage,
     DnsTunnelingStage, DpiStage, FtpAlgStage, IpsStage, L4StateStage, LocalOwnershipStage,
     MetricsStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
-    SmtpStage, TlsPortEnforcementStage, ValidationStage,
+    TlsPortEnforcementStage, ValidationStage, SmtpStage,
 };
 use crate::pipeline::{Chain, ExecutionSink, ExecutionStage, Stage, StageOutcome};
 use tokio::sync::mpsc;
@@ -103,14 +103,14 @@ async fn main() {
                                                     Chain<
                                                         MlAlertStage,
                                                         Chain<
-                                                            PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
+                                                            PolicyEvalStage<zones::resolver::RoutingZoneResolver<M>>,
                                                             Chain<
                                                                 NatPostroutingStage<M>,
                                                                 Chain<
                                                                     FtpAlgStage,
                                                                     Chain<
-                                                                        ConntrackConfirmStage,
-                                                                        Chain<SmtpStage, ExecutionStage>,
+                                                                        SmtpStage,
+                                                                        Chain<ExecutionStage, ConntrackConfirmStage>,
                                                                     >,
                                                                 >,
                                                             >,
@@ -387,7 +387,7 @@ async fn main() {
             None
         }
     };
-    
+
     let nat_engine = NatEngine::new(nat_rules, interface_ips);
 
     // Late binding NatEngine ⇄ Conntrack: attach Weak ref + register observer
@@ -399,7 +399,7 @@ async fn main() {
     let helpers = {
         let mut r = crate::conntrack::helper::HelperRegistry::new();
         r.register(Arc::new(crate::conntrack::helper::ftp::FtpHelper::new()));
-        
+
         Arc::new(r)
     };
 
@@ -408,9 +408,9 @@ async fn main() {
     {
         let nat_engine_for_addr = Arc::clone(&nat_engine);
         let monitor_for_addr = Arc::clone(&interface_monitor);
-        
+
         let mut rx = netlink_listener.subscribe();
-        
+
         let cancel_for_addr = netlink_cancel.clone();
 
         tokio::spawn(async move {
@@ -419,20 +419,20 @@ async fn main() {
             loop {
                 tokio::select! {
                     _ = cancel_for_addr.cancelled() => break,
-                    
+
                     msg = rx.recv() => {
                         match msg {
                             Ok(RouteNetlinkMessage::NewAddress(_)) | Ok(RouteNetlinkMessage::DelAddress(_)) => {
                                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                                
+
                                 let snapshot = monitor_for_addr.snapshot();
-                                
+
                                 let new_ips: HashMap<String, Vec<IpAddr>> = snapshot.into_iter()
                                     .map(|(name, iface)| {
                                         let ips: Vec<IpAddr> = iface.addresses.iter().map(|n| n.addr()).collect();
                                         (name, ips)
                                     }).collect();
-                                
+
                                 nat_engine_for_addr.replace_interface_ips(new_ips);
                             }
                             Ok(_) => {}
@@ -447,7 +447,7 @@ async fn main() {
     // Inicjalizacja providera konfiguracji DNS inspection.
     let dns_inspection_store =
         Arc::new(DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await);
-    
+
     let dns_initial_config = dns_inspection_store.get_config().clone();
 
     let dns_inspection = match DnsInspection::new((*dns_initial_config).clone()) {
@@ -566,16 +566,16 @@ async fn main() {
                                                                         helpers: Arc::clone(&helpers),
                                                                     },
                                                                     tail: Chain {
-                                                                        head: ConntrackConfirmStage {
-                                                                            ct: Arc::clone(&conntrack),
+                                                                        head: SmtpStage {
+                                                                            tracker: Arc::clone(&smtp_tracker),
                                                                         },
                                                                         tail: Chain {
-                                                                            head: SmtpStage {
-                                                                                tracker: Arc::clone(&smtp_tracker),
+                                                                            head: ExecutionStage { tx: exec_tx.clone() },
+                                                                            tail: ConntrackConfirmStage {
+                                                                                ct: Arc::clone(&conntrack),
                                                                             },
-                                                                            tail: ExecutionStage { tx: exec_tx.clone() },
-                                                                        },
-                                                                    },
+                                                                        }
+                                                                    }
                                                                 },
                                                             },
                                                         },
@@ -593,6 +593,27 @@ async fn main() {
         },
     };
 
+    let mut sniffed_names: Vec<String> = loaded_zone_interfaces
+        .iter()
+        .filter(|(_, zi)| zi.sniffed)
+        .filter_map(|(id, _)| crate::zones::resolve_os_name(&loaded_zone_interfaces, id))
+        .collect();
+
+    if sniffed_names.is_empty() {
+        if let Ok(env_ifaces) = std::env::var("CAPTURE_INTERFACES") {
+            for name in env_ifaces.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                sniffed_names.push(name.to_string());
+            }
+            if !sniffed_names.is_empty() {
+                tracing::warn!(
+                    event = "sniffer.fallback.env",
+                    interfaces = ?sniffed_names,
+                    "no sniffed interfaces in zone_interfaces.json, using CAPTURE_INTERFACES env"
+                );
+            }
+        }
+    }
+
     if config.ssl_inspection_enabled {
         let tls_runtime_cancel = CancellationToken::new();
         decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
@@ -604,16 +625,9 @@ async fn main() {
                     .parse()
                     .expect("MITM_LISTEN_ADDR must be a valid socket address");
 
-                let sniffed_names: Vec<String> = zone_interfaces
-                    .get_zone_interfaces()
-                    .iter()
-                    .filter(|(_, zi)| zi.sniffed)
-                    .filter_map(|(id, _)| crate::zones::resolve_os_name(&zone_interfaces.get_zone_interfaces(), id))
-                    .collect();
-
                 match TransparentRedirect::new(
                     listen_addr,
-                    sniffed_names,
+                    sniffed_names.clone(),
                     config.tls_inspection_ports.clone(),
                 )
                 .and_then(|redirect| redirect.install())
@@ -665,29 +679,6 @@ async fn main() {
     let sniffer = Arc::new(sniffer);
     
     // Startup sniffer reconciliation
-    let mut sniffed_names: Vec<String> = loaded_zone_interfaces
-        .iter()
-        .filter(|(_, zi)| zi.sniffed)
-        .filter_map(|(id, _)| crate::zones::resolve_os_name(&loaded_zone_interfaces, id))
-        .collect();
-
-    // Fallback z env CAPTURE_INTERFACES gdy zone_interfaces nie ma sniffed=true.
-    // Bez tego pipeline startuje, ale 0 capture → żaden pakiet nie wchodzi.
-    if sniffed_names.is_empty() {
-        if let Ok(env_ifaces) = std::env::var("CAPTURE_INTERFACES") {
-            for name in env_ifaces.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                sniffed_names.push(name.to_string());
-            }
-            if !sniffed_names.is_empty() {
-                tracing::warn!(
-                    event = "sniffer.fallback.env",
-                    interfaces = ?sniffed_names,
-                    "no sniffed interfaces in zone_interfaces.json, using CAPTURE_INTERFACES env"
-                );
-            }
-        }
-    }
-
     tracing::info!(
         event = "sniffer.reconcile.start",
         interfaces = ?sniffed_names,
@@ -750,6 +741,7 @@ async fn main() {
             let metrics_collector = Arc::clone(&metrics_collector);
             let counter = Arc::clone(&pkt_counter);
             let exec_tx = exec_tx.clone();
+
             tokio::spawn(async move {
                 if !matches!(
                     &ctx.borrow_sliced_packet().net,

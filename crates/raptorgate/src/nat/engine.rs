@@ -139,13 +139,12 @@ impl NatEngine {
 
         let (orig_for_apply, translated) = match direction {
             PacketDirection::Original => {
-                let translated = apply_transform_to_tuple(&ct.original, transform);
+                let translated = apply_transform_to_tuple_original(&ct.original, transform);
                 (ct.original, translated)
             }
             PacketDirection::Reply => {
                 let reply = ct.reply.lock().clone();
-                let translated = apply_transform_to_tuple_reply(&reply, transform);
-                (reply, translated)
+                (reply, ct.original.invert())
             }
         };
 
@@ -216,8 +215,9 @@ impl NatEngine {
                 })
             },
 
-            NatAction::Dnat { translated_ip, .. } => {
-                Some(NatRange::single_ip_port(*translated_ip, ct.original.dst_port))
+            NatAction::Dnat { translated_ip, translated_port, .. } => {
+                let port = translated_port.unwrap_or(ct.original.dst_port);
+                Some(NatRange::single_ip_port(*translated_ip, port))
             },
 
             NatAction::Pat { translated_ip, translated_port, .. } => {
@@ -326,6 +326,25 @@ impl NatEngine {
     }
 
     fn allocate_unique_tuple(&self, ct: &Arc<ConntrackEntry>, manip: ManipType, range: &NatRange, proto: Protocol, seed: u64) -> Result<Candidate> {
+        // Destination NAT (DNAT/PAT) with a fixed port: multiple connections share the
+        // same translated port — uniqueness comes from the client's source tuple, not
+        // from port allocation.  Skip PortStore to avoid "port exhausted" on the second
+        // concurrent connection.
+        if manip == ManipType::Destination && range.port_specified() && range.min_port == range.max_port {
+            let candidate = Candidate {
+                ip: range.min_ip,
+                port: Some(range.min_port),
+                alloc_ip: None,
+                alloc_port: None,
+            };
+
+            if self.reply_collides(ct, manip, &candidate) {
+                bail!("destination NAT reply collision for {:?}", range);
+            }
+
+            return Ok(candidate);
+        }
+
         const MAX_ATTEMPTS: u32 = 16;
 
         let original_port = match manip {
@@ -441,6 +460,22 @@ fn apply_transform_to_tuple(reply: &FlowTuple, t: &NatTransform) -> FlowTuple {
     out
 }
 
+fn apply_transform_to_tuple_original(original: &FlowTuple, t: &NatTransform) -> FlowTuple {
+    let mut out = *original;
+
+    if let Some(m) = &t.src_manip {
+        out.src_ip = m.ip;
+        if let Some(p) = m.port { out.src_port = p; }
+    }
+
+    if let Some(m) = &t.dst_manip {
+        out.dst_ip = m.ip;
+        if let Some(p) = m.port { out.dst_port = p; }
+    }
+
+    out
+}
+
 #[derive(Debug, Clone, Copy)]
 enum PacketDirection { Original, Reply }
 
@@ -474,22 +509,152 @@ fn flow_matches_action(action: &NatAction, flow: &FlowTuple) -> bool {
     }
 }
 
-fn apply_transform_to_tuple_reply(reply: &FlowTuple, t: &NatTransform) -> FlowTuple {
-    let mut out = *reply;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use crate::nat::config::{NatAction, NatRule, NatRules, NatProtocol};
+    use crate::conntrack::table::Conntrack;
+    use crate::conntrack::config::ConntrackConfig;
+    use crate::conntrack::proto::{ProtoRegistry, ProtoState};
+    use crate::conntrack::proto::tcp::TcpProtoState;
+    use crate::conntrack::tuple::{FlowTuple, Protocol};
 
-    if t.has_src_manip() {
-        if let Some(m) = &t.src_manip {
-            out.dst_ip = m.ip;
-            if let Some(p) = m.port { out.dst_port = p; }
+    fn ip(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(a, b, c, d))
+    }
+
+    fn dnat_rule(id: &str, dst_cidr: &str, translated_ip: &str, translated_port: Option<u16>) -> NatRule {
+        NatRule::new(
+            id.into(), 1,
+            None, None, None, None,
+            NatProtocol::All, None, None,
+            NatAction::Dnat {
+                dst_cidr: dst_cidr.parse().unwrap(),
+                translated_ip: translated_ip.parse().unwrap(),
+                translated_port,
+            },
+        )
+    }
+
+    fn pat_rule(id: &str, dst_ip: &str, dst_port: u16, translated_ip: &str, translated_port: u16) -> NatRule {
+        NatRule::new(
+            id.into(), 1,
+            None, None, None, None,
+            NatProtocol::All, None, None,
+            NatAction::Pat {
+                dst_ip: dst_ip.parse().unwrap(),
+                dst_port,
+                translated_ip: translated_ip.parse().unwrap(),
+                translated_port,
+            },
+        )
+    }
+
+    fn make_engine(rules: Vec<NatRule>) -> Arc<NatEngine> {
+        let nat_rules = Arc::new(NatRules::new(rules));
+        let engine = NatEngine::new(Some(nat_rules), HashMap::new());
+        let proto = Arc::new(ProtoRegistry::new());
+        let ct = Arc::new(Conntrack::new(proto, ConntrackConfig::default()));
+        engine.attach_conntrack(&ct);
+        engine
+    }
+
+    fn make_entry(src_ip: IpAddr, src_port: u16, dst_ip: IpAddr, dst_port: u16) -> Arc<ConntrackEntry> {
+        Arc::new(ConntrackEntry::new(
+            1,
+            FlowTuple { src_ip, src_port, dst_ip, dst_port, zone: 0, protocol: Protocol::Tcp },
+            ProtoState::Tcp(TcpProtoState::default()),
+            Duration::from_secs(300),
+            0,
+        ))
+    }
+
+    #[test]
+    fn dnat_with_translated_port_does_not_lease_in_port_store() {
+        let engine = make_engine(vec![
+            dnat_rule("d1", "203.0.113.10/32", "10.0.0.10", Some(80)),
+        ]);
+
+        let ct = make_entry(ip(192,168,1,100), 50000, ip(203,0,113,10), 8080);
+        let range = NatRange::single_ip_port(ip(10,0,0,10), 80);
+        let candidate = engine.allocate_unique_tuple(&ct, ManipType::Destination, &range, Protocol::Tcp, 0).unwrap();
+
+        assert_eq!(candidate.port, Some(80));
+        assert!(candidate.alloc_ip.is_none(), "DNAT fixed port must not lease in PortStore");
+        assert!(candidate.alloc_port.is_none());
+    }
+
+    #[test]
+    fn dnat_fixed_port_allows_multiple_concurrent_connections() {
+        let engine = make_engine(vec![
+            dnat_rule("d1", "203.0.113.10/32", "10.0.0.10", Some(80)),
+        ]);
+
+        let range = NatRange::single_ip_port(ip(10,0,0,10), 80);
+
+        for i in 0..100u16 {
+            let ct = make_entry(ip(192,168,1, (i % 254 + 1) as u8), 50000 + i, ip(203,0,113,10), 8080);
+            let candidate = engine.allocate_unique_tuple(&ct, ManipType::Destination, &range, Protocol::Tcp, i as u64).unwrap();
+            assert_eq!(candidate.port, Some(80));
+        }
+
+        assert!(!engine.port_store().is_leased(ip(10,0,0,10), Protocol::Tcp, 80));
+    }
+
+    #[test]
+    fn pat_fixed_port_allows_multiple_concurrent_connections() {
+        let engine = make_engine(vec![
+            pat_rule("p1", "203.0.113.10", 8080, "10.0.0.10", 80),
+        ]);
+
+        let range = NatRange::single_ip_port(ip(10,0,0,10), 80);
+
+        for i in 0..50u16 {
+            let ct = make_entry(ip(192,168,1,100), 50000 + i, ip(203,0,113,10), 8080);
+            let candidate = engine.allocate_unique_tuple(&ct, ManipType::Destination, &range, Protocol::Tcp, i as u64).unwrap();
+            assert_eq!(candidate.port, Some(80));
         }
     }
 
-    if t.has_dst_manip() {
-        if let Some(m) = &t.dst_manip {
-            out.src_ip = m.ip;
-            if let Some(p) = m.port { out.src_port = p; }
-        }
+    #[test]
+    fn dnat_without_translated_port_uses_original_dst_port() {
+        let engine = make_engine(vec![
+            dnat_rule("d1", "203.0.113.0/24", "10.0.0.10", None),
+        ]);
+
+        let ct = make_entry(ip(192,168,1,100), 50000, ip(203,0,113,10), 443);
+
+        let action = NatAction::Dnat {
+            dst_cidr: "203.0.113.0/24".parse().unwrap(),
+            translated_ip: ip(10,0,0,10),
+            translated_port: None,
+        };
+
+        let range = engine.range_from_action(&action, None, &ct).unwrap();
+        assert_eq!(range.min_port, 443);
+        assert_eq!(range.max_port, 443);
     }
 
-    out
+    #[test]
+    fn dnat_with_translated_port_uses_that_port_in_range() {
+        let engine = make_engine(vec![
+            dnat_rule("d1", "203.0.113.0/24", "10.0.0.10", Some(80)),
+        ]);
+
+        let ct = make_entry(ip(192,168,1,100), 50000, ip(203,0,113,10), 8080);
+
+        let action = NatAction::Dnat {
+            dst_cidr: "203.0.113.0/24".parse().unwrap(),
+            translated_ip: ip(10,0,0,10),
+            translated_port: Some(80),
+        };
+
+        let range = engine.range_from_action(&action, None, &ct).unwrap();
+        assert_eq!(range.min_port, 80);
+        assert_eq!(range.max_port, 80);
+    }
 }
+

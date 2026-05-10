@@ -1,7 +1,7 @@
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
-import { z } from 'zod';
+import { z } from "zod";
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from "./_common.js";
 
-const defaultZoneIdSchema = z.literal('00000000-0000-0000-0000-000000000000');
+const defaultZoneIdSchema = z.literal("00000000-0000-0000-0000-000000000000");
 const zoneIdSchema = z.union([uuidSchema, defaultZoneIdSchema]);
 
 export const ZoneRecordSchema = z
