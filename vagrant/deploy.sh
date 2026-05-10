@@ -24,6 +24,70 @@ ensure_iptables_rule() {
   sudo iptables -C "$chain" "$@" 2>/dev/null || sudo iptables -I "$chain" 1 "$@"
 }
 
+wait_for_raptorgate_ca() {
+  local retries="${RAPTORGATE_CA_WAIT_RETRIES:-30}"
+  local delay="${RAPTORGATE_CA_WAIT_SECONDS:-2}"
+  local attempt
+
+  for ((attempt = 1; attempt <= retries; attempt++)); do
+    if vagrant ssh r1 -c "sudo test -s /var/lib/raptorgate/pki/ca.crt" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "$delay"
+  done
+
+  echo "RaptorGate CA was not generated on r1 after $((retries * delay)) seconds" >&2
+  return 1
+}
+
+vagrant_machine_state() {
+  local host="$1"
+
+  vagrant status "$host" --machine-readable | awk -F, '$3=="state"{print $4}' | tail -n1
+}
+
+install_raptorgate_ca_on_host() {
+  local host="$1"
+  local ca_file="$2"
+  local state
+
+  state="$(vagrant_machine_state "$host")"
+  if [ "$state" != "running" ]; then
+    echo "$host is $state; skipping RaptorGate CA installation"
+    return 0
+  fi
+
+  echo "Installing RaptorGate CA on $host"
+  vagrant upload "$ca_file" /tmp/raptorgate-ca.crt "$host" >/dev/null
+  vagrant ssh "$host" -c "sudo install -m 0644 /tmp/raptorgate-ca.crt /usr/local/share/ca-certificates/raptorgate-ca.crt && sudo update-ca-certificates" >/dev/null
+}
+
+distribute_raptorgate_ca() {
+  if [ "${SSL_TRUST_CA:-1}" = "0" ]; then
+    echo "SSL_TRUST_CA=0; skipping RaptorGate CA distribution"
+    return 0
+  fi
+
+  local hosts="${SSL_TRUST_HOSTS:-h2 ldap radius}"
+  local ca_file
+
+  if [ -z "$hosts" ]; then
+    echo "SSL_TRUST_HOSTS is empty; skipping RaptorGate CA distribution"
+    return 0
+  fi
+
+  wait_for_raptorgate_ca
+
+  ca_file="$(mktemp "${TMPDIR:-/tmp}/raptorgate-ca.XXXXXX.crt")"
+  vagrant ssh r1 -c "sudo cat /var/lib/raptorgate/pki/ca.crt" > "$ca_file"
+
+  for host in $hosts; do
+    install_raptorgate_ca_on_host "$host" "$ca_file"
+  done
+
+  rm -f "$ca_file"
+}
+
 # Parse flags
 if [[ "$1" == "--no-backend" || "$1" == "-n" ]]; then
   export NO_BACKEND=1
@@ -117,3 +181,4 @@ else
   echo "r1 is not running yet; skipping rsync and relying on vagrant up for initial sync"
 fi
 vagrant up --provision
+distribute_raptorgate_ca
