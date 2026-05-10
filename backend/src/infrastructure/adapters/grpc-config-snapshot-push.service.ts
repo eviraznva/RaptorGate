@@ -220,16 +220,18 @@ export class GrpcConfigSnapshotPushService
         id: z.getId(),
         name: z.getName(),
       })),
-      zoneInterfaces: b.zone_interfaces.items.map((zi) => ({
-        id: zi.getId(),
-        zoneId: zi.getZoneId(),
-        kind: zi.getVlanId() == null
-          ? { $case: "physical" as const, physical: { interfaceName: zi.getInterfaceName() } }
-          : { $case: "vlan" as const, vlan: { parentInterfaceId: zi.getParentInterfaceId() ?? "", vlanId: zi.getVlanId()! } },
-        status: this.toZoneInterfaceStatus(zi.getStatus()),
-        addresses: zi.getAddresses(),
-        sniffed: zi.getSniffed(),
-      })),
+      zoneInterfaces: b.zone_interfaces.items.map((zi) => {
+        const base = {
+          id: zi.getId(),
+          zoneId: zi.getZoneId(),
+          status: this.toZoneInterfaceStatus(zi.getStatus()),
+          addresses: zi.getAddresses(),
+          sniffed: zi.getSniffed(),
+        };
+        return zi.getVlanId() == null
+          ? { ...base, physical: { interfaceName: zi.getInterfaceName() } } as any
+          : { ...base, vlan: { parentInterfaceId: zi.getParentInterfaceId() ?? "", vlanId: zi.getVlanId()! } } as any;
+      }),
       zonePairs: b.zone_pairs.items.map((zp) => ({
         id: zp.getId(),
         srcZoneId: zp.getSrcZoneId(),

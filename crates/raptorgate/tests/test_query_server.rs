@@ -450,7 +450,7 @@ async fn fetch_policies_returns_ok() {
 }
 
 #[tokio::test]
-#[serial(snapshot_bundle, nat_config)]
+#[serial(snapshot_bundle, nat_config, ips_config)]
 async fn factory_reset_restores_safe_defaults() {
     let mut snapshot_client = connect_snapshot(&shared_server().socket).await;
     let mut query_client = connect(&shared_server().socket).await;
