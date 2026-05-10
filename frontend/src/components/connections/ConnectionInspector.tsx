@@ -100,7 +100,7 @@ export default function ConnectionInspector({
         <div className="connections-payload-box">
           <div className="connections-trace-head">
             <span>Response Item</span>
-            <strong>/tcp-sessions</strong>
+            <strong>/sessions</strong>
           </div>
           <pre>{session ? JSON.stringify(session, null, 2) : "{}"}</pre>
         </div>
