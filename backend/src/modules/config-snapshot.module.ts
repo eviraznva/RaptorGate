@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from '../application/ports/config-snapshot-push-service.interface.js';
+import { FIREWALL_ZONE_QUERY_SERVICE_TOKEN } from '../application/ports/firewall-zone-query-service.interface.js';
 import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../application/ports/raptor-lang-validation-service.interface.js';
 import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
 import { ConfigSnapshotDiffService } from '../application/services/config-snapshot-diff.service.js';
@@ -15,7 +16,9 @@ import { GetConfigHistoryUseCase } from '../application/use-cases/get-config-his
 import { ImportConfigUseCase } from '../application/use-cases/import-config.use-case.js';
 import { RollbackConfigUseCase } from '../application/use-cases/rollback-config.use-case.js';
 import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../domain/repositories/config-snapshot.repository.js';
+import { DNS_INSPECTION_REPOSITORY_TOKEN } from '../domain/repositories/dns-inspection.repository.js';
 import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../domain/repositories/firewall-certificate.repository.js';
+import { IPS_CONFIG_REPOSITORY_TOKEN } from '../domain/repositories/ips-config.repository.js';
 import { NAT_RULES_REPOSITORY_TOKEN } from '../domain/repositories/nat-rules.repository.js';
 import { SSL_BYPASS_REPOSITORY_TOKEN } from '../domain/repositories/ssl-bypass.repository.js';
 import { PERMISSION_REPOSITORY_TOKEN } from '../domain/repositories/permission.repository.js';
@@ -31,6 +34,8 @@ import {
   CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN,
   GrpcConfigSnapshotPushService,
 } from '../infrastructure/adapters/grpc-config-snapshot-push.service.js';
+import { FIREWALL_QUERY_GRPC_CLIENT_TOKEN } from '../infrastructure/adapters/grpc-firewall-dns-inspection-query.service.js';
+import { GrpcFirewallZoneQueryService } from '../infrastructure/adapters/grpc-firewall-zone-query.service.js';
 import {
   GrpcRaptorLangValidationService,
   RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
@@ -39,7 +44,9 @@ import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
 import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
 import { FileStore } from '../infrastructure/persistence/json/file-store.js';
 import { JsonConfigSnapshotRepository } from '../infrastructure/persistence/repositories/json-config-snapshot.repository.js';
+import { JsonDnsInspectionRepository } from '../infrastructure/persistence/repositories/json-dns-inspection.repository.js';
 import { JsonFirewallCertificateRepository } from '../infrastructure/persistence/repositories/json-firewall-certificate.repository.js';
+import { JsonIpsConfigRepository } from '../infrastructure/persistence/repositories/json-ips-config.repository.js';
 import { JsonNatRuleRepository } from '../infrastructure/persistence/repositories/json-nat-rule.repository.js';
 import { JsonSslBypassRepository } from '../infrastructure/persistence/repositories/json-ssl-bypass.repository.js';
 import { JsonPermissionRepository } from '../infrastructure/persistence/repositories/json-permission.repository.js';
@@ -86,6 +93,39 @@ import { Env } from '../shared/config/env.validation.js';
                 includeDirs: [join(process.cwd(), '..', 'proto')],
               },
               url: grpcUrl,
+            },
+          };
+        },
+        inject: [ConfigService],
+      },
+      {
+        name: FIREWALL_QUERY_GRPC_CLIENT_TOKEN,
+        useFactory: (configService: ConfigService<Env, true>) => {
+          const firewallQuerySocketPath = configService.get(
+            'FIREWALL_QUERY_GRPC_SOCKET_PATH',
+            { infer: true },
+          );
+
+          const resolveGrpcUrl = (path: string): string =>
+            path.startsWith('unix://')
+              ? path
+              : `unix://${join(process.cwd(), path)}`;
+
+          return {
+            transport: Transport.GRPC,
+            options: {
+              package: 'raptorgate.services',
+              protoPath: join(
+                process.cwd(),
+                '..',
+                'proto',
+                'services',
+                'query_service.proto',
+              ),
+              loader: {
+                includeDirs: [join(process.cwd(), '..', 'proto')],
+              },
+              url: resolveGrpcUrl(firewallQuerySocketPath),
             },
           };
         },
@@ -169,6 +209,14 @@ import { Env } from '../shared/config/env.validation.js';
       useClass: JsonNatRuleRepository,
     },
     {
+      provide: DNS_INSPECTION_REPOSITORY_TOKEN,
+      useClass: JsonDnsInspectionRepository,
+    },
+    {
+      provide: IPS_CONFIG_REPOSITORY_TOKEN,
+      useClass: JsonIpsConfigRepository,
+    },
+    {
       provide: PERMISSION_REPOSITORY_TOKEN,
       useClass: JsonPermissionRepository,
     },
@@ -219,6 +267,10 @@ import { Env } from '../shared/config/env.validation.js';
     {
       provide: RAPTOR_LANG_VALIDATION_SERVICE_TOKEN,
       useClass: GrpcRaptorLangValidationService,
+    },
+    {
+      provide: FIREWALL_ZONE_QUERY_SERVICE_TOKEN,
+      useClass: GrpcFirewallZoneQueryService,
     },
     JwtService,
   ],

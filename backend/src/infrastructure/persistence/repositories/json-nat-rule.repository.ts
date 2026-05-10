@@ -1,14 +1,18 @@
-import { INatRulesRepository } from '../../../domain/repositories/nat-rules.repository.js';
+import { join } from 'node:path';
+import { Inject, Injectable } from '@nestjs/common';
+import type {
+  NatRule,
+  NatRuleAction,
+} from '../../../domain/entities/nat-rule.entity.js';
+import type { INatRulesRepository } from '../../../domain/repositories/nat-rules.repository.js';
+import type { NatProtocol } from '../../grpc/generated/common/common.js';
+import { Mutex } from '../json/file-mutex.js';
+import { FileStore } from '../json/file-store.js';
+import { NatRuleJsonMapper } from '../mappers/nat-rule-json.mapper.js';
 import {
   NatRulesFile,
   NatRulesFileSchema,
 } from '../schemas/nat-rules.schema.js';
-import { NatRuleJsonMapper } from '../mappers/nat-rule-json.mapper.js';
-import { NatRule } from '../../../domain/entities/nat-rule.entity.js';
-import { Inject, Injectable } from '@nestjs/common';
-import { FileStore } from '../json/file-store.js';
-import { Mutex } from '../json/file-mutex.js';
-import { join } from 'node:path';
 
 @Injectable()
 export class JsonNatRuleRepository implements INatRulesRepository {
@@ -85,44 +89,16 @@ export class JsonNatRuleRepository implements INatRulesRepository {
       .map((i) => NatRuleJsonMapper.toDomain(i));
   }
 
-  async findByType(type: string): Promise<NatRule[]> {
-    const payload = await this.readPayload();
+  async findByActionKind(kind: NatRuleAction['$case']): Promise<NatRule[]> {
+    const rules = await this.findAll();
 
-    return payload.items
-      .filter((i) => i.type === type)
-      .map((i) => NatRuleJsonMapper.toDomain(i));
+    return rules.filter((rule) => rule.getActionKind() === kind);
   }
 
-  async findBySourceIp(sourceIp: string): Promise<NatRule[]> {
-    const payload = await this.readPayload();
+  async findByProtocol(protocol: NatProtocol): Promise<NatRule[]> {
+    const rules = await this.findAll();
 
-    return payload.items
-      .filter((i) => i.srcIp === sourceIp)
-      .map((i) => NatRuleJsonMapper.toDomain(i));
-  }
-
-  async findByDestinationIp(destinationIp: string): Promise<NatRule[]> {
-    const payload = await this.readPayload();
-
-    return payload.items
-      .filter((i) => i.dstIp === destinationIp)
-      .map((i) => NatRuleJsonMapper.toDomain(i));
-  }
-
-  async findBySourcePort(sourcePort: number): Promise<NatRule[]> {
-    const payload = await this.readPayload();
-
-    return payload.items
-      .filter((i) => i.srcPort === sourcePort)
-      .map((i) => NatRuleJsonMapper.toDomain(i));
-  }
-
-  async findByDestinationPort(destinationPort: number): Promise<NatRule[]> {
-    const payload = await this.readPayload();
-
-    return payload.items
-      .filter((i) => i.dstPort === destinationPort)
-      .map((i) => NatRuleJsonMapper.toDomain(i));
+    return rules.filter((rule) => rule.getProtocol() === protocol);
   }
 
   async delete(id: string): Promise<void> {

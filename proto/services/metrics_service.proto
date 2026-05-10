@@ -6,6 +6,7 @@ import "google/protobuf/timestamp.proto";
 
 service FirewallMetricsService {
   rpc StreamMetrics(StreamMetricsRequest) returns (stream RealtimeMetric);
+  rpc StreamConntrackMetrics(StreamConntrackMetricsRequest) returns (stream ConntrackMetricsUpdate);
 }
 
 message StreamMetricsRequest {
@@ -17,4 +18,116 @@ message RealtimeMetric {
   double value = 2;
   string unit = 3;
   google.protobuf.Timestamp timestamp = 4;
+}
+
+message StreamConntrackMetricsRequest {
+  optional uint64 interval_ms = 1;
+  optional uint32 max_flows = 2;
+  optional bool include_destroyed = 3;
+}
+
+message ConntrackMetricsUpdate {
+  google.protobuf.Timestamp timestamp = 1;
+  ConntrackSummary summary = 2;
+  repeated ConntrackFlow flows = 3;
+}
+
+message ConntrackSummary {
+  uint64 created = 1;
+  uint64 confirmed = 2;
+  uint64 destroyed = 3;
+  uint64 invalid = 4;
+  uint64 drops_table_full = 5;
+  uint64 lookups = 6;
+  uint64 hits = 7;
+  uint64 insert_collisions = 8;
+  uint64 active_entries = 9;
+  uint64 retained_destroyed_entries = 10;
+  uint64 history_limit = 11;
+}
+
+message ConntrackFlow {
+  uint64 id = 1;
+  ConntrackLifecycle lifecycle = 2;
+  ConntrackFlowState state = 3;
+  ConntrackDirection last_direction = 4;
+  ConntrackFlowTuple original = 5;
+  ConntrackFlowTuple reply = 6;
+  ConntrackInterfacePath interfaces = 7;
+  uint32 mark = 8;
+  uint32 status_bits = 9;
+  uint64 bytes_original = 10;
+  uint64 bytes_reply = 11;
+  uint64 packets_original = 12;
+  uint64 packets_reply = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp last_seen_at = 15;
+  google.protobuf.Timestamp expires_at = 16;
+  google.protobuf.Timestamp destroyed_at = 17;
+  ConntrackDestroyReason destroy_reason = 18;
+  ConntrackNatInfo nat_info = 19;
+}
+
+message ConntrackFlowTuple {
+  string src_ip = 1;
+  uint32 src_port = 2;
+  string dst_ip = 3;
+  uint32 dst_port = 4;
+  ConntrackProtocol protocol = 5;
+}
+
+message ConntrackInterfacePath {
+  string original_ingress = 1;
+  string original_egress = 2;
+  string reply_ingress = 3;
+  string reply_egress = 4;
+}
+
+message ConntrackNatInfo {
+  string rule_id = 1;
+  uint64 binding_id = 2;
+  bool has_src_nat = 3;
+  bool has_dst_nat = 4;
+  optional string allocated_ip = 5;
+  optional uint32 allocated_port = 6;
+  optional string src_manip_ip = 7;
+  optional uint32 src_manip_port = 8;
+  optional string dst_manip_ip = 9;
+  optional uint32 dst_manip_port = 10;
+}
+
+enum ConntrackFlowState {
+  CONNTRACK_FLOW_STATE_UNSPECIFIED = 0;
+  CONNTRACK_FLOW_STATE_NEW = 1;
+  CONNTRACK_FLOW_STATE_ESTABLISHED = 2;
+  CONNTRACK_FLOW_STATE_RELATED = 3;
+  CONNTRACK_FLOW_STATE_INVALID = 4;
+}
+
+enum ConntrackLifecycle {
+  CONNTRACK_LIFECYCLE_UNSPECIFIED = 0;
+  CONNTRACK_LIFECYCLE_ACTIVE = 1;
+  CONNTRACK_LIFECYCLE_DESTROYED = 2;
+}
+
+enum ConntrackDirection {
+  CONNTRACK_DIRECTION_UNSPECIFIED = 0;
+  CONNTRACK_DIRECTION_ORIGINAL = 1;
+  CONNTRACK_DIRECTION_REPLY = 2;
+}
+
+enum ConntrackProtocol {
+  CONNTRACK_PROTOCOL_UNSPECIFIED = 0;
+  CONNTRACK_PROTOCOL_ICMP = 1;
+  CONNTRACK_PROTOCOL_TCP = 6;
+  CONNTRACK_PROTOCOL_UDP = 17;
+  CONNTRACK_PROTOCOL_ICMPV6 = 58;
+}
+
+enum ConntrackDestroyReason {
+  CONNTRACK_DESTROY_REASON_UNSPECIFIED = 0;
+  CONNTRACK_DESTROY_REASON_TIMEOUT = 1;
+  CONNTRACK_DESTROY_REASON_MANUAL = 2;
+  CONNTRACK_DESTROY_REASON_REPLACED = 3;
+  CONNTRACK_DESTROY_REASON_SHUTDOWN = 4;
 }

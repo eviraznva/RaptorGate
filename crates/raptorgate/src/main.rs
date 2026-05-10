@@ -568,6 +568,27 @@ async fn main() {
         },
     };
 
+    let mut sniffed_names: Vec<String> = loaded_zone_interfaces
+        .iter()
+        .filter(|(_, zi)| zi.sniffed)
+        .filter_map(|(id, _)| crate::zones::resolve_os_name(&loaded_zone_interfaces, id))
+        .collect();
+
+    if sniffed_names.is_empty() {
+        if let Ok(env_ifaces) = std::env::var("CAPTURE_INTERFACES") {
+            for name in env_ifaces.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                sniffed_names.push(name.to_string());
+            }
+            if !sniffed_names.is_empty() {
+                tracing::warn!(
+                    event = "sniffer.fallback.env",
+                    interfaces = ?sniffed_names,
+                    "no sniffed interfaces in zone_interfaces.json, using CAPTURE_INTERFACES env"
+                );
+            }
+        }
+    }
+
     if config.ssl_inspection_enabled {
         let tls_runtime_cancel = CancellationToken::new();
         decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
@@ -579,16 +600,9 @@ async fn main() {
                     .parse()
                     .expect("MITM_LISTEN_ADDR must be a valid socket address");
 
-                let sniffed_names: Vec<String> = zone_interfaces
-                    .get_zone_interfaces()
-                    .iter()
-                    .filter(|(_, zi)| zi.sniffed)
-                    .filter_map(|(id, _)| crate::zones::resolve_os_name(&zone_interfaces.get_zone_interfaces(), id))
-                    .collect();
-
                 match TransparentRedirect::new(
                     listen_addr,
-                    sniffed_names,
+                    sniffed_names.clone(),
                     config.tls_inspection_ports.clone(),
                 )
                 .and_then(|redirect| redirect.install())
@@ -638,29 +652,6 @@ async fn main() {
     let sniffer = Arc::new(sniffer);
     
     // Startup sniffer reconciliation
-    let mut sniffed_names: Vec<String> = loaded_zone_interfaces
-        .iter()
-        .filter(|(_, zi)| zi.sniffed)
-        .filter_map(|(id, _)| crate::zones::resolve_os_name(&loaded_zone_interfaces, id))
-        .collect();
-
-    // Fallback z env CAPTURE_INTERFACES gdy zone_interfaces nie ma sniffed=true.
-    // Bez tego pipeline startuje, ale 0 capture → żaden pakiet nie wchodzi.
-    if sniffed_names.is_empty() {
-        if let Ok(env_ifaces) = std::env::var("CAPTURE_INTERFACES") {
-            for name in env_ifaces.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                sniffed_names.push(name.to_string());
-            }
-            if !sniffed_names.is_empty() {
-                tracing::warn!(
-                    event = "sniffer.fallback.env",
-                    interfaces = ?sniffed_names,
-                    "no sniffed interfaces in zone_interfaces.json, using CAPTURE_INTERFACES env"
-                );
-            }
-        }
-    }
-
     tracing::info!(
         event = "sniffer.reconcile.start",
         interfaces = ?sniffed_names,

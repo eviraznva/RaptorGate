@@ -11,8 +11,6 @@ import type { DecisionMix, MetricsStats, MetricsTabKey } from "./metricsTypes";
 import {
   alertTone,
   eventMessage,
-  fallbackDrops,
-  fallbackTraffic,
   firewallAlertId,
   formatEndpoint,
   metricSeries,
@@ -108,17 +106,42 @@ export function Metrics() {
   );
   const selectedTone = selectedAlert ? alertTone(selectedAlert) : undefined;
   const trafficValues = useMemo(
-    () => metricSeries(metrics, "throughput", fallbackTraffic),
+    () => metricSeries(metrics, "throughput"),
     [metrics],
   );
   const dropValues = useMemo(
-    () => metricSeries(metrics, "drops", fallbackDrops),
+    () => metricSeries(metrics, "drops"),
     [metrics],
   );
   const filteredEvents = useMemo(
     () => filterEvents(events, logFilter),
     [events, logFilter],
   );
+  const metricsCount = metrics.length;
+  const eventsCount = events.length;
+  const filteredEventsCount = filteredEvents.length;
+  const trafficSampleCount = trafficValues.length;
+  const dropSampleCount = dropValues.length;
+
+  useEffect(() => {
+    console.log("[metrics] realtime samples", { total: metricsCount });
+  }, [metricsCount]);
+
+  useEffect(() => {
+    console.log("[metrics] chart series", {
+      drops: dropSampleCount,
+      throughput: trafficSampleCount,
+    });
+  }, [dropSampleCount, trafficSampleCount]);
+
+  useEffect(() => {
+    console.log("[metrics] log filter", {
+      events: eventsCount,
+      filtered: filteredEventsCount,
+      query: logFilter,
+    });
+  }, [eventsCount, filteredEventsCount, logFilter]);
+
   return (
     <main className="metrics-observability-page">
       <div className="observability-shell">

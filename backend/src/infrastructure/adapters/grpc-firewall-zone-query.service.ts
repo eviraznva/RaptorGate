@@ -167,7 +167,7 @@ export class GrpcFirewallZoneQueryService
     }
   }
 
-  async updateZoneInterfaceProperties(
+  async updatePhysicalInterfaceProperties(
     _input: UpdateZoneInterfacePropertiesInput,
   ): Promise<void> {
     return;
@@ -216,6 +216,7 @@ export class GrpcFirewallZoneQueryService
       this.toZoneInterfaceStatus(zoneInterface.status),
       [...zoneInterface.addresses],
       new Date(),
+      zoneInterface.sniffed ?? false,
     );
   }
 
@@ -223,9 +224,17 @@ export class GrpcFirewallZoneQueryService
     if (zoneInterface.kind?.$case === "physical") {
       return zoneInterface.kind.physical.interfaceName;
     }
-
     if (zoneInterface.kind?.$case === "vlan") {
       return zoneInterface.kind.vlan.parentInterfaceId;
+    }
+
+    // proto-loader returns oneof fields flat on message, not wrapped in kind.$case
+    const flat = zoneInterface as Record<string, any>;
+    if (flat.physical?.interfaceName) {
+      return flat.physical.interfaceName;
+    }
+    if (flat.vlan?.parentInterfaceId) {
+      return flat.vlan.parentInterfaceId;
     }
 
     return "";
@@ -236,6 +245,11 @@ export class GrpcFirewallZoneQueryService
   ): number | null {
     if (zoneInterface.kind?.$case === "vlan") {
       return zoneInterface.kind.vlan.vlanId;
+    }
+
+    const flat = zoneInterface as Record<string, any>;
+    if (flat.vlan?.vlanId != null) {
+      return flat.vlan.vlanId;
     }
 
     return null;

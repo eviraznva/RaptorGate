@@ -10,6 +10,7 @@ export class ZoneInterfaceResponseMapper {
       vlanId: zoneInterface.getVlanId(),
       status: zoneInterface.getStatus(),
       addresses: zoneInterface.getAddresses(),
+      sniffed: zoneInterface.getSniffed(),
       createdAt: zoneInterface.getCreatedAt(),
     };
   }

@@ -7,5 +7,6 @@ export class EditZoneInterfaceDto {
   ipv6Address?: string | null;
   ipv6Mask?: number | null;
   isActive?: boolean;
+  sniffed?: boolean;
   accessToken: string;
 }

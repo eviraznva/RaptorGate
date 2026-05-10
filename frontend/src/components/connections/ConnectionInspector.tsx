@@ -1,6 +1,11 @@
 import type { TcpTrackedSession } from "../../types/sessions/TcpSession";
 import {
+  formatBytes,
+  formatDateTime,
   formatEndpoint,
+  formatInterfacePath,
+  getTotalBytes,
+  getTotalPackets,
   TCP_SESSION_STATE_LABELS,
 } from "./connectionsUtils";
 
@@ -55,15 +60,47 @@ export default function ConnectionInspector({
             <strong>{session ? session.endpointB.port : "-"}</strong>
           </div>
           <div className="connections-detail-item">
-            <span>API Method</span>
-            <strong>GET</strong>
+            <span>Lifecycle</span>
+            <strong>{session ? session.lifecycle.toUpperCase() : "-"}</strong>
+          </div>
+          <div className="connections-detail-item">
+            <span>Last Direction</span>
+            <strong>{session ? session.lastDirection.toUpperCase() : "-"}</strong>
+          </div>
+          <div className="connections-detail-item">
+            <span>Total Bytes</span>
+            <strong>{session ? formatBytes(getTotalBytes(session)) : "-"}</strong>
+          </div>
+          <div className="connections-detail-item">
+            <span>Total Packets</span>
+            <strong>{session ? getTotalPackets(session).toLocaleString() : "-"}</strong>
+          </div>
+          <div className="connections-detail-item">
+            <span>Interface Path</span>
+            <strong>{session ? formatInterfacePath(session) : "-"}</strong>
+          </div>
+          <div className="connections-detail-item">
+            <span>Last Seen</span>
+            <strong>{session ? formatDateTime(session.lastSeenAt) : "-"}</strong>
+          </div>
+          <div className="connections-detail-item">
+            <span>Expires</span>
+            <strong>{session ? formatDateTime(session.expiresAt) : "-"}</strong>
+          </div>
+          <div className="connections-detail-item">
+            <span>NAT</span>
+            <strong>
+              {session?.natInfo
+                ? `${session.natInfo.ruleId || "NAT"} / ${session.natInfo.bindingId}`
+                : "-"}
+            </strong>
           </div>
         </div>
 
         <div className="connections-payload-box">
           <div className="connections-trace-head">
             <span>Response Item</span>
-            <strong>/tcp-sessions</strong>
+            <strong>/sessions</strong>
           </div>
           <pre>{session ? JSON.stringify(session, null, 2) : "{}"}</pre>
         </div>

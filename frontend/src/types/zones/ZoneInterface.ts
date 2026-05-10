@@ -12,5 +12,6 @@ export interface ZoneInterface {
   vlanId: number | null;
   status: ZoneInterfaceStatus;
   addresses: string[];
+  sniffed: boolean;
   createdAt: string;
 }

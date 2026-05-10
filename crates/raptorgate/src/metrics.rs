@@ -1,7 +1,7 @@
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use prost_types::Timestamp;
 use thiserror::Error;
@@ -9,8 +9,30 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
+use crate::conntrack::entry::{ConntrackInterfacePath as EntryInterfacePath, CtInfo};
+use crate::conntrack::observer::DestroyReason;
+use crate::conntrack::table::{
+    Conntrack, ConntrackFlowLifecycle, ConntrackFlowSnapshot, ConntrackNatSnapshot,
+    ConntrackSummarySnapshot,
+};
+use crate::conntrack::tuple::{Direction, FlowTuple, Protocol};
 use crate::proto::services::firewall_metrics_service_server::FirewallMetricsService;
-use crate::proto::services::{RealtimeMetric, StreamMetricsRequest};
+use crate::proto::services::{
+    ConntrackDestroyReason as ProtoConntrackDestroyReason,
+    ConntrackDirection as ProtoConntrackDirection,
+    ConntrackFlow as ProtoConntrackFlow,
+    ConntrackFlowState as ProtoConntrackFlowState,
+    ConntrackFlowTuple as ProtoConntrackFlowTuple,
+    ConntrackInterfacePath as ProtoConntrackInterfacePath,
+    ConntrackLifecycle as ProtoConntrackLifecycle,
+    ConntrackMetricsUpdate,
+    ConntrackNatInfo as ProtoConntrackNatInfo,
+    ConntrackProtocol as ProtoConntrackProtocol,
+    ConntrackSummary,
+    RealtimeMetric,
+    StreamConntrackMetricsRequest,
+    StreamMetricsRequest,
+};
 
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(1);
 const MIN_INTERVAL: Duration = Duration::from_millis(250);
@@ -134,17 +156,19 @@ impl SystemMetricsSampler {
 
 pub struct MetricsService {
     collector: Arc<MetricsCollector>,
+    conntrack: Arc<Conntrack>,
 }
 
 impl MetricsService {
-    pub fn new(collector: Arc<MetricsCollector>) -> Self {
-        Self { collector }
+    pub fn new(collector: Arc<MetricsCollector>, conntrack: Arc<Conntrack>) -> Self {
+        Self { collector, conntrack }
     }
 }
 
 #[tonic::async_trait]
 impl FirewallMetricsService for MetricsService {
     type StreamMetricsStream = ReceiverStream<Result<RealtimeMetric, Status>>;
+    type StreamConntrackMetricsStream = ReceiverStream<Result<ConntrackMetricsUpdate, Status>>;
 
     async fn stream_metrics(
         &self,
@@ -198,6 +222,48 @@ impl FirewallMetricsService for MetricsService {
 
         Ok(Response::new(ReceiverStream::new(rx)))
     }
+
+    async fn stream_conntrack_metrics(
+        &self,
+        request: Request<StreamConntrackMetricsRequest>,
+    ) -> Result<Response<Self::StreamConntrackMetricsStream>, Status> {
+        let request = request.into_inner();
+        let interval = metric_interval(request.interval_ms);
+        let max_flows = request.max_flows.map(|value| value as usize);
+        let include_destroyed = request.include_destroyed.unwrap_or(true);
+        let conntrack = Arc::clone(&self.conntrack);
+        let (tx, rx) = mpsc::channel(16);
+
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+
+            loop {
+                ticker.tick().await;
+
+                let timestamp = SystemTime::now();
+                let now = Instant::now();
+                let summary = conntrack.metrics().summary();
+                let flows = conntrack
+                    .metrics()
+                    .snapshot_flows(max_flows, include_destroyed)
+                    .into_iter()
+                    .map(|flow| conntrack_flow_to_proto(flow, now, timestamp))
+                    .collect();
+
+                let update = ConntrackMetricsUpdate {
+                    timestamp: Some(system_time_to_timestamp(timestamp)),
+                    summary: Some(conntrack_summary_to_proto(summary)),
+                    flows,
+                };
+
+                if tx.send(Ok(update)).await.is_err() {
+                    return;
+                }
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
 }
 
 pub fn realtime_metric(
@@ -225,6 +291,143 @@ fn system_time_to_timestamp(value: SystemTime) -> Timestamp {
             nanos: 0,
         },
     }
+}
+
+fn conntrack_summary_to_proto(summary: ConntrackSummarySnapshot) -> ConntrackSummary {
+    ConntrackSummary {
+        created: summary.created,
+        confirmed: summary.confirmed,
+        destroyed: summary.destroyed,
+        invalid: summary.invalid,
+        drops_table_full: summary.drops_table_full,
+        lookups: summary.lookups,
+        hits: summary.hits,
+        insert_collisions: summary.insert_collisions,
+        active_entries: summary.active_entries,
+        retained_destroyed_entries: summary.retained_destroyed_entries,
+        history_limit: summary.history_limit,
+    }
+}
+
+fn conntrack_flow_to_proto(
+    flow: ConntrackFlowSnapshot,
+    now: Instant,
+    timestamp: SystemTime,
+) -> ProtoConntrackFlow {
+    ProtoConntrackFlow {
+        id: flow.id,
+        lifecycle: conntrack_lifecycle_to_proto(flow.lifecycle) as i32,
+        state: conntrack_state_to_proto(flow.state) as i32,
+        last_direction: conntrack_direction_to_proto(flow.last_direction) as i32,
+        original: Some(flow_tuple_to_proto(flow.original)),
+        reply: Some(flow_tuple_to_proto(flow.reply)),
+        interfaces: Some(interface_path_to_proto(flow.interfaces)),
+        mark: flow.mark,
+        status_bits: flow.status_bits,
+        bytes_original: flow.bytes_orig,
+        bytes_reply: flow.bytes_reply,
+        packets_original: flow.packets_orig,
+        packets_reply: flow.packets_reply,
+        created_at: Some(instant_to_timestamp(flow.created_at, now, timestamp)),
+        last_seen_at: Some(instant_to_timestamp(flow.last_seen_at, now, timestamp)),
+        expires_at: Some(instant_to_timestamp(flow.expires_at, now, timestamp)),
+        destroyed_at: flow.destroyed_at.map(|value| instant_to_timestamp(value, now, timestamp)),
+        destroy_reason: conntrack_destroy_reason_to_proto(flow.destroy_reason) as i32,
+        nat_info: flow.nat.map(conntrack_nat_to_proto),
+    }
+}
+
+fn flow_tuple_to_proto(tuple: FlowTuple) -> ProtoConntrackFlowTuple {
+    ProtoConntrackFlowTuple {
+        src_ip: tuple.src_ip.to_string(),
+        src_port: u32::from(tuple.src_port),
+        dst_ip: tuple.dst_ip.to_string(),
+        dst_port: u32::from(tuple.dst_port),
+        protocol: conntrack_protocol_to_proto(tuple.protocol) as i32,
+    }
+}
+
+fn interface_path_to_proto(path: EntryInterfacePath) -> ProtoConntrackInterfacePath {
+    ProtoConntrackInterfacePath {
+        original_ingress: path.original_ingress.as_deref().unwrap_or_default().to_string(),
+        original_egress: path.original_egress.as_deref().unwrap_or_default().to_string(),
+        reply_ingress: path.reply_ingress.as_deref().unwrap_or_default().to_string(),
+        reply_egress: path.reply_egress.as_deref().unwrap_or_default().to_string(),
+    }
+}
+
+fn conntrack_nat_to_proto(nat: ConntrackNatSnapshot) -> ProtoConntrackNatInfo {
+    ProtoConntrackNatInfo {
+        rule_id: nat.rule_id,
+        binding_id: nat.binding_id,
+        has_src_nat: nat.has_src_nat,
+        has_dst_nat: nat.has_dst_nat,
+        allocated_ip: nat.allocated_ip.map(|ip| ip.to_string()),
+        allocated_port: nat.allocated_port.map(u32::from),
+        src_manip_ip: nat.src_manip.as_ref().map(|manip| manip.ip.to_string()),
+        src_manip_port: nat.src_manip.as_ref().and_then(|manip| manip.port.map(u32::from)),
+        dst_manip_ip: nat.dst_manip.as_ref().map(|manip| manip.ip.to_string()),
+        dst_manip_port: nat.dst_manip.as_ref().and_then(|manip| manip.port.map(u32::from)),
+    }
+}
+
+fn conntrack_state_to_proto(state: CtInfo) -> ProtoConntrackFlowState {
+    match state {
+        CtInfo::New => ProtoConntrackFlowState::New,
+        CtInfo::Established => ProtoConntrackFlowState::Established,
+        CtInfo::Related => ProtoConntrackFlowState::Related,
+        CtInfo::Invalid => ProtoConntrackFlowState::Invalid,
+    }
+}
+
+fn conntrack_lifecycle_to_proto(lifecycle: ConntrackFlowLifecycle) -> ProtoConntrackLifecycle {
+    match lifecycle {
+        ConntrackFlowLifecycle::Active => ProtoConntrackLifecycle::Active,
+        ConntrackFlowLifecycle::Destroyed => ProtoConntrackLifecycle::Destroyed,
+    }
+}
+
+fn conntrack_direction_to_proto(direction: Option<Direction>) -> ProtoConntrackDirection {
+    match direction {
+        Some(Direction::Original) => ProtoConntrackDirection::Original,
+        Some(Direction::Reply) => ProtoConntrackDirection::Reply,
+        None => ProtoConntrackDirection::Unspecified,
+    }
+}
+
+fn conntrack_protocol_to_proto(protocol: Protocol) -> ProtoConntrackProtocol {
+    match protocol {
+        Protocol::Tcp => ProtoConntrackProtocol::Tcp,
+        Protocol::Udp => ProtoConntrackProtocol::Udp,
+        Protocol::Icmp => ProtoConntrackProtocol::Icmp,
+        Protocol::IcmpV6 => ProtoConntrackProtocol::Icmpv6,
+    }
+}
+
+fn conntrack_destroy_reason_to_proto(
+    reason: Option<DestroyReason>,
+) -> ProtoConntrackDestroyReason {
+    match reason {
+        Some(DestroyReason::Timeout) => ProtoConntrackDestroyReason::Timeout,
+        Some(DestroyReason::Manual) => ProtoConntrackDestroyReason::Manual,
+        Some(DestroyReason::Replaced) => ProtoConntrackDestroyReason::Replaced,
+        Some(DestroyReason::Shutdown) => ProtoConntrackDestroyReason::Shutdown,
+        None => ProtoConntrackDestroyReason::Unspecified,
+    }
+}
+
+fn instant_to_timestamp(value: Instant, now: Instant, timestamp: SystemTime) -> Timestamp {
+    let system_time = if value <= now {
+        timestamp
+            .checked_sub(now.duration_since(value))
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    } else {
+        timestamp
+            .checked_add(value.duration_since(now))
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    };
+
+    system_time_to_timestamp(system_time)
 }
 
 fn cpu_percent_between(previous: CpuSample, current: CpuSample) -> f64 {
@@ -317,6 +520,32 @@ mod tests {
     use super::*;
     use tokio_stream::StreamExt;
 
+    use crate::conntrack::config::ConntrackConfig;
+    use crate::conntrack::entry::ConntrackEntry;
+    use crate::conntrack::proto::udp::UdpProtoState;
+    use crate::conntrack::proto::{ProtoRegistry, ProtoState};
+    use crate::conntrack::tuple::{FlowTuple, Protocol};
+
+    fn empty_conntrack() -> Conntrack {
+        Conntrack::new(Arc::new(ProtoRegistry::new()), ConntrackConfig::default())
+    }
+
+    fn sample_entry() -> Arc<ConntrackEntry> {
+        Arc::new(ConntrackEntry::new(
+            1,
+            FlowTuple::new(
+                "10.0.0.1".parse().unwrap(),
+                12345,
+                "1.1.1.1".parse().unwrap(),
+                443,
+                Protocol::Udp,
+            ),
+            ProtoState::Udp(UdpProtoState::default()),
+            Duration::from_secs(60),
+            0,
+        ))
+    }
+
     #[test]
     fn collector_tracks_packet_and_drop_deltas() {
         let collector = MetricsCollector::new();
@@ -361,7 +590,7 @@ mod tests {
         collector.observe_packet(1_000_000);
         collector.observe_drop();
 
-        let service = MetricsService::new(collector);
+        let service = MetricsService::new(collector, Arc::new(empty_conntrack()));
         let mut stream = service
             .stream_metrics(Request::new(StreamMetricsRequest {
                 interval_ms: Some(250),
@@ -387,5 +616,42 @@ mod tests {
         assert!(names.contains(&("drops".to_string(), "pps".to_string())));
         assert!(names.contains(&("cpu".to_string(), "%".to_string())));
         assert!(names.contains(&("memory".to_string(), "%".to_string())));
+    }
+
+    #[tokio::test]
+    async fn metrics_service_streams_conntrack_summary_and_flows() {
+        let collector = Arc::new(MetricsCollector::new());
+        let conntrack = Arc::new(empty_conntrack());
+        let entry = sample_entry();
+
+        entry.record_ingress_interface(Direction::Original, "eth0");
+        assert!(conntrack.confirm(&entry));
+
+        let service = MetricsService::new(collector, conntrack);
+        let mut stream = service
+            .stream_conntrack_metrics(Request::new(StreamConntrackMetricsRequest {
+                interval_ms: Some(250),
+                max_flows: Some(10),
+                include_destroyed: Some(true),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        let update = tokio::time::timeout(Duration::from_secs(2), stream.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        let summary = update.summary.unwrap();
+        let flow = update.flows.first().unwrap();
+
+        assert_eq!(summary.active_entries, 1);
+        assert_eq!(flow.id, 1);
+        assert_eq!(flow.state, ProtoConntrackFlowState::New as i32);
+        assert_eq!(flow.lifecycle, ProtoConntrackLifecycle::Active as i32);
+        assert_eq!(flow.original.as_ref().unwrap().src_ip, "10.0.0.1");
+        assert_eq!(flow.interfaces.as_ref().unwrap().original_ingress, "eth0");
     }
 }

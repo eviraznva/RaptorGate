@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import type { INatRulesRepository } from '../../domain/repositories/nat-rules.repository.js';
 import { NAT_RULES_REPOSITORY_TOKEN } from '../../domain/repositories/nat-rules.repository.js';
@@ -17,8 +17,11 @@ export class GetAllNatRulesUseCase {
     if (!natRules) throw new EntityNotFoundException('nat rules', 'all');
     let result = natRules;
 
-    if (dto.type !== undefined)
-      result = result.filter((rule) => rule.getType().getValue() === dto.type);
+    if (dto.actionKind !== undefined)
+      result = result.filter((rule) => rule.getActionKind() === dto.actionKind);
+
+    if (dto.protocol !== undefined)
+      result = result.filter((rule) => rule.getProtocol() === dto.protocol);
 
     if (dto.isActive !== undefined)
       result = result.filter((rule) => rule.getIsActive() === dto.isActive);

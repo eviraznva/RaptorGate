@@ -59,4 +59,9 @@ export class EditZoneInterfaceDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiProperty({ example: true, required: false })
+  @IsOptional()
+  @IsBoolean()
+  sniffed?: boolean;
 }

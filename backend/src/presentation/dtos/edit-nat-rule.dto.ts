@@ -1,107 +1,108 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
-  IsIn,
+  IsEnum,
   IsInt,
-  IsIP,
+  IsObject,
   IsOptional,
+  IsString,
   Max,
   Min,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import type { CreateNatRuleActionDto } from '../../application/dtos/create-nat-rule.dto.js';
+import { NatProtocol } from '../../infrastructure/grpc/generated/common/common.js';
+
+const toNatProtocol = (value: unknown): unknown => {
+  if (typeof value === 'string') {
+    return NatProtocol[value as keyof typeof NatProtocol];
+  }
+
+  return value;
+};
 
 export class EditNatRuleDto {
-  @ApiProperty({
-    example: 'DNAT',
-    enum: ['SNAT', 'DNAT', 'PAT'],
-    required: false,
-  })
-  @IsIn(['SNAT', 'DNAT', 'PAT'])
-  @IsOptional()
-  type?: string;
-
-  @ApiProperty({
-    example: true,
-    required: false,
-  })
+  @ApiPropertyOptional({ example: true })
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
 
-  @ApiProperty({
-    example: '192.168.1.10',
-    required: false,
-    nullable: true,
-  })
-  @IsIP()
-  @IsOptional()
-  sourceIp?: string | null;
-
-  @ApiProperty({
-    example: '10.0.0.5',
-    required: false,
-    nullable: true,
-  })
-  @IsIP()
-  @IsOptional()
-  destinationIp?: string | null;
-
-  @ApiProperty({
-    example: 443,
-    required: false,
-    nullable: true,
-    minimum: 1,
-    maximum: 65535,
-  })
-  @IsInt()
-  @Max(65535)
-  @Min(1)
-  @IsOptional()
-  sourcePort?: number | null;
-
-  @ApiProperty({
-    example: 8080,
-    required: false,
-    nullable: true,
-    minimum: 1,
-    maximum: 65535,
-  })
-  @IsInt()
-  @Min(1)
-  @Max(65535)
-  @IsOptional()
-  destinationPort?: number | null;
-
-  @ApiProperty({
-    example: '172.16.0.20',
-    required: false,
-    nullable: true,
-  })
-  @IsIP()
-  @IsOptional()
-  translatedIp?: string | null;
-
-  @ApiProperty({
-    example: 8443,
-    required: false,
-    nullable: true,
-    minimum: 1,
-    maximum: 65535,
-  })
-  @IsInt()
-  @Min(1)
-  @Max(65535)
-  @IsOptional()
-  translatedPort?: number | null;
-
-  @ApiProperty({
-    example: 10,
-    required: false,
-    minimum: 1,
-    maximum: 100,
-  })
+  @ApiPropertyOptional({ example: 10, minimum: 1, maximum: 100 })
   @IsInt()
   @Min(1)
   @Max(100)
   @IsOptional()
   priority?: number;
+
+  @ApiPropertyOptional({
+    example: 'NAT_PROTOCOL_ALL',
+    enum: ['NAT_PROTOCOL_ALL', 'NAT_PROTOCOL_TCP', 'NAT_PROTOCOL_UDP', 'NAT_PROTOCOL_ICMP'],
+  })
+  @Transform(({ value }) => toNatProtocol(value))
+  @IsEnum(NatProtocol)
+  @IsOptional()
+  protocol?: NatProtocol;
+
+  @ApiPropertyOptional({ example: 'lan0', nullable: true })
+  @IsString()
+  @IsOptional()
+  inInterface?: string | null;
+
+  @ApiPropertyOptional({ example: 'wan0', nullable: true })
+  @IsString()
+  @IsOptional()
+  outInterface?: string | null;
+
+  @ApiPropertyOptional({ example: 'lan', nullable: true })
+  @IsString()
+  @IsOptional()
+  inZone?: string | null;
+
+  @ApiPropertyOptional({ example: 'wan', nullable: true })
+  @IsString()
+  @IsOptional()
+  outZone?: string | null;
+
+  @ApiPropertyOptional({ example: 1024, nullable: true, minimum: 1, maximum: 65535 })
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  @IsOptional()
+  matchSrcPortMin?: number | null;
+
+  @ApiPropertyOptional({ example: 65535, nullable: true, minimum: 1, maximum: 65535 })
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  @IsOptional()
+  matchSrcPortMax?: number | null;
+
+  @ApiPropertyOptional({ example: 443, nullable: true, minimum: 1, maximum: 65535 })
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  @IsOptional()
+  matchDstPortMin?: number | null;
+
+  @ApiPropertyOptional({ example: 443, nullable: true, minimum: 1, maximum: 65535 })
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  @IsOptional()
+  matchDstPortMax?: number | null;
+
+  @ApiPropertyOptional({
+    example: {
+      $case: 'pat',
+      pat: {
+        dstIp: '203.0.113.10',
+        dstPort: 443,
+        translatedIp: '10.0.0.10',
+        translatedPort: 8443,
+      },
+    },
+  })
+  @IsObject()
+  @IsOptional()
+  action?: CreateNatRuleActionDto;
 }

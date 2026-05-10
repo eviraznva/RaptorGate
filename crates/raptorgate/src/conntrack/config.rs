@@ -27,6 +27,9 @@ pub struct ConntrackConfig {
     #[serde(default = "default_events_enabled")]
     pub events_enabled: bool,
 
+    #[serde(default = "default_flow_history_max_entries")]
+    pub flow_history_max_entries: u32,
+
     #[serde(default)]
     pub tcp: TcpConfig,
 
@@ -103,6 +106,7 @@ impl Default for ConntrackConfig {
             accounting: false,
             timestamp: false,
             events_enabled: default_events_enabled(),
+            flow_history_max_entries: default_flow_history_max_entries(),
             tcp: TcpConfig::default(),
             udp: UdpConfig::default(),
             icmp: IcmpConfig::default(),
@@ -243,6 +247,7 @@ fn default_htable_size() -> u32 { 65_536 }
 fn default_gc_interval() -> Duration { Duration::from_secs(5) }
 fn default_log_invalid() -> LogInvalid { LogInvalid::None }
 fn default_events_enabled() -> bool { true }
+fn default_flow_history_max_entries() -> u32 { 100_000 }
 fn default_generic_timeout() -> Duration { Duration::from_secs(600) }
 fn default_max_retrans() -> u8 { 3 }
 fn default_true() -> bool { true }

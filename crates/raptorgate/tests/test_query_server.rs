@@ -19,8 +19,7 @@ use ngfw::proto::services::{
     ActiveConfigSnapshot, ConfigBundle, FactoryResetRequest,
     GetLiveZoneInterfacesRequest, GetPinningBypassRequest,
     GetPinningStatsRequest, GetPoliciesRequest, GetZoneInterfaceRequest,
-    GetZoneInterfacesRequest, GetZonePairsRequest, GetZonesRequest,
-    GetTcpSessionsRequest, PushActiveConfigSnapshotRequest,
+    GetZoneInterfacesRequest, GetZonePairsRequest, GetZonesRequest, PushActiveConfigSnapshotRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::tls::pinning_detector::PinningConfig;
@@ -419,19 +418,6 @@ async fn push_active_config_snapshot_raptorlang_error() {
     let response = client.push_active_config_snapshot(request).await;
 
     assert!(response.is_err());
-}
-
-#[tokio::test]
-async fn get_tcp_sessions_returns_empty_tracker_sessions() {
-    let mut query_client = connect(&shared_server().socket).await;
-
-    let resp = query_client
-        .get_tcp_sessions(GetTcpSessionsRequest {})
-        .await
-        .unwrap()
-        .into_inner();
-
-    assert!(resp.sessions.is_empty());
 }
 
 #[tokio::test]

@@ -3,6 +3,10 @@ import type {
   TcpTrackedSessionState,
 } from "../../types/sessions/TcpSession";
 import {
+  formatBytes,
+  formatDateTime,
+  getTotalBytes,
+  getTotalPackets,
   TCP_SESSION_STATE_LABELS,
   TCP_SESSION_STATES,
 } from "./connectionsUtils";
@@ -80,6 +84,9 @@ export default function ConnectionsTable({
               <th>Direction</th>
               <th>Endpoint B</th>
               <th>Port</th>
+              <th>Bytes</th>
+              <th>Packets</th>
+              <th>Last Seen</th>
             </tr>
           </thead>
           <tbody>
@@ -96,14 +103,19 @@ export default function ConnectionsTable({
                 </td>
                 <td className="endpoint">{session.endpointA.ip}</td>
                 <td>{session.endpointA.port}</td>
-                <td className="route-mark">----------&gt;</td>
+                <td className="route-mark">
+                  {session.lastDirection === "reply" ? "<----------" : "---------->"}
+                </td>
                 <td className="endpoint">{session.endpointB.ip}</td>
                 <td>{session.endpointB.port}</td>
+                <td>{formatBytes(getTotalBytes(session))}</td>
+                <td>{getTotalPackets(session).toLocaleString()}</td>
+                <td>{formatDateTime(session.lastSeenAt)}</td>
               </tr>
             ))}
             {sessions.length === 0 ? (
               <tr>
-                <td className="connections-empty-row" colSpan={6}>
+                <td className="connections-empty-row" colSpan={9}>
                   No TCP sessions match current filters
                 </td>
               </tr>

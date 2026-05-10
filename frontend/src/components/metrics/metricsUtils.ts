@@ -12,14 +12,6 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
   second: "2-digit",
 });
 
-export const fallbackTraffic = [
-  38, 44, 41, 53, 58, 61, 57, 68, 64, 71, 66, 73, 76, 70, 74,
-];
-
-export const fallbackDrops = [
-  8, 11, 9, 14, 18, 21, 19, 25, 29, 24, 23, 31, 39, 34, 36,
-];
-
 export function parseTime(value: string): number {
   const timestamp = Date.parse(value);
   return Number.isNaN(timestamp) ? 0 : timestamp;
@@ -51,8 +43,8 @@ export function formatEndpoint(event: FirewallEvent, side: "src" | "dst"): strin
   return port ? `${ip}:${port}` : ip;
 }
 
-export function formatMetric(metric: RealtimeMetric | undefined, fallback: string): string {
-  if (!metric || !Number.isFinite(metric.value)) return fallback;
+export function formatMetric(metric: RealtimeMetric | undefined): string {
+  if (!metric || !Number.isFinite(metric.value)) return "—";
 
   const value = metric.value >= 100 ? Math.round(metric.value).toLocaleString() : metric.value.toFixed(1);
   return `${value} ${metric.unit}`;
@@ -208,29 +200,12 @@ export function alertDetails(event: FirewallEvent, tone: AlertTone): AlertDetail
 export function metricSeries(
   metrics: RealtimeMetric[],
   name: string,
-  fallback: number[],
 ): number[] {
-  const values = metrics
+  return metrics
     .filter((metric) => metric.name === name && Number.isFinite(metric.value))
     .slice(0, 18)
     .reverse()
     .map((metric) => metric.value);
-
-  return values.length > 2 ? values : fallback;
-}
-
-export function sparkPath(values: number[], width: number, height: number): string {
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-
-  return values
-    .map((value, index) => {
-      const x = (index / Math.max(values.length - 1, 1)) * width;
-      const y = height - ((value - min) / range) * height;
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
 }
 
 export function latestMetric(

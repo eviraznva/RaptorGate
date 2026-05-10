@@ -8,10 +8,6 @@ import { IpAddress } from "../../domain/value-objects/ip-address.vo.js";
 import { Port } from "../../domain/value-objects/port.vo.js";
 import { UpdateDnsInspectionConfigDto } from "../dtos/update-dns-inspection-config.dto.js";
 import { UpdateDnsInspectionConfigResponseDto } from "../dtos/update-dns-inspection-config-response.dto.js";
-import {
-  FIREWALL_DNS_INSPECTION_QUERY_SERVICE_TOKEN,
-  type IFirewallDnsInspectionQueryService,
-} from "../ports/firewall-dns-inspection-query-service.interface.js";
 
 @Injectable()
 export class UpdateDnsInspectionConfigUseCase {
@@ -20,8 +16,6 @@ export class UpdateDnsInspectionConfigUseCase {
   constructor(
     @Inject(DNS_INSPECTION_REPOSITORY_TOKEN)
     private readonly repository: IDnsInspectionRepository,
-    @Inject(FIREWALL_DNS_INSPECTION_QUERY_SERVICE_TOKEN)
-    private readonly firewallDnsInspectionQueryService: IFirewallDnsInspectionQueryService,
   ) {}
 
   async execute(
@@ -55,9 +49,6 @@ export class UpdateDnsInspectionConfigUseCase {
     );
 
     await this.repository.save(dnsInspection);
-    await this.firewallDnsInspectionQueryService.swapDnsInspectionConfig(
-      dnsInspection,
-    );
 
     this.logger.log({
       event: "dns_inspection.update.succeeded",

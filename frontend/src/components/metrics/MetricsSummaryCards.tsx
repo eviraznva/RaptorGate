@@ -1,11 +1,15 @@
+import { useMemo } from "react";
+import {
+  Area,
+  AreaChart,
+  ResponsiveContainer,
+} from "recharts";
 import type { RealtimeMetric } from "./metricsTypes";
 import {
-  fallbackDrops,
   formatAge,
   formatMetric,
   latestMetric,
   metricSeries,
-  sparkPath,
 } from "./metricsUtils";
 
 type MetricsSummaryCardsProps = {
@@ -15,14 +19,40 @@ type MetricsSummaryCardsProps = {
   trafficValues: number[];
 };
 
-function Sparkline({ values, tone = "#06b6d4" }: { values: number[]; tone?: string }) {
-  const path = sparkPath(values, 96, 30);
+type SparklinePoint = {
+  sample: string;
+  value: number;
+};
+
+const miniChartMargin = { bottom: 0, left: 0, right: 0, top: 2 };
+
+function MiniMetricChart({ values, tone = "#06b6d4" }: { values: number[]; tone?: string }) {
+  const data = useMemo<SparklinePoint[]>(
+    () => values.map((value, index) => ({ sample: `${index + 1}`, value })),
+    [values],
+  );
+
+  if (data.length === 0) {
+    return <span className="metric-sparkline-empty">no live samples</span>;
+  }
 
   return (
-    <svg className="metric-sparkline" viewBox="0 0 96 30" aria-hidden="true">
-      <path d={`${path} L 96 30 L 0 30 Z`} fill={tone} opacity="0.13" />
-      <path d={path} fill="none" stroke={tone} strokeWidth="2" strokeLinecap="round" />
-    </svg>
+    <div className="metric-sparkline" aria-hidden="true">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={miniChartMargin}>
+          <Area
+            dataKey="value"
+            dot={data.length === 1 ? { fill: tone, r: 2 } : false}
+            fill={tone}
+            fillOpacity={0.13}
+            isAnimationActive={false}
+            stroke={tone}
+            strokeWidth={2}
+            type="monotone"
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -36,46 +66,42 @@ export default function MetricsSummaryCards({
   const cpuMetric = latestMetric(metrics, "cpu");
   const memoryMetric = latestMetric(metrics, "memory");
   const dropsMetric = latestMetric(metrics, "drops");
+  const cpuValues = useMemo(() => metricSeries(metrics, "cpu"), [metrics]);
+  const memoryValues = useMemo(() => metricSeries(metrics, "memory"), [metrics]);
 
   return (
     <div className="metrics-grid">
       <article className="metric-card">
         <span className="metric-label">Throughput</span>
-        <strong>{formatMetric(throughputMetric, "-- Mbps")}</strong>
+        <strong>{formatMetric(throughputMetric)}</strong>
         <span className="metric-delta good">
-          {throughputMetric ? formatAge(throughputMetric.timestamp, now) : "awaiting sample"}
+          {throughputMetric ? formatAge(throughputMetric.timestamp, now) : "awaiting live sample"}
         </span>
-        <Sparkline values={trafficValues} />
+        <MiniMetricChart values={trafficValues} />
       </article>
       <article className="metric-card">
         <span className="metric-label">CPU load</span>
-        <strong>{formatMetric(cpuMetric, "-- %")}</strong>
+        <strong>{formatMetric(cpuMetric)}</strong>
         <span className="metric-delta">
-          {cpuMetric ? formatAge(cpuMetric.timestamp, now) : "awaiting sample"}
+          {cpuMetric ? formatAge(cpuMetric.timestamp, now) : "awaiting live sample"}
         </span>
-        <Sparkline
-          values={metricSeries(metrics, "cpu", [31, 34, 38, 35, 42, 47, 44, 49, 46, 51])}
-          tone="#10b981"
-        />
+        <MiniMetricChart values={cpuValues} tone="#10b981" />
       </article>
       <article className="metric-card">
         <span className="metric-label">Memory pressure</span>
-        <strong>{formatMetric(memoryMetric, "-- %")}</strong>
+        <strong>{formatMetric(memoryMetric)}</strong>
         <span className="metric-delta warn">
-          {memoryMetric ? formatAge(memoryMetric.timestamp, now) : "awaiting sample"}
+          {memoryMetric ? formatAge(memoryMetric.timestamp, now) : "awaiting live sample"}
         </span>
-        <Sparkline
-          values={metricSeries(metrics, "memory", [48, 51, 53, 52, 58, 61, 59, 64, 62, 66])}
-          tone="#f59e0b"
-        />
+        <MiniMetricChart values={memoryValues} tone="#f59e0b" />
       </article>
       <article className="metric-card">
         <span className="metric-label">Drops</span>
-        <strong>{formatMetric(dropsMetric, "-- pps")}</strong>
+        <strong>{formatMetric(dropsMetric)}</strong>
         <span className="metric-delta status-danger">
-          {dropsMetric ? formatAge(dropsMetric.timestamp, now) : "awaiting sample"}
+          {dropsMetric ? formatAge(dropsMetric.timestamp, now) : "awaiting live sample"}
         </span>
-        <Sparkline values={dropValues.length > 0 ? dropValues : fallbackDrops} tone="#f43f5e" />
+        <MiniMetricChart values={dropValues} tone="#f43f5e" />
       </article>
     </div>
   );

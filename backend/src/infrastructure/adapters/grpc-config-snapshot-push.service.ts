@@ -15,22 +15,41 @@ import type {
   IConfigSnapshotPushService,
 } from "../../application/ports/config-snapshot-push-service.interface.js";
 import type { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
+import type {
+  DnssecFailureAction,
+  DnssecTransport,
+  DnsInspectionConfig as DomainDnsInspectionConfig,
+} from "../../domain/entities/dns-inspection-config.entity.js";
+import type { IpsConfig as DomainIpsConfig } from "../../domain/entities/ips-config.entity.js";
+import type {
+  NatRule as DomainNatRule,
+  NatRuleAction,
+} from "../../domain/entities/nat-rule.entity.js";
+import { NatConfigIsInvalidException } from "../../domain/exceptions/nat-config-is-invalid.exception.js";
 import type { ConfigSnapshotPayload } from "../../domain/value-objects/config-snapshot-payload.interface.js";
 import {
   CertificateType,
   DefaultPolicy,
-  NatRuleType,
   Severity,
 } from "../grpc/generated/common/common.js";
 import {
+  DnsInspectionDnssecFailureAction,
+  DnsInspectionDnssecTransport,
   InterfaceStatus,
+  IpsAction,
+  IpsAppProtocol,
+  IpsMatchType,
+  IpsPatternEncoding,
+  type DnsInspectionConfig as ProtoDnsInspectionConfig,
+  type IpsConfig as ProtoIpsConfig,
+  type NatRule as ProtoNatRule,
   type TlsInspectionPolicy,
 } from "../grpc/generated/config/config_models.js";
 import type { Timestamp } from "../grpc/generated/google/protobuf/timestamp.js";
 import {
   type ConfigBundle,
-  FIREWALL_CONFIG_SNAPSHOT_SERVICE_NAME,
   type FactoryResetRequest,
+  FIREWALL_CONFIG_SNAPSHOT_SERVICE_NAME,
   type FirewallConfigSnapshotServiceClient,
   type PushActiveConfigSnapshotRequest,
 } from "../grpc/generated/services/config_snapshot_service.js";
@@ -57,18 +76,20 @@ export class GrpcConfigSnapshotPushService
       );
   }
 
-  async factoryReset(command: FactoryResetCommand): Promise<FactoryResetResult> {
+  async factoryReset(
+    command: FactoryResetCommand,
+  ): Promise<FactoryResetResult> {
     const correlationId = randomUUID();
     const request: FactoryResetRequest = {
       correlationId,
-      reason: command.reason ?? 'factory_reset',
+      reason: command.reason ?? "factory_reset",
       clearPki: command.clearPki,
       clearServerKeys: command.clearServerKeys,
     };
 
     this.logger.warn({
-      event: 'firewall.factory_reset.started',
-      message: 'requesting firewall factory reset',
+      event: "firewall.factory_reset.started",
+      message: "requesting firewall factory reset",
       correlationId,
       clearPki: request.clearPki ?? true,
       clearServerKeys: request.clearServerKeys ?? true,
@@ -81,19 +102,19 @@ export class GrpcConfigSnapshotPushService
 
       if (!response.accepted) {
         this.logger.warn({
-          event: 'firewall.factory_reset.rejected',
-          message: response.message || 'firewall rejected factory reset',
+          event: "firewall.factory_reset.rejected",
+          message: response.message || "firewall rejected factory reset",
           correlationId,
           safeStateApplied: response.safeStateApplied,
         });
         throw new Error(
-          `Firewall rejected factory reset: ${response.message || 'unknown reason'}`,
+          `Firewall rejected factory reset: ${response.message || "unknown reason"}`,
         );
       }
 
       this.logger.warn({
-        event: 'firewall.factory_reset.succeeded',
-        message: 'firewall factory reset completed',
+        event: "firewall.factory_reset.succeeded",
+        message: "firewall factory reset completed",
         correlationId,
         removedServerKeys: response.removedServerKeys,
         removedServerKeyFiles: response.removedServerKeyFiles,
@@ -103,12 +124,12 @@ export class GrpcConfigSnapshotPushService
       return response;
     } catch (error) {
       const reasonText =
-        error instanceof Error ? error.message : 'Unknown gRPC error';
+        error instanceof Error ? error.message : "Unknown gRPC error";
 
       this.logger.error(
         {
-          event: 'firewall.factory_reset.failed',
-          message: 'failed to request firewall factory reset',
+          event: "firewall.factory_reset.failed",
+          message: "failed to request firewall factory reset",
           correlationId,
           error: reasonText,
         },
@@ -179,6 +200,7 @@ export class GrpcConfigSnapshotPushService
         reason,
         snapshotId: snapshot.getId(),
         appliedSnapshotId: response.appliedSnapshotId,
+        payload: request.snapshot?.bundle,
       });
     } catch (error) {
       const reasonText =
@@ -191,6 +213,7 @@ export class GrpcConfigSnapshotPushService
           correlationId,
           reason,
           snapshotId: snapshot.getId(),
+          payload: request.snapshot?.bundle,
           error: reasonText,
         },
         error instanceof Error ? error.stack : undefined,
@@ -222,38 +245,23 @@ export class GrpcConfigSnapshotPushService
         zoneId: zi.getZoneId(),
         status: this.toZoneInterfaceStatus(zi.getStatus()),
         addresses: zi.getAddresses(),
-        kind:
-          zi.getVlanId() === null
-            ? {
-                $case: "physical",
-                physical: { interfaceName: zi.getInterfaceName() },
-              }
-            : {
-                $case: "vlan",
-                vlan: {
-                  parentInterfaceId: zi.getInterfaceName(),
-                  vlanId: zi.getVlanId() ?? 0,
-                },
+        ...(zi.getVlanId() === null
+          ? { physical: { interfaceName: zi.getInterfaceName() } }
+          : {
+              vlan: {
+                parentInterfaceId: zi.getInterfaceName(),
+                vlanId: zi.getVlanId() ?? 0,
               },
-        sniffed: false,
-      })),
+            }),
+        sniffed: zi.getSniffed(),
+      })) as any,
       zonePairs: b.zone_pairs.items.map((zp) => ({
         id: zp.getId(),
         srcZoneId: zp.getSrcZoneId(),
         dstZoneId: zp.getDstZoneId(),
         defaultPolicy: this.toDefaultPolicy(zp.getDefaultPolicy()),
       })),
-      natRules: b.nat_rules.items.map((n) => ({
-        id: n.getId(),
-        type: this.toNatRuleType(n.getType().getValue()),
-        srcIp: n.getSourceIp()?.getValue ?? "",
-        dstIp: n.getDestinationIp()?.getValue ?? "",
-        srcPort: n.getSourcePort()?.getValue,
-        dstPort: n.getDestinationPort()?.getValue,
-        translatedIp: n.getTranslatedIp()?.getValue ?? "",
-        translatedPort: n.getTranslatedPort()?.getValue,
-        priority: n.getPriority().getValue(),
-      })),
+      natRules: b.nat_rules.items.map((n) => this.toNatRule(n)) as any,
       dnsBlacklist: b.dns_blacklist.items.map((d) => ({
         id: d.getId(),
         domain: d.getDomain(),
@@ -291,8 +299,253 @@ export class GrpcConfigSnapshotPushService
         isActive: c.getIsActive(),
       })),
       tlsInspectionPolicy: this.toTlsInspectionPolicy(b.tls_inspection_policy),
+      dnsInspectionConfig: b.dns_inspection_config
+        ? this.toDnsInspectionConfig(b.dns_inspection_config)
+        : undefined,
+      ipsConfig: b.ips_config ? this.toIpsConfig(b.ips_config) : undefined,
       identity: undefined,
     };
+  }
+
+  private toNatRule(n: DomainNatRule): Record<string, unknown> {
+    const action = n.getAction();
+    const normalized = this.normalizeActionShape(action);
+
+    if (!normalized?.$case) {
+      throw new NatConfigIsInvalidException(
+        "unknown",
+        "action",
+        "action is required",
+      );
+    }
+
+    return {
+      id: n.getId(),
+      priority: n.getPriority().getValue(),
+      inInterface: n.getInInterface() ?? undefined,
+      outInterface: n.getOutInterface() ?? undefined,
+      inZone: n.getInZone() ?? undefined,
+      outZone: n.getOutZone() ?? undefined,
+      protocol: n.getProtocol(),
+      matchSrcPortMin: n.getMatchSrcPortMin()?.getValue,
+      matchSrcPortMax: n.getMatchSrcPortMax()?.getValue,
+      matchDstPortMin: n.getMatchDstPortMin()?.getValue,
+      matchDstPortMax: n.getMatchDstPortMax()?.getValue,
+      ...this.toFlatNatAction(normalized),
+    };
+  }
+
+  private toFlatNatAction(
+    action: NatRuleAction,
+  ): Record<string, unknown> {
+    switch (action.$case) {
+      case "snat":
+        return {
+          snat: {
+            srcCidr: action.snat.srcCidr,
+            translatedIp: action.snat.translatedIp,
+            srcPortMin: action.snat.srcPortMin?.getValue,
+            srcPortMax: action.snat.srcPortMax?.getValue,
+          },
+        };
+      case "dnat":
+        return {
+          dnat: {
+            dstCidr: action.dnat.dstCidr,
+            translatedIp: action.dnat.translatedIp,
+            translatedPort: action.dnat.translatedPort?.getValue,
+          },
+        };
+      case "pat":
+        return {
+          pat: {
+            dstIp: action.pat.dstIp,
+            dstPort: action.pat.dstPort.getValue,
+            translatedIp: action.pat.translatedIp,
+            translatedPort: action.pat.translatedPort.getValue,
+          },
+        };
+      case "masquerade":
+        return {
+          masquerade: {
+            srcCidr: action.masquerade.srcCidr,
+            srcPortMin: action.masquerade.srcPortMin?.getValue,
+            srcPortMax: action.masquerade.srcPortMax?.getValue,
+          },
+        };
+      default:
+        throw new NatConfigIsInvalidException(
+          (action as { $case: string }).$case,
+          "action",
+          "unsupported action case",
+        );
+    }
+  }
+
+  private normalizeActionShape(action: NatRuleAction | undefined): NatRuleAction | undefined {
+    if (!action) return undefined;
+
+    if ("$case" in action) {
+      return action;
+    }
+
+    const keys = Object.keys(action);
+    if (keys.length !== 1) {
+      return undefined;
+    }
+
+    const variant = keys[0];
+    if (!["snat", "dnat", "pat", "masquerade"].includes(variant)) {
+      return undefined;
+    }
+
+    return {
+      $case: variant as any,
+      [variant]: (action as any)[variant],
+    } as NatRuleAction;
+  }
+
+  private toDnsInspectionConfig(
+    config: DomainDnsInspectionConfig,
+  ): ProtoDnsInspectionConfig {
+    const general = config.getGeneral();
+    const blocklist = config.getBlocklist();
+    const dnsTunneling = config.getDnsTunneling();
+    const dnssec = config.getDnssec();
+
+    return {
+      general: { enabled: general.enabled },
+      blocklist: {
+        enabled: blocklist.enabled,
+        domains: [...blocklist.domains],
+      },
+      dnsTunneling: {
+        enabled: dnsTunneling.enabled,
+        maxLabelLength: dnsTunneling.maxLabelLength,
+        entropyThreshold: dnsTunneling.entropyThreshold,
+        windowSeconds: dnsTunneling.windowSeconds,
+        maxQueriesPerDomain: dnsTunneling.maxQueriesPerDomain,
+        maxUniqueSubdomains: dnsTunneling.maxUniqueSubdomains,
+        ignoreDomains: [...dnsTunneling.ignoreDomains],
+        alertThreshold: dnsTunneling.alertThreshold,
+        blockThreshold: dnsTunneling.blockThreshold,
+      },
+      dnssec: {
+        enabled: dnssec.enabled,
+        maxLookupsPerPacket: dnssec.maxLookupsPerPacket,
+        defaultOnResolverFailure: this.toDnssecFailureAction(
+          dnssec.defaultOnResolverFailure,
+        ),
+        resolver: {
+          primary: {
+            address: dnssec.resolver.primary.address?.getValue ?? "",
+            port: dnssec.resolver.primary.port.getValue,
+          },
+          secondary: {
+            address: dnssec.resolver.secondary.address?.getValue ?? "",
+            port: dnssec.resolver.secondary.port.getValue,
+          },
+          transport: this.toDnssecTransport(dnssec.resolver.transport),
+          timeoutMs: dnssec.resolver.timeoutMs,
+          retries: dnssec.resolver.retries,
+        },
+        cache: {
+          enabled: dnssec.cache.enabled,
+          maxEntries: dnssec.cache.maxEntries,
+          ttlSeconds: {
+            secure: dnssec.cache.ttlSeconds.secure,
+            insecure: dnssec.cache.ttlSeconds.insecure,
+            bogus: dnssec.cache.ttlSeconds.bogus,
+            failure: dnssec.cache.ttlSeconds.failure,
+          },
+        },
+      },
+    };
+  }
+
+  private toIpsConfig(config: DomainIpsConfig): ProtoIpsConfig {
+    return {
+      general: config.getGeneral(),
+      detection: config.getDetection(),
+      signatures: config.getSignatures().map((signature) => ({
+        id: signature.getId(),
+        name: signature.getName(),
+        enabled: signature.getIsActive(),
+        category: signature.getCategory().getValue(),
+        pattern: signature.getPattern().getValue(),
+        severity: this.toIpsSeverity(signature.getSeverity().getValue()),
+        action: this.toIpsAction(signature.getAction().getValue()),
+        appProtocols: signature
+          .getAppProtocols()
+          .map((protocol) => this.toIpsAppProtocol(protocol.getValue())),
+        srcPorts: signature.getSrcPorts().map((port) => port.getValue),
+        dstPorts: signature.getDstPorts().map((port) => port.getValue),
+        matchType: this.toIpsMatchType(signature.getMatchType().getValue()),
+        patternEncoding: this.toIpsPatternEncoding(
+          signature.getPatternEncoding().getValue(),
+        ),
+        caseInsensitive: signature.getCaseInsensitive(),
+      })),
+    };
+  }
+
+  private toIpsSeverity(value: string): Severity {
+    const mapped = Severity[value as keyof typeof Severity];
+    return typeof mapped === "number" ? mapped : Severity.SEVERITY_UNSPECIFIED;
+  }
+
+  private toIpsAction(value: string): IpsAction {
+    const mapped = IpsAction[value as keyof typeof IpsAction];
+    return typeof mapped === "number"
+      ? mapped
+      : IpsAction.IPS_ACTION_UNSPECIFIED;
+  }
+
+  private toIpsAppProtocol(value: string): IpsAppProtocol {
+    const mapped = IpsAppProtocol[value as keyof typeof IpsAppProtocol];
+    return typeof mapped === "number"
+      ? mapped
+      : IpsAppProtocol.IPS_APP_PROTOCOL_UNSPECIFIED;
+  }
+
+  private toIpsMatchType(value: string): IpsMatchType {
+    const mapped = IpsMatchType[value as keyof typeof IpsMatchType];
+    return typeof mapped === "number"
+      ? mapped
+      : IpsMatchType.IPS_MATCH_TYPE_UNSPECIFIED;
+  }
+
+  private toIpsPatternEncoding(value: string): IpsPatternEncoding {
+    const mapped = IpsPatternEncoding[value as keyof typeof IpsPatternEncoding];
+    return typeof mapped === "number"
+      ? mapped
+      : IpsPatternEncoding.IPS_PATTERN_ENCODING_UNSPECIFIED;
+  }
+
+  private toDnssecTransport(
+    value: DnssecTransport,
+  ): DnsInspectionDnssecTransport {
+    switch (value) {
+      case "udp":
+        return DnsInspectionDnssecTransport.DNS_INSPECTION_DNSSEC_TRANSPORT_UDP;
+      case "tcp":
+        return DnsInspectionDnssecTransport.DNS_INSPECTION_DNSSEC_TRANSPORT_TCP;
+      case "udpWithTcpFallback":
+        return DnsInspectionDnssecTransport.DNS_INSPECTION_DNSSEC_TRANSPORT_UDP_WITH_TCP_FALLBACK;
+    }
+  }
+
+  private toDnssecFailureAction(
+    value: DnssecFailureAction,
+  ): DnsInspectionDnssecFailureAction {
+    switch (value) {
+      case "allow":
+        return DnsInspectionDnssecFailureAction.DNS_INSPECTION_DNSSEC_FAILURE_ACTION_ALLOW;
+      case "alert":
+        return DnsInspectionDnssecFailureAction.DNS_INSPECTION_DNSSEC_FAILURE_ACTION_ALERT;
+      case "block":
+        return DnsInspectionDnssecFailureAction.DNS_INSPECTION_DNSSEC_FAILURE_ACTION_BLOCK;
+    }
   }
 
   private toTlsInspectionPolicy(
@@ -324,19 +577,6 @@ export class GrpcConfigSnapshotPushService
         return DefaultPolicy.DEFAULT_POLICY_DROP;
       default:
         return DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED;
-    }
-  }
-
-  private toNatRuleType(value: string): NatRuleType {
-    switch (value.toUpperCase()) {
-      case "SNAT":
-        return NatRuleType.NAT_RULE_TYPE_SNAT;
-      case "DNAT":
-        return NatRuleType.NAT_RULE_TYPE_DNAT;
-      case "PAT":
-        return NatRuleType.NAT_RULE_TYPE_PAT;
-      default:
-        return NatRuleType.NAT_RULE_TYPE_UNSPECIFIED;
     }
   }
 
