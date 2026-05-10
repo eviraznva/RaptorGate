@@ -66,10 +66,6 @@ parking_lot = "0.12.5"
 time = { version = "0.3.47", features = ["local-offset"] }
 rand = "0.8.6"
 
-parking_lot = "0.12.5"
-time = { version = "0.3.47", features = ["local-offset"] }
-rand = "0.8.6"
-
 [dev-dependencies]
 serial_test = "3.2.0"
 tempfile = "3"

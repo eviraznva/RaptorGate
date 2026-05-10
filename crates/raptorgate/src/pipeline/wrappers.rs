@@ -1253,7 +1253,7 @@ impl Stage for ConntrackInStage {
         !packet_is_decrypted(ctx)
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let outcome = self.ct.process(ctx.borrow_sliced_packet(), 0);
 
         match outcome {
@@ -1309,7 +1309,7 @@ impl Stage for ConntrackConfirmStage {
         ctx.ct().is_some() && ctx.ct_is_new()
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let entry = ctx.ct().unwrap().clone();
 
         if !self.ct.confirm(&entry) {
@@ -1332,7 +1332,7 @@ pub struct L4StateStage {
 impl Stage for L4StateStage {
     fn is_applicable(&self, ctx: &PacketContext) -> bool { !packet_is_decrypted(ctx) }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         populate_ml_tcp_and_flow_stats(ctx, &self.flow_stats);
 
         StageOutcome::Continue
