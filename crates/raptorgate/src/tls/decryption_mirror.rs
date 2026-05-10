@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -234,22 +235,67 @@ async fn run_mirror_worker(mut rx: mpsc::Receiver<MirrorRecord>, cancel: Cancell
                     stream = None;
                     active_target = Some(record.target.clone());
                 }
-                if stream.is_none() {
-                    stream = match TcpStream::connect(record.target.as_str()).await {
-                        Ok(stream) => Some(stream),
-                        Err(e) => {
-                            tracing::warn!(target = %record.target, error = %e, "decryption mirror connect failed");
-                            continue;
-                        }
-                    };
+                let frame = record.frame.encode();
+                write_mirror_frame(&mut stream, &record.target, &frame).await;
+            }
+        }
+    }
+}
+
+async fn connect_mirror_target(target: &str) -> std::io::Result<TcpStream> {
+    let stream = TcpStream::connect(target).await?;
+    if let Err(e) = stream.set_nodelay(true) {
+        tracing::debug!(target = %target, error = %e, "decryption mirror set TCP_NODELAY failed");
+    }
+    Ok(stream)
+}
+
+fn mirror_stream_closed(stream: &TcpStream, target: &str) -> bool {
+    let mut probe = [0u8; 1];
+    match stream.try_read(&mut probe) {
+        Ok(0) => true,
+        Ok(n) => {
+            tracing::debug!(target = %target, bytes = n, "decryption mirror collector sent unexpected data");
+            false
+        }
+        Err(e) if e.kind() == ErrorKind::WouldBlock => false,
+        Err(e) => {
+            tracing::warn!(target = %target, error = %e, "decryption mirror collector connection check failed");
+            true
+        }
+    }
+}
+
+async fn write_mirror_frame(stream: &mut Option<TcpStream>, target: &str, frame: &[u8]) {
+    for attempt in 0..2 {
+        if stream
+            .as_ref()
+            .is_some_and(|active| mirror_stream_closed(active, target))
+        {
+            *stream = None;
+        }
+        if stream.is_none() {
+            *stream = match connect_mirror_target(target).await {
+                Ok(stream) => Some(stream),
+                Err(e) => {
+                    tracing::warn!(target = %target, error = %e, "decryption mirror connect failed");
+                    return;
                 }
-                let Some(active) = stream.as_mut() else {
-                    continue;
-                };
-                if let Err(e) = active.write_all(&record.frame.encode()).await {
-                    tracing::warn!(target = %record.target, error = %e, "decryption mirror write failed");
-                    stream = None;
-                }
+            };
+        }
+        let Some(active) = stream.as_mut() else {
+            return;
+        };
+        match active.write_all(frame).await {
+            Ok(()) => return,
+            Err(e) => {
+                tracing::warn!(
+                    target = %target,
+                    error = %e,
+                    retrying = attempt == 0,
+                    "decryption mirror write failed"
+                );
+                *stream = None;
             }
         }
     }
@@ -280,6 +326,8 @@ fn mode_code(mode: InspectionMode) -> u8 {
 mod tests {
     use super::*;
     use std::net::SocketAddr;
+    use tokio::io::AsyncReadExt;
+    use tokio::time::{sleep, timeout, Duration};
     use uuid::Uuid;
 
     use crate::tls::inspection_relay::{Direction, InspectionMode, SessionMeta};
@@ -343,6 +391,64 @@ mod tests {
 
         assert!(buf[..n].windows(24).any(|window| window == b"GET /secret HTTP/1.1\r\n\r\n"));
         assert!(buf[..n].windows(14).any(|window| window == b"www.google.com"));
+    }
+
+    #[tokio::test]
+    async fn mirror_stream_retries_current_frame_after_stale_collector_disconnect() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = listener.local_addr().unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let mirror = DecryptionMirror::start(
+            DecryptionMirrorConfig {
+                enabled: true,
+                target: Some(target.to_string()),
+                ..Default::default()
+            },
+            cancel.clone(),
+        );
+
+        mirror.record_data(
+            Uuid::from_u128(0x11111111111111111111111111111111),
+            1,
+            Direction::ClientToServer,
+            &test_meta(),
+            b"first frame",
+        );
+
+        let (mut stale_stream, _) = listener.accept().await.unwrap();
+        let mut first = vec![0u8; 256];
+        let first_len = timeout(Duration::from_secs(1), stale_stream.read(&mut first))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(first[..first_len].windows(11).any(|window| window == b"first frame"));
+        drop(stale_stream);
+        sleep(Duration::from_millis(50)).await;
+
+        mirror.record_data(
+            Uuid::from_u128(0x22222222222222222222222222222222),
+            1,
+            Direction::ClientToServer,
+            &test_meta(),
+            b"second frame",
+        );
+
+        let (mut reconnected_stream, _) = timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .expect("mirror did not reconnect after stale collector disconnect")
+            .unwrap();
+        let mut second = vec![0u8; 256];
+        let second_len = timeout(Duration::from_secs(1), reconnected_stream.read(&mut second))
+            .await
+            .unwrap()
+            .unwrap();
+        cancel.cancel();
+
+        assert!(
+            second[..second_len]
+                .windows(12)
+                .any(|window| window == b"second frame")
+        );
     }
 
     #[test]
