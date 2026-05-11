@@ -75,6 +75,4 @@ export class EditRuleDto {
   @Type(() => SmtpMatchersDto)
   @IsOptional()
   smtpMatchers?: SmtpMatchersDto;
-
-  id: string;
 }

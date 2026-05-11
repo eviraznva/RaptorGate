@@ -468,7 +468,7 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
               ) : (
                 <div className="space-y-2">
                   {form.smtpMatchers[category].map((match, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
+                    <div key={idx} className="space-y-2">
                       <input
                         type="text"
                         placeholder="Regex pattern"
@@ -476,25 +476,27 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
                         onChange={(e) =>
                           updateSmtpMatcher(category, idx, "regex", e.target.value)
                         }
-                        className="input text-xs flex-1 font-mono"
+                        className="input text-sm min-w-0 font-mono"
                       />
-                      <select
-                        value={match.onMatch}
-                        onChange={(e) =>
-                          updateSmtpMatcher(category, idx, "onMatch", e.target.value)
-                        }
-                        className="input text-xs w-20"
-                      >
-                        <option value="allow">Allow</option>
-                        <option value="deny">Deny</option>
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => removeSmtpMatcher(category, idx)}
-                        className="text-[#f43f5e] hover:text-[#fb7185] text-sm px-1"
-                      >
-                        ✕
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={match.onMatch}
+                          onChange={(e) =>
+                            updateSmtpMatcher(category, idx, "onMatch", e.target.value)
+                          }
+                          className="input text-sm w-20 shrink-0"
+                        >
+                          <option value="allow">Allow</option>
+                          <option value="deny">Deny</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => removeSmtpMatcher(category, idx)}
+                          className="text-[#f43f5e] hover:text-[#fb7185] text-sm px-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

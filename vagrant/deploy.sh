@@ -172,6 +172,7 @@ cp -rf services .router_sync
 cp -rf nginx/* .router_sync/nginx/
 cp -rf logrotate/* .router_sync/logrotate/
 cp -rf vector/* .router_sync/vector/
+cp -f configs/* .router_sync/configs/ || true
 
 R1_STATE="$(vagrant status r1 --machine-readable | awk -F, '$3=="state"{print $4}' | tail -n1)"
 
