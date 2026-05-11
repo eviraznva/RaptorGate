@@ -12,7 +12,6 @@ import {
   type ZonePairsPayload,
 } from "../../services/zonePairs";
 import { setZonePairs } from "../../features/zonePairsSlice";
-import { Icon } from "@iconify/react";
 import { useGetZonesQuery, type ZonesPayload } from "../../services/zones";
 import { setZones } from "../../features/zonesSlice";
 

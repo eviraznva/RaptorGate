@@ -133,6 +133,10 @@ pub struct ZoneInterface {
 }
 
 impl ZoneInterface {
+    pub fn zone_id(&self) -> &ZoneId {
+        &self.zone_id
+    }
+
     pub fn try_from_proto(value: config::ZoneInterface) -> Result<(ZoneInterfaceId, Self), anyhow::Error> {
         let id = ZoneInterfaceId(Uuid::parse_str(&value.id)?);
         let zone_id = ZoneId(Uuid::parse_str(&value.zone_id)?);

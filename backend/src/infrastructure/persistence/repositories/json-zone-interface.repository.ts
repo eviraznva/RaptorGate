@@ -76,4 +76,28 @@ export class JsonZoneInterfaceRepository implements IZoneInterfaceRepository {
       ZoneInterfaceJsonMapper.toDomain(item),
     );
   }
+
+  async findByZoneId(zoneId: string): Promise<ZoneInterface[]> {
+    const zoneInterfaces = await this.readPayload();
+    return zoneInterfaces.items
+      .filter((item) => item.zoneId === zoneId)
+      .map((item) => ZoneInterfaceJsonMapper.toDomain(item));
+  }
+
+  async findByInterfaceName(interfaceName: string): Promise<ZoneInterface | null> {
+    const zoneInterfaces = await this.readPayload();
+    const zoneInterfaceByName = zoneInterfaces.items.find((item) => item.interfaceName === interfaceName);
+    if (!zoneInterfaceByName) return null;
+
+    return ZoneInterfaceJsonMapper.toDomain(zoneInterfaceByName);
+  }
+
+  async delete(id: string): Promise<void> {
+    const zoneInterfaces = await this.readPayload();
+    zoneInterfaces.items = zoneInterfaces.items.filter((item) => item.id !== id);
+
+    await this.mutex.runExclusive(async () => {
+      await this.fileStore.writeJsonAtomic(this.filePath, zoneInterfaces);
+    });
+  }
 }

@@ -5,6 +5,7 @@ use ouroboros::self_referencing;
 use etherparse::{err::packet, SlicedPacket};
 
 use crate::dpi::DpiContext;
+use crate::identity::IdentityContext;
 use crate::ml::MlFeatureVector;
 use crate::conntrack::tuple::Direction;
 use crate::conntrack::entry::{ConntrackEntry, CtInfo};
@@ -21,6 +22,7 @@ pub struct PacketContext {
     pub sliced_packet: SlicedPacket<'this>,
 
     pub dpi_ctx: Option<DpiContext>,
+    pub identity_ctx: Option<IdentityContext>,
     pub ml_feature_vector: MlFeatureVector,
 
     ct_entry: Option<Arc<ConntrackEntry>>,
@@ -37,6 +39,7 @@ impl Clone for PacketContext {
             self.borrow_warnings().clone(),
             *self.borrow_arrival_time(),
             self.borrow_dpi_ctx().clone(),
+            self.borrow_identity_ctx().clone(),
         ).expect("cloning PacketContext should never fail since it's already been parsed once")
     }
 }
@@ -49,6 +52,7 @@ impl PacketContext {
             Vec::new(),
             SystemTime::now(),
             None,
+            None,
         )
     }
 
@@ -58,6 +62,7 @@ impl PacketContext {
         warnings: Vec<String>,
         arrival_time: SystemTime,
         dpi_ctx: Option<DpiContext>,
+        identity_ctx: Option<IdentityContext>,
     ) -> Result<Self, packet::SliceError> {
         let mut ctx = PacketContextTryBuilder {
             src_interface,
@@ -66,6 +71,7 @@ impl PacketContext {
             raw,
             sliced_packet_builder: |raw| SlicedPacket::from_ethernet(raw),
             dpi_ctx,
+            identity_ctx,
             ml_feature_vector: MlFeatureVector::default(),
             ct_entry: None,
             ct_info: None,
@@ -73,7 +79,7 @@ impl PacketContext {
             ct_is_new: false,
         }
         .try_build()?;
-        
+
         let arrival = *ctx.borrow_arrival_time();
         ctx.with_mut(|fields| {
             fields

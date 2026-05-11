@@ -26,6 +26,9 @@ Environment=COOKIE_SECRET=development-cookie-secret-change-me-1234567890
 Environment=AUTH_COOKIE_PATH=/api/auth/refresh
 Environment=BACKEND_LOG_LEVELS=log,error,warn
 Environment=RAPTORGATE_PKI_DIR=/var/lib/raptorgate/pki
+Environment=SECRET_STORE_KEY=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+Environment=RADIUS_SECRET=radiussecret
+Environment=IDENTITY_LDAP_BIND_PASSWORD=admin
 User=root
 
 [Install]

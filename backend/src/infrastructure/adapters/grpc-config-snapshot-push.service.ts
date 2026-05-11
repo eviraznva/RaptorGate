@@ -33,6 +33,7 @@ import {
   Severity,
 } from "../grpc/generated/common/common.js";
 import {
+  type DecryptionMirrorConfig,
   DnsInspectionDnssecFailureAction,
   DnsInspectionDnssecTransport,
   InterfaceStatus,
@@ -335,9 +336,7 @@ export class GrpcConfigSnapshotPushService
     };
   }
 
-  private toFlatNatAction(
-    action: NatRuleAction,
-  ): Record<string, unknown> {
+  private toFlatNatAction(action: NatRuleAction): Record<string, unknown> {
     switch (action.$case) {
       case "snat":
         return {
@@ -382,7 +381,9 @@ export class GrpcConfigSnapshotPushService
     }
   }
 
-  private normalizeActionShape(action: NatRuleAction | undefined): NatRuleAction | undefined {
+  private normalizeActionShape(
+    action: NatRuleAction | undefined,
+  ): NatRuleAction | undefined {
     if (!action) return undefined;
 
     if ("$case" in action) {
@@ -557,6 +558,27 @@ export class GrpcConfigSnapshotPushService
       stripEchDns: policy?.strip_ech_dns ?? true,
       logEchAttempts: policy?.log_ech_attempts ?? true,
       knownPinnedDomains: [...(policy?.known_pinned_domains ?? [])],
+      decryptionMirror: this.toDecryptionMirrorConfig(
+        policy?.decryption_mirror,
+      ),
+    };
+  }
+
+  private toDecryptionMirrorConfig(
+    config:
+      | NonNullable<
+          ConfigSnapshotPayload["bundle"]["tls_inspection_policy"]
+        >["decryption_mirror"]
+      | undefined,
+  ): DecryptionMirrorConfig {
+    return {
+      enabled: config?.enabled ?? false,
+      targetHost: config?.target_host ?? "",
+      targetPort: config?.target_port ?? 0,
+      includeClientToServer: config?.include_client_to_server ?? true,
+      includeServerToClient: config?.include_server_to_client ?? true,
+      forwardedOnly: config?.forwarded_only ?? true,
+      maxSessionBytes: config?.max_session_bytes ?? 16 * 1024 * 1024,
     };
   }
 

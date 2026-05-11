@@ -23,9 +23,8 @@ use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::nat::{NatConfigProvider, NatEngine};
 use crate::factory_reset::{safe_app_config, FactoryResetOptions, FactoryResetReport};
-use crate::data_plane::tcp_session_tracker::{
-    EndpointIdentifier, TcpClosingState, TcpHandshakeState, TcpSessionState, TcpSessionTracker,
-};
+use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
+use crate::identity::{IdentitySessionHandler, IdentitySessionStore};
 use crate::metrics::{MetricsCollector, MetricsService};
 use crate::nat::config::NatRules;
 use crate::policy::engine::PolicyEngine;
@@ -39,6 +38,7 @@ use crate::proto::services::firewall_config_snapshot_service_server::{
     FirewallConfigSnapshotService, FirewallConfigSnapshotServiceServer,
 };
 use crate::proto::services::firewall_metrics_service_server::FirewallMetricsServiceServer;
+use crate::proto::services::identity_session_service_server::IdentitySessionServiceServer;
 use crate::proto::services::{
     GetNatBindingsRequest, GetNatBindingsResponse,
     GetPinningBypassRequest, GetPinningBypassResponse, GetPinningStatsRequest,
@@ -53,6 +53,7 @@ use crate::proto::services::{
 use crate::tls::pinning_detector::PinningDetector;
 use crate::tls::cert_storage::clear_ca_files;
 use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
+use crate::tls::decryption_mirror::{DecryptionMirror, DecryptionMirrorConfig};
 use crate::validation::validate_bundle;
 use crate::zones::Zone;
 use crate::interfaces::{InterfaceController, InterfaceMonitor};
@@ -66,6 +67,7 @@ where
     Controller: InterfaceController + Send + Sync,
 {
     handler: QueryHandler<PolicySwap, Monitor, Controller>,
+    identity_handler: IdentitySessionHandler,
     socket_path: String,
     shutdown: CancellationToken,
 }
@@ -78,11 +80,13 @@ where
 {
     pub fn new(
         handler: QueryHandler<PolicySwap, Monitor, Controller>,
+        identity_sessions: Arc<IdentitySessionStore>,
         socket_path: impl Into<String>,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
             handler,
+            identity_handler: IdentitySessionHandler::new(identity_sessions),
             socket_path: socket_path.into(),
             shutdown,
         }
@@ -117,6 +121,7 @@ where
                 Arc::clone(&self.handler.conntrack),
             )))
             .add_service(FirewallConfigSnapshotServiceServer::new(self.handler))
+            .add_service(IdentitySessionServiceServer::new(self.identity_handler))
             .serve_with_incoming_shutdown(incoming, self.shutdown.cancelled())
             .await
         {
@@ -150,6 +155,7 @@ where
     pub ips_store: Arc<IpsConfigProvider>,
     pub ips: Arc<Ips>,
     pub decision_engine: Arc<TlsDecisionEngine>,
+    pub decryption_mirror: Arc<DecryptionMirror>,
     pub server_key_store: Arc<ServerKeyStore>,
     /// Detektor pinningu — wspoldzielony z TlsDecisionEngine do obserwacji stanu.
     pub pinning_detector: Arc<PinningDetector>,
@@ -184,6 +190,7 @@ where
             ips_store: Arc::clone(&self.ips_store),
             ips: Arc::clone(&self.ips),
             decision_engine: Arc::clone(&self.decision_engine),
+            decryption_mirror: Arc::clone(&self.decryption_mirror),
             server_key_store: Arc::clone(&self.server_key_store),
             pinning_detector: Arc::clone(&self.pinning_detector),
             interface_monitor: Arc::clone(&self.interface_monitor),
@@ -210,6 +217,49 @@ where
             converter(item).map_err(|e| Status::invalid_argument(format!("invalid {label}: {e}")))
         })
         .collect()
+}
+
+fn decryption_mirror_config_from_proto(
+    config: Option<&crate::proto::config::DecryptionMirrorConfig>,
+) -> Result<DecryptionMirrorConfig, String> {
+    let Some(config) = config else {
+        return Ok(DecryptionMirrorConfig::default());
+    };
+    let max_session_bytes = if config.max_session_bytes == 0 {
+        DecryptionMirrorConfig::default().max_session_bytes
+    } else {
+        config.max_session_bytes
+    };
+    let include_client_to_server = config.include_client_to_server || !config.include_server_to_client;
+    let include_server_to_client = config.include_server_to_client || !config.include_client_to_server;
+
+    if !config.enabled {
+        return Ok(DecryptionMirrorConfig {
+            enabled: false,
+            target: None,
+            include_client_to_server,
+            include_server_to_client,
+            forwarded_only: config.forwarded_only,
+            max_session_bytes,
+        });
+    }
+
+    let target_host = config.target_host.trim();
+    if target_host.is_empty() {
+        return Err("target_host is required when mirror is enabled".into());
+    }
+    if config.target_port == 0 || config.target_port > u16::MAX as u32 {
+        return Err("target_port must be in range 1..65535 when mirror is enabled".into());
+    }
+
+    Ok(DecryptionMirrorConfig {
+        enabled: true,
+        target: Some(format!("{target_host}:{}", config.target_port)),
+        include_client_to_server,
+        include_server_to_client,
+        forwarded_only: config.forwarded_only,
+        max_session_bytes,
+    })
 }
 
 #[tonic::async_trait]
@@ -664,6 +714,19 @@ where
             });
             self.decision_engine
                 .reload_known_pinned_domains(&policy.known_pinned_domains);
+            let mirror_config = match decryption_mirror_config_from_proto(policy.decryption_mirror.as_ref()) {
+                Ok(config) => config,
+                Err(e) => {
+                    tracing::error!(error = %e, "decryption mirror policy apply failed");
+                    return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                        correlation_id,
+                        accepted: false,
+                        message: format!("decryption mirror policy apply failed: {e}"),
+                        applied_snapshot_id: String::new(),
+                    }));
+                }
+            };
+            self.decryption_mirror.reload_config(mirror_config);
             if let Err(e) = self.apply_dns_ech_policy(policy).await {
                 tracing::error!(error = %e, "DNS ECH policy apply failed");
                 return Ok(Response::new(PushActiveConfigSnapshotResponse {
@@ -673,6 +736,8 @@ where
                     applied_snapshot_id: String::new(),
                 }));
             }
+        } else {
+            self.decryption_mirror.reload_config(DecryptionMirrorConfig::default());
         }
 
         if let Err(e) = self.apply_nat_rules(&bundle.nat_rules).await {

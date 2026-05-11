@@ -5,13 +5,16 @@ import { Provider } from "react-redux";
 import { store } from "./app/store.ts";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import LoginPage from "./pages/LoginPage.tsx";
+import PortalPage from "./pages/PortalPage.tsx";
 import ResetPasswordPage from "./pages/ResetPasswordPage.tsx";
 import Dashboard from "./pages/Dashboard.tsx";
 import Dns from "./pages/Dns.tsx";
+import SslDecryptionMirror from "./pages/SslDecryptionMirror.tsx";
 import Ips from "./pages/Ips.tsx";
 import ConnectionTracking from "./pages/ConnectionTracking.tsx";
 import PolicyEngine from "./pages/PolicyEngine.tsx";
-//import Settings from "./pages/Settings.tsx";
+import Settings from "./pages/Settings.tsx";
+import Identity from "./pages/Identity.tsx";
 import Zones from "./pages/Zones.tsx";
 import NatRules from "./pages/NatRules.tsx";
 import Users from "./pages/Users.tsx";
@@ -36,6 +39,14 @@ const router = createBrowserRouter([
         element: <ResetPasswordPage />,
       },
       {
+        path: "/portal",
+        element: <PortalPage />,
+      },
+      {
+        path: "/portal/login",
+        element: <PortalPage />,
+      },
+      {
         path: "/dashboard",
         element: (
           <ProtectedRoute>
@@ -51,6 +62,10 @@ const router = createBrowserRouter([
           {
             path: "dns",
             element: <Dns />,
+          },
+          {
+            path: "ssl-decryption-mirror",
+            element: <SslDecryptionMirror />,
           },
           {
             path: "ips",
@@ -83,6 +98,14 @@ const router = createBrowserRouter([
           {
             path: "config-diff",
             element: <ConfigDiff />,
+          },
+          {
+            path: "settings",
+            element: <Settings />,
+          },
+          {
+            path: "identity",
+            element: <Identity />,
           },
           // {
           //   path: "settings",

@@ -8,7 +8,7 @@ export class CreateZonePairDto {
   })
   @IsNotEmpty()
   @IsString()
-  @IsUUID('4')
+  @IsUUID('all')
   srcZoneId: string;
 
   @ApiProperty({
@@ -16,7 +16,7 @@ export class CreateZonePairDto {
   })
   @IsNotEmpty()
   @IsString()
-  @IsUUID('4')
+  @IsUUID('all')
   dstZoneId: string;
 
   @ApiProperty({

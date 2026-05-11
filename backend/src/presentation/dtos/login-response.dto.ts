@@ -1,4 +1,4 @@
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export class LoginResponseDto {
   @ApiProperty({
@@ -42,4 +42,23 @@ export class LoginResponseDto {
     example: true,
   })
   showRecoveryToken: boolean;
+
+  @ApiPropertyOptional({
+    description: "Admin roles resolved for this login session",
+    example: ["admin"],
+  })
+  roles?: string[];
+
+  @ApiPropertyOptional({
+    description: "Authentication provider that accepted the login",
+    example: "radius",
+  })
+  authProvider?: string;
+
+  @ApiPropertyOptional({
+    description: "Authentication profile used by external admin login",
+    example: "auth-1",
+    nullable: true,
+  })
+  authProfileId?: string | null;
 }

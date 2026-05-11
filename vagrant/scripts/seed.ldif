@@ -12,7 +12,7 @@ objectClass: posixAccount
 uid: admin
 cn: Admin User
 sn: Admin
-userPassword: admin123
+userPassword: admin1234
 uidNumber: 1001
 gidNumber: 1001
 homeDirectory: /home/admin

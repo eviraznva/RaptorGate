@@ -24,6 +24,10 @@ import ConfigDiffReducer from "../features/configDiffSlice";
 import UsersManagementSlice from "../features/usersManagementSlice";
 import { configApi } from "../services/config";
 import SessionsReducer from "../features/sessionsSlice";
+import { identityConfigApi } from "../services/identityConfig";
+import { identitySessionsApi } from "../services/identitySessions";
+import { secretsApi } from "../services/secrets";
+import { decryptionMirrorApi } from "../services/decryptionMirror";
 
 export const store = configureStore({
   reducer: {
@@ -48,6 +52,10 @@ export const store = configureStore({
     [natRulesApi.reducerPath]: natRulesApi.reducer,
     [configApi.reducerPath]: configApi.reducer,
     [usersApi.reducerPath]: usersApi.reducer,
+    [identityConfigApi.reducerPath]: identityConfigApi.reducer,
+    [identitySessionsApi.reducerPath]: identitySessionsApi.reducer,
+    [secretsApi.reducerPath]: secretsApi.reducer,
+    [decryptionMirrorApi.reducerPath]: decryptionMirrorApi.reducer,
     [rulesApi.reducerPath]: rulesApi.reducer,
     [zonesApi.reducerPath]: zonesApi.reducer,
     [authApi.reducerPath]: authApi.reducer,
@@ -62,6 +70,10 @@ export const store = configureStore({
       natRulesApi.middleware,
       configApi.middleware,
       usersApi.middleware,
+      identityConfigApi.middleware,
+      identitySessionsApi.middleware,
+      secretsApi.middleware,
+      decryptionMirrorApi.middleware,
       zonesApi.middleware,
       rulesApi.middleware,
       authApi.middleware,

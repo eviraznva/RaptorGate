@@ -463,6 +463,7 @@ mod tests {
             Vec::new(),
             SystemTime::now(),
             Some(dpi_ctx),
+            None,
         )
         .expect("packet context should parse")
     }
@@ -506,6 +507,7 @@ mod tests {
             Arc::<str>::from("eth1"),
             Vec::new(),
             SystemTime::now(),
+            None,
             None,
         )
         .expect("packet context should parse");

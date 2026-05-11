@@ -16,6 +16,12 @@ const payload = (
       ips_signatures: { items: [] },
       ml_model: null,
       firewall_certificates: { items: [] },
+      identity_config: {
+        radius_server_profiles: { items: [] },
+        ldap_server_profiles: { items: [] },
+        authentication_profiles: { items: [] },
+        settings: {},
+      },
       users: { items: [] },
       ...bundle,
     },
@@ -190,6 +196,61 @@ describe('ConfigSnapshotDiffService', () => {
         after: '[redacted]',
       },
     ]);
+  });
+
+  it('redacts identity secret references in diffs', () => {
+    const result = service.diff(
+      payload({
+        identity_config: {
+          radius_server_profiles: {
+            items: [{ id: 'radius-1', sharedSecretRef: 'env:RADIUS_SECRET' }],
+          },
+          ldap_server_profiles: {
+            items: [
+              {
+                id: 'ldap-1',
+                bindPasswordRef: 'env:IDENTITY_LDAP_BIND_PASSWORD',
+              },
+            ],
+          },
+          authentication_profiles: { items: [] },
+          settings: {},
+        },
+      }),
+      payload({
+        identity_config: {
+          radius_server_profiles: {
+            items: [
+              {
+                id: 'radius-1',
+                sharedSecretRef: 'secret://identity/radius/prod',
+              },
+            ],
+          },
+          ldap_server_profiles: {
+            items: [
+              {
+                id: 'ldap-1',
+                bindPasswordRef: 'secret://identity/ldap/prod',
+              },
+            ],
+          },
+          authentication_profiles: { items: [] },
+          settings: {},
+        },
+      }),
+    );
+
+    expect(JSON.stringify(result.changes)).not.toContain('RADIUS_SECRET');
+    expect(JSON.stringify(result.changes)).not.toContain(
+      'IDENTITY_LDAP_BIND_PASSWORD',
+    );
+    expect(JSON.stringify(result.changes)).not.toContain(
+      'secret://identity/radius/prod',
+    );
+    expect(JSON.stringify(result.changes)).not.toContain(
+      'secret://identity/ldap/prod',
+    );
   });
 
   it('returns deterministic ordering by section path and type', () => {

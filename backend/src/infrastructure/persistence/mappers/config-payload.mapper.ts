@@ -1,31 +1,33 @@
-import { ConfigurationSnapshot } from '../../../domain/entities/configuration-snapshot.entity.js';
+import { ConfigurationSnapshot } from "../../../domain/entities/configuration-snapshot.entity.js";
 import {
   ConfigSnapshotPayload,
-  type TlsInspectionPolicyPayload,
   normalizeTlsInspectionPolicy,
-} from '../../../domain/value-objects/config-snapshot-payload.interface.js';
-import { DnsBlacklistFile } from '../schemas/dns-blacklist.schema';
-import { FirewallCertificatesFile } from '../schemas/firewall-certificates.schema';
-import { IpsConfigRecord } from '../schemas/ips-config.schema.js';
-import { IpsSignaturesFile } from '../schemas/ips-signatures.schema';
-import { DnsInspectionRecord } from '../schemas/dns-inspection.schema.js';
-import { NatRulesFile } from '../schemas/nat-rules.schema';
-import { RulesFile } from '../schemas/rules.schema';
-import { SslBypassListFile } from '../schemas/ssl-bypass-list.schema';
-import { UsersFile } from '../schemas/users.schema';
-import { ZoneInterfacesFile } from '../schemas/zone-interfaces.schema';
-import { ZonePairsFile } from '../schemas/zone-pairs.schema';
-import { ZonesFile } from '../schemas/zones.schema';
-import { DnsInspectionJsonMapper } from './dns-inspection-json.mapper.js';
-import { FirewallCertificateJsonMapper } from './firewall-certificate-json.mapper';
-import { IpsConfigJsonMapper } from './ips-config-json.mapper.js';
-import { NatRuleJsonMapper } from './nat-rule-json.mapper';
-import { RuleJsonMapper } from './rule-json.mapper';
-import { SslBypassJsonMapper } from './ssl-bypass-json.mapper';
-import { UserJsonMapper } from './user-json.mapper';
-import { ZoneInterfaceJsonMapper } from './zone-interface-json.mapper';
-import { ZoneJsonMapper } from './zone-json.mapper';
-import { ZonePairJsonMapper } from './zone-pair-json.mapper';
+  type TlsInspectionPolicyPayload,
+} from "../../../domain/value-objects/config-snapshot-payload.interface.js";
+import { DnsBlacklistFile } from "../schemas/dns-blacklist.schema";
+import { DnsInspectionRecord } from "../schemas/dns-inspection.schema.js";
+import { FirewallCertificatesFile } from "../schemas/firewall-certificates.schema";
+import { IdentityConfigurationRecord } from "../schemas/identity-config.schema";
+import { IpsConfigRecord } from "../schemas/ips-config.schema.js";
+import { IpsSignaturesFile } from "../schemas/ips-signatures.schema";
+import { NatRulesFile } from "../schemas/nat-rules.schema";
+import { RulesFile } from "../schemas/rules.schema";
+import { SslBypassListFile } from "../schemas/ssl-bypass-list.schema";
+import { UsersFile } from "../schemas/users.schema";
+import { ZoneInterfacesFile } from "../schemas/zone-interfaces.schema";
+import { ZonePairsFile } from "../schemas/zone-pairs.schema";
+import { ZonesFile } from "../schemas/zones.schema";
+import { DnsInspectionJsonMapper } from "./dns-inspection-json.mapper.js";
+import { FirewallCertificateJsonMapper } from "./firewall-certificate-json.mapper";
+import { IdentityConfigJsonMapper } from "./identity-config-json.mapper";
+import { IpsConfigJsonMapper } from "./ips-config-json.mapper.js";
+import { NatRuleJsonMapper } from "./nat-rule-json.mapper";
+import { RuleJsonMapper } from "./rule-json.mapper";
+import { SslBypassJsonMapper } from "./ssl-bypass-json.mapper";
+import { UserJsonMapper } from "./user-json.mapper";
+import { ZoneInterfaceJsonMapper } from "./zone-interface-json.mapper";
+import { ZoneJsonMapper } from "./zone-json.mapper";
+import { ZonePairJsonMapper } from "./zone-pair-json.mapper";
 
 export interface ConfigBundlePayloadSchema {
   rules: RulesFile;
@@ -39,6 +41,7 @@ export interface ConfigBundlePayloadSchema {
   ml_model: null;
   firewall_certificates: FirewallCertificatesFile;
   tls_inspection_policy?: TlsInspectionPolicyPayload;
+  identity_config?: IdentityConfigurationRecord;
   dns_inspection_config?: DnsInspectionRecord | null;
   ips_config?: IpsConfigRecord | null;
   users: UsersFile;
@@ -69,12 +72,12 @@ export function mapConfigSnapshotToPayloadRecord(
     ZonePairJsonMapper.toRecord(zonePair),
   );
 
-  const toZonesFile = payload.bundle.zones.items.map((zone) =>
-    ZoneJsonMapper.toRecord(zone, crypto.randomUUID()),
-  );
-
   const toZoneInterfacesFile = payload.bundle.zone_interfaces.items.map(
     (zoneInterface) => ZoneInterfaceJsonMapper.toRecord(zoneInterface),
+  );
+
+  const toZonesFile = payload.bundle.zones.items.map((zone) =>
+    ZoneJsonMapper.toRecord(zone, crypto.randomUUID()),
   );
 
   const toUsersFile = payload.bundle.users.items.map((user) =>
@@ -122,6 +125,9 @@ export function mapConfigSnapshotToPayloadRecord(
       tls_inspection_policy: normalizeTlsInspectionPolicy(
         payload.bundle.tls_inspection_policy,
       ),
+      identity_config: IdentityConfigJsonMapper.payloadToRecord(
+        payload.bundle.identity_config,
+      ),
       dns_inspection_config: payload.bundle.dns_inspection_config
         ? DnsInspectionJsonMapper.toRecord(payload.bundle.dns_inspection_config)
         : null,
@@ -155,12 +161,12 @@ export function mapConfigBundlePayloadToDomain(
     ZonePairJsonMapper.toDomain(zonePair),
   );
 
-  const toZonesDomain = payload.bundle.zones.items.map((zone) =>
-    ZoneJsonMapper.toDomain(zone),
-  );
-
   const toZoneInterfacesDomain = payload.bundle.zone_interfaces.items.map(
     (zoneInterface) => ZoneInterfaceJsonMapper.toDomain(zoneInterface),
+  );
+
+  const toZonesDomain = payload.bundle.zones.items.map((zone) =>
+    ZoneJsonMapper.toDomain(zone),
   );
 
   const toUsersDomain = payload.bundle.users.items.map((user) =>
@@ -171,8 +177,8 @@ export function mapConfigBundlePayloadToDomain(
     SslBypassJsonMapper.toDomain(entry),
   );
 
-  const toCertsDomain = payload.bundle.firewall_certificates.items.map(
-    (cert) => FirewallCertificateJsonMapper.toDomain(cert),
+  const toCertsDomain = payload.bundle.firewall_certificates.items.map((cert) =>
+    FirewallCertificateJsonMapper.toDomain(cert),
   );
 
   return {
@@ -207,6 +213,9 @@ export function mapConfigBundlePayloadToDomain(
       },
       tls_inspection_policy: normalizeTlsInspectionPolicy(
         payload.bundle.tls_inspection_policy,
+      ),
+      identity_config: IdentityConfigJsonMapper.recordToPayload(
+        payload.bundle.identity_config,
       ),
       dns_inspection_config: payload.bundle.dns_inspection_config
         ? DnsInspectionJsonMapper.toDomain(payload.bundle.dns_inspection_config)

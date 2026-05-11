@@ -7,6 +7,8 @@ import { LoginUserUseCase } from '../application/use-cases/login-user.use-case.j
 import { LogoutUserUseCase } from '../application/use-cases/logout-user.use-case.js';
 import { RecoverPasswordUseCase } from '../application/use-cases/recover-password.use-case.js';
 import { RefreshTokenUseCase } from '../application/use-cases/refresh-token.use-case.js';
+import { AdminAuthorizationService } from '../application/services/admin-authorization.service.js';
+import { ADMIN_AUTH_SESSION_REPOSITORY_TOKEN } from '../domain/repositories/admin-auth-session.repository.js';
 import { PERMISSION_REPOSITORY_TOKEN } from '../domain/repositories/permission.repository.js';
 import { ROLE_REPOSITORY_TOKEN } from '../domain/repositories/role.repository.js';
 import { USER_REPOSITORY_TOKEN } from '../domain/repositories/user.repository.js';
@@ -19,12 +21,16 @@ import { FileStore } from '../infrastructure/persistence/json/file-store.js';
 import { JsonPermissionRepository } from '../infrastructure/persistence/repositories/json-permission.repository.js';
 import { JsonRoleRepository } from '../infrastructure/persistence/repositories/json-role.repository.js';
 import { JsonUserRepository } from '../infrastructure/persistence/repositories/json-user.repository.js';
+import { JsonAdminAuthSessionRepository } from '../infrastructure/persistence/repositories/json-admin-auth-session.repository.js';
 import { AuthController } from '../presentation/controllers/auth.controller.js';
+import { AuthenticationEngineModule } from './authentication-engine.module.js';
+import { IdentityConfigStoreModule } from './identity-config-store.module.js';
 
 @Module({
-  imports: [],
+  imports: [AuthenticationEngineModule, IdentityConfigStoreModule],
   controllers: [AuthController],
   providers: [
+    AdminAuthorizationService,
     LoginUserUseCase,
     RefreshTokenUseCase,
     LogoutUserUseCase,
@@ -33,6 +39,7 @@ import { AuthController } from '../presentation/controllers/auth.controller.js';
     Mutex,
     { provide: PASSWORD_HASHER_TOKEN, useClass: BcryptPasswordHasher },
     { provide: USER_REPOSITORY_TOKEN, useClass: JsonUserRepository },
+    { provide: ADMIN_AUTH_SESSION_REPOSITORY_TOKEN, useClass: JsonAdminAuthSessionRepository },
     { provide: ROLE_REPOSITORY_TOKEN, useClass: JsonRoleRepository },
     {
       provide: PERMISSION_REPOSITORY_TOKEN,
@@ -46,6 +53,7 @@ import { AuthController } from '../presentation/controllers/auth.controller.js';
   exports: [
     RolesPermissionsGuard,
     ROLE_REPOSITORY_TOKEN,
+    ADMIN_AUTH_SESSION_REPOSITORY_TOKEN,
     PERMISSION_REPOSITORY_TOKEN,
     TOKEN_SERVICE_TOKEN,
   ],

@@ -46,6 +46,10 @@ export class ZoneInterface {
     return this.id;
   }
 
+  public getZoneId(): string {
+    return this.zoneId;
+  }
+
   public getInterfaceName(): string {
     return this.interfaceName;
   }
@@ -56,10 +60,6 @@ export class ZoneInterface {
 
   public getStatus(): ZoneInterfaceStatus {
     return this.status;
-  }
-
-  public getZoneId(): string {
-    return this.zoneId;
   }
 
   public getCreatedAt(): Date {

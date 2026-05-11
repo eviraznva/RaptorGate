@@ -6,6 +6,7 @@ mod disk_store;
 mod dpi;
 mod events;
 mod factory_reset;
+mod identity;
 mod interfaces;
 mod ip_defrag;
 mod logging;
@@ -17,6 +18,7 @@ mod pipeline;
 mod policy;
 mod proto;
 mod query_server;
+mod routing;
 mod rule_tree;
 mod server_certificate_server;
 mod tls;
@@ -37,10 +39,11 @@ use crate::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
+use crate::identity::IdentitySessionStore;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
     ConntrackConfirmStage, ConntrackInStage, DnsBlockListStage, DnsEchMitigationStage,
-    DnsTunnelingStage, DpiStage, FtpAlgStage, IpsStage, L4StateStage, LocalOwnershipStage,
+    DnsTunnelingStage, DpiStage, FtpAlgStage, IdentityLookupStage, IpsStage, L4StateStage, LocalOwnershipStage,
     MetricsStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
     TlsPortEnforcementStage, ValidationStage, SmtpStage,
 };
@@ -49,7 +52,7 @@ use tokio::sync::mpsc;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
-    CaManager, DecryptedChainInspector, EchTlsPolicy, MitmProxy, MitmProxyConfig,
+    CaManager, DecryptedChainInspector, DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, MitmProxy, MitmProxyConfig,
     PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
 use crate::interfaces::{InterfaceMonitor, NetlinkInterfaceController, NetworkInterfaceMonitor};
@@ -83,34 +86,37 @@ async fn main() {
             Chain<
                 LocalOwnershipStage,
                 Chain<
-                    ConntrackInStage,
+                    IdentityLookupStage,
                     Chain<
-                        DpiStage,
+                        ConntrackInStage,
                         Chain<
-                            TlsPortEnforcementStage,
+                            DpiStage,
                             Chain<
-                                DnsBlockListStage,
+                                TlsPortEnforcementStage,
                                 Chain<
-                                    DnsTunnelingStage,
+                                    DnsBlockListStage,
                                     Chain<
-                                        DnsEchMitigationStage,
+                                        DnsTunnelingStage,
                                         Chain<
-                                            IpsStage,
+                                            DnsEchMitigationStage,
                                             Chain<
-                                                NatPreroutingStage,
+                                                IpsStage,
                                                 Chain<
-                                                    L4StateStage,
+                                                    NatPreroutingStage,
                                                     Chain<
-                                                        MlAlertStage,
+                                                        L4StateStage,
                                                         Chain<
-                                                            PolicyEvalStage<zones::resolver::RoutingZoneResolver<M>>,
+                                                            MlAlertStage,
                                                             Chain<
-                                                                NatPostroutingStage<M>,
+                                                                PolicyEvalStage<zones::resolver::RoutingZoneResolver<M>>,
                                                                 Chain<
-                                                                    FtpAlgStage,
+                                                                    NatPostroutingStage<M>,
                                                                     Chain<
-                                                                        SmtpStage,
-                                                                        Chain<ExecutionStage, ConntrackConfirmStage>,
+                                                                        FtpAlgStage,
+                                                                        Chain<
+                                                                            SmtpStage,
+                                                                            Chain<ExecutionStage, ConntrackConfirmStage>,
+                                                                        >,
                                                                     >,
                                                                 >,
                                                             >,
@@ -198,6 +204,10 @@ async fn main() {
         Arc::clone(&server_key_store),
         EchTlsPolicy::default(),
         PinningConfig::default(),
+    ));
+    let decryption_mirror = Arc::new(DecryptionMirror::start(
+        DecryptionMirrorConfig::default(),
+        CancellationToken::new(),
     ));
 
     let tcp_session_tracker = TcpSessionTracker::new();
@@ -477,6 +487,7 @@ async fn main() {
     };
 
     let dpi_classifier = Arc::new(DpiClassifier::new());
+    let identity_sessions = IdentitySessionStore::new_shared();
 
     let control_server = ControlServer::new(
         config.control_plane_socket_path.clone(),
@@ -493,6 +504,7 @@ async fn main() {
     ));
     let ml_detector: Arc<dyn crate::ml::MlPacketInspector> =
         Arc::new(crate::ml::MlDetector::from_env());
+    let pipeline_interface_monitor: Arc<dyn InterfaceMonitor> = interface_monitor.clone();
 
     let (exec_tx, exec_rx) = mpsc::unbounded_channel();
 
@@ -506,19 +518,23 @@ async fn main() {
                 head: LocalOwnershipStage {
                     config_provider: Arc::clone(&config_provider),
                     zone_interface_provider: Arc::clone(&zone_interfaces),
-                    local_ips: Arc::new(local_ips),
+                    local_ips: Arc::new(local_ips.clone()),
                 },
                 tail: Chain {
-                    head: ConntrackInStage {
-                        ct: Arc::clone(&conntrack),
+                    head: IdentityLookupStage {
+                        store: Arc::clone(&identity_sessions),
                     },
                     tail: Chain {
-                        head: DpiStage {
-                            classifier: Arc::clone(&dpi_classifier),
-                            flow_stats: Arc::clone(&ml_flow_stats),
-                            pinning_detector: Some(decision_engine.pinning_detector_arc()),
+                        head: ConntrackInStage {
+                            ct: Arc::clone(&conntrack),
                         },
                         tail: Chain {
+                            head: DpiStage {
+                                classifier: Arc::clone(&dpi_classifier),
+                                flow_stats: Arc::clone(&ml_flow_stats),
+                                pinning_detector: Some(decision_engine.pinning_detector_arc()),
+                            },
+                            tail: Chain {
                             head: TlsPortEnforcementStage {
                                 config_provider: Arc::clone(&config_provider),
                             },
@@ -588,6 +604,7 @@ async fn main() {
                             },
                         },
                     },
+                    },
                 },
             },
         },
@@ -629,6 +646,7 @@ async fn main() {
                     listen_addr,
                     sniffed_names.clone(),
                     config.tls_inspection_ports.clone(),
+                    local_ips.iter().copied().collect(),
                 )
                 .and_then(|redirect| redirect.install())
                 {
@@ -643,10 +661,16 @@ async fn main() {
                     cert_forger: Arc::clone(forger),
                     untrust_forger: Arc::clone(untrust),
                     decision_engine: Arc::clone(&decision_engine),
-                    decrypted_inspector: Arc::new(DecryptedChainInspector::new(
+                    decrypted_inspector: Arc::new(DecryptedChainInspector::with_identity_and_routing(
                         pipeline.clone(),
                         Arc::clone(&dpi_classifier),
+                        Arc::clone(&identity_sessions),
+                        crate::tls::decrypted_chain::DecryptedRoutingContext {
+                            interface_monitor: Arc::clone(&pipeline_interface_monitor),
+                            zone_interface_store: Arc::clone(&zone_interfaces),
+                        },
                     )),
+                    decryption_mirror: Arc::clone(&decryption_mirror),
                     cancel: tls_runtime_cancel,
                 };
 
@@ -708,6 +732,7 @@ async fn main() {
             ips_store: Arc::clone(&ips_store),
             ips: Arc::clone(&ips),
             decision_engine: Arc::clone(&decision_engine),
+            decryption_mirror: Arc::clone(&decryption_mirror),
             server_key_store: Arc::clone(&server_key_store),
             pinning_detector: decision_engine.pinning_detector_arc(),
             interface_monitor: Arc::clone(&interface_monitor),
@@ -717,6 +742,7 @@ async fn main() {
             metrics_collector: Arc::clone(&metrics_collector),
             reset_lock: Arc::new(Mutex::new(())),
         },
+        Arc::clone(&identity_sessions),
         &config.query_socket_path,
         CancellationToken::new(),
     );

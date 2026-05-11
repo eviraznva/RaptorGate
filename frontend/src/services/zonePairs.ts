@@ -16,12 +16,14 @@ export type CreateZonePairBody = {
 export const zonePairsApi = createApi({
   reducerPath: "zonePairsApi",
   baseQuery: baseQueryWithReauth,
+  tagTypes: ["ZonePairs"],
   endpoints: (builder) => ({
     getZonePairs: builder.query<ApiResponse<ZonePairsPayload>, void>({
       query: () => ({
         url: "/zone-pairs",
         method: "GET",
       }),
+      providesTags: ["ZonePairs"],
     }),
 
     createZonePair: builder.mutation<ApiResponse<{ zonePair: ZonePair }>, CreateZonePairBody>({
@@ -30,6 +32,7 @@ export const zonePairsApi = createApi({
         method: "POST",
         body,
       }),
+      invalidatesTags: ["ZonePairs"],
     }),
 
     updateZonePair: builder.mutation<
@@ -41,6 +44,7 @@ export const zonePairsApi = createApi({
         method: "PUT",
         body,
       }),
+      invalidatesTags: ["ZonePairs"],
     }),
 
     deleteZonePair: builder.mutation<void, string>({
@@ -48,6 +52,7 @@ export const zonePairsApi = createApi({
         url: `/zone-pairs/${id}`,
         method: "DELETE",
       }),
+      invalidatesTags: ["ZonePairs"],
     }),
   }),
 });

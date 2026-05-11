@@ -5,6 +5,7 @@ use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use crate::data_plane::dns_inspection::types::DnssecStatus;
 use crate::dpi::DpiContext;
+use crate::identity::IdentityContext;
 use crate::rule_tree::{
     ArrivalInfo, FieldValue, IpVer, MatchKind, Operation, Pattern, Port, Protocol, RuleTree, Step,
     TreeWalker, Verdict,
@@ -17,14 +18,16 @@ pub struct DnsEvalContext {
     pub dnssec_status: Option<DnssecStatus>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct PolicyEvalContext<'a, 'p> {
     pub packet: &'a SlicedPacket<'p>,
     pub arrival: &'a ArrivalInfo,
     pub dns: Option<&'a DnsEvalContext>,
     pub dpi: Option<&'a DpiContext>,
+    pub identity: Option<&'a IdentityContext>,
 }
 
+#[derive(Clone)]
 pub struct PolicyEvaluator {
     rules: RuleTree,
     orphaned_verdict: Verdict,
@@ -39,22 +42,41 @@ impl PolicyEvaluator {
     }
 
     pub(crate) fn evaluate(&self, ctx: PolicyEvalContext<'_, '_>) -> Verdict {
+        self.evaluate_if_matches(ctx)
+            .unwrap_or_else(|| self.orphaned_verdict.clone())
+    }
+
+    pub(crate) fn evaluate_if_matches(
+        &self,
+        ctx: PolicyEvalContext<'_, '_>,
+    ) -> Option<Verdict> {
         let mut walker = TreeWalker::new(&self.rules);
 
         loop {
             match walker.current_step() {
                 Step::NeedsMatch { kind, pattern } => {
-                    let matched = match Self::extract(*kind, &ctx) {
-                        Some(value) => Self::pattern_matches(pattern, value),
-                        None => Self::missing_value_matches(*kind, pattern),
-                    };
+                    let matched = Self::matches_kind(*kind, pattern, &ctx);
                     if let Step::Verdict(v) = walker.advance(matched) {
-                        return v.clone();
+                        return Some(v.clone());
                     }
                 }
-                Step::Verdict(v) => return v.clone(),
-                Step::NoMatch => return self.orphaned_verdict.clone(),
+                Step::Verdict(v) => return Some(v.clone()),
+                Step::NoMatch => return None,
             }
+        }
+    }
+
+    fn matches_kind(kind: MatchKind, pattern: &Pattern, ctx: &PolicyEvalContext<'_, '_>) -> bool {
+        if matches!(kind, MatchKind::IdentityGroup) {
+            let groups = ctx
+                .identity
+                .and_then(|identity| identity.session.as_ref().map(|s| s.groups.as_slice()));
+            return Self::pattern_matches_group(pattern, groups);
+        }
+
+        match Self::extract(kind, ctx) {
+            Some(value) => Self::pattern_matches(pattern, &value),
+            None => Self::missing_value_matches(kind, pattern),
         }
     }
 
@@ -117,6 +139,18 @@ impl PolicyEvaluator {
                 let status = ctx.dns?.dnssec_status?;
                 Some(FieldValue::DnssecStatus(status))
             }
+            MatchKind::AuthState => {
+                let state = ctx
+                    .identity
+                    .map(|identity| identity.auth_state)
+                    .unwrap_or(crate::identity::AuthState::Unknown);
+                Some(FieldValue::AuthState(state))
+            }
+            MatchKind::IdentityUser => ctx
+                .identity
+                .and_then(|identity| identity.session.as_ref())
+                .map(|session| FieldValue::IdentityUser(session.username.clone())),
+            MatchKind::IdentityGroup => None,
         }
     }
 
@@ -136,36 +170,52 @@ impl PolicyEvaluator {
         }
     }
 
-    fn pattern_matches(pattern: &Pattern, value: FieldValue) -> bool {
+    fn pattern_matches(pattern: &Pattern, value: &FieldValue) -> bool {
         match (pattern, value) {
             (Pattern::Wildcard, _) => true,
 
-            (Pattern::Equal(field_value), value) => *field_value == value,
+            (Pattern::Equal(field_value), value) => field_value == value,
 
             (Pattern::Comparison(op, FieldValue::Port(rhs)), FieldValue::Port(v)) => match op {
-                Operation::Greater => v > *rhs,
-                Operation::Lesser => v < *rhs,
-                Operation::GreaterOrEqual => v >= *rhs,
-                Operation::LesserOrEqual => v <= *rhs,
+                Operation::Greater => v > rhs,
+                Operation::Lesser => v < rhs,
+                Operation::GreaterOrEqual => v >= rhs,
+                Operation::LesserOrEqual => v <= rhs,
             },
             (Pattern::Comparison(op, FieldValue::Hour(rhs)), FieldValue::Hour(v)) => match op {
-                Operation::Greater => v > *rhs,
-                Operation::Lesser => v < *rhs,
-                Operation::GreaterOrEqual => v >= *rhs,
-                Operation::LesserOrEqual => v <= *rhs,
+                Operation::Greater => v > rhs,
+                Operation::Lesser => v < rhs,
+                Operation::GreaterOrEqual => v >= rhs,
+                Operation::LesserOrEqual => v <= rhs,
             },
             (Pattern::Comparison(op, FieldValue::DayOfWeek(rhs)), FieldValue::DayOfWeek(v)) => {
                 match op {
-                    Operation::Greater => v > *rhs,
-                    Operation::Lesser => v < *rhs,
-                    Operation::GreaterOrEqual => v >= *rhs,
-                    Operation::LesserOrEqual => v <= *rhs,
+                    Operation::Greater => v > rhs,
+                    Operation::Lesser => v < rhs,
+                    Operation::GreaterOrEqual => v >= rhs,
+                    Operation::LesserOrEqual => v <= rhs,
                 }
             }
             (Pattern::Comparison(_, _), _) => false,
 
             (Pattern::Or(patterns), _) => patterns.iter().any(|p| Self::pattern_matches(p, value)),
             (Pattern::And(patterns), _) => patterns.iter().all(|p| Self::pattern_matches(p, value)),
+        }
+    }
+
+    fn pattern_matches_group(pattern: &Pattern, groups: Option<&[String]>) -> bool {
+        match pattern {
+            Pattern::Wildcard => groups.is_some(),
+            Pattern::Equal(FieldValue::IdentityGroup(name)) => {
+                groups.is_some_and(|gs| gs.iter().any(|g| g == name))
+            }
+            Pattern::Or(patterns) => patterns
+                .iter()
+                .any(|p| Self::pattern_matches_group(p, groups)),
+            Pattern::And(patterns) => patterns
+                .iter()
+                .all(|p| Self::pattern_matches_group(p, groups)),
+            _ => false,
         }
     }
 }
@@ -260,6 +310,7 @@ mod tests {
             arrival,
             dns: None,
             dpi,
+            identity: None,
         })
     }
 

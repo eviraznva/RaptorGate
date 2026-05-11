@@ -12,6 +12,7 @@ import { NatRuleJsonMapper } from "../../infrastructure/persistence/mappers/nat-
 import { SslBypassEntry } from "../../domain/entities/ssl-bypass-entry.entity.js";
 import { User } from "../../domain/entities/user.entity.js";
 import { Zone } from "../../domain/entities/zone.entity.js";
+import { ZoneInterface } from "../../domain/entities/zone-interface.entity.js";
 import { ZonePair } from "../../domain/entities/zone-pair.entity.js";
 import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
 import {
@@ -22,6 +23,10 @@ import {
   FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
   type IFirewallCertificateRepository,
 } from "../../domain/repositories/firewall-certificate.repository.js";
+import {
+  IDENTITY_CONFIG_REPOSITORY_TOKEN,
+  type IIdentityConfigRepository,
+} from "../../domain/repositories/identity-config.repository.js";
 import {
   type INatRulesRepository,
   NAT_RULES_REPOSITORY_TOKEN,
@@ -39,6 +44,10 @@ import {
   ZONE_REPOSITORY_TOKEN,
 } from "../../domain/repositories/zone.repository.js";
 import {
+  type IZoneInterfaceRepository,
+  ZONE_INTERFACE_REPOSITORY_TOKEN,
+} from "../../domain/repositories/zone-interface.repository.js";
+import {
   type IZonePairRepository,
   ZONE_PAIR_REPOSITORY_TOKEN,
 } from "../../domain/repositories/zone-pair.repository.js";
@@ -49,6 +58,8 @@ import {
 } from "../../domain/value-objects/config-snapshot-payload.interface.js";
 import { Priority } from "../../domain/value-objects/priority.vo.js";
 import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
+import { IdentityConfigJsonMapper } from "../../infrastructure/persistence/mappers/identity-config-json.mapper.js";
+import { IdentitySecretReferenceValidatorService } from "../services/identity-secret-reference-validator.service.js";
 import { ImportConfigDto } from "../dtos/import-config.dto";
 import { ImportConfigResponseDto } from "../dtos/import-config-response.dto";
 import {
@@ -79,6 +90,8 @@ export class ImportConfigUseCase {
     private readonly configSnapshotPushService: IConfigSnapshotPushService,
     @Inject(ZONE_REPOSITORY_TOKEN)
     private readonly zoneRepository: IZoneRepository,
+    @Inject(ZONE_INTERFACE_REPOSITORY_TOKEN)
+    private readonly zoneInterfaceRepository: IZoneInterfaceRepository,
     @Inject(ZONE_PAIR_REPOSITORY_TOKEN)
     private readonly zonePairRepository: IZonePairRepository,
     @Inject(RULES_REPOSITORY_TOKEN)
@@ -89,6 +102,9 @@ export class ImportConfigUseCase {
     private readonly firewallCertificateRepository: IFirewallCertificateRepository,
     @Inject(SSL_BYPASS_REPOSITORY_TOKEN)
     private readonly sslBypassRepository: ISslBypassRepository,
+    @Inject(IDENTITY_CONFIG_REPOSITORY_TOKEN)
+    private readonly identityConfigRepository: IIdentityConfigRepository,
+    private readonly identitySecretReferenceValidator: IdentitySecretReferenceValidatorService,
   ) {}
 
   async execute(dto: ImportConfigDto): Promise<ImportConfigResponseDto> {
@@ -169,6 +185,19 @@ export class ImportConfigUseCase {
       ),
     );
 
+    const importedZoneInterfaces = payload.bundle.zone_interfaces.items.map(
+      (zi: any) =>
+        ZoneInterface.create(
+          zi.id,
+          zi.zoneId,
+          zi.interfaceName,
+          zi.vlanId ?? null,
+          zi.status ?? 'unspecified',
+          zi.addresses ?? [],
+          new Date(zi.createdAt),
+        ),
+    );
+
     const importedNatRules = payload.bundle.nat_rules.items.map((n: any) =>
       NatRuleJsonMapper.toDomain(n),
     );
@@ -217,12 +246,15 @@ export class ImportConfigUseCase {
         [],
       ),
     );
+    const importedIdentityConfig = IdentityConfigJsonMapper.toDomain(
+      payload.bundle.identity_config ?? IdentityConfigJsonMapper.emptyRecord(),
+    );
 
     const domainPayload: ConfigSnapshotPayload = {
       bundle: {
         rules: { items: importedRules },
         zones: { items: importedZones },
-        zone_interfaces: { items: [] },
+        zone_interfaces: { items: importedZoneInterfaces },
         zone_pairs: { items: importedZonePairs },
         nat_rules: { items: importedNatRules },
         dns_blacklist: { items: [] },
@@ -232,6 +264,9 @@ export class ImportConfigUseCase {
         firewall_certificates: { items: importedCerts },
         tls_inspection_policy: normalizeTlsInspectionPolicy(
           payload.bundle.tls_inspection_policy,
+        ),
+        identity_config: IdentityConfigJsonMapper.toPayload(
+          importedIdentityConfig,
         ),
         users: { items: importedUsers },
       },
@@ -246,12 +281,17 @@ export class ImportConfigUseCase {
     );
 
     if (dto.snapshotData.isActive) {
+      await this.identitySecretReferenceValidator.validateActiveConfig(
+        importedIdentityConfig,
+      );
       await this.zoneRepository.overwriteAll(importedZones);
+      await this.zoneInterfaceRepository.overwriteAll(importedZoneInterfaces);
       await this.zonePairRepository.overwriteAll(importedZonePairs);
       await this.rulesRepository.overwriteAll(importedRules);
       await this.natRulesRepository.overwriteAll(importedNatRules);
       await this.firewallCertificateRepository.overwriteAll(importedCerts);
       await this.sslBypassRepository.overwriteAll(importedBypass);
+      await this.identityConfigRepository.overwrite(importedIdentityConfig);
 
       const currentActiveSnapshot = allConfigSnapshots.find((s) =>
         s.getIsActive(),
@@ -284,6 +324,7 @@ export class ImportConfigUseCase {
       counts: {
         rules: payload.bundle.rules.items.length,
         zones: payload.bundle.zones.items.length,
+        zoneInterfaces: payload.bundle.zone_interfaces.items.length,
         zonePairs: payload.bundle.zone_pairs.items.length,
         natRules: payload.bundle.nat_rules.items.length,
       },

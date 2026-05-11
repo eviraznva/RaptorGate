@@ -184,3 +184,34 @@ impl Policy {
 
 use crate::validation::foreign_keys;
 foreign_keys!(Policy { zone_pair_id: ZonePairId });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXPECTED_IDENTITY_RULES: [&str; 4] = [
+        "Identity pre-auth portal gate",
+        "Identity guest sensitive deny",
+        "Identity admin management access",
+        "Identity authenticated app access",
+    ];
+
+    #[test]
+    fn backend_identity_seed_rules_parse() {
+        let raw = include_str!("../../../backend/data/json-db/rules.json");
+        let parsed: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let items = parsed["items"].as_array().unwrap();
+        let names = items
+            .iter()
+            .map(|item| item["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        for expected in EXPECTED_IDENTITY_RULES {
+            assert!(names.contains(&expected));
+        }
+
+        for item in items {
+            parse_rule_tree(item["content"].as_str().unwrap()).unwrap();
+        }
+    }
+}

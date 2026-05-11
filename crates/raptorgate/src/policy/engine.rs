@@ -164,6 +164,7 @@ mod tests {
             arrival: &arrival,
             dns: None,
             dpi: None,
+            identity: None,
         };
 
         assert_eq!(engine.evaluate(&zp_id, ctx), Some(Verdict::Allow));
@@ -206,6 +207,7 @@ mod tests {
             arrival: &arrival,
             dns: None,
             dpi: None,
+            identity: None,
         };
 
         assert_eq!(
@@ -246,6 +248,7 @@ mod tests {
             arrival: &arrival,
             dns: None,
             dpi: None,
+            identity: None,
         };
 
         assert_eq!(

@@ -8,8 +8,14 @@ use tonic::async_trait;
 
 use crate::data_plane::packet_context::PacketContext;
 use crate::dpi::{DpiClassifier, DpiContext};
+use crate::identity::{
+    resolve_identity, IdentityContext, IdentitySessionStore,
+};
+use crate::interfaces::InterfaceMonitor;
 use crate::pipeline::{Stage, StageOutcome};
+use crate::routing::resolve_egress_for_ip;
 use crate::tls::inspection_relay::{Direction, SessionMeta};
+use crate::zones::provider::ZoneInterfaceProvider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectionDisposition {
@@ -58,13 +64,49 @@ impl DecryptedTrafficInspector for NoopDecryptedInspector {
 pub struct DecryptedChainInspector<P> {
     pipeline: P,
     dpi_classifier: Arc<DpiClassifier>,
+    identity_sessions: Arc<IdentitySessionStore>,
+    routing: Option<DecryptedRoutingContext>,
+}
+
+#[derive(Clone)]
+pub struct DecryptedRoutingContext {
+    pub interface_monitor: Arc<dyn InterfaceMonitor>,
+    pub zone_interface_store: Arc<ZoneInterfaceProvider>,
 }
 
 impl<P> DecryptedChainInspector<P> {
     pub fn new(pipeline: P, dpi_classifier: Arc<DpiClassifier>) -> Self {
+        Self::with_identity(
+            pipeline,
+            dpi_classifier,
+            IdentitySessionStore::new_shared(),
+        )
+    }
+
+    pub fn with_identity(
+        pipeline: P,
+        dpi_classifier: Arc<DpiClassifier>,
+        identity_sessions: Arc<IdentitySessionStore>,
+    ) -> Self {
         Self {
             pipeline,
             dpi_classifier,
+            identity_sessions,
+            routing: None,
+        }
+    }
+
+    pub fn with_identity_and_routing(
+        pipeline: P,
+        dpi_classifier: Arc<DpiClassifier>,
+        identity_sessions: Arc<IdentitySessionStore>,
+        routing: DecryptedRoutingContext,
+    ) -> Self {
+        Self {
+            pipeline,
+            dpi_classifier,
+            identity_sessions,
+            routing: Some(routing),
         }
     }
 }
@@ -83,7 +125,18 @@ where
         meta: &SessionMeta,
     ) -> InspectionDecision {
         let endpoints = endpoints_for_direction(meta, direction);
-        let mut packet_ctx = match build_packet_context(payload, seed_ctx, endpoints.0, endpoints.1) {
+        let arrival_time = SystemTime::now();
+        let identity = resolve_identity(&self.identity_sessions, meta.peer.ip(), arrival_time);
+
+        let mut packet_ctx = match build_packet_context(
+            payload,
+            seed_ctx,
+            endpoints.0,
+            endpoints.1,
+            arrival_time,
+            Some(identity),
+            self.routing.as_ref(),
+        ) {
             Ok(ctx) => ctx,
             Err(err) => {
                 tracing::warn!(
@@ -141,17 +194,39 @@ fn build_packet_context(
     seed_ctx: &DpiContext,
     src: SocketAddr,
     dst: SocketAddr,
+    arrival_time: SystemTime,
+    identity_ctx: Option<IdentityContext>,
+    routing: Option<&DecryptedRoutingContext>,
 ) -> anyhow::Result<PacketContext> {
     let raw = build_tcp_packet(payload, src, dst)?;
+    let src_interface = resolve_decrypted_source_interface(src.ip(), routing);
 
     PacketContext::from_raw_full(
         raw,
-        Arc::from("tls-decrypted"),
+        Arc::from(src_interface.as_str()),
         Vec::new(),
-        SystemTime::now(),
+        arrival_time,
         Some(seed_ctx.clone()),
+        identity_ctx,
     )
     .context("failed to parse synthetic decrypted packet")
+}
+
+fn resolve_decrypted_source_interface(src_ip: IpAddr, routing: Option<&DecryptedRoutingContext>) -> String {
+    let Some(routing) = routing else {
+        return "tls-decrypted".into();
+    };
+    let zone_interfaces = routing
+        .zone_interface_store
+        .get_zone_interfaces()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let live_interfaces = routing.interface_monitor.snapshot();
+
+    resolve_egress_for_ip(src_ip, &live_interfaces, &zone_interfaces)
+        .map(|resolved| resolved.interface_name)
+        .unwrap_or_else(|| "tls-decrypted".into())
 }
 
 fn build_tcp_packet(payload: &[u8], src: SocketAddr, dst: SocketAddr) -> anyhow::Result<Vec<u8>> {
@@ -195,6 +270,7 @@ fn transport_payload(ctx: &PacketContext) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::pipeline::Stage;
+    use std::time::Duration;
 
     #[derive(Clone)]
     struct MarkingStage;
@@ -216,6 +292,19 @@ mod tests {
             server: "10.0.0.2:443".parse().unwrap(),
             sni: Some("example.com".into()),
             mode: crate::tls::inspection_relay::InspectionMode::Outbound,
+        }
+    }
+
+    fn identity_session() -> crate::identity::IdentitySession {
+        let now = SystemTime::now();
+        crate::identity::IdentitySession {
+            session_id: "sess-1".into(),
+            identity_user_id: "user-1".into(),
+            username: "alice".into(),
+            client_ip: "10.0.0.1".parse().unwrap(),
+            authenticated_at: now,
+            expires_at: now + Duration::from_secs(60),
+            groups: Vec::new(),
         }
     }
 
@@ -244,5 +333,61 @@ mod tests {
         assert!(decision.ctx.decrypted);
         assert_eq!(decision.ctx.src_port, Some(12345));
         assert_eq!(decision.ctx.dst_port, Some(443));
+    }
+
+    #[tokio::test]
+    async fn synthetic_packet_forwards_missing_identity_to_pipeline() {
+        let inspector = DecryptedChainInspector::with_identity(
+            MarkingStage,
+            Arc::new(DpiClassifier::new()),
+            crate::identity::IdentitySessionStore::new_shared(),
+        );
+        let seed_ctx = DpiContext {
+            decrypted: true,
+            src_port: Some(12345),
+            dst_port: Some(443),
+            ..Default::default()
+        };
+
+        let decision = inspector
+            .inspect(
+                b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+                &seed_ctx,
+                Direction::ClientToServer,
+                &test_meta(),
+            )
+            .await;
+
+        assert_eq!(decision.disposition, InspectionDisposition::Forward);
+        assert_eq!(decision.ctx.app_proto, Some(crate::dpi::AppProto::Http));
+    }
+
+    #[tokio::test]
+    async fn synthetic_packet_allows_active_identity_when_required() {
+        let store = crate::identity::IdentitySessionStore::new_shared();
+        store.upsert(identity_session());
+        let inspector = DecryptedChainInspector::with_identity(
+            MarkingStage,
+            Arc::new(DpiClassifier::new()),
+            store,
+        );
+        let seed_ctx = DpiContext {
+            decrypted: true,
+            src_port: Some(12345),
+            dst_port: Some(443),
+            ..Default::default()
+        };
+
+        let decision = inspector
+            .inspect(
+                b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+                &seed_ctx,
+                Direction::ClientToServer,
+                &test_meta(),
+            )
+            .await;
+
+        assert_eq!(decision.disposition, InspectionDisposition::Forward);
+        assert_eq!(decision.ctx.app_proto, Some(crate::dpi::AppProto::Http));
     }
 }

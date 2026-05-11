@@ -32,6 +32,10 @@ const CONFIG_DIFF_SECTIONS = new Set<ConfigDiffSection>([
   'ips_signatures',
   'firewall_certificates',
   'users',
+  'radius_server_profiles',
+  'ldap_server_profiles',
+  'authentication_profiles',
+  'identity_settings',
   'tls_inspection_policy',
   'ml_model',
 ]);
@@ -46,7 +50,18 @@ const SENSITIVE_KEYS = new Set([
   'recoveryToken',
   'certificatePem',
   'privateKeyRef',
+  'sharedSecret',
+  'sharedSecretRef',
+  'bindPassword',
+  'bindPasswordRef',
 ]);
+
+const IDENTITY_DIFF_SECTIONS: Record<string, ConfigDiffSection> = {
+  radius_server_profiles: 'radius_server_profiles',
+  ldap_server_profiles: 'ldap_server_profiles',
+  authentication_profiles: 'authentication_profiles',
+  settings: 'identity_settings',
+};
 
 @Injectable()
 export class ConfigSnapshotDiffService {
@@ -199,7 +214,11 @@ export class ConfigSnapshotDiffService {
 
   // Converts first path segment into typed config section.
   private toSection(path: string[]): ConfigDiffSection | undefined {
-    const [section] = path;
+    const [section, identitySection] = path;
+
+    if (section === 'identity_config' && identitySection) {
+      return IDENTITY_DIFF_SECTIONS[identitySection];
+    }
 
     // Runtime check protects DTO from paths outside known sections.
     if (CONFIG_DIFF_SECTIONS.has(section as ConfigDiffSection)) {

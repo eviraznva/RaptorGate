@@ -6,8 +6,10 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import type { Request, Response } from "express";
@@ -19,11 +21,16 @@ import { IpsSignatureConfigIsInvalidException } from "src/domain/exceptions/ips-
 import { SignatureSeverityIsInvalidException } from "src/domain/exceptions/signature-severity-is-invalid.exception.js";
 import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
 import { AtLeastOneFieldRequiredException } from "../../domain/exceptions/at-least-one-field-required.exception.js";
+import { AuthenticationMisconfiguredException } from "../../domain/exceptions/authentication-misconfigured.exception.js";
+import { AuthenticationRejectedException } from "../../domain/exceptions/authentication-rejected.exception.js";
+import { AuthenticationUnavailableException } from "../../domain/exceptions/authentication-unavailable.exception.js";
 import { ChecksumIsInvalidException } from "../../domain/exceptions/checksum-is-invalid.exception.js";
 import { DomainNameIsInvalidException } from "../../domain/exceptions/domain-name-is-invalid.exception.js";
 import { EmailIsInvalidException } from "../../domain/exceptions/email-is-invalid.exception.js";
 import { EntityAlreadyExistsException } from "../../domain/exceptions/entity-already-exists-exception.js";
 import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
+import { IdentityConfigIsInvalidException } from "../../domain/exceptions/identity-config-is-invalid.exception.js";
+import { IdentityProfileInUseException } from "../../domain/exceptions/identity-profile-in-use.exception.js";
 import { InvalidCredentialsException } from "../../domain/exceptions/invalid-credentials.exception.js";
 import { IpAddressIsInvalidException } from "../../domain/exceptions/ip-address-is-invalid.exception.js";
 import { IpsSignatureCategoryIsInvalidException } from "../../domain/exceptions/ips-signature-category-is-invalid.exception.js";
@@ -32,10 +39,14 @@ import { NatConfigIsInvalidException } from "../../domain/exceptions/nat-config-
 import { NatTypeIsInvalidException } from "../../domain/exceptions/nat-type-is-invalid.exception.js";
 import { PortIsInvalidException } from "../../domain/exceptions/port-is-invalid.exception.js";
 import { PriorityIsInvalidException } from "../../domain/exceptions/priority-is-invalid.exception.js";
+import { RadiusAccessRejectedException } from "../../domain/exceptions/radius-access-rejected.exception.js";
+import { RadiusUnavailableException } from "../../domain/exceptions/radius-unavailable.exception.js";
 import { RaptorLangValidationException } from "../../domain/exceptions/raptor-lang-validation.exception.js";
 import { RefreshTokenIsInvalidException } from "../../domain/exceptions/refresh-token-is-invalid.exception.js";
 import { RegexPatternIsInvalidException } from "../../domain/exceptions/regex-pattern-is-invalid.exception.js";
 import { SemanticVersionIsInvalidException } from "../../domain/exceptions/semantic-version-is-invalid.exception.js";
+import { SecretIsInvalidException } from "../../domain/exceptions/secret-is-invalid.exception.js";
+import { SecretReferenceMissingException } from "../../domain/exceptions/secret-reference-missing.exception.js";
 import { SnapshotTypeIsInvalidException } from "../../domain/exceptions/snapshot-type-is-invalid.exception.js";
 import { UserAlreadyExistsException } from "../../domain/exceptions/user-already-exitst.exception.js";
 import { UserNotFoundException } from "../../domain/exceptions/user-not-found.exception.js";
@@ -75,16 +86,30 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
   private mapDomainToHttpException(exception: unknown): HttpException | null {
     if (
       exception instanceof UserAlreadyExistsException ||
-      exception instanceof EntityAlreadyExistsException
+      exception instanceof EntityAlreadyExistsException ||
+      exception instanceof IdentityProfileInUseException
     ) {
       return new ConflictException(exception.message);
     }
 
     if (
       exception instanceof RefreshTokenIsInvalidException ||
-      exception instanceof AccessTokenIsInvalidException
+      exception instanceof AccessTokenIsInvalidException ||
+      exception instanceof RadiusAccessRejectedException ||
+      exception instanceof AuthenticationRejectedException
     ) {
       return new UnauthorizedException(exception.message);
+    }
+
+    if (
+      exception instanceof RadiusUnavailableException ||
+      exception instanceof AuthenticationUnavailableException
+    ) {
+      return new ServiceUnavailableException(exception.message);
+    }
+
+    if (exception instanceof AuthenticationMisconfiguredException) {
+      return new InternalServerErrorException(exception.message);
     }
 
     if (
@@ -117,7 +142,10 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
       exception instanceof IpsMatchTypeIsInvalidException ||
       exception instanceof IpsPatternEncodingIsInvalidException ||
       exception instanceof IpsSignatureConfigIsInvalidException ||
-      exception instanceof SignatureSeverityIsInvalidException
+      exception instanceof SignatureSeverityIsInvalidException ||
+      exception instanceof SecretIsInvalidException ||
+      exception instanceof SecretReferenceMissingException ||
+      exception instanceof IdentityConfigIsInvalidException
     ) {
       return new BadRequestException(exception.message);
     }

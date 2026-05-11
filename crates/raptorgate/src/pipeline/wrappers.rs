@@ -19,6 +19,7 @@ use crate::{
     nat::NatEngine,
     dpi::{DpiClassifier, FlowKey, InspectResult},
     events::{self, Event, EventKind},
+    identity::{resolve_identity, IdentitySessionStore},
     metrics::MetricsCollector,
     ml::{MlPacketInspector, MlPrediction},
     packet_validator::validate,
@@ -119,6 +120,50 @@ fn packet_destination_ip(ctx: &PacketContext) -> Option<IpAddr> {
         Some(NetSlice::Ipv4(ipv4)) => Some(IpAddr::V4(ipv4.header().destination_addr())),
         Some(NetSlice::Ipv6(ipv6)) => Some(IpAddr::V6(ipv6.header().destination_addr())),
         _ => None,
+    }
+}
+
+fn packet_source_ip(ctx: &PacketContext) -> Option<IpAddr> {
+    match &ctx.borrow_sliced_packet().net {
+        Some(NetSlice::Ipv4(ipv4)) => Some(IpAddr::V4(ipv4.header().source_addr())),
+        Some(NetSlice::Ipv6(ipv6)) => Some(IpAddr::V6(ipv6.header().source_addr())),
+        _ => None,
+    }
+}
+
+#[derive(Clone)]
+pub struct IdentityLookupStage {
+    pub store: Arc<IdentitySessionStore>,
+}
+
+impl Stage for IdentityLookupStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        !packet_is_decrypted(ctx) && packet_source_ip(ctx).is_some()
+    }
+
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+        let Some(src_ip) = packet_source_ip(ctx) else {
+            return StageOutcome::Continue;
+        };
+
+        let now = *ctx.borrow_arrival_time();
+        let identity = resolve_identity(&self.store, src_ip, now);
+        let auth_state = identity.auth_state;
+        let session_user = identity
+            .session
+            .as_ref()
+            .map(|session| session.username.clone());
+
+        ctx.with_identity_ctx_mut(|slot| *slot = Some(identity));
+
+        tracing::trace!(
+            event = "identity.lookup.resolved",
+            src_ip = %src_ip,
+            auth_state = ?auth_state,
+            username = session_user.as_deref().unwrap_or(""),
+            "identity lookup completed"
+        );
+        StageOutcome::Continue
     }
 }
 
@@ -251,6 +296,10 @@ impl Stage for FtpAlgStage {
                         let arrival_time = *ctx.borrow_arrival_time();
                         let warnings = ctx.with_warnings_mut(std::mem::take);
                         let dpi_ctx_taken = ctx.with_dpi_ctx_mut(|dpi| dpi.take());
+                        let identity_ctx_taken = ctx.with_identity_ctx_mut(|identity| identity.take());
+                        let ct_info = ctx.ct_info();
+                        let ct_direction = ctx.ct_direction();
+                        let ct_is_new = ctx.ct_is_new();
 
                         match PacketContext::from_raw_full(
                             raw_copy,
@@ -258,8 +307,14 @@ impl Stage for FtpAlgStage {
                             warnings,
                             arrival_time,
                             dpi_ctx_taken,
+                            identity_ctx_taken,
                         ) {
-                            Ok(new_ctx) => *ctx = new_ctx,
+                            Ok(mut new_ctx) => {
+                                if let (Some(info), Some(direction)) = (ct_info, ct_direction) {
+                                    new_ctx.set_conntrack(ct.clone(), info, direction, ct_is_new);
+                                }
+                                *ctx = new_ctx;
+                            }
                             Err(err) => {
                                 tracing::warn!(
                                     event = "ftp_alg.reparse.failed",
@@ -677,6 +732,7 @@ impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneRes
             arrival: &arrival,
             dns: dns_ctx.as_ref(),
             dpi: ctx.borrow_dpi_ctx().as_ref(),
+            identity: ctx.borrow_identity_ctx().as_ref(),
         });
 
         match verdict {
