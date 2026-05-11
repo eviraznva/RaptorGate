@@ -404,7 +404,24 @@ async fn main() {
         .await;
 
     tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
-    let interface_ips = resolve_interface_ips(&vec![]);
+    let mut sniffed_names = sniffed_interface_names(&loaded_zone_interfaces);
+
+    if sniffed_names.is_empty() {
+        if let Ok(env_ifaces) = std::env::var("CAPTURE_INTERFACES") {
+            for name in env_ifaces.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                sniffed_names.push(name.to_string());
+            }
+            if !sniffed_names.is_empty() {
+                tracing::warn!(
+                    event = "sniffer.fallback.env",
+                    interfaces = ?sniffed_names,
+                    "no sniffed interfaces in zone_interfaces.json, using CAPTURE_INTERFACES env"
+                );
+            }
+        }
+    }
+
+    let interface_ips = resolve_interface_ips(&sniffed_names);
     let local_ips = collect_local_ips(&interface_ips);
     let nat_store = Arc::new(NatConfigProvider::from_disk(config.data_dir.clone()).await);
     let nat_rules = match nat_store.get_config().to_runtime_rules() {
@@ -637,27 +654,6 @@ async fn main() {
         },
     };
 
-    let mut sniffed_names: Vec<String> = loaded_zone_interfaces
-        .iter()
-        .filter(|(_, zi)| zi.sniffed)
-        .filter_map(|(id, _)| crate::zones::resolve_os_name(&loaded_zone_interfaces, id))
-        .collect();
-
-    if sniffed_names.is_empty() {
-        if let Ok(env_ifaces) = std::env::var("CAPTURE_INTERFACES") {
-            for name in env_ifaces.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                sniffed_names.push(name.to_string());
-            }
-            if !sniffed_names.is_empty() {
-                tracing::warn!(
-                    event = "sniffer.fallback.env",
-                    interfaces = ?sniffed_names,
-                    "no sniffed interfaces in zone_interfaces.json, using CAPTURE_INTERFACES env"
-                );
-            }
-        }
-    }
-
     if config.ssl_inspection_enabled {
         let tls_runtime_cancel = CancellationToken::new();
         decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
@@ -850,6 +846,16 @@ async fn main() {
     }
 }
 
+fn sniffed_interface_names<S: std::hash::BuildHasher>(
+    loaded_zone_interfaces: &HashMap<crate::zones::ZoneInterfaceId, crate::zones::ZoneInterface, S>,
+) -> Vec<String> {
+    loaded_zone_interfaces
+        .iter()
+        .filter(|(_, zi)| zi.sniffed)
+        .filter_map(|(id, _)| crate::zones::resolve_os_name(loaded_zone_interfaces, id))
+        .collect()
+}
+
 fn resolve_interface_ips(capture_interfaces: &[String]) -> HashMap<String, Vec<IpAddr>> {
     let mut interface_ips = HashMap::new();
 
@@ -880,4 +886,47 @@ fn collect_local_ips(interface_ips: &HashMap<String, Vec<IpAddr>>) -> HashSet<Ip
         .values()
         .flat_map(|ips| ips.iter().copied())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zones::{
+        InterfaceStatus, PhysicalInterface, ZoneId, ZoneInterface, ZoneInterfaceId, ZoneInterfaceKind,
+    };
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    fn zone_interface_id(value: u128) -> ZoneInterfaceId {
+        ZoneInterfaceId::from(Uuid::from_u128(value))
+    }
+
+    fn zone_id(value: u128) -> ZoneId {
+        ZoneId::from(Uuid::from_u128(value))
+    }
+
+    fn physical_zone_interface(name: &str, sniffed: bool) -> ZoneInterface {
+        ZoneInterface {
+            zone_id: zone_id(1),
+            kind: ZoneInterfaceKind::Physical(PhysicalInterface {
+                interface_name: name.to_string(),
+            }),
+            status: InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed,
+        }
+    }
+
+    #[test]
+    fn sniffed_interface_names_resolves_configured_interfaces() {
+        let mut interfaces = HashMap::new();
+        interfaces.insert(zone_interface_id(1), physical_zone_interface("eth1", true));
+        interfaces.insert(zone_interface_id(2), physical_zone_interface("eth2", true));
+        interfaces.insert(zone_interface_id(3), physical_zone_interface("eth3", false));
+
+        let mut names = sniffed_interface_names(&interfaces);
+        names.sort();
+
+        assert_eq!(names, vec!["eth1".to_string(), "eth2".to_string()]);
+    }
 }
