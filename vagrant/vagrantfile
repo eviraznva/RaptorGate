@@ -25,10 +25,108 @@ def setup_tun_device
   SHELL
 end
 
+def configure_dns_path(iface, dns)
+  <<-SHELL
+    resolvectl dns #{iface} #{dns}
+    resolvectl domain #{iface} '~.'
+    resolvectl default-route #{iface} yes
+    resolvectl default-route eth0 no 2>/dev/null || true
+  SHELL
+end
+
+def install_dependencies(packages)
+  <<-SHELL
+    sudo pkill -f apt-get || true
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y --no-install-recommends #{packages}
+    apt-get install -y arping traceroute
+  SHELL
+end
+
+def setup_email_server
+  <<-SHELL
+    postconf -e 'myhostname = h1.test.local'
+    postconf -e 'mydomain = test.local'
+    postconf -e 'myorigin = $mydomain'
+    postconf -e 'mydestination = localhost'
+    postconf -e 'mynetworks = 192.168.10.0/24, 192.168.20.0/24, 127.0.0.0/8'
+    postconf -e 'virtual_mailbox_domains = test.local test.remote'
+    postconf -e 'virtual_mailbox_base = /var/mail/vmail'
+    postconf -e 'virtual_mailbox_maps = hash:/etc/postfix/vmailbox'
+    postconf -e 'virtual_uid_maps = static:5000'
+    postconf -e 'virtual_gid_maps = static:5000'
+    postconf -e 'smtpd_tls_security_level = none'
+    postconf -e 'smtp_tls_security_level = none'
+
+    cat > /etc/postfix/vmailbox <<EOF
+user1@test.local test.local/user1/
+user2@test.local test.local/user2/
+user3@test.local test.local/user3/
+user1@test.remote test.remote/user1/
+user2@test.remote test.remote/user2/
+user3@test.remote test.remote/user3/
+user4@test.remote test.remote/user4/
+user5@test.remote test.remote/user5/
+EOF
+    postmap /etc/postfix/vmailbox
+
+    useradd -r -u 5000 -g mail -d /var/mail/vmail -s /usr/sbin/nologin -c "Virtual Mail User" vmail || true
+    mkdir -p /var/mail/vmail/test.local/{user1,user2,user3}
+    mkdir -p /var/mail/vmail/test.remote/{user1,user2,user3,user4,user5}
+    chown -R vmail:mail /var/mail/vmail
+    chmod -R 770 /var/mail/vmail
+
+    cat > /etc/dovecot/conf.d/10-auth.conf <<EOF
+disable_plaintext_auth = no
+auth_mechanisms = plain login
+passdb {
+  driver = passwd-file
+  args = scheme=PLAIN username_format=%u /etc/dovecot/users
+}
+userdb {
+  driver = static
+  args = uid=vmail gid=mail home=/var/mail/vmail/%d/%n
+}
+EOF
+
+    cat > /etc/dovecot/conf.d/10-mail.conf <<EOF
+mail_location = maildir:/var/mail/vmail/%d/%n
+mail_privileged_group = mail
+EOF
+
+    cat > /etc/dovecot/conf.d/10-ssl.conf <<EOF
+ssl = no
+EOF
+
+    cat > /etc/dovecot/users <<EOF
+user1@test.local:{PLAIN}password1
+user2@test.local:{PLAIN}password2
+user3@test.local:{PLAIN}password3
+user1@test.remote:{PLAIN}password1
+user2@test.remote:{PLAIN}password2
+user3@test.remote:{PLAIN}password3
+user4@test.remote:{PLAIN}password4
+user5@test.remote:{PLAIN}password5
+EOF
+    chmod 600 /etc/dovecot/users
+
+    systemctl restart postfix
+    systemctl restart dovecot
+    systemctl enable postfix
+    systemctl enable dovecot
+  SHELL
+end
+
+def setup_email_client
+  <<-SHELL
+  SHELL
+end
+
 def setup_nftables
   <<-SHELL
     apt-get update
-    apt-get install -y nftables
+    apt-get install -y nftables logrotate
     systemctl enable nftables
     systemctl restart nftables
 
@@ -53,15 +151,126 @@ def setup_nftables
     nft add rule inet filter input ct state established,related accept
     nft add rule inet filter input tcp dport 22 ct state new accept
     nft add rule inet filter input tcp dport 2201 ct state new accept
+
+    UPLINK_IF=$(ip route show default | awk '/default/ {print $5; exit}')
+    if [ -n "$UPLINK_IF" ]; then
+      nft add table ip nat
+      nft 'add chain ip nat postrouting { type nat hook postrouting priority srcnat; policy accept; }'
+      nft add rule inet filter forward iifname "$UPLINK_IF" oifname "eth2" ct state established,related accept
+      nft add rule inet filter forward iifname "eth2" oifname "$UPLINK_IF" udp dport 53 ct state new,established accept
+      nft add rule inet filter forward iifname "eth2" oifname "$UPLINK_IF" tcp dport 53 ct state new,established accept
+      nft add rule ip nat postrouting oifname "$UPLINK_IF" ip saddr 192.168.20.0/24 masquerade
+    fi
+    nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 443 ct state new accept
+    nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 9428 ct state new accept
+
+    # Issue 7: portal captive na interfejsie h1, nginx vhost 192.168.10.254:443.
+    nft add rule inet filter input iifname "eth1" ip daddr 192.168.10.254 tcp dport 443 ct state new accept
   SHELL
 end
+
 def setup_backend_service
   <<-SHELL
     chmod +x /resources/backend/bun
+    if getent group raptorgate-logs >/dev/null 2>&1; then
+      install -d -m 2750 -o root -g raptorgate-logs /var/log/raptorgate/backend
+    else
+      install -d -m 0755 /var/log/raptorgate/backend
+    fi
+    touch /var/log/raptorgate/.logrotate-trigger
     cp -f /resources/services/backend.service /etc/systemd/system/backend.service
+    if [ -f /resources/logrotate/raptorgate ]; then
+      cp -f /resources/logrotate/raptorgate /etc/logrotate.d/raptorgate
+      chmod 0644 /etc/logrotate.d/raptorgate
+    fi
     systemctl daemon-reload
     systemctl enable backend
     systemctl restart backend
+  SHELL
+end
+
+def setup_frontend_service
+  <<-SHELL
+    apt-get update
+    apt-get install -y nginx
+    install -d -m 0755 /resources/frontend/dist
+    install -d -m 0755 /var/log/raptorgate/frontend
+    cp -f /resources/nginx/raptorgate-frontend.conf /etc/nginx/raptorgate-frontend.conf
+    cp -f /resources/services/frontend.service /etc/systemd/system/frontend.service
+    systemctl disable --now nginx 2>/dev/null || true
+    systemctl daemon-reload
+    systemctl enable frontend
+    systemctl restart frontend
+  SHELL
+end
+
+def setup_observability
+  <<-SHELL
+    set -e
+
+    apt-get update
+    apt-get install -y ca-certificates curl gnupg tar gzip
+
+    if ! command -v vector >/dev/null 2>&1; then
+      vector_setup="$(mktemp)"
+      curl -fsSL -o "$vector_setup" https://setup.vector.dev
+      bash "$vector_setup"
+      rm -f "$vector_setup"
+      apt-get install -y vector
+    fi
+
+    if ! id -u victorialogs >/dev/null 2>&1; then
+      useradd --system --home /var/lib/victorialogs --shell /usr/sbin/nologin victorialogs
+    fi
+
+    if ! getent group raptorgate-logs >/dev/null 2>&1; then
+      groupadd --system raptorgate-logs
+    fi
+
+    if id -u vector >/dev/null 2>&1; then
+      usermod -a -G raptorgate-logs vector
+    fi
+
+    install -d -m 0755 /etc/vector
+    install -d -m 0755 -o victorialogs -g victorialogs /var/lib/victorialogs
+    install -d -m 2750 -o root -g raptorgate-logs /var/log/raptorgate /var/log/raptorgate/backend /var/log/raptorgate/firewall
+    chgrp -R raptorgate-logs /var/log/raptorgate
+    find /var/log/raptorgate -type d -exec chmod 2750 {} +
+    find /var/log/raptorgate -type f -name "*.log" -exec chmod 0640 {} +
+    if id -u vector >/dev/null 2>&1; then
+      install -d -m 0755 -o vector -g vector /var/lib/vector
+      chown -R vector:vector /var/lib/vector
+      chmod -R u+rwX /var/lib/vector
+    else
+      install -d -m 0755 /var/lib/vector
+    fi
+
+    VICTORIALOGS_VERSION="${VICTORIALOGS_VERSION:-v1.50.0}"
+    if [ ! -x /usr/local/bin/victoria-logs-prod ] || ! /usr/local/bin/victoria-logs-prod --version 2>/dev/null | grep -q "$VICTORIALOGS_VERSION"; then
+      tmp_dir="$(mktemp -d)"
+      curl -fL -o "$tmp_dir/victoria-logs.tar.gz" "https://github.com/VictoriaMetrics/VictoriaLogs/releases/download/$VICTORIALOGS_VERSION/victoria-logs-linux-amd64-$VICTORIALOGS_VERSION.tar.gz"
+      tar -xzf "$tmp_dir/victoria-logs.tar.gz" -C "$tmp_dir"
+      victorialogs_bin="$tmp_dir/victoria-logs-prod"
+      if [ ! -f "$victorialogs_bin" ]; then
+        victorialogs_bin="$(find "$tmp_dir" -type f -name victoria-logs-prod -print -quit)"
+      fi
+      if [ -z "$victorialogs_bin" ] || [ ! -f "$victorialogs_bin" ]; then
+        echo "victoria-logs-prod not found in downloaded archive"
+        find "$tmp_dir" -maxdepth 2 -type f -print
+        exit 1
+      fi
+      install -m 0755 "$victorialogs_bin" /usr/local/bin/victoria-logs-prod
+      rm -rf "$tmp_dir"
+    fi
+
+    cp -f /resources/services/victorialogs.service /etc/systemd/system/victorialogs.service
+    cp -f /resources/vector/vector.yaml /etc/vector/vector.yaml
+
+    systemctl daemon-reload
+    systemctl enable victorialogs
+    systemctl restart victorialogs
+    systemctl enable vector
+    systemctl restart vector
   SHELL
 end
 
@@ -82,8 +291,19 @@ def setup_ngfw_service
     mkdir -p /resources/ngfw
     mkdir -p /resources/ngfw/.data
     mkdir -p /resources/ngfw/sockets
+    if getent group raptorgate-logs >/dev/null 2>&1; then
+      install -d -m 2750 -o root -g raptorgate-logs /var/log/raptorgate/firewall
+    else
+      install -d -m 0755 /var/log/raptorgate/firewall
+    fi
+    touch /var/log/raptorgate/.logrotate-trigger
     chmod +x /resources/ngfw/ngfw
-    cp -rf /resources/services/* /etc/systemd/system/
+    cp -f /resources/services/*.service /etc/systemd/system/
+    cp -f /resources/services/ngfw.env /etc/systemd/system/ngfw.env
+    if [ -f /resources/logrotate/raptorgate ]; then
+      cp -f /resources/logrotate/raptorgate /etc/logrotate.d/raptorgate
+      chmod 0644 /etc/logrotate.d/raptorgate
+    fi
     systemctl daemon-reload
     systemctl restart ngfw
     systemctl enable --now ngfw
@@ -91,6 +311,30 @@ def setup_ngfw_service
     # tun0 now has its final index — safe to write nftables rules by name
     nft add rule inet filter forward iif "tun0" accept
     nft add rule inet filter forward oif "tun0" accept
+
+    # MITM proxy (SSL inspection) terminuje lokalnie TCP/8443 po REDIRECT z 443.
+    # INPUT ma policy drop, wiec trzeba wpuscic nowe polaczenia na 8443.
+    nft add rule inet filter input tcp dport 8443 ct state new accept
+    sudo chown -R vagrant:vagrant /resources/ngfw/sockets
+  SHELL
+end
+
+def setup_h2_http_service
+  <<-SHELL
+    getent passwd h2-http >/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin h2-http
+    install -d -m 0755 /opt/h2-http
+    install -m 0755 /tmp/h2-http-server.py /opt/h2-http/server.py
+    install -m 0644 /tmp/h2-http.service /etc/systemd/system/h2-http.service
+    systemctl daemon-reload
+    systemctl enable h2-http
+    systemctl restart h2-http
+  SHELL
+end
+
+def setup_identity_test_tools
+  <<-SHELL
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ldap-utils freeradius-utils
+    install -m 0755 /tmp/test-identity.sh /usr/local/bin/test-identity
   SHELL
 end
 unless File.respond_to?(:exists?)
@@ -111,6 +355,7 @@ Vagrant.configure("2") do |config|
     lv.memory = 1024
     lv.cpus   = 2
     lv.uri = "qemu:///system"
+    lv.management_network_keep = true
   end
   config.vm.synced_folder ".", "/vagrant", disabled: true
 
@@ -120,6 +365,7 @@ Vagrant.configure("2") do |config|
   #   192.168.20.0/24  (intnet2) : h2  (.10)  — r1 (.254)
   #                                             ldap  (.20)
   #                                             radius (.30)
+  #   192.168.56.0/24  (mgmt)    : host       — r1 (.254)
   #   r1 also runs the backend API (internal only, port 3000)
   # ---------------------------------------------------------------
 
@@ -131,13 +377,15 @@ Vagrant.configure("2") do |config|
       netmask: "255.255.255.0",
       libvirt__network_name: "intnet1"
 
-    h1.vm.provision "shell", inline: "apt-get update -qq && apt-get install -y --no-install-recommends hping3 python3 ncat ethtool python3-scapy"
-
-    h1.vm.provision "shell", inline: configure_interface("eth1", "192.168.10.10", "24", "192.168.10.254") + <<-SHELL
-    ip route del default 2>/dev/null || true
-    ip route add default via 192.168.10.254
-    ethtool -K eth1 tx off
+    h1_provision = install_dependencies("hping3 python3 ncat ethtool python3-scapy postfix dovecot-imapd")
+    h1_provision += setup_email_server
+    h1_provision += configure_interface("eth1", "192.168.10.10", "24", "192.168.10.254") + <<-SHELL
+      ip route del default 2>/dev/null || true
+      ip route add default via 192.168.10.254
+      ethtool -K eth1 tx off
     SHELL
+    h1_provision += configure_dns_path("eth1", "8.8.8.8")
+    h1.vm.provision "shell", inline: h1_provision
   end
 
   # --- Host 2 (subnet 2) ----------------------------------------
@@ -148,13 +396,25 @@ Vagrant.configure("2") do |config|
       netmask: "255.255.255.0",
       libvirt__network_name: "intnet2"
 
-    h2.vm.provision "shell", inline: "apt-get update -qq && apt-get install -y --no-install-recommends hping3 python3 ncat ethtool python3-scapy"
+    h2.vm.provision "shell", inline: "printf 'iperf3 iperf3/start_daemon boolean false\n' | debconf-set-selections && DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends hping3 python3 ncat ethtool python3-scapy iperf3"
+    h2.vm.provision "file",
+      source: "scripts/ml_traffic_probe.py",
+      destination: "/tmp/raptorgate-ml-traffic"
 
-    h2.vm.provision "shell", inline: configure_interface("eth1", "192.168.20.10", "24", "192.168.20.254") + <<-SHELL
-    ip route del default 2>/dev/null || true
-    ip route add default via 192.168.20.254
+    h2.vm.provision "file", source: "scripts/h2-http-server.py", destination: "/tmp/h2-http-server.py"
+    h2.vm.provision "file", source: "services/h2-http.service", destination: "/tmp/h2-http.service"
+
+    h2_provision = install_dependencies("hping3 python3 ncat ethtool python3-scapy swaks mutt curl")
+    h2_provision += configure_interface("eth1", "192.168.20.10", "24", "192.168.20.254") + <<-SHELL
+    # ip route del default 2>/dev/null || true
+    # ip route add default via 192.168.20.254
+    ip route replace 192.168.10.0/24 via 192.168.20.254 dev eth1
     ethtool -K eth1 tx off
+    install -m 0755 /tmp/raptorgate-ml-traffic /usr/local/bin/raptorgate-ml-traffic
     SHELL
+    h2_provision += configure_dns_path("eth1", "8.8.8.8")
+    h2_provision += setup_h2_http_service
+    h2.vm.provision "shell", inline: h2_provision
   end
 
   # --- Router (between both subnets) + Backend API -------------
@@ -168,7 +428,15 @@ Vagrant.configure("2") do |config|
       ip: "192.168.20.254",
       netmask: "255.255.255.0",
       libvirt__network_name: "intnet2"
-
+    r1.vm.network "private_network",
+      ip: "192.168.56.254",
+      netmask: "255.255.255.0",
+      libvirt__network_name: "mgmt"
+    r1.vm.network "private_network",
+      libvirt__network_name: "trunk1",
+      libvirt__forward_mode: "none",
+      libvirt__dhcp_enabled: false,
+      auto_config: false
     # config.trigger.before :provision do |t|
     #   t.info = "rsyncing .router_sync -> /resources"
     #   t.run = { inline: "vagrant rsync r1" }
@@ -176,12 +444,28 @@ Vagrant.configure("2") do |config|
 
     r1.vm.synced_folder ".router_sync", "/resources", id: "ngfw", type: "rsync"
 
-    r1.vm.provision "shell", inline:
-      configure_interface("eth1", "192.168.10.254", "24") +
-      configure_interface("eth2", "192.168.20.254", "24") +
-      setup_tun_device + setup_nftables + setup_ngfw_service + setup_backend_service
+    r1.vm.provision "file", source: "scripts/test-identity.sh", destination: "/tmp/test-identity.sh"
 
-    # r1 has two interfaces, no gateway needed since it IS the gateway
+    r1_provision = configure_interface("eth1", "192.168.10.254", "24") +
+      configure_interface("eth2", "192.168.20.254", "24") +
+      configure_interface("eth3", "192.168.56.254", "24") +
+      setup_tun_device + setup_nftables + setup_ngfw_service + setup_observability + install_dependencies("arping traceroute")
+
+    unless ENV['NO_BACKEND'] == '1'
+      r1_provision += setup_backend_service + setup_frontend_service
+    end
+
+    if ENV['NO_BACKEND'] == '1'
+      r1_provision +=
+        <<-SHELL
+            systemctl stop backend || true
+            systemctl stop frontend || true
+        SHELL
+    end
+
+    r1_provision += setup_identity_test_tools
+
+    r1.vm.provision "shell", inline: r1_provision
   end
 
   config.vm.define "ldap" do |ldap|
@@ -190,28 +474,28 @@ Vagrant.configure("2") do |config|
       ip: "192.168.20.40",
       netmask: "255.255.255.0",
       libvirt__network_name: "intnet2"
-
+  
     ldap.vm.provision "file",
       source: "scripts/seed.ldif",
       destination: "/tmp/seed.ldif"
-
-
+  
+  
     ldap.vm.provision "shell", path: "scripts/provision-ldap.sh"
     ldap.vm.provision "shell", inline: configure_interface("eth1", "192.168.20.40", "24", "192.168.20.254") + <<-SHELL
       # ip route del default 2>/dev/null || true
       # ip route add default via 192.168.20.254
     SHELL
   end
-
+  
   config.vm.define "radius" do |radius|
     radius.vm.hostname = "radius"
     radius.vm.network "private_network",
       ip: "192.168.20.30",
       netmask: "255.255.255.0",
       libvirt__network_name: "intnet2"
-
+  
     radius.vm.provision "shell", path: "scripts/provision-radius.sh"
-
+  
     radius.vm.provision "shell", inline: configure_interface("eth1", "192.168.20.30", "24", "192.168.20.254") + <<-SHELL
       ip route del default 2>/dev/null || true
       ip route add default via 192.168.20.254

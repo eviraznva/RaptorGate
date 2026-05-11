@@ -9,7 +9,20 @@ import {
   Param,
   Post,
   Put,
-} from '@nestjs/common';
+  Query,
+} from "@nestjs/common";
+import { ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { CreateUserUseCase } from "../../application/use-cases/create-user.use-case.js";
+import { DeleteUserUseCase } from "../../application/use-cases/delete-user.use-case.js";
+import { EditUserUseCase } from "../../application/use-cases/edit-user.use-case.js";
+import { GetAllUsersUseCase } from "../../application/use-cases/get-all-users.use-case.js";
+import { Permission } from "../../domain/enums/permissions.enum.js";
+import { Role } from "../../domain/enums/role.enum.js";
+import {
+  ApiCreatedEnvelope,
+  ApiNoContentEnvelope,
+  ApiOkEnvelope,
+} from "../decorators/api-envelope-response.decorator";
 import {
   ApiError400,
   ApiError401,
@@ -18,30 +31,20 @@ import {
   ApiError409,
   ApiError429,
   ApiError500,
-} from '../decorators/api-error-response.decorator';
-import {
-  ApiCreatedEnvelope,
-  ApiNoContentEnvelope,
-  ApiOkEnvelope,
-} from '../decorators/api-envelope-response.decorator';
-import { RequirePermissions } from 'src/infrastructure/decorators/require-permissions.decorator';
-import { GetAllUsersUseCase } from 'src/application/use-cases/get-all-users.use-case';
-import { DeleteUserUseCase } from 'src/application/use-cases/delete-user.use-case';
-import { CreateUserUseCase } from 'src/application/use-cases/create-user.use-case';
-import { EditUserUseCase } from 'src/application/use-cases/edit-user.use-case';
-import { GetAllUsersResponseDto } from '../dtos/get-all-users-response.dto';
-import { ResponseMessage } from '../decorators/response-message.decorator';
-import { CreateUserResponseDto } from '../dtos/create-user-response.dto';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
-import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Permission } from 'src/domain/enums/permissions.enum';
-import { CreateUserDto } from '../dtos/create-user.dto';
-import { EditUserDto } from '../dtos/edit-user.dto';
-import { Role } from 'src/domain/enums/role.enum';
+} from "../decorators/api-error-response.decorator";
+import { RequirePermissions } from "../decorators/auth/require-permissions.decorator.js";
+import { Roles } from "../decorators/auth/roles.decorator.js";
+import { ResponseMessage } from "../decorators/response-message.decorator";
+import { CreateUserDto } from "../dtos/create-user.dto";
+import { CreateUserResponseDto } from "../dtos/create-user-response.dto";
+import { EditUserDto } from "../dtos/edit-user.dto";
+import { EditUserResponseDto } from "../dtos/edit-user-response.dto";
+import { GetAllUsersResponseDto } from "../dtos/get-all-users-response.dto";
+import { GetUsersQueryDto } from "../dtos/get-users-query.dto";
+import { UserResponseMapper } from "../mappers/user-response.mapper";
 
-@ApiTags('User Management')
-@Controller('user')
+@ApiTags("User Management")
+@Controller("user")
 export class UserController {
   constructor(
     @Inject(CreateUserUseCase)
@@ -54,95 +57,107 @@ export class UserController {
   ) {}
 
   @ApiOperation({
-    summary: 'Create a new user',
+    summary: "Create a new user",
     description:
-      'Creates a new user with the provided username, password, and roles',
+      "Creates a new user with the provided username, password, and roles",
   })
   @Post()
-  @Roles(Role.SuperAdmin, Role.Admin)
+  @Roles(Role.SuperAdmin)
   @RequirePermissions(Permission.USERS_CREATE, Permission.USERS_ASSIGN_ROLE)
   @HttpCode(HttpStatus.CREATED)
   @ApiBody({ type: CreateUserDto })
-  @ResponseMessage('User created successfully')
+  @ResponseMessage("User created successfully")
   @ApiCreatedEnvelope(CreateUserResponseDto)
-  @ApiError400('User input validation failed')
-  @ApiError401('Authorization header missing or invalid')
-  @ApiError403('Insufficient permissions')
-  @ApiError409('User with the same username already exists')
-  @ApiError429('Too many requests')
-  @ApiError500('Server error while creating user')
+  @ApiError400("User input validation failed")
+  @ApiError401("Authorization header missing or invalid")
+  @ApiError403("Insufficient permissions")
+  @ApiError409("User with the same username already exists")
+  @ApiError429("Too many requests")
+  @ApiError500("Server error while creating user")
   async createUser(@Body() dto: CreateUserDto): Promise<CreateUserResponseDto> {
-    const user = await this.createUserUseCase.execute(dto);
-    return user;
+    const result = await this.createUserUseCase.execute(dto);
+
+    const user = UserResponseMapper.toDto(result.user);
+
+    return { user };
   }
 
   @ApiOperation({
-    summary: 'Get all users',
+    summary: "Get all users",
     description:
-      'Gets a list of all users. Requires SuperAdmin or Admin role and USERS_READ permission.',
+      "Gets a list of all users. Requires SuperAdmin or Admin role and USERS_READ permission.",
   })
   @Get()
   @Roles(Role.Viewer)
   @RequirePermissions(Permission.USERS_READ)
   @HttpCode(HttpStatus.OK)
-  @ResponseMessage('List of all users retrieved successfully')
+  @ResponseMessage("List of all users retrieved successfully")
   @ApiOkEnvelope(
     GetAllUsersResponseDto,
-    'List of all users retrieved successfully',
+    "List of all users retrieved successfully",
   )
-  @ApiError401('Authorization header missing or invalid')
-  @ApiError403('Insufficient permissions to view users')
-  @ApiError404('No users found')
-  @ApiError429('Too many requests')
-  @ApiError500('Server error while retrieving users')
-  async getAllUsers(): Promise<GetAllUsersResponseDto> {
-    return await this.getAllUsersUseCase.execute();
+  @ApiError401("Authorization header missing or invalid")
+  @ApiError403("Insufficient permissions to view users")
+  @ApiError404("No users found")
+  @ApiError429("Too many requests")
+  @ApiError500("Server error while retrieving users")
+  async getAllUsers(
+    @Query() query: GetUsersQueryDto,
+  ): Promise<GetAllUsersResponseDto> {
+    const result = await this.getAllUsersUseCase.execute(query);
+
+    const users = result.users.map((user) => UserResponseMapper.toDto(user));
+
+    return { users };
   }
 
   @ApiOperation({
-    summary: 'Edit an existing user',
+    summary: "Edit an existing user",
     description:
-      'Edits an existing user by their ID. Requires SuperAdmin or Admin role and USERS_EDIT permission.',
+      "Edits an existing user by their ID. Requires SuperAdmin or Admin role and USERS_EDIT permission.",
   })
-  @Put(':id')
-  @Roles(Role.Admin)
+  @Put(":id")
+  @Roles(Role.SuperAdmin)
   @RequirePermissions(Permission.USERS_UPDATE, Permission.USERS_ASSIGN_ROLE)
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: EditUserDto })
-  @ResponseMessage('User updated successfully')
-  @ApiOkEnvelope(EditUserResponseDto, 'User updated successfully')
-  @ApiError400('User input validation failed')
-  @ApiError401('Authorization header missing or invalid')
-  @ApiError403('Insufficient permissions to edit user')
-  @ApiError404('User not found')
-  @ApiError409('Conflict occurred while editing user')
-  @ApiError429('Too many requests')
-  @ApiError500('Server error while editing user')
+  @ResponseMessage("User updated successfully")
+  @ApiOkEnvelope(EditUserResponseDto, "User updated successfully")
+  @ApiError400("User input validation failed")
+  @ApiError401("Authorization header missing or invalid")
+  @ApiError403("Insufficient permissions to edit user")
+  @ApiError404("User not found")
+  @ApiError409("Conflict occurred while editing user")
+  @ApiError429("Too many requests")
+  @ApiError500("Server error while editing user")
   async editUser(
     @Body() dto: EditUserDto,
-    @Param('id') id: string,
+    @Param("id") id: string,
   ): Promise<EditUserResponseDto> {
-    const editedUser = await this.editUserUseCase.execute({ ...dto, id });
-    return editedUser;
+    const result = await this.editUserUseCase.execute({ ...dto, id });
+
+    const editedUser = UserResponseMapper.toDto(result.user);
+
+    return { user: editedUser };
   }
 
   @ApiOperation({
-    summary: 'Delete a user',
+    summary: "Delete a user",
     description:
-      'Deletes a user by their ID. Requires SuperAdmin or Admin role and USERS_DELETE permission.',
+      "Deletes a user by their ID. Requires SuperAdmin or Admin role and USERS_DELETE permission.",
   })
-  @Delete(':id')
-  @Roles(Role.Operator)
+  @Delete(":id")
+  @Roles(Role.SuperAdmin)
   @RequirePermissions(Permission.USERS_DELETE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiNoContentEnvelope()
-  @ApiError401('Authorization header missing or invalid')
-  @ApiError403('Insufficient permissions to delete user')
-  @ApiError404('User not found')
-  @ApiError409('Conflict occurred while deleting user')
-  @ApiError429('Too many requests')
-  @ApiError500('Server error while deleting user')
-  async deleteUser(@Param('id') id: string): Promise<void> {
+  @ApiError401("Authorization header missing or invalid")
+  @ApiError403("Insufficient permissions to delete user")
+  @ApiError404("User not found")
+  @ApiError409("Conflict occurred while deleting user")
+  @ApiError429("Too many requests")
+  @ApiError500("Server error while deleting user")
+  async deleteUser(@Param("id") id: string): Promise<void> {
     await this.deleteUserUseCase.execute({ userId: id });
   }
 }

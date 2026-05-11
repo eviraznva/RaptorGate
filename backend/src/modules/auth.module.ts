@@ -1,30 +1,36 @@
-import { JsonPermissionRepository } from 'src/infrastructure/persistence/repositories/json-permission.repository';
-import { RECOVERY_TOKEN_SERVICE_TOKEN } from 'src/application/ports/recovery-token-service.interface';
-import { JsonRoleRepository } from 'src/infrastructure/persistence/repositories/json-role.repository';
-import { JsonUserRepository } from 'src/infrastructure/persistence/repositories/json-user.repository';
-import { RecoverPasswordUseCase } from 'src/application/use-cases/recover-password.use-case';
-import { PERMISSION_REPOSITORY_TOKEN } from 'src/domain/repositories/permission.repository';
-import { RolesPermissionsGuard } from 'src/infrastructure/adapters/roles-permissions.guard';
-import { RecoveryTokenService } from 'src/infrastructure/adapters/recovery-token.service';
-import { BcryptPasswordHasher } from 'src/infrastructure/adapters/bcrypt-password-hasher';
-import { PASSWORD_HASHER_TOKEN } from 'src/application/ports/passowrd-hasher.interface';
-import { RefreshTokenUseCase } from 'src/application/use-cases/refresh-token.use-case';
-import { TOKEN_SERVICE_TOKEN } from 'src/application/ports/token-service.interface';
-import { LogoutUserUseCase } from 'src/application/use-cases/logout-user.use-case';
-import { LoginUserUseCase } from 'src/application/use-cases/login-user.use-case';
-import { ROLE_REPOSITORY_TOKEN } from 'src/domain/repositories/role.repository';
-import { USER_REPOSITORY_TOKEN } from 'src/domain/repositories/user.repository';
-import { TokenService } from 'src/infrastructure/adapters/jwt-token.service';
-import { AuthController } from 'src/presentation/controllers/auth.controller';
-import { FileStore } from 'src/infrastructure/persistence/json/file-store';
-import { Mutex } from 'src/infrastructure/persistence/json/file-mutex';
-import { JwtService } from '@nestjs/jwt';
-import { Module } from '@nestjs/common';
+import { Module } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { PASSWORD_HASHER_TOKEN } from "../application/ports/passowrd-hasher.interface.js";
+import { RECOVERY_TOKEN_SERVICE_TOKEN } from "../application/ports/recovery-token-service.interface.js";
+import { TOKEN_SERVICE_TOKEN } from "../application/ports/token-service.interface.js";
+import { AdminAuthorizationService } from "../application/services/admin-authorization.service.js";
+import { LoginUserUseCase } from "../application/use-cases/login-user.use-case.js";
+import { LogoutUserUseCase } from "../application/use-cases/logout-user.use-case.js";
+import { RecoverPasswordUseCase } from "../application/use-cases/recover-password.use-case.js";
+import { RefreshTokenUseCase } from "../application/use-cases/refresh-token.use-case.js";
+import { ADMIN_AUTH_SESSION_REPOSITORY_TOKEN } from "../domain/repositories/admin-auth-session.repository.js";
+import { PERMISSION_REPOSITORY_TOKEN } from "../domain/repositories/permission.repository.js";
+import { ROLE_REPOSITORY_TOKEN } from "../domain/repositories/role.repository.js";
+import { USER_REPOSITORY_TOKEN } from "../domain/repositories/user.repository.js";
+import { BcryptPasswordHasher } from "../infrastructure/adapters/bcrypt-password-hasher.js";
+import { TokenService } from "../infrastructure/adapters/jwt-token.service.js";
+import { RecoveryTokenService } from "../infrastructure/adapters/recovery-token.service.js";
+import { RolesPermissionsGuard } from "../infrastructure/adapters/roles-permissions.guard.js";
+import { Mutex } from "../infrastructure/persistence/json/file-mutex.js";
+import { FileStore } from "../infrastructure/persistence/json/file-store.js";
+import { JsonAdminAuthSessionRepository } from "../infrastructure/persistence/repositories/json-admin-auth-session.repository.js";
+import { JsonPermissionRepository } from "../infrastructure/persistence/repositories/json-permission.repository.js";
+import { JsonRoleRepository } from "../infrastructure/persistence/repositories/json-role.repository.js";
+import { JsonUserRepository } from "../infrastructure/persistence/repositories/json-user.repository.js";
+import { AuthController } from "../presentation/controllers/auth.controller.js";
+import { AuthenticationEngineModule } from "./authentication-engine.module.js";
+import { IdentityConfigStoreModule } from "./identity-config-store.module.js";
 
 @Module({
-  imports: [],
+  imports: [AuthenticationEngineModule, IdentityConfigStoreModule],
   controllers: [AuthController],
   providers: [
+    AdminAuthorizationService,
     LoginUserUseCase,
     RefreshTokenUseCase,
     LogoutUserUseCase,
@@ -33,6 +39,10 @@ import { Module } from '@nestjs/common';
     Mutex,
     { provide: PASSWORD_HASHER_TOKEN, useClass: BcryptPasswordHasher },
     { provide: USER_REPOSITORY_TOKEN, useClass: JsonUserRepository },
+    {
+      provide: ADMIN_AUTH_SESSION_REPOSITORY_TOKEN,
+      useClass: JsonAdminAuthSessionRepository,
+    },
     { provide: ROLE_REPOSITORY_TOKEN, useClass: JsonRoleRepository },
     {
       provide: PERMISSION_REPOSITORY_TOKEN,
@@ -46,6 +56,7 @@ import { Module } from '@nestjs/common';
   exports: [
     RolesPermissionsGuard,
     ROLE_REPOSITORY_TOKEN,
+    ADMIN_AUTH_SESSION_REPOSITORY_TOKEN,
     PERMISSION_REPOSITORY_TOKEN,
     TOKEN_SERVICE_TOKEN,
   ],

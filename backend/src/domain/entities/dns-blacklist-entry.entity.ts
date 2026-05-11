@@ -1,20 +1,31 @@
+import { DomainName } from "../value-objects/domain-name.vo";
+
 export class DnsBlacklistEntry {
   private constructor(
     private readonly id: string,
-    private domain: string,
+    private domain: DomainName,
     private reason: string,
     private isActive: boolean,
     private readonly createdAt: Date,
+    private readonly createdBy: string,
   ) {}
 
   public static create(
     id: string,
-    domain: string,
+    domain: DomainName,
     reason: string,
     isActive: boolean,
     createdAt: Date,
+    createdBy: string,
   ): DnsBlacklistEntry {
-    return new DnsBlacklistEntry(id, domain, reason, isActive, createdAt);
+    return new DnsBlacklistEntry(
+      id,
+      domain,
+      reason,
+      isActive,
+      createdAt,
+      createdBy,
+    );
   }
 
   public getId(): string {
@@ -22,7 +33,7 @@ export class DnsBlacklistEntry {
   }
 
   public getDomain(): string {
-    return this.domain;
+    return this.domain.getValue;
   }
 
   public getReason(): string {
@@ -35,5 +46,9 @@ export class DnsBlacklistEntry {
 
   public getCreatedAt(): Date {
     return this.createdAt;
+  }
+
+  public getCreatedBy(): string {
+    return this.createdBy;
   }
 }

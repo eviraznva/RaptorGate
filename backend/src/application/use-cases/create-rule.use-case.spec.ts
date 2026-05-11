@@ -1,26 +1,26 @@
+import { jest } from "@jest/globals";
+import { Test, type TestingModule } from "@nestjs/testing";
+import { FirewallRule } from "../../domain/entities/firewall-rule.entity.js";
+import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
+import { EntityAlreadyExistsException } from "../../domain/exceptions/entity-already-exists-exception.js";
+import { RaptorLangValidationException } from "../../domain/exceptions/raptor-lang-validation.exception.js";
 import {
-  RAPTOR_LANG_VALIDATION_SERVICE_TOKEN,
-  type IRaptorLangValidationService,
-} from '../ports/raptor-lang-validation-service.interface.js';
-import {
-  TOKEN_SERVICE_TOKEN,
-  type ITokenService,
-  type TokenPayload,
-} from '../ports/token-service.interface.js';
-import {
-  RULES_REPOSITORY_TOKEN,
   type IRulesRepository,
-} from '../../domain/repositories/rules-repository.js';
-import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
-import { RaptorLangValidationException } from '../../domain/exceptions/raptor-lang-validation.exception.js';
-import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-already-exists-exception.js';
-import { FirewallRule } from '../../domain/entities/firewall-rule.entity.js';
-import { Priority } from '../../domain/value-objects/priority.vo.js';
-import { CreateRuleUseCase } from './create-rule.use-case.js';
-import { jest } from '@jest/globals';
-import { Test, TestingModule } from '@nestjs/testing';
+  RULES_REPOSITORY_TOKEN,
+} from "../../domain/repositories/rules-repository.js";
+import { Priority } from "../../domain/value-objects/priority.vo.js";
+import {
+  type IRaptorLangValidationService,
+  RAPTOR_LANG_VALIDATION_SERVICE_TOKEN,
+} from "../ports/raptor-lang-validation-service.interface.js";
+import {
+  type ITokenService,
+  TOKEN_SERVICE_TOKEN,
+  type TokenPayload,
+} from "../ports/token-service.interface.js";
+import { CreateRuleUseCase } from "./create-rule.use-case.js";
 
-describe('CreateRuleUseCase', () => {
+describe("CreateRuleUseCase", () => {
   let useCase: CreateRuleUseCase;
 
   const repository: jest.Mocked<IRulesRepository> = {
@@ -45,22 +45,22 @@ describe('CreateRuleUseCase', () => {
     };
 
   const validClaims: TokenPayload = {
-    sub: 'user-1',
-    username: 'marek',
+    sub: "user-1",
+    username: "marek",
   };
 
   const createExistingRule = (): FirewallRule =>
     FirewallRule.create(
-      'rule-1',
-      'Allow HTTPS',
-      'existing rule',
-      'zone-pair-1',
+      "rule-1",
+      "Allow HTTPS",
+      "existing rule",
+      "zone-pair-1",
       true,
-      'match protocol { = tcp : verdict allow }',
+      "match protocol { = tcp : verdict allow }",
       Priority.create(10),
-      new Date('2026-03-20T23:11:43.970Z'),
-      new Date('2026-03-20T23:11:43.970Z'),
-      'user-1',
+      new Date("2026-03-20T23:11:43.970Z"),
+      new Date("2026-03-20T23:11:43.970Z"),
+      "user-1",
     );
 
   beforeEach(async () => {
@@ -87,16 +87,16 @@ describe('CreateRuleUseCase', () => {
     useCase = module.get(CreateRuleUseCase);
   });
 
-  it('validates RaptorLang content and saves rule for a valid payload', async () => {
+  it("validates RaptorLang content and saves rule for a valid payload", async () => {
     const dto = {
-      name: 'Allow HTTPS',
-      description: 'allow outbound tls',
-      zonePairId: 'zone-pair-1',
+      name: "Allow HTTPS",
+      description: "allow outbound tls",
+      zonePairId: "zone-pair-1",
       isActive: true,
       content:
-        'match ip_ver { = v4 : match protocol { = tcp : match dst_port { = 443 : verdict allow _ : verdict drop } } }',
+        "match ip_ver { = v4 : match protocol { = tcp : match dst_port { = 443 : verdict allow _ : verdict drop } } }",
       priority: 100,
-      accessToken: 'valid-token',
+      accessToken: "valid-token",
     };
 
     tokenService.decodeAccessToken.mockReturnValue(validClaims);
@@ -125,18 +125,18 @@ describe('CreateRuleUseCase', () => {
     expect(savedRule.getCreatedBy()).toBe(validClaims.sub);
   });
 
-  it('propagates RaptorLang validation errors and does not save the rule', async () => {
+  it("propagates RaptorLang validation errors and does not save the rule", async () => {
     const dto = {
-      name: 'Broken Rule',
-      description: 'invalid RaptorLang',
-      zonePairId: 'zone-pair-1',
+      name: "Broken Rule",
+      description: "invalid RaptorLang",
+      zonePairId: "zone-pair-1",
       isActive: true,
-      content: 'match protocol { = tcp verdict allow }',
+      content: "match protocol { = tcp verdict allow }",
       priority: 50,
-      accessToken: 'valid-token',
+      accessToken: "valid-token",
     };
     const validationError = new RaptorLangValidationException(
-      'Unexpected token at 1:26',
+      "Unexpected token at 1:26",
     );
 
     tokenService.decodeAccessToken.mockReturnValue(validClaims);
@@ -153,15 +153,15 @@ describe('CreateRuleUseCase', () => {
     expect(repository.save).not.toHaveBeenCalled();
   });
 
-  it('throws for invalid access token before RaptorLang validation', async () => {
+  it("throws for invalid access token before RaptorLang validation", async () => {
     const dto = {
-      name: 'Allow DNS',
-      description: 'allow dns traffic',
-      zonePairId: 'zone-pair-2',
+      name: "Allow DNS",
+      description: "allow dns traffic",
+      zonePairId: "zone-pair-2",
       isActive: true,
-      content: 'match protocol { = udp : verdict allow }',
+      content: "match protocol { = udp : verdict allow }",
       priority: 20,
-      accessToken: 'bad-token',
+      accessToken: "bad-token",
     };
 
     tokenService.decodeAccessToken.mockReturnValue(null);
@@ -177,15 +177,15 @@ describe('CreateRuleUseCase', () => {
     expect(repository.save).not.toHaveBeenCalled();
   });
 
-  it('throws when rule name already exists and skips RaptorLang validation', async () => {
+  it("throws when rule name already exists and skips RaptorLang validation", async () => {
     const dto = {
-      name: 'Allow HTTPS',
-      description: 'duplicate rule',
-      zonePairId: 'zone-pair-1',
+      name: "Allow HTTPS",
+      description: "duplicate rule",
+      zonePairId: "zone-pair-1",
       isActive: true,
-      content: 'match protocol { = tcp : verdict allow }',
+      content: "match protocol { = tcp : verdict allow }",
       priority: 10,
-      accessToken: 'valid-token',
+      accessToken: "valid-token",
     };
 
     tokenService.decodeAccessToken.mockReturnValue(validClaims);

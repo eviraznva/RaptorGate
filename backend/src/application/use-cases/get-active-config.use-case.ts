@@ -1,9 +1,10 @@
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
-import type { IConfigSnapshotRepository } from '../../domain/repositories/config-snapshot.repository.js';
-import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
-import { RpcException } from '@nestjs/microservices';
-import { Inject, Injectable } from '@nestjs/common';
-import { status } from '@grpc/grpc-js';
+import { Inject, Injectable } from "@nestjs/common";
+import type { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
+import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
+import {
+  CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
+  type IConfigSnapshotRepository,
+} from "../../domain/repositories/config-snapshot.repository.js";
 
 @Injectable()
 export class GetActiveConfigUseCase {
@@ -14,12 +15,8 @@ export class GetActiveConfigUseCase {
   async execute(): Promise<ConfigurationSnapshot> {
     const snapshot = await this.repository.findActiveSnapshot();
 
-    if (!snapshot) {
-      throw new RpcException({
-        code: status.NOT_FOUND,
-        message: 'No active configuration snapshot found',
-      });
-    }
+    if (!snapshot)
+      throw new EntityNotFoundException("configuration snapshot", "active");
 
     const payload = snapshot.deserializePayload();
 

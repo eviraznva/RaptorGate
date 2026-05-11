@@ -1,0 +1,789 @@
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
+
+use prost_types::Timestamp;
+use std::sync::OnceLock;
+use tokio::{select, sync::mpsc, time::interval};
+use tokio_stream::wrappers::ReceiverStream;
+
+use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
+use crate::proto::events as proto;
+use crate::proto::services::backend_event_service_client::BackendEventServiceClient;
+use crate::tls::inspection_relay::{Direction, InspectionMode};
+
+#[derive(Debug, Clone, Copy)]
+pub enum HandshakeStage {
+    ClientHello,
+    ServerHandshake,
+    ClientFinished,
+}
+
+impl HandshakeStage {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ClientHello => "client_hello",
+            Self::ServerHandshake => "server_handshake",
+            Self::ClientFinished => "client_finished",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum EchOrigin {
+    DnsHttpsRecord,
+    ClientHelloOuterSni,
+}
+
+impl EchOrigin {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DnsHttpsRecord => "dns_https_rr",
+            Self::ClientHelloOuterSni => "client_hello_outer_sni",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum EchAction {
+    Logged,
+    Stripped,
+    Blocked,
+}
+
+impl EchAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Logged => "logged",
+            Self::Stripped => "stripped",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+pub fn format_tls_version(raw: u16) -> String {
+    match raw {
+        0x0304 => "TLS1.3".to_string(),
+        0x0303 => "TLS1.2".to_string(),
+        0x0302 => "TLS1.1".to_string(),
+        0x0301 => "TLS1.0".to_string(),
+        0x0300 => "SSL3.0".to_string(),
+        other => format!("0x{other:04x}"),
+    }
+}
+
+const CHANNEL_CAPACITY: usize = 1024;
+const FLUSH_INTERVAL_MS: u64 = 500;
+const MAX_BATCH_SIZE: usize = 64;
+const OVERFLOW_CAPACITY: usize = 512;
+const RECONNECT_INTERVAL_SECS: u64 = 2;
+
+static EVENT_TX: OnceLock<mpsc::Sender<Event>> = OnceLock::new();
+static DROPPED_EVENTS: AtomicU64 = AtomicU64::new(0);
+
+fn record_dropped_event(kind: EventKind, reason: &'static str) {
+    let dropped = DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
+    tracing::warn!(
+        event = "event_bus.event_dropped",
+        ?kind,
+        reason,
+        dropped_events = dropped,
+        "event dropped"
+    );
+}
+
+struct BackendConnection {
+    tx: mpsc::Sender<proto::Event>,
+}
+
+impl BackendConnection {
+    /// Returns false if the gRPC task has died (receiver dropped).
+    async fn send(&self, event: proto::Event) -> bool {
+        tracing::debug!(
+            event = "event_bus.dispatch.started",
+            kind = ?event.kind,
+            "sending event to backend stream"
+        );
+
+        self.tx.send(event).await.is_ok()
+    }
+}
+
+async fn try_connect(socket_path: &str) -> Result<BackendConnection, tonic::transport::Error> {
+    let socket_path = socket_path.to_owned();
+
+    let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+        .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
+            let path = socket_path.clone();
+            async move {
+                let stream = tokio::net::UnixStream::connect(&path).await?;
+                Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(stream))
+            }
+        }))
+        .await?;
+
+    let (tx, rx) = mpsc::channel::<proto::Event>(CHANNEL_CAPACITY);
+    let mut client = BackendEventServiceClient::new(channel);
+
+    tokio::spawn(async move {
+        if let Err(e) = client.push_events(ReceiverStream::new(rx)).await {
+            tracing::warn!(
+                event = "event_bus.backend_stream.ended",
+                error = %e,
+                "BackendEventService stream ended"
+            );
+        }
+        // when this task returns, `rx` is dropped → `tx.send()` will fail
+        // → the event loop detects it and sets backend = None
+    });
+
+    Ok(BackendConnection { tx })
+}
+
+pub fn emit(event: Event) {
+    if let Some(tx) = EVENT_TX.get() {
+        if let Err(e) = tx.try_send(event) {
+            record_dropped_event(e.into_inner().kind, "internal_channel_full");
+        }
+    } else {
+        record_dropped_event(event.kind, "system_not_initialized");
+    }
+}
+
+pub async fn init_event_system(socket_path: String) {
+    let (tx, mut rx) = mpsc::channel::<Event>(CHANNEL_CAPACITY);
+    EVENT_TX.set(tx).unwrap_or_else(|_| panic!("event queue already initialised"));
+
+    let mut backend: Option<BackendConnection> = None;
+    let mut buffer: Vec<Event> = Vec::new();
+    let mut flush_tick = interval(Duration::from_millis(FLUSH_INTERVAL_MS));
+    let mut reconnect_interval = interval(Duration::from_secs(RECONNECT_INTERVAL_SECS));
+
+    // Skip the first tick immediately
+    reconnect_interval.tick().await;
+
+    loop {
+        select! {
+            Some(event) = rx.recv() => {
+                handle_incoming(event, &mut buffer, &mut backend).await;
+            }
+            _ = flush_tick.tick() => {
+                flush_batch(&mut buffer, &mut backend).await;
+            }
+            _ = reconnect_interval.tick() => {
+                if backend.as_ref().is_some_and(|conn| conn.tx.is_closed()) {
+                    tracing::warn!(
+                        event = "event_bus.backend_connection.lost",
+                        dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                        "backend connection lost, will reconnect"
+                    );
+
+                    backend = None;
+                }
+
+                if backend.is_none() {
+                    attempt_reconnect(&socket_path, &mut backend, &mut buffer).await;
+                }
+            }
+        }
+    }
+}
+
+async fn handle_incoming(event: Event, buffer: &mut Vec<Event>, backend: &mut Option<BackendConnection>) {
+    if event.kind.is_immediate() {
+        flush_batch(buffer, backend).await;
+        dispatch(event, backend, buffer).await;
+    } else {
+        buffer.push(event);
+        if buffer.len() >= MAX_BATCH_SIZE {
+            flush_batch(buffer, backend).await;
+        }
+    }
+}
+
+async fn flush_batch(buffer: &mut Vec<Event>, backend: &mut Option<BackendConnection>) {
+    if backend.is_none() {
+        return;
+    }
+
+    let batch = std::mem::take(buffer);
+
+    for event in batch {
+        dispatch(event, backend, buffer).await;
+    }
+}
+
+async fn dispatch(event: Event, backend: &mut Option<BackendConnection>, buffer: &mut Vec<Event>) {
+    match backend {
+        Some(conn) => {
+            let kind = event.kind.clone();
+            if conn.send(event.into()).await {
+                tracing::trace!(
+                    event = "event_bus.event_emitted",
+                    kind = ?kind,
+                    "event emitted successfully"
+                );
+            } else {
+                tracing::warn!(
+                    event = "event_bus.backend_connection.lost",
+                    dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                    "backend connection lost, will reconnect"
+                );
+                *backend = None;
+                record_dropped_event(kind, "backend_send_failed");
+            }
+        }
+
+        None => {
+            if buffer.len() < OVERFLOW_CAPACITY {
+                tracing::trace!(
+                    event = "event_bus.buffered",
+                    kind = ?event.kind,
+                    buffered_events = buffer.len(),
+                    "no backend connection, buffering event"
+                );
+                buffer.push(event);
+            } else {
+                record_dropped_event(event.kind, "overflow_buffer_full");
+            }
+        }
+    }
+}
+
+async fn attempt_reconnect(
+    socket_path: &str,
+    backend: &mut Option<BackendConnection>,
+    buffer: &mut Vec<Event>,
+) {
+    let mut attempted_paths = vec![socket_path.to_string()];
+
+    let mut last_error = None;
+
+    for attempted_socket_path in attempted_paths {
+        match try_connect(&attempted_socket_path).await {
+            Ok(conn) => {
+                tracing::info!(
+                    event = "event_bus.backend_connected",
+                    socket_path = attempted_socket_path,
+                    configured_socket_path = socket_path,
+                    buffered_events = buffer.len(),
+                    dropped_events = DROPPED_EVENTS.load(Ordering::Relaxed),
+                    "reconnected to backend"
+                );
+                *backend = Some(conn);
+
+                emit(Event::new(EventKind::EventBusConnectedEvent {}));
+                flush_batch(buffer, backend).await;
+                return;
+            }
+            Err(err) => {
+                last_error = Some((attempted_socket_path, err));
+            }
+        }
+    }
+
+    if let Some((attempted_socket_path, err)) = last_error {
+        tracing::warn!(
+            event = "event_bus.backend_reconnect.failed",
+            socket_path,
+            attempted_socket_path,
+            error = ?err,
+            "reconnect attempt failed"
+        );
+    }
+}
+
+#[derive(Debug)]
+pub struct Event {
+    pub emitted_at: SystemTime,
+    pub kind: EventKind,
+}
+
+impl Event {
+    pub fn new(kind: EventKind) -> Self {
+        Self { emitted_at: SystemTime::now(), kind }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RouteInfo {
+    pub destination: String,
+    pub out_interface_index: u32,
+    pub priority: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct SmtpSessionInfo {
+    pub client: Option<EndpointIdentifier>,
+    pub server: Option<EndpointIdentifier>,
+}
+
+#[derive(Debug, Clone)]
+pub enum EventKind {
+    TcpSessionEstabilished { src: EndpointIdentifier, dst: EndpointIdentifier },
+    TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
+    TcpConnectionRejected { src: EndpointIdentifier, dst: EndpointIdentifier },
+    TcpSessionAbortedMidClose { src: EndpointIdentifier, dst: EndpointIdentifier },
+    TcpSessionEnteredTimeWait { src: EndpointIdentifier, dst: EndpointIdentifier },
+    TunDeviceSwapped { old_device: String, new_device: String, old_address: String, new_address: String },
+    SnifferConfigChanged { old_interfaces: Vec<String>, new_interfaces: Vec<String>, old_timeout: Duration, new_timeout: Duration },
+    SnifferReconnecting { iface: String, attempt: u32, next_retry_ms: u64 },
+    SnifferReconnected { iface: String, total_attempts: u32, total_downtime_ms: u64 },
+    TlsInterceptStarted { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, tls_version: Option<String> },
+    TlsHandshakeComplete { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, alpn: Option<String>, tls_version: Option<String> },
+    TlsSessionClosed { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, bytes_up: u64, bytes_down: u64 },
+    InboundTlsInterceptStarted { peer: SocketAddr, server: SocketAddr, sni: Option<String>, common_name: String, tls_version: Option<String> },
+    InboundTlsHandshakeComplete { peer: SocketAddr, server: SocketAddr, sni: Option<String>, alpn: Option<String>, tls_version: Option<String> },
+    InboundTlsSessionClosed { peer: SocketAddr, server: SocketAddr, sni: Option<String>, bytes_up: u64, bytes_down: u64 },
+    DecryptedTrafficClassified { peer: SocketAddr, server: SocketAddr, sni: Option<String>, app_proto: String, http_version: Option<String>, direction: Direction, mode: InspectionMode },
+    DecryptedIpsMatch { peer: SocketAddr, server: SocketAddr, sni: Option<String>, signature_name: String, severity: String, blocked: bool, direction: Direction, mode: InspectionMode, log_id: String },
+    TlsUntrustedCertDetected { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, domain: String, tls_version: Option<String> },
+    TlsBypassApplied { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, domain: String, tls_version: Option<String> },
+    InboundTlsBypassApplied { peer: SocketAddr, server: SocketAddr, sni: Option<String>, tls_version: Option<String> },
+    PinningFailureDetected { peer: SocketAddr, dst: SocketAddr, sni: String, tls_version: Option<String> },
+    PinningAutoBypassActivated { source_ip: IpAddr, domain: String, reason: String },
+    TlsHandshakeFailed { peer: SocketAddr, dst: SocketAddr, sni: Option<String>, tls_version: Option<String>, stage: HandshakeStage, reason: String, mode: InspectionMode },
+    EchAttemptDetected { source_ip: Option<IpAddr>, domain: String, origin: EchOrigin, action: EchAction },
+    InterfaceStateChanged { interface_name: String, old_status: String, new_status: String, addresses: Vec<String> },
+    InterfaceRenamed {
+        interface_index: u32,
+        old_interface_name: String,
+        new_interface_name: String,
+        status: String,
+        addresses: Vec<String>,
+    },
+    IpsSignatureMatched {
+        signature_id: String,
+        signature_name: String,
+        category: String,
+        severity: String,
+        action: String,
+        src_ip: String,
+        src_port: u16,
+        dst_ip: String,
+        dst_port: u16,
+        transport_protocol: String,
+        app_protocol: String,
+        interface: String,
+        payload_length: u32,
+    },
+    MlThreatDetected {
+        score: f32,
+        threshold: f32,
+        model_checksum: String,
+        attack_type: String,
+        src_ip: String,
+        src_port: u16,
+        dst_ip: String,
+        dst_port: u16,
+        transport_protocol: String,
+        app_protocol: String,
+        interface: String,
+        payload_length: u32,
+    },
+    RouteAdded { route: RouteInfo },
+    RouteModified { old_route: RouteInfo, new_route: RouteInfo },
+    RouteDeleted { route: RouteInfo },
+    PolicyWarning { message: String, verdict: &'static str },
+    EventBusConnectedEvent {},
+    SmtpSessionStateChanged { session: SmtpSessionInfo, new_state: String },
+}
+
+impl EventKind {
+    pub const fn is_immediate(&self) -> bool {
+        use EventKind as E;
+        match self {
+            E::TcpSessionEstabilished { .. }
+            | E::TcpSessionRemoved { .. }
+            | E::TcpConnectionRejected { .. }
+            | E::TcpSessionAbortedMidClose { .. }
+            | E::TcpSessionEnteredTimeWait { .. }
+            | E::TunDeviceSwapped { .. }
+            | E::SnifferConfigChanged { .. }
+            | E::SnifferReconnecting { .. }
+            | E::SnifferReconnected { .. }
+            | E::TlsInterceptStarted { .. }
+            | E::TlsHandshakeComplete { .. }
+            | E::TlsSessionClosed { .. }
+            | E::InboundTlsInterceptStarted { .. }
+            | E::InboundTlsHandshakeComplete { .. }
+            | E::InboundTlsSessionClosed { .. }
+            | E::DecryptedTrafficClassified { .. }
+            | E::DecryptedIpsMatch { .. }
+            | E::TlsUntrustedCertDetected { .. }
+            | E::TlsBypassApplied { .. }
+            | E::InboundTlsBypassApplied { .. }
+            | E::PinningFailureDetected { .. }
+            | E::PinningAutoBypassActivated { .. }
+            | E::TlsHandshakeFailed { .. }
+            | E::EchAttemptDetected { .. }
+            | E::InterfaceStateChanged { .. }
+            | E::InterfaceRenamed { .. }
+            | E::IpsSignatureMatched { .. }
+            | E::MlThreatDetected { .. }
+            | E::RouteAdded { .. }
+            | E::RouteModified { .. }
+            | E::RouteDeleted { .. }
+            | E::PolicyWarning { .. }
+            | E::EventBusConnectedEvent { .. }
+            | E::SmtpSessionStateChanged { .. } => true,
+        }
+    }
+}
+
+
+fn system_time_to_proto(t: SystemTime) -> Timestamp {
+    let dur = t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+    Timestamp {
+        #[allow(clippy::cast_possible_wrap)]
+        seconds: dur.as_secs() as i64,
+        #[allow(clippy::cast_possible_wrap)]
+        nanos:   dur.subsec_nanos() as i32,
+    }
+}
+
+fn duration_to_proto(d: Duration) -> prost_types::Duration {
+    prost_types::Duration {
+        #[allow(clippy::cast_possible_wrap)]
+        seconds: d.as_secs() as i64,
+        #[allow(clippy::cast_possible_wrap)]
+        nanos:   d.subsec_nanos() as i32,
+    }
+}
+
+impl From<EventKind> for proto::EventKind {
+    fn from(kind: EventKind) -> Self {
+        use proto::event_kind::Item;
+        proto::EventKind {
+            item: Some(match kind {
+                EventKind::TcpSessionEstabilished { src, dst } =>
+                    Item::TcpSessionEstablished(proto::TcpSessionEstablishedEvent {
+                        src: Some(src.into()),
+                        dst: Some(dst.into()),
+                    }),
+                EventKind::TcpSessionRemoved { src, dst } =>
+                    Item::TcpSessionRemoved(proto::TcpSessionRemovedEvent {
+                        src: Some(src.into()),
+                        dst: Some(dst.into()),
+                    }),
+                EventKind::TcpConnectionRejected { src, dst } =>
+                    Item::TcpConnectionRejected(proto::TcpConnectionRejectedEvent {
+                        src: Some(src.into()),
+                        dst: Some(dst.into()),
+                    }),
+                EventKind::TcpSessionAbortedMidClose { src, dst } =>
+                    Item::TcpSessionAborted(proto::TcpSessionAbortedMidCloseEvent {
+                        src: Some(src.into()),
+                        dst: Some(dst.into()),
+                    }),
+                EventKind::TcpSessionEnteredTimeWait { src, dst } =>
+                    Item::TcpSessionEnteredTimewait(proto::TcpSessionEnteredTimeWaitEvent {
+                        src: Some(src.into()),
+                        dst: Some(dst.into()),
+                    }),
+
+                EventKind::TunDeviceSwapped { old_device, new_device, old_address, new_address } =>
+                    Item::TunDeviceSwapped(proto::TunDeviceSwappedEvent {
+                        old_device,
+                        new_device,
+                        old_address,
+                        new_address,
+                    }),
+                EventKind::SnifferConfigChanged { old_interfaces, new_interfaces, old_timeout, new_timeout } =>
+                    Item::SnifferConfigChanged(proto::SnifferConfigChangedEvent {
+                        old_interfaces,
+                        new_interfaces,
+                        old_timeout: Some(duration_to_proto(old_timeout)),
+                        new_timeout: Some(duration_to_proto(new_timeout)),
+                    }),
+                EventKind::SnifferReconnecting { iface, attempt, next_retry_ms } =>
+                    Item::PolicyWarning(proto::PolicyWarningEvent {
+                        message: format!("sniffer reconnecting: iface={iface}, attempt={attempt}, next_retry_ms={next_retry_ms}"),
+                        verdict: "sniffer_reconnecting".to_string(),
+                    }),
+                EventKind::SnifferReconnected { iface, total_attempts, total_downtime_ms } =>
+                    Item::PolicyWarning(proto::PolicyWarningEvent {
+                        message: format!("sniffer reconnected: iface={iface}, total_attempts={total_attempts}, total_downtime_ms={total_downtime_ms}"),
+                        verdict: "sniffer_reconnected".to_string(),
+                    }),
+                EventKind::TlsInterceptStarted { peer, dst, sni, tls_version } =>
+                    Item::TlsInterceptStarted(proto::TlsInterceptStartedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::TlsHandshakeComplete { peer, dst, sni, alpn, tls_version } =>
+                    Item::TlsHandshakeComplete(proto::TlsHandshakeCompleteEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        alpn: alpn.unwrap_or_default(),
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::TlsSessionClosed { peer, dst, sni, bytes_up, bytes_down } =>
+                    Item::TlsSessionClosed(proto::TlsSessionClosedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        bytes_up,
+                        bytes_down,
+                    }),
+                EventKind::InboundTlsInterceptStarted { peer, server, sni, common_name, tls_version } =>
+                    Item::InboundTlsInterceptStarted(proto::InboundTlsInterceptStartedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        common_name,
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::InboundTlsHandshakeComplete { peer, server, sni, alpn, tls_version } =>
+                    Item::InboundTlsHandshakeComplete(proto::InboundTlsHandshakeCompleteEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        alpn: alpn.unwrap_or_default(),
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::InboundTlsSessionClosed { peer, server, sni, bytes_up, bytes_down } =>
+                    Item::InboundTlsSessionClosed(proto::InboundTlsSessionClosedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        bytes_up,
+                        bytes_down,
+                    }),
+                EventKind::DecryptedTrafficClassified { peer, server, sni, app_proto, http_version, direction, mode } =>
+                    Item::DecryptedTrafficClassified(proto::DecryptedTrafficClassifiedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        app_proto,
+                        http_version: http_version.unwrap_or_default(),
+                        direction: format!("{direction:?}"),
+                        mode: format!("{mode:?}"),
+                    }),
+                EventKind::DecryptedIpsMatch { peer, server, sni, signature_name, severity, blocked, direction, mode, log_id } =>
+                    Item::DecryptedIpsMatch(proto::DecryptedIpsMatchEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        signature_name,
+                        severity,
+                        blocked,
+                        direction: format!("{direction:?}"),
+                        mode: format!("{mode:?}"),
+                        log_id,
+                    }),
+                EventKind::TlsUntrustedCertDetected { peer, dst, sni, domain, tls_version } =>
+                    Item::TlsUntrustedCertDetected(proto::TlsUntrustedCertDetectedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        domain,
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::TlsBypassApplied { peer, dst, sni, domain, tls_version } =>
+                    Item::TlsBypassApplied(proto::TlsBypassAppliedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        domain,
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::InboundTlsBypassApplied { peer, server, sni, tls_version } =>
+                    Item::InboundTlsBypassApplied(proto::InboundTlsBypassAppliedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        server_ip: server.ip().to_string(),
+                        server_port: u32::from(server.port()),
+                        sni: sni.unwrap_or_default(),
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::PinningFailureDetected { peer, dst, sni, tls_version } =>
+                    Item::PinningFailureDetected(proto::PinningFailureDetectedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni,
+                        tls_version: tls_version.unwrap_or_default(),
+                    }),
+                EventKind::PinningAutoBypassActivated { source_ip, domain, reason } =>
+                    Item::PinningAutoBypassActivated(proto::PinningAutoBypassActivatedEvent {
+                        source_ip: source_ip.to_string(),
+                        domain,
+                        reason,
+                    }),
+                EventKind::TlsHandshakeFailed { peer, dst, sni, tls_version, stage, reason, mode } =>
+                    Item::TlsHandshakeFailed(proto::TlsHandshakeFailedEvent {
+                        peer_ip: peer.ip().to_string(),
+                        peer_port: u32::from(peer.port()),
+                        dst_ip: dst.ip().to_string(),
+                        dst_port: u32::from(dst.port()),
+                        sni: sni.unwrap_or_default(),
+                        tls_version: tls_version.unwrap_or_default(),
+                        stage: stage.as_str().to_string(),
+                        reason,
+                        mode: format!("{mode:?}"),
+                    }),
+                EventKind::EchAttemptDetected { source_ip, domain, origin, action } =>
+                    Item::EchAttemptDetected(proto::EchAttemptDetectedEvent {
+                        source_ip: source_ip.map(|ip| ip.to_string()).unwrap_or_default(),
+                        domain,
+                        origin: origin.as_str().to_string(),
+                        action: action.as_str().to_string(),
+                    }),
+                EventKind::InterfaceStateChanged { interface_name, old_status, new_status, addresses } =>
+                    Item::InterfaceStateChanged(proto::InterfaceStateChangedEvent {
+                        interface_name,
+                        old_status,
+                        new_status,
+                        addresses,
+                    }),
+                EventKind::InterfaceRenamed {
+                    interface_index,
+                    old_interface_name,
+                    new_interface_name,
+                    status,
+                    addresses,
+                } => Item::InterfaceRenamed(proto::InterfaceRenamedEvent {
+                    interface_index,
+                    old_interface_name,
+                    new_interface_name,
+                    status,
+                    addresses,
+                }),
+                EventKind::IpsSignatureMatched {
+                    signature_id,
+                    signature_name,
+                    category,
+                    severity,
+                    action,
+                    src_ip,
+                    src_port,
+                    dst_ip,
+                    dst_port,
+                    transport_protocol,
+                    app_protocol,
+                    interface,
+                    payload_length,
+                } => Item::IpsSignatureMatched(proto::IpsSignatureMatchedEvent {
+                    signature_id,
+                    signature_name,
+                    category,
+                    severity,
+                    action,
+                    src_ip,
+                    src_port: u32::from(src_port),
+                    dst_ip,
+                    dst_port: u32::from(dst_port),
+                    transport_protocol,
+                    app_protocol,
+                    interface,
+                    payload_length,
+                }),
+                EventKind::MlThreatDetected {
+                    score,
+                    threshold,
+                    model_checksum,
+                    attack_type,
+                    src_ip,
+                    src_port,
+                    dst_ip,
+                    dst_port,
+                    transport_protocol,
+                    app_protocol,
+                    interface,
+                    payload_length,
+                } => Item::MlThreatDetected(proto::MlThreatDetectedEvent {
+                    score,
+                    threshold,
+                    model_checksum,
+                    attack_type,
+                    src_ip,
+                    src_port: u32::from(src_port),
+                    dst_ip,
+                    dst_port: u32::from(dst_port),
+                    transport_protocol,
+                    app_protocol,
+                    interface,
+                    payload_length,
+                }),
+                EventKind::RouteAdded { route } =>
+                    Item::RouteAdded(proto::RouteAddedEvent {
+                        route: Some(proto::Route {
+                            destination: route.destination,
+                            out_interface_index: route.out_interface_index,
+                            priority: route.priority,
+                        }),
+                    }),
+                EventKind::RouteModified { old_route, new_route } =>
+                    Item::RouteModified(proto::RouteModifiedEvent {
+                        old_route: Some(proto::Route {
+                            destination: old_route.destination,
+                            out_interface_index: old_route.out_interface_index,
+                            priority: old_route.priority,
+                        }),
+                        new_route: Some(proto::Route {
+                            destination: new_route.destination,
+                            out_interface_index: new_route.out_interface_index,
+                            priority: new_route.priority,
+                        }),
+                    }),
+                EventKind::RouteDeleted { route } =>
+                    Item::RouteDeleted(proto::RouteDeletedEvent {
+                        route: Some(proto::Route {
+                            destination: route.destination,
+                            out_interface_index: route.out_interface_index,
+                            priority: route.priority,
+                        }),
+                    }),
+                EventKind::PolicyWarning { message, verdict } =>
+                    Item::PolicyWarning(proto::PolicyWarningEvent {
+                        message,
+                        verdict: verdict.to_string(),
+                    }),
+                EventKind::EventBusConnectedEvent { .. } => Item::EventBusConnected(proto::EventBusConnectedEvent {}),
+                EventKind::SmtpSessionStateChanged { session, new_state } =>
+                    Item::SmtpSessionStateChanged(proto::SmtpSessionStateChangedEvent {
+                        session: Some(proto::SmtpSession {
+                            client: session.client.map(Into::into),
+                            server: session.server.map(Into::into),
+                        }),
+                        new_state,
+                    }),
+            }),
+        }
+    }
+}
+
+
+impl From<Event> for proto::Event {
+    fn from(event: Event) -> Self {
+        proto::Event {
+            emitted_at: Some(system_time_to_proto(event.emitted_at)),
+            kind:       Some(event.kind.into()),
+        }
+    }
+}

@@ -1,2 +1,9 @@
 obj/
 bin/
+target/
+.git/
+.codex/
+**/node_modules/
+**/dist/
+vagrant/.vagrant/
+vagrant/.router_sync/

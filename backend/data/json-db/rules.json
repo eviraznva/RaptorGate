@@ -1,18 +1,6 @@
 {
   "items": [
     {
-      "id": "a1c6151b-e916-456d-b4f9-2d57d2075aff",
-      "name": "Allow HTTPS",
-      "zonePairId": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
-      "isActive": true,
-      "content": "allow tcp any any eq 443",
-      "priority": 10,
-      "createdBy": "00000000-0000-4000-8000-000000000001",
-      "createdAt": "2026-03-22T17:26:23.485Z",
-      "updatedAt": "2026-03-22T17:26:23.485Z",
-      "description": "Allow outgoing HTTPS traffic to external APIs"
-    },
-    {
       "id": "88263938-f3db-4d2c-8b4a-4db7bd379057",
       "name": "Allow HTTP",
       "zonePairId": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
@@ -23,6 +11,54 @@
       "createdAt": "2026-03-23T10:24:10.635Z",
       "updatedAt": "2026-03-23T10:24:10.635Z",
       "description": "Allow outgoing HTTPS traffic to external APIs"
+    },
+    {
+      "id": "77777777-7777-4777-8777-777777777777",
+      "name": "Identity pre-auth portal gate",
+      "zonePairId": "33333333-3333-4333-8333-333333333333",
+      "isActive": true,
+      "content": "match auth_state {\n  = unknown: verdict drop\n}",
+      "priority": 1,
+      "createdBy": "00000000-0000-4000-8000-000000000001",
+      "createdAt": "2026-04-27T00:00:00.000Z",
+      "updatedAt": "2026-04-27T00:00:00.000Z",
+      "description": "Block unauthenticated traffic on protected zone pairs before portal login"
+    },
+    {
+      "id": "88888888-8888-4888-8888-888888888888",
+      "name": "Identity guest sensitive deny",
+      "zonePairId": "33333333-3333-4333-8333-333333333333",
+      "isActive": true,
+      "content": "match auth_state {\n  = authenticated:\n    match identity_group {\n      = \"guests\":\n        match protocol {\n          = tcp:\n            match dst_port {\n              |(= 22 = 3389 = 445 = 8080): verdict drop\n            }\n        }\n    }\n}",
+      "priority": 10,
+      "createdBy": "00000000-0000-4000-8000-000000000001",
+      "createdAt": "2026-04-27T00:00:00.000Z",
+      "updatedAt": "2026-04-27T00:00:00.000Z",
+      "description": "Deny guests access to sensitive management and application ports"
+    },
+    {
+      "id": "99999999-9999-4999-8999-999999999999",
+      "name": "Identity admin management access",
+      "zonePairId": "33333333-3333-4333-8333-333333333333",
+      "isActive": true,
+      "content": "match auth_state {\n  = authenticated:\n    match identity_group {\n      = \"admins\":\n        match protocol {\n          = tcp:\n            match dst_port {\n              |(= 443 = 8443): verdict allow\n            }\n        }\n    }\n}",
+      "priority": 20,
+      "createdBy": "00000000-0000-4000-8000-000000000001",
+      "createdAt": "2026-04-27T00:00:00.000Z",
+      "updatedAt": "2026-04-27T00:00:00.000Z",
+      "description": "Allow authenticated admins to reach management services"
+    },
+    {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "name": "Identity authenticated app access",
+      "zonePairId": "33333333-3333-4333-8333-333333333333",
+      "isActive": true,
+      "content": "match auth_state {\n  = authenticated:\n    match protocol {\n      = tcp:\n        match dst_port {\n          |(= 80 = 443 = 8080): verdict allow\n        }\n      = icmp: verdict allow\n    }\n}",
+      "priority": 30,
+      "createdBy": "00000000-0000-4000-8000-000000000001",
+      "createdAt": "2026-04-27T00:00:00.000Z",
+      "updatedAt": "2026-04-27T00:00:00.000Z",
+      "description": "Allow authenticated users to selected application services"
     }
   ]
 }

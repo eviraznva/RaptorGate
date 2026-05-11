@@ -1,6 +1,11 @@
 export type TokenPayload = {
   sub: string;
   username: string;
+  principalType?: "local_user" | "external_admin";
+  roles?: string[];
+  authProvider?: "local" | "radius" | "ldap";
+  authProfileId?: string;
+  externalId?: string;
 };
 
 export type TokenPair = {
@@ -19,4 +24,4 @@ export interface ITokenService {
   decodeAccessToken(token: string): TokenPayload | null;
 }
 
-export const TOKEN_SERVICE_TOKEN = Symbol('TOKEN_SERVICE_TOKEN');
+export const TOKEN_SERVICE_TOKEN = Symbol("TOKEN_SERVICE_TOKEN");

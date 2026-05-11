@@ -1,5 +1,5 @@
-import { Permission } from '../enums/permissions.enum.js';
-import { Role } from '../enums/role.enum.js';
+import { Permission } from "../enums/permissions.enum.js";
+import { Role } from "../enums/role.enum.js";
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   [Role.Viewer]: [
@@ -9,6 +9,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     Permission.DNS_BLACKLISTS_READ,
     Permission.SSL_BYPASS_READ,
     Permission.IPS_SIGNATURES_READ,
+    Permission.CERTIFICATES_READ,
     Permission.ZONE_PAIRINGS_READ,
     Permission.FIREWALL_STATUS,
     Permission.IDENTITY_READ,
@@ -31,6 +32,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     Permission.SSL_BYPASS_CREATE,
     Permission.SSL_BYPASS_DELETE,
     Permission.IPS_SIGNATURES_READ,
+    Permission.CERTIFICATES_READ,
     Permission.ZONE_PAIRINGS_READ,
     Permission.FIREWALL_STATUS,
     Permission.IDENTITY_READ,
@@ -75,6 +77,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     Permission.ZONE_PAIRINGS_DELETE,
     Permission.FIREWALL_STATUS,
     Permission.IDENTITY_READ,
+    Permission.IDENTITY_UPDATE,
   ],
   [Role.SuperAdmin]: [
     Permission.RULES_READ,
@@ -121,5 +124,6 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     Permission.ZONE_PAIRINGS_DELETE,
     Permission.FIREWALL_STATUS,
     Permission.IDENTITY_READ,
+    Permission.IDENTITY_UPDATE,
   ],
 };

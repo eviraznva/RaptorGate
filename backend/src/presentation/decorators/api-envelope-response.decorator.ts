@@ -1,16 +1,16 @@
+import { applyDecorators, Type } from "@nestjs/common";
 import {
   ApiCreatedResponse,
   ApiExtraModels,
   ApiNoContentResponse,
   ApiOkResponse,
   getSchemaPath,
-} from '@nestjs/swagger';
-import { SuccessEnvelopeDto } from '../dtos/api-envelope.dto.js';
-import { applyDecorators, Type } from '@nestjs/common';
+} from "@nestjs/swagger";
+import { SuccessEnvelopeDto } from "../dtos/api-envelope.dto.js";
 
 export const ApiOkEnvelope = <TModel extends Type<unknown>>(
   model: TModel,
-  message = 'Success',
+  message = "Success",
 ) =>
   applyDecorators(
     ApiExtraModels(SuccessEnvelopeDto, model),
@@ -32,7 +32,7 @@ export const ApiOkEnvelope = <TModel extends Type<unknown>>(
 
 export const ApiCreatedEnvelope = <TModel extends Type<unknown>>(
   model: TModel,
-  message = 'Resource created',
+  message = "Resource created",
 ) =>
   applyDecorators(
     ApiExtraModels(SuccessEnvelopeDto, model),
@@ -41,10 +41,15 @@ export const ApiCreatedEnvelope = <TModel extends Type<unknown>>(
         allOf: [
           { $ref: getSchemaPath(SuccessEnvelopeDto) },
           {
+            type: "object",
+            required: ["statusCode", "message", "data"],
             properties: {
-              statusCode: { example: 201 },
-              message: { example: message },
-              data: { $ref: getSchemaPath(model) },
+              statusCode: { type: "number", example: 201 },
+              message: { type: "string", example: message },
+              data: {
+                allOf: [{ $ref: getSchemaPath(model) }],
+                nullable: false,
+              },
             },
           },
         ],
@@ -52,13 +57,5 @@ export const ApiCreatedEnvelope = <TModel extends Type<unknown>>(
     }),
   );
 
-export const ApiNoContentEnvelope = (description = 'No content') =>
+export const ApiNoContentEnvelope = (description = "No content") =>
   applyDecorators(ApiNoContentResponse({ description }));
-
-// export const ApiBadRequestEnvelope = (example = 'Invalid request') =>
-//   applyDecorators(
-//     ApiBadRequestResponse({
-//       type: ErrorEnvelopeDto,
-//       description: example,
-//     }),
-//   );

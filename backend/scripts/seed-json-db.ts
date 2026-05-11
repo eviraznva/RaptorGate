@@ -1,9 +1,9 @@
-import { ROLE_PERMISSIONS } from '../src/domain/constants/role-permissions.js';
-import { Permission } from '../src/domain/enums/permissions.enum.js';
-import { Role } from '../src/domain/enums/role.enum.js';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import * as bcrypt from 'bcrypt';
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import * as bcrypt from "bcrypt";
+import { ROLE_PERMISSIONS } from "../src/domain/constants/role-permissions.js";
+import { Permission } from "../src/domain/enums/permissions.enum.js";
+import { Role } from "../src/domain/enums/role.enum.js";
 
 type JsonTable<T> = { items: T[] };
 
@@ -39,12 +39,12 @@ type RolePermissionRecord = {
   permissionId: string;
 };
 
-const DB_DIR = join(process.cwd(), 'data', 'json-db');
+const DB_DIR = join(process.cwd(), "data", "json-db");
 
-const USER_ID = '00000000-0000-4000-8000-000000000001';
+const USER_ID = "00000000-0000-4000-8000-000000000001";
 
 function seqUuid(sequence: number): string {
-  return `00000000-0000-4000-8000-${sequence.toString(16).padStart(12, '0')}`;
+  return `00000000-0000-4000-8000-${sequence.toString(16).padStart(12, "0")}`;
 }
 
 function permissionDescription(permissionName: string): string {
@@ -53,8 +53,8 @@ function permissionDescription(permissionName: string): string {
 
 async function writeJson<T>(fileName: string, payload: JsonTable<T> | object) {
   const filePath = join(DB_DIR, fileName);
-  const text = JSON.stringify(payload, null, 2) + '\n';
-  await writeFile(filePath, text, 'utf8');
+  const text = JSON.stringify(payload, null, 2) + "\n";
+  await writeFile(filePath, text, "utf8");
 }
 
 async function main() {
@@ -62,10 +62,10 @@ async function main() {
 
   const now = new Date().toISOString();
   const saltRounds = Number.parseInt(
-    process.env.BCRYPT_SALT_ROUNDS ?? '12',
+    process.env.BCRYPT_SALT_ROUNDS ?? "12",
     10,
   );
-  const passwordHash = await bcrypt.hash('admin123', saltRounds);
+  const passwordHash = await bcrypt.hash("Test1234", saltRounds);
 
   const rolesOrder: Role[] = [
     Role.SuperAdmin,
@@ -108,7 +108,7 @@ async function main() {
   const users: UserRecord[] = [
     {
       id: USER_ID,
-      username: 'admin',
+      username: "admin",
       passwordHash,
       refreshToken: null,
       refreshTokenExpiry: null,
@@ -124,40 +124,40 @@ async function main() {
     },
   ];
 
-  await writeJson<UserRecord>('users.json', { items: users });
-  await writeJson<RoleRecord>('roles.json', { items: roles });
-  await writeJson<PermissionRecord>('permissions.json', { items: permissions });
-  await writeJson<UserRoleRecord>('user_roles.json', { items: userRoles });
-  await writeJson<RolePermissionRecord>('role_permissions.json', {
+  await writeJson<UserRecord>("users.json", { items: users });
+  await writeJson<RoleRecord>("roles.json", { items: roles });
+  await writeJson<PermissionRecord>("permissions.json", { items: permissions });
+  await writeJson<UserRoleRecord>("user_roles.json", { items: userRoles });
+  await writeJson<RolePermissionRecord>("role_permissions.json", {
     items: rolePermissions,
   });
 
   const emptyTables = [
-    'configuration_snapshots.json',
-    'zones.json',
-    'zone_pairs.json',
-    'zone_interfaces.json',
-    'rules.json',
-    'rule_change_history.json',
-    'nat_rules.json',
-    'dns_blacklist.json',
-    'ssl_bypass_list.json',
-    'ips_signatures.json',
-    'ml_models.json',
-    'firewall_certificates.json',
-    'identity_users.json',
-    'identity_manager_user_sessions.json',
-    'user_groups.json',
-    'user_group_members.json',
-    'sessions.json',
-    'network_session_history.json',
+    "configuration_snapshots.json",
+    "zones.json",
+    "zone_pairs.json",
+    "zone_interfaces.json",
+    "rules.json",
+    "rule_change_history.json",
+    "nat_rules.json",
+    "dns_blacklist.json",
+    "ssl_bypass_list.json",
+    "ips_signatures.json",
+    "ml_models.json",
+    "firewall_certificates.json",
+    "identity_users.json",
+    "identity_manager_user_sessions.json",
+    "user_groups.json",
+    "user_group_members.json",
+    "sessions.json",
+    "network_session_history.json",
   ];
 
   await Promise.all(
     emptyTables.map((tableName) => writeJson(tableName, { items: [] })),
   );
 
-  await writeJson('_meta.json', {
+  await writeJson("_meta.json", {
     schemaVersion: 1,
     generatedAt: now,
     seed: {
@@ -168,15 +168,15 @@ async function main() {
       role_permissions: rolePermissions.length,
     },
     notes:
-      'Seed generated from role.enum.ts, permissions.enum.ts and role-permissions.ts',
+      "Seed generated from role.enum.ts, permissions.enum.ts and role-permissions.ts",
   });
 
-  console.log('Seeded backend/data/json-db');
+  console.log("Seeded backend/data/json-db");
   console.log(`Admin username: admin`);
   console.log(`Admin password hash: ${passwordHash}`);
 }
 
 main().catch((error) => {
-  console.error('Failed to seed backend/data/json-db', error);
+  console.error("Failed to seed backend/data/json-db", error);
   process.exit(1);
 });

@@ -1,8 +1,5 @@
+import { Zone } from "../../domain/entities/zone.entity.js";
+
 export class CreateZoneResponseDto {
-  id: string;
-  name: string;
-  description: string | null;
-  isActive: boolean;
-  createdAt: Date;
-  createdBy: string;
+  zone: Zone;
 }

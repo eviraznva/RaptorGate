@@ -1,0 +1,17 @@
+[Unit]
+Description=RaptorGate Frontend HTTPS Gateway
+After=network-online.target backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/nginx -t -c /etc/nginx/raptorgate-frontend.conf
+ExecStart=/usr/sbin/nginx -c /etc/nginx/raptorgate-frontend.conf -g 'daemon off;'
+ExecReload=/usr/sbin/nginx -s reload -c /etc/nginx/raptorgate-frontend.conf
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

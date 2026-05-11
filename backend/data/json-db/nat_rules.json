@@ -1,79 +1,80 @@
 {
   "items": [
     {
-      "id": "07c5b5fb-4304-4997-90e4-115af50098bb",
-      "type": "SNAT",
+      "id": "848f3523-c00b-40a7-9843-170f715ef183",
       "isActive": true,
-      "srcIp": "192.168.1.10",
-      "dstIp": null,
-      "srcPort": null,
-      "dstPort": null,
-      "translatedIp": "172.16.0.20",
-      "translatedPort": null,
       "priority": 10,
-      "createdAt": "2026-03-23T06:43:47.449Z",
-      "updatedAt": "2026-03-23T06:51:19.805Z",
-      "createdBy": "76f0a8cb-37cd-4511-9aaf-b8024aa1aca5"
+      "protocol": "NAT_PROTOCOL_ALL",
+      "inInterface": null,
+      "outInterface": null,
+      "inZone": null,
+      "outZone": null,
+      "matchSrcPortMin": null,
+      "matchSrcPortMax": null,
+      "matchDstPortMin": null,
+      "matchDstPortMax": null,
+      "action": {
+        "$case": "dnat",
+        "dnat": {
+          "dstCidr": "192.168.20.200/24",
+          "translatedIp": "192.168.20.200"
+        }
+      },
+      "createdAt": "2026-05-08T16:41:50.459Z",
+      "updatedAt": "2026-05-08T16:41:50.459Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
     },
     {
-      "id": "b29c1dda-9515-4f83-86cf-48aed6f661ae",
-      "type": "SNAT",
+      "id": "9323ef15-0c11-49a3-8400-552d8026bafe",
       "isActive": true,
-      "srcIp": "192.168.1.10",
-      "dstIp": null,
-      "srcPort": null,
-      "dstPort": null,
-      "translatedIp": "172.16.0.20",
-      "translatedPort": null,
       "priority": 10,
-      "createdAt": "2026-03-23T11:34:19.429Z",
-      "updatedAt": "2026-03-23T11:34:19.429Z",
-      "createdBy": "e79d8463-5650-4e0d-b76d-a4de3ca9c804"
+      "protocol": "NAT_PROTOCOL_ALL",
+      "inInterface": null,
+      "outInterface": null,
+      "inZone": null,
+      "outZone": null,
+      "matchSrcPortMin": null,
+      "matchSrcPortMax": null,
+      "matchDstPortMin": null,
+      "matchDstPortMax": null,
+      "action": {
+        "$case": "pat",
+        "pat": {
+          "dstIp": "192.168.20.201",
+          "dstPort": 80,
+          "translatedIp": "192.168.20.10",
+          "translatedPort": 8080
+        }
+      },
+      "createdAt": "2026-05-08T16:42:27.152Z",
+      "updatedAt": "2026-05-08T16:42:27.152Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
     },
     {
-      "id": "f877657b-687e-43a4-bb77-079e42167540",
-      "type": "DNAT",
+      "id": "057404e2-e675-4e36-ac64-d1514b36b92d",
       "isActive": true,
-      "srcIp": null,
-      "dstIp": "10.0.0.5",
-      "srcPort": null,
-      "dstPort": null,
-      "translatedIp": "192.168.1.50",
-      "translatedPort": null,
-      "priority": 20,
-      "createdAt": "2026-03-23T11:34:29.174Z",
-      "updatedAt": "2026-03-23T11:34:29.174Z",
-      "createdBy": "06856b09-0107-40eb-9575-b4a58605c7c0"
-    },
-    {
-      "id": "3349d1c9-c725-474a-b4ce-77a2558f6298",
-      "type": "PAT",
-      "isActive": true,
-      "srcIp": null,
-      "dstIp": "10.0.0.5",
-      "srcPort": null,
-      "dstPort": 443,
-      "translatedIp": "192.168.1.50",
-      "translatedPort": 8443,
-      "priority": 30,
-      "createdAt": "2026-03-23T11:34:38.607Z",
-      "updatedAt": "2026-03-23T11:34:38.607Z",
-      "createdBy": "df1455c6-916a-47f8-91c5-3cc7675b123a"
-    },
-    {
-      "id": "6c7faecd-56c8-4f85-b39f-10a63470b04a",
-      "type": "SNAT",
-      "isActive": true,
-      "srcIp": "192.168.1.99",
-      "dstIp": null,
-      "srcPort": null,
-      "dstPort": null,
-      "translatedIp": "10.0.0.5",
-      "translatedPort": null,
-      "priority": 99,
-      "createdAt": "2026-03-26T15:39:15.504Z",
-      "updatedAt": "2026-03-26T15:39:15.504Z",
-      "createdBy": "368562e3-4039-43db-bc01-50793beee4de"
+      "priority": 10,
+      "protocol": "NAT_PROTOCOL_ALL",
+      "inInterface": null,
+      "outInterface": null,
+      "inZone": null,
+      "outZone": null,
+      "matchSrcPortMin": null,
+      "matchSrcPortMax": null,
+      "matchDstPortMin": null,
+      "matchDstPortMax": null,
+      "action": {
+        "$case": "snat",
+        "snat": {
+          "srcCidr": "192.168.10.10/24",
+          "translatedIp": "192.168.10.200",
+          "srcPortMin": null,
+          "srcPortMax": null
+        }
+      },
+      "createdAt": "2026-05-08T16:42:56.657Z",
+      "updatedAt": "2026-05-08T16:42:56.657Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
     }
   ]
 }

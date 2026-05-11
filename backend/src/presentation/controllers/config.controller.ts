@@ -1,70 +1,95 @@
 import {
-  Controller,
-  Inject,
-  Post,
   Body,
+  Controller,
   Get,
-  Param,
-  HttpStatus,
   HttpCode,
-} from '@nestjs/common';
+  HttpStatus,
+  Inject,
+  Param,
+  Post,
+  Query,
+} from "@nestjs/common";
+import { ApiBody, ApiOperation, ApiQuery } from "@nestjs/swagger";
+import type { GetConfigDiffDto } from "../../application/dtos/get-config-diff.dto.js";
+import { ApplyConfigSnapshotUseCase } from "../../application/use-cases/apply-config-snapshot.use-case.js";
+import { ExportConfigUseCase } from "../../application/use-cases/export-config.use-case.js";
+import { FactoryResetUseCase } from "../../application/use-cases/factory-reset.use-case.js";
+import { GetConfigDiffUseCase } from "../../application/use-cases/get-config-diff.use-case.js";
+import { GetConfigHistoryUseCase } from "../../application/use-cases/get-config-history.use-case.js";
+import { ImportConfigUseCase } from "../../application/use-cases/import-config.use-case.js";
+import { RollbackConfigUseCase } from "../../application/use-cases/rollback-config.use-case.js";
+import { Permission } from "../../domain/enums/permissions.enum.js";
+import { Role } from "../../domain/enums/role.enum.js";
+import { mapConfigSnapshotToPayloadRecord } from "../../infrastructure/persistence/mappers/config-payload.mapper.js";
+import { ConfigurationSnapshotJsonMapper } from "../../infrastructure/persistence/mappers/configuration-snapshots.mapper.js";
+import {
+  ApiCreatedEnvelope,
+  ApiOkEnvelope,
+} from "../decorators/api-envelope-response.decorator.js";
 import {
   ApiError400,
   ApiError401,
   ApiError403,
+  ApiError404,
   ApiError429,
   ApiError500,
-} from '../decorators/api-error-response.decorator.js';
+} from "../decorators/api-error-response.decorator.js";
+import { ExtractToken } from "../decorators/auth/extract-token.decorator.js";
+import { RequirePermissions } from "../decorators/auth/require-permissions.decorator.js";
+import { Roles } from "../decorators/auth/roles.decorator.js";
+import { ResponseMessage } from "../decorators/response-message.decorator.js";
+import { ApplyConfigSnapshotDto } from "../dtos/apply-config-snapshot.dto.js";
+import { ApplyConfigSnapshotResponseDto } from "../dtos/apply-config-snapshot-response.dto.js";
+import { ExportConfigResponseDto } from "../dtos/export-config-response.dto.js";
 import {
-  ApiCreatedEnvelope,
-  ApiOkEnvelope,
-} from '../decorators/api-envelope-response.decorator.js';
-import { ApplyConfigSnapshotUseCase } from '../../application/use-cases/apply-config-snapshot.use-case.js';
-import { RequirePermissions } from '../../infrastructure/decorators/require-permissions.decorator.js';
-import { GetConfigHistoryUseCase } from '../../application/use-cases/get-config-history.use-case.js';
-import { RollbackConfigUseCase } from '../../application/use-cases/rollback-config.use-case.js';
-import { ApplyConfigSnapshotResponseDto } from '../dtos/apply-config-snapshot-response.dto.js';
-import { RollbackConfigSnapshotResponseDto } from '../dtos/rollback-config-snapshot.dto.js';
-import { ExtractToken } from '../../infrastructure/decorators/extract-token.decorator.js';
-import { GetConfigHistoryResponseDto } from '../dtos/get-config-history-response.dto.js';
-import { ResponseMessage } from '../decorators/response-message.decorator.js';
-import { ApplyConfigSnapshotDto } from '../dtos/apply-config-snapshot.dto.js';
-import { Roles } from '../../infrastructure/decorators/roles.decorator.js';
-import { Permission } from '../../domain/enums/permissions.enum.js';
-import { ApiBody, ApiOperation } from '@nestjs/swagger';
-import { Role } from '../../domain/enums/role.enum.js';
+  FactoryResetDto,
+  FactoryResetResponseDto,
+} from "../dtos/factory-reset.dto.js";
+import { GetConfigDiffQueryDto } from "../dtos/get-config-diff-query.dto.js";
+import { GetConfigDiffResponseDto } from "../dtos/get-config-diff-response.dto.js";
+import { GetConfigHistoryResponseDto } from "../dtos/get-config-history-response.dto.js";
+import { ImportConfigSnapshotDto } from "../dtos/import-config-snapshot.dto.js";
+import { RollbackConfigSnapshotResponseDto } from "../dtos/rollback-config-snapshot.dto.js";
 
-@Controller('config')
+@Controller("config")
 export class ConfigController {
   constructor(
     @Inject(ApplyConfigSnapshotUseCase)
     private readonly applyConfigSnapshotUseCase: ApplyConfigSnapshotUseCase,
     @Inject(GetConfigHistoryUseCase)
     private readonly getConfigHistoryUseCase: GetConfigHistoryUseCase,
+    @Inject(GetConfigDiffUseCase)
+    private readonly getConfigDiffUseCase: GetConfigDiffUseCase,
     @Inject(RollbackConfigUseCase)
     private readonly rollbackConfigUseCase: RollbackConfigUseCase,
+    @Inject(ExportConfigUseCase)
+    private readonly exportConfigUseCase: ExportConfigUseCase,
+    @Inject(ImportConfigUseCase)
+    private readonly importConfigUseCase: ImportConfigUseCase,
+    @Inject(FactoryResetUseCase)
+    private readonly factoryResetUseCase: FactoryResetUseCase,
   ) {}
 
   @ApiOperation({
-    summary: 'Apply configuration snapshot',
+    summary: "Apply configuration snapshot",
     description:
-      'Applies a configuration snapshot. This will replace the current active configuration with the one from the snapshot.',
+      "Applies a configuration snapshot. This will replace the current active configuration with the one from the snapshot.",
   })
   @Roles(Role.Operator)
   @RequirePermissions(Permission.SNAPSHOTS_CREATE)
-  @Post('apply')
+  @Post("apply")
   @HttpCode(HttpStatus.CREATED)
   @ApiBody({ type: ApplyConfigSnapshotDto })
-  @ResponseMessage('Configuration snapshot applied')
+  @ResponseMessage("Configuration snapshot applied")
   @ApiCreatedEnvelope(
     ApplyConfigSnapshotResponseDto,
-    'Configuration snapshot applied',
+    "Configuration snapshot applied",
   )
-  @ApiError400('Validation failed or invalid snapshot ID')
-  @ApiError401('Access token is missing, invalid, or expired')
-  @ApiError403('Insufficient permissions to apply configuration snapshot')
-  @ApiError429('Too many requests')
-  @ApiError500('Internal server error while applying configuration snapshot')
+  @ApiError400("Validation failed or invalid snapshot ID")
+  @ApiError401("Access token is missing, invalid, or expired")
+  @ApiError403("Insufficient permissions to apply configuration snapshot")
+  @ApiError429("Too many requests")
+  @ApiError500("Internal server error while applying configuration snapshot")
   async applyConfigSnapshot(
     @Body() dto: ApplyConfigSnapshotDto,
     @ExtractToken() accessToken: string,
@@ -78,25 +103,55 @@ export class ConfigController {
   }
 
   @ApiOperation({
-    summary: 'History of configuration snapshots',
+    summary: "Diff configuration snapshots",
     description:
-      'Gets the history of all configuration snapshots, including active and inactive ones.',
+      "Compares two configuration snapshots and returns a domain-aware configuration diff.",
+  })
+  @ApiQuery({ name: "baseId", required: true, type: String })
+  @ApiQuery({ name: "targetId", required: true, type: String })
+  @Roles(Role.Admin, Role.SuperAdmin)
+  @RequirePermissions(Permission.SNAPSHOTS_READ)
+  @Get("diff")
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage("Configuration snapshot diff retrieved")
+  @ApiOkEnvelope(
+    GetConfigDiffResponseDto,
+    "Configuration snapshot diff retrieved",
+  )
+  @ApiError400("Validation failed or invalid snapshot ID")
+  @ApiError401("Access token is missing, invalid, or expired")
+  @ApiError403("Insufficient permissions to view configuration snapshot diff")
+  @ApiError404("Configuration snapshot not found")
+  @ApiError429("Too many requests to retrieve configuration snapshot diff")
+  @ApiError500(
+    "Internal server error while retrieving configuration snapshot diff",
+  )
+  async getConfigDiff(
+    @Query() query: GetConfigDiffQueryDto,
+  ): Promise<GetConfigDiffDto> {
+    return this.getConfigDiffUseCase.execute(query);
+  }
+
+  @ApiOperation({
+    summary: "History of configuration snapshots",
+    description:
+      "Gets the history of all configuration snapshots, including active and inactive ones.",
   })
   @Roles(Role.Viewer)
-  @Get('history')
+  @Get("history")
   @HttpCode(HttpStatus.OK)
-  @ResponseMessage('Configuration snapshot history retrieved')
+  @ResponseMessage("Configuration snapshot history retrieved")
   @ApiOkEnvelope(
     GetConfigHistoryResponseDto,
-    'Configuration snapshot history retrieved',
+    "Configuration snapshot history retrieved",
   )
-  @ApiError401('Access token is missing, invalid, or expired')
+  @ApiError401("Access token is missing, invalid, or expired")
   @ApiError403(
-    'Insufficient permissions to view configuration snapshot history',
+    "Insufficient permissions to view configuration snapshot history",
   )
-  @ApiError429('Too many requests to retrieve configuration snapshot history')
+  @ApiError429("Too many requests to retrieve configuration snapshot history")
   @ApiError500(
-    'Internal server error while retrieving configuration snapshot history',
+    "Internal server error while retrieving configuration snapshot history",
   )
   async getConfigHistory(): Promise<GetConfigHistoryResponseDto> {
     const configHistory = await this.getConfigHistoryUseCase.execute();
@@ -104,29 +159,124 @@ export class ConfigController {
   }
 
   @ApiOperation({
-    summary: 'Rollback to a chosen configuration snapshot',
+    summary: "Rollback to a chosen configuration snapshot",
     description:
-      'Rolls back the active configuration to a chosen snapshot. This will replace the current active configuration with the one from the snapshot.',
+      "Rolls back the active configuration to a chosen snapshot. This will replace the current active configuration with the one from the snapshot.",
   })
   @Roles(Role.Operator)
   @RequirePermissions(Permission.SNAPSHOTS_RESTORE)
-  @Post('rollback/:id')
-  @ResponseMessage('Configuration rolled back to chosen snapshot')
+  @Post("rollback/:id")
+  @ResponseMessage("Configuration rolled back to chosen snapshot")
   @ApiCreatedEnvelope(
     RollbackConfigSnapshotResponseDto,
-    'Configuration rolled back to chosen snapshot',
+    "Configuration rolled back to chosen snapshot",
   )
-  @ApiError400('Validation failed or invalid snapshot ID')
-  @ApiError401('Access token is missing, invalid, or expired')
-  @ApiError403('Insufficient permissions to rollback configuration snapshot')
-  @ApiError429('Too many requests')
+  @ApiError400("Validation failed or invalid snapshot ID")
+  @ApiError401("Access token is missing, invalid, or expired")
+  @ApiError403("Insufficient permissions to rollback configuration snapshot")
+  @ApiError429("Too many requests")
   @ApiError500(
-    'Internal server error while rolling back configuration snapshot',
+    "Internal server error while rolling back configuration snapshot",
   )
   async rollbackToConfigSnapshot(
-    @Param('id') id: string,
+    @Param("id") id: string,
   ): Promise<RollbackConfigSnapshotResponseDto> {
     const config = await this.rollbackConfigUseCase.execute({ id });
     return config;
+  }
+
+  @ApiOperation({
+    summary: "Factory reset firewall configuration",
+    description:
+      "Resets firewall local configuration to safe defaults and removes working key material on the firewall.",
+  })
+  @Roles(Role.Operator)
+  @RequirePermissions(Permission.SNAPSHOTS_RESTORE)
+  @Post("factory-reset")
+  @HttpCode(HttpStatus.OK)
+  @ApiBody({ type: FactoryResetDto, required: false })
+  @ResponseMessage("Firewall factory reset completed")
+  @ApiOkEnvelope(FactoryResetResponseDto, "Firewall factory reset completed")
+  @ApiError400("Validation failed")
+  @ApiError401("Access token is missing, invalid, or expired")
+  @ApiError403("Insufficient permissions to factory reset firewall")
+  @ApiError429("Too many requests")
+  @ApiError500("Internal server error while factory resetting firewall")
+  async factoryReset(
+    @Body() dto: FactoryResetDto = {},
+  ): Promise<FactoryResetResponseDto> {
+    return this.factoryResetUseCase.execute(dto);
+  }
+
+  @ApiOperation({
+    summary: "Export active configuration snapshot",
+    description:
+      "Exports the active configuration snapshot. This will return the current active configuration in a format that can be saved or used for backup purposes.",
+  })
+  @Roles(Role.Admin, Role.SuperAdmin)
+  @RequirePermissions(Permission.SNAPSHOTS_READ)
+  @Get("export")
+  @ResponseMessage("Active configuration snapshot exported")
+  @ApiOkEnvelope(
+    ExportConfigResponseDto,
+    "Active configuration snapshot exported",
+  )
+  @ApiError401("Access token is missing, invalid, or expired")
+  @ApiError403("Insufficient permissions to export configuration snapshot")
+  @ApiError429("Too many requests")
+  @ApiError500("Internal server error while exporting configuration snapshot")
+  async exportConfig(): Promise<ExportConfigResponseDto> {
+    const result = await this.exportConfigUseCase.execute();
+    const configPayloadToRecord = mapConfigSnapshotToPayloadRecord(
+      result.configSnapshot,
+    );
+
+    result.configSnapshot.setPayloadJson(configPayloadToRecord);
+    const configSnapshot = ConfigurationSnapshotJsonMapper.toRecord(
+      result.configSnapshot,
+    );
+
+    return configSnapshot;
+  }
+
+  @ApiOperation({
+    summary: "Import configuration snapshot",
+    description:
+      "Imports a configuration snapshot from a JSON payload. Validates checksum, updates internal tables if isActive=true and creates a new snapshot version.",
+  })
+  @Roles(Role.Operator)
+  @RequirePermissions(Permission.SNAPSHOTS_CREATE)
+  @Post("import")
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBody({ type: ImportConfigSnapshotDto })
+  @ResponseMessage("Configuration snapshot imported")
+  @ApiCreatedEnvelope(
+    ExportConfigResponseDto,
+    "Configuration snapshot imported",
+  )
+  @ApiError400("Validation failed, bad format or checksum mismatch")
+  @ApiError401("Access token is missing, invalid, or expired")
+  @ApiError403("Insufficient permissions to import configuration snapshot")
+  @ApiError429("Too many requests")
+  @ApiError500("Internal server error while importing configuration snapshot")
+  async importConfigSnapshot(
+    @Body() dto: ImportConfigSnapshotDto,
+    @ExtractToken() accessToken: string,
+  ): Promise<ExportConfigResponseDto> {
+    const result = await this.importConfigUseCase.execute({
+      snapshotData: dto,
+      accessToken,
+    });
+
+    const configPayloadToRecord = mapConfigSnapshotToPayloadRecord(
+      result.configSnapshot,
+    );
+
+    result.configSnapshot.setPayloadJson(configPayloadToRecord);
+    const configSnapshot = ConfigurationSnapshotJsonMapper.toRecord(
+      result.configSnapshot,
+    );
+
+    return configSnapshot;
   }
 }

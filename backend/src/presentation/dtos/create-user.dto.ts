@@ -1,29 +1,29 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty } from "@nestjs/swagger";
 import {
-  IsString,
   IsNotEmpty,
-  MinLength,
+  IsString,
   Matches,
   MaxLength,
-} from 'class-validator';
-import { Role } from 'src/domain/enums/role.enum';
+  MinLength,
+} from "class-validator";
+import { Role } from "../../domain/enums/role.enum.js";
 
 export class CreateUserDto {
-  @ApiProperty({ example: 'jankowal' })
+  @ApiProperty({ example: "jankowal" })
   @IsNotEmpty()
   @IsString()
   @MinLength(3)
   @MaxLength(20)
   @Matches(/^[a-zA-Z][a-zA-Z0-9_-]*$/, {
     message:
-      'Username must start with a letter and can only contain letters, numbers, underscores (_), and hyphens (-).',
+      "Username must start with a letter and can only contain letters, numbers, underscores (_), and hyphens (-).",
   })
   username: string;
 
   @ApiProperty({
-    example: 'StrongPass123!',
+    example: "StrongPass123!",
     minLength: 8,
-    description: 'Hasło użytkownika',
+    description: "Hasło użytkownika",
   })
   @IsString()
   @IsNotEmpty()
@@ -32,7 +32,7 @@ export class CreateUserDto {
 
   @ApiProperty({
     example: [Role.Admin],
-    description: 'Rola użytkownika',
+    description: "Rola użytkownika",
   })
   @IsNotEmpty()
   roles: string[];

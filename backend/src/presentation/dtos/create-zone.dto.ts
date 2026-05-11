@@ -1,9 +1,9 @@
-import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty } from "@nestjs/swagger";
+import { IsNotEmpty, IsString, MaxLength, MinLength } from "class-validator";
 
 export class CreateZoneDto {
   @ApiProperty({
-    example: 'Living Room',
+    example: "Living Room",
   })
   @IsNotEmpty()
   @IsString()
@@ -12,10 +12,10 @@ export class CreateZoneDto {
   name: string;
 
   @ApiProperty({
-    example: 'The main living area of the house',
+    example: "The main living area of the house",
   })
   @IsString()
-  description?: string | null;
+  description: string | null;
 
   @ApiProperty({
     example: true,

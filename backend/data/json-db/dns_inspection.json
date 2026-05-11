@@ -1,0 +1,50 @@
+{
+  "general": {
+    "enabled": true
+  },
+  "blocklist": {
+    "enabled": false,
+    "domains": [
+      "example.com"
+    ]
+  },
+  "dnsTunneling": {
+    "enabled": false,
+    "maxLabelLength": 40,
+    "entropyThreshold": 3.5,
+    "windowSeconds": 60,
+    "maxQueriesPerDomain": 100,
+    "maxUniqueSubdomains": 20,
+    "ignoreDomains": [],
+    "alertThreshold": 0.6,
+    "blockThreshold": 0.85
+  },
+  "dnssec": {
+    "enabled": false,
+    "maxLookupsPerPacket": 1,
+    "defaultOnResolverFailure": "allow",
+    "resolver": {
+      "primary": {
+        "address": "127.0.0.1",
+        "port": 53
+      },
+      "secondary": {
+        "address": "127.0.0.1",
+        "port": 53
+      },
+      "transport": "udpWithTcpFallback",
+      "timeoutMs": 2000,
+      "retries": 1
+    },
+    "cache": {
+      "enabled": true,
+      "maxEntries": 4096,
+      "ttlSeconds": {
+        "secure": 300,
+        "insecure": 300,
+        "bogus": 60,
+        "failure": 15
+      }
+    }
+  }
+}

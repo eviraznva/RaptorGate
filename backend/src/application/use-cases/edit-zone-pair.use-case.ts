@@ -1,15 +1,17 @@
-import { AtLeastOneFieldRequiredException } from '../../domain/exceptions/at-least-one-field-required.exception.js';
-import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
-import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
-import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
-import { EditZonePairResponseDto } from '../dtos/edit-zone-pair-response.dto.js';
-import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
-import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
-import { EditZonePairDto } from '../dtos/edit-zone-pair.dto.js';
-import { Injectable, Inject } from '@nestjs/common';
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { AtLeastOneFieldRequiredException } from "../../domain/exceptions/at-least-one-field-required.exception.js";
+import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
+import type { IZoneRepository } from "../../domain/repositories/zone.repository.js";
+import { ZONE_REPOSITORY_TOKEN } from "../../domain/repositories/zone.repository.js";
+import type { IZonePairRepository } from "../../domain/repositories/zone-pair.repository.js";
+import { ZONE_PAIR_REPOSITORY_TOKEN } from "../../domain/repositories/zone-pair.repository.js";
+import { EditZonePairDto } from "../dtos/edit-zone-pair.dto.js";
+import { EditZonePairResponseDto } from "../dtos/edit-zone-pair-response.dto.js";
 
 @Injectable()
 export class EditZonePairUseCase {
+  private readonly logger = new Logger(EditZonePairUseCase.name);
+
   constructor(
     @Inject(ZONE_PAIR_REPOSITORY_TOKEN)
     private readonly zonePairRepository: IZonePairRepository,
@@ -19,7 +21,7 @@ export class EditZonePairUseCase {
 
   async execute(dto: EditZonePairDto): Promise<EditZonePairResponseDto> {
     const zonePairExists = await this.zonePairRepository.findById(dto.id);
-    if (!zonePairExists) throw new EntityNotFoundException('Zone pair', dto.id);
+    if (!zonePairExists) throw new EntityNotFoundException("Zone pair", dto.id);
 
     const isAllUndefined =
       dto.dstZoneId === undefined &&
@@ -32,7 +34,7 @@ export class EditZonePairUseCase {
       const srcZoneExists = await this.zoneRepository.findById(dto.srcZoneId);
 
       if (!srcZoneExists)
-        throw new EntityNotFoundException('zone', dto.srcZoneId);
+        throw new EntityNotFoundException("zone", dto.srcZoneId);
 
       zonePairExists.setSrcZoneId(dto.srcZoneId);
     }
@@ -41,7 +43,7 @@ export class EditZonePairUseCase {
       const dstZoneExists = await this.zoneRepository.findById(dto.dstZoneId);
 
       if (!dstZoneExists)
-        throw new EntityNotFoundException('zone', dto.dstZoneId);
+        throw new EntityNotFoundException("zone", dto.dstZoneId);
 
       zonePairExists.setDstZoneId(dto.dstZoneId);
     }
@@ -50,13 +52,20 @@ export class EditZonePairUseCase {
 
     await this.zonePairRepository.save(zonePairExists);
 
-    return {
-      id: zonePairExists.getId(),
+    this.logger.log({
+      event: "zone_pair.update.succeeded",
+      message: "zone pair updated",
+      zonePairId: zonePairExists.getId(),
       srcZoneId: zonePairExists.getSrcZoneId(),
       dstZoneId: zonePairExists.getDstZoneId(),
       defaultPolicy: zonePairExists.getDefaultPolicy(),
-      createdAt: zonePairExists.getCreatedAt(),
-      createdBy: zonePairExists.getCreatedBy(),
+      changedFields: Object.entries(dto)
+        .filter(([key, value]) => key !== "id" && value !== undefined)
+        .map(([key]) => key),
+    });
+
+    return {
+      zonePair: zonePairExists,
     };
   }
 }

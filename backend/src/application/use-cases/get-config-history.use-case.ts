@@ -1,7 +1,7 @@
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
-import type { IConfigSnapshotRepository } from '../../domain/repositories/config-snapshot.repository.js';
-import { GetConfigHistoryDto } from '../dtos/get-config-history.dto.js';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable } from "@nestjs/common";
+import type { IConfigSnapshotRepository } from "../../domain/repositories/config-snapshot.repository.js";
+import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from "../../domain/repositories/config-snapshot.repository.js";
+import type { GetConfigHistoryDto } from "../dtos/get-config-history.dto.js";
 
 @Injectable()
 export class GetConfigHistoryUseCase {

@@ -1,24 +1,26 @@
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { AtLeastOneFieldRequiredException } from "../../domain/exceptions/at-least-one-field-required.exception.js";
+import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
+import { RoleIsInvalidException } from "../../domain/exceptions/role-is-invalid.exception.js";
 import {
-  ROLE_REPOSITORY_TOKEN,
   type IRoleRepository,
-} from 'src/domain/repositories/role.repository';
+  ROLE_REPOSITORY_TOKEN,
+} from "../../domain/repositories/role.repository.js";
 import {
-  USER_REPOSITORY_TOKEN,
   type IUserRepository,
-} from 'src/domain/repositories/user.repository';
+  USER_REPOSITORY_TOKEN,
+} from "../../domain/repositories/user.repository.js";
+import { EditUserDto } from "../dtos/edit-user.dto";
+import { EditUserResponseDto } from "../dtos/edit-user-response.dto";
 import {
-  PASSWORD_HASHER_TOKEN,
   type IPasswordHasher,
-} from '../ports/passowrd-hasher.interface';
-import { AtLeastOneFieldRequiredException } from 'src/domain/exceptions/at-least-one-field-required.exception';
-import { EntityNotFoundException } from 'src/domain/exceptions/entity-not-found-exception';
-import { RoleIsInvalidException } from 'src/domain/exceptions/role-is-invalid.exception';
-import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
-import { EditUserDto } from '../dtos/edit-user.dto';
-import { Inject, Injectable } from '@nestjs/common';
+  PASSWORD_HASHER_TOKEN,
+} from "../ports/passowrd-hasher.interface";
 
 @Injectable()
 export class EditUserUseCase {
+  private readonly logger = new Logger(EditUserUseCase.name);
+
   constructor(
     @Inject(USER_REPOSITORY_TOKEN)
     private readonly userRepository: IUserRepository,
@@ -30,7 +32,7 @@ export class EditUserUseCase {
 
   async execute(dto: EditUserDto): Promise<EditUserResponseDto> {
     const user = await this.userRepository.findById(dto.id);
-    if (!user) throw new EntityNotFoundException('User', dto.id);
+    if (!user) throw new EntityNotFoundException("User", dto.id);
 
     const isAllUndefined = Object.values(dto).every(
       (value) => value == undefined,
@@ -72,13 +74,19 @@ export class EditUserUseCase {
     );
 
     const userRoles = await this.roleRepository.findByUserId(user.getId());
+    user.setRoles(userRoles);
 
-    return {
-      id: user.getId(),
+    this.logger.log({
+      event: "user.update.succeeded",
+      message: "user updated",
+      userId: user.getId(),
       username: user.getUsername(),
-      createdAt: user.getCreatedAt(),
-      updatedAt: user.getUpdatedAt(),
-      roles: userRoles.map((r) => r.getName()),
-    };
+      roles: userRoles.map((role) => role.getName()),
+      changedFields: Object.entries(dto)
+        .filter(([key, value]) => key !== "id" && value !== undefined)
+        .map(([key]) => key),
+    });
+
+    return { user };
   }
 }

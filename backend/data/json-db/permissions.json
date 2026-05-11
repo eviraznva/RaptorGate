@@ -219,6 +219,21 @@
       "id": "00000000-0000-4000-8000-000000000413",
       "name": "identity:read",
       "description": "Permission identity:read"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000414",
+      "name": "dns-inspection:read",
+      "description": "Permission dns-inspection:read"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000415",
+      "name": "dns-inspection:update",
+      "description": "Permission dns-inspection:update"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000416",
+      "name": "identity:update",
+      "description": "Permission identity:update"
     }
   ]
 }

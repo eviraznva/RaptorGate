@@ -5,17 +5,21 @@ import {
   Inject,
   Injectable,
   UnauthorizedException,
-} from '@nestjs/common';
-import { REQUIRE_PERMISSIONS_KEY } from '../decorators/require-permissions.decorator.js';
-import { TOKEN_SERVICE_TOKEN } from '../../application/ports/token-service.interface.js';
-import type { ITokenService } from '../../application/ports/token-service.interface.js';
-import { ROLE_REPOSITORY_TOKEN } from '../../domain/repositories/role.repository.js';
-import type { IRoleRepository } from '../../domain/repositories/role.repository.js';
-import { Permission } from '../../domain/enums/permissions.enum.js';
-import { ROLES_KEY } from '../decorators/roles.decorator.js';
-import { Role } from '../../domain/enums/role.enum.js';
-import { Reflector } from '@nestjs/core';
-import { Request } from 'express';
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { Request } from "express";
+import type { ITokenService } from "../../application/ports/token-service.interface.js";
+import { TOKEN_SERVICE_TOKEN } from "../../application/ports/token-service.interface.js";
+import { Permission } from "../../domain/enums/permissions.enum.js";
+import { Role } from "../../domain/enums/role.enum.js";
+import {
+  ADMIN_AUTH_SESSION_REPOSITORY_TOKEN,
+  type IAdminAuthSessionRepository,
+} from "../../domain/repositories/admin-auth-session.repository.js";
+import type { IRoleRepository } from "../../domain/repositories/role.repository.js";
+import { ROLE_REPOSITORY_TOKEN } from "../../domain/repositories/role.repository.js";
+import { REQUIRE_PERMISSIONS_KEY } from "../../presentation/decorators/auth/require-permissions.decorator.js";
+import { ROLES_KEY } from "../../presentation/decorators/auth/roles.decorator.js";
 
 @Injectable()
 export class RolesPermissionsGuard implements CanActivate {
@@ -24,6 +28,8 @@ export class RolesPermissionsGuard implements CanActivate {
     @Inject(TOKEN_SERVICE_TOKEN) private readonly tokenService: ITokenService,
     @Inject(ROLE_REPOSITORY_TOKEN)
     private readonly roleRepository: IRoleRepository,
+    @Inject(ADMIN_AUTH_SESSION_REPOSITORY_TOKEN)
+    private readonly adminAuthSessionRepository: IAdminAuthSessionRepository,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -45,22 +51,25 @@ export class RolesPermissionsGuard implements CanActivate {
     const request: Request = context.switchToHttp().getRequest();
     const token = this.extractTokenFromHeader(request);
 
-    if (!token) throw new UnauthorizedException('Missing or invalid token');
+    if (!token) throw new UnauthorizedException("Missing or invalid token");
     const payload = await this.tokenService.verifyAccessToken(token);
 
-    if (!payload) throw new UnauthorizedException('Invalid or expired token');
-    const userRoles = await this.roleRepository.findByUserId(payload.sub);
+    if (!payload) throw new UnauthorizedException("Invalid or expired token");
+    const userRoles =
+      payload.principalType === "external_admin"
+        ? await this.resolveExternalAdminRoles(payload.sub, payload.roles ?? [])
+        : await this.roleRepository.findByUserId(payload.sub);
 
     // Sprawdzenie roli
     if (requiredRoles && requiredRoles.length > 0) {
-      const userRoleNames = userRoles.map((r) => r.getName());
+      const userRoleNames = expandRoleNames(userRoles.map((r) => r.getName()));
 
       const hasRole = requiredRoles.some((role) =>
         userRoleNames.includes(role),
       );
 
       if (!hasRole) {
-        throw new ForbiddenException('Forbidden: insufficient role');
+        throw new ForbiddenException("Forbidden: insufficient role");
       }
     }
 
@@ -70,7 +79,7 @@ export class RolesPermissionsGuard implements CanActivate {
       );
 
       if (!hasAll) {
-        throw new ForbiddenException('Forbidden: insufficient permissions');
+        throw new ForbiddenException("Forbidden: insufficient permissions");
       }
     }
 
@@ -78,8 +87,46 @@ export class RolesPermissionsGuard implements CanActivate {
   }
 
   private extractTokenFromHeader(request: Request): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
+    const [type, token] = request.headers.authorization?.split(" ") ?? [];
 
-    return type === 'Bearer' ? token : undefined;
+    return type === "Bearer" ? token : undefined;
   }
+
+  private async resolveExternalAdminRoles(
+    sessionId: string,
+    roleNames: string[],
+  ) {
+    const session = await this.adminAuthSessionRepository.findById(sessionId);
+    if (!session || session.isRevoked()) {
+      throw new UnauthorizedException("Invalid or expired token");
+    }
+
+    const names = roleNames.length > 0 ? roleNames : session.getRoles();
+    const roles = await Promise.all(
+      names.map((name) => this.roleRepository.findByName(name)),
+    );
+
+    return roles.filter(
+      (role): role is NonNullable<typeof role> => role !== null,
+    );
+  }
+}
+
+function expandRoleNames(roleNames: string[]): string[] {
+  const names = new Set(roleNames);
+
+  if (names.has(Role.SuperAdmin)) {
+    names.add(Role.Admin);
+    names.add(Role.Operator);
+    names.add(Role.Viewer);
+  }
+  if (names.has(Role.Admin)) {
+    names.add(Role.Operator);
+    names.add(Role.Viewer);
+  }
+  if (names.has(Role.Operator)) {
+    names.add(Role.Viewer);
+  }
+
+  return [...names];
 }

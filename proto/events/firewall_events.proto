@@ -3,10 +3,37 @@ syntax = "proto3";
 package raptorgate.events;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 
 message Event {
   google.protobuf.Timestamp emitted_at = 1;
   EventKind kind = 2;
+}
+
+message TunDeviceSwappedEvent {
+  string old_device = 1;
+  string new_device = 2;
+  string old_address = 3;
+  string new_address = 4;
+}
+
+message Route {
+  string destination = 1;        // CIDR, e.g., "10.0.0.0/24"
+  uint32 out_interface_index = 2; // ifindex of outgoing interface
+  uint32 priority = 3;           // route metric/priority
+}
+
+message RouteAddedEvent {
+  Route route = 1;
+}
+
+message RouteModifiedEvent {
+  Route old_route = 1;
+  Route new_route = 2;
+}
+
+message RouteDeletedEvent {
+  Route route = 1;
 }
 
 message EventKind {
@@ -15,12 +42,90 @@ message EventKind {
     TcpSessionRemovedEvent         tcp_session_removed      = 2;
     TcpConnectionRejectedEvent     tcp_connection_rejected  = 3;
     TcpSessionAbortedMidCloseEvent tcp_session_aborted      = 4;
+    TcpSessionEnteredTimeWaitEvent tcp_session_entered_timewait = 5;
+    TunDeviceSwappedEvent          tun_device_swapped       = 6;
+    SnifferConfigChangedEvent      sniffer_config_changed   = 7;
+    EventBusConnectedEvent         event_bus_connected      = 8;
+    IpsSignatureMatchedEvent       ips_signature_matched    = 9;
+    TlsInterceptStartedEvent       tls_intercept_started    = 10;
+    TlsHandshakeCompleteEvent      tls_handshake_complete   = 11;
+    TlsSessionClosedEvent          tls_session_closed       = 12;
+    InboundTlsInterceptStartedEvent   inbound_tls_intercept_started   = 13;
+    InboundTlsHandshakeCompleteEvent  inbound_tls_handshake_complete  = 14;
+    InboundTlsSessionClosedEvent      inbound_tls_session_closed      = 15;
+    DecryptedTrafficClassifiedEvent   decrypted_traffic_classified    = 16;
+    DecryptedIpsMatchEvent            decrypted_ips_match             = 17;
+    TlsUntrustedCertDetectedEvent     tls_untrusted_cert_detected     = 18;
+    TlsBypassAppliedEvent             tls_bypass_applied              = 19;
+    InboundTlsBypassAppliedEvent      inbound_tls_bypass_applied      = 20;
+    PinningFailureDetectedEvent       pinning_failure_detected        = 21;
+    PinningAutoBypassActivatedEvent   pinning_auto_bypass_activated   = 22;
+    TlsHandshakeFailedEvent           tls_handshake_failed            = 23;
+    EchAttemptDetectedEvent           ech_attempt_detected            = 24;
+    InterfaceStateChangedEvent        interface_state_changed         = 25;
+    InterfaceRenamedEvent             interface_renamed               = 26;
+    MlThreatDetectedEvent             ml_threat_detected              = 27;
+    RouteAddedEvent    route_added    = 28;
+    RouteModifiedEvent route_modified = 29;
+    RouteDeletedEvent  route_deleted  = 30;
+    PolicyWarningEvent policy_warning = 31;
+    SmtpSessionStateChangedEvent smtp_session_state_changed = 32;
   }
 }
 
 message TcpEndpoint {
   string ip   = 1;
   uint32 port = 2;
+}
+
+message SmtpSession {
+  TcpEndpoint client = 1;
+  TcpEndpoint server = 2;
+}
+
+message SmtpSessionStateChangedEvent {
+  SmtpSession session = 1;
+  string new_state = 2;
+}
+
+message EventBusConnectedEvent {}
+
+message IpsSignatureMatchedEvent {
+  string signature_id = 1;
+  string signature_name = 2;
+  string category = 3;
+  string severity = 4;
+  string action = 5;
+  string src_ip = 6;
+  uint32 src_port = 7;
+  string dst_ip = 8;
+  uint32 dst_port = 9;
+  string transport_protocol = 10;
+  string app_protocol = 11;
+  string interface = 12;
+  uint32 payload_length = 13;
+}
+
+message MlThreatDetectedEvent {
+  float score = 1;
+  float threshold = 2;
+  string model_checksum = 3;
+  string src_ip = 4;
+  uint32 src_port = 5;
+  string dst_ip = 6;
+  uint32 dst_port = 7;
+  string transport_protocol = 8;
+  string app_protocol = 9;
+  string interface = 10;
+  uint32 payload_length = 11;
+  string attack_type = 12;
+}
+
+message SnifferConfigChangedEvent {
+  repeated string old_interfaces = 1;
+  repeated string new_interfaces = 2;
+  google.protobuf.Duration old_timeout = 3;
+  google.protobuf.Duration new_timeout = 4;
 }
 
 message TcpSessionEstablishedEvent {
@@ -41,4 +146,177 @@ message TcpConnectionRejectedEvent {
 message TcpSessionAbortedMidCloseEvent {
   TcpEndpoint src = 1;
   TcpEndpoint dst = 2;
+}
+
+message TcpSessionEnteredTimeWaitEvent {
+  TcpEndpoint src = 1;
+  TcpEndpoint dst = 2;
+}
+
+message TlsInterceptStartedEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string tls_version = 6;
+}
+
+message TlsHandshakeCompleteEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string alpn        = 6;
+  string tls_version = 7;
+}
+
+message TlsSessionClosedEvent {
+  string peer_ip    = 1;
+  uint32 peer_port  = 2;
+  string dst_ip     = 3;
+  uint32 dst_port   = 4;
+  string sni        = 5;
+  uint64 bytes_up   = 6;
+  uint64 bytes_down = 7;
+}
+
+message InboundTlsInterceptStartedEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string server_ip   = 3;
+  uint32 server_port = 4;
+  string sni         = 5;
+  string common_name = 6;
+  string tls_version = 7;
+}
+
+message InboundTlsHandshakeCompleteEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string server_ip   = 3;
+  uint32 server_port = 4;
+  string sni         = 5;
+  string alpn        = 6;
+  string tls_version = 7;
+}
+
+message InboundTlsSessionClosedEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string server_ip   = 3;
+  uint32 server_port = 4;
+  string sni         = 5;
+  uint64 bytes_up    = 6;
+  uint64 bytes_down  = 7;
+}
+
+message DecryptedTrafficClassifiedEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string server_ip   = 3;
+  uint32 server_port = 4;
+  string sni         = 5;
+  string app_proto   = 6;
+  string http_version = 7;
+  string direction   = 8;
+  string mode        = 9;
+}
+
+message DecryptedIpsMatchEvent {
+  string peer_ip        = 1;
+  uint32 peer_port      = 2;
+  string server_ip      = 3;
+  uint32 server_port    = 4;
+  string sni            = 5;
+  string signature_name = 6;
+  string severity       = 7;
+  bool   blocked        = 8;
+  string direction      = 9;
+  string mode           = 10;
+  string log_id         = 11;
+}
+
+message TlsUntrustedCertDetectedEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string domain      = 6;
+  string tls_version = 7;
+}
+
+message TlsBypassAppliedEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string domain      = 6;
+  string tls_version = 7;
+}
+
+message InboundTlsBypassAppliedEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string server_ip   = 3;
+  uint32 server_port = 4;
+  string sni         = 5;
+  string tls_version = 6;
+}
+
+message PinningFailureDetectedEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string tls_version = 6;
+}
+
+message PinningAutoBypassActivatedEvent {
+  string source_ip = 1;
+  string domain    = 2;
+  string reason    = 3;
+}
+
+message TlsHandshakeFailedEvent {
+  string peer_ip     = 1;
+  uint32 peer_port   = 2;
+  string dst_ip      = 3;
+  uint32 dst_port    = 4;
+  string sni         = 5;
+  string tls_version = 6;
+  string stage       = 7;
+  string reason      = 8;
+  string mode        = 9;
+}
+
+message EchAttemptDetectedEvent {
+  string source_ip = 1;
+  string domain    = 2;
+  string origin    = 3;
+  string action    = 4;
+}
+
+message InterfaceStateChangedEvent {
+  string interface_name = 1;
+  string old_status = 2;
+  string new_status = 3;
+  repeated string addresses = 4;
+}
+
+message InterfaceRenamedEvent {
+  uint32 interface_index = 1;
+  string old_interface_name = 2;
+  string new_interface_name = 3;
+  string status = 4;
+  repeated string addresses = 5;
+}
+
+message PolicyWarningEvent {
+  string message = 1;
+  string verdict = 2;
 }

@@ -1,12 +1,23 @@
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
-import { z } from 'zod';
+import { z } from "zod";
+import { isoDateTimeSchema, tableFileSchema } from "./_common.js";
+
+const zoneInterfaceIdSchema = z.uuid();
+const noZoneIdSchema = z.literal("00000000-0000-0000-0000-000000000000");
+const zoneInterfaceZoneIdSchema = z.union([
+  zoneInterfaceIdSchema,
+  noZoneIdSchema,
+]);
 
 export const ZoneInterfaceRecordSchema = z
   .object({
-    id: uuidSchema,
-    zoneId: uuidSchema,
+    id: zoneInterfaceIdSchema,
+    zoneId: zoneInterfaceZoneIdSchema,
     interfaceName: z.string().min(1).max(64),
-    vlanId: z.number().int(),
+    vlanId: z.number().int().nullable(),
+    status: z.enum(["unspecified", "active", "inactive", "missing", "unknown"]),
+    addresses: z.array(z.string()),
+    sniffed: z.boolean(),
+    parentInterfaceId: z.string().nullable(),
     createdAt: isoDateTimeSchema,
   })
   .strict();

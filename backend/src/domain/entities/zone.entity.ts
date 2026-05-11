@@ -6,6 +6,7 @@ export class Zone {
     private isActive: boolean,
     private readonly createdAt: Date,
     private readonly createdBy: string,
+    private readonly interfaceIds: string[] = [],
   ) {}
 
   public static create(
@@ -15,8 +16,17 @@ export class Zone {
     isActive: boolean,
     createdAt: Date,
     createdBy: string,
+    interfaceIds: string[] = [],
   ): Zone {
-    return new Zone(id, name, description, isActive, createdAt, createdBy);
+    return new Zone(
+      id,
+      name,
+      description,
+      isActive,
+      createdAt,
+      createdBy,
+      interfaceIds,
+    );
   }
 
   public getId(): string {
@@ -41,6 +51,10 @@ export class Zone {
 
   public getCreatedBy(): string {
     return this.createdBy;
+  }
+
+  public getInterfaceIds(): string[] {
+    return this.interfaceIds;
   }
 
   public setName(name: string): void {

@@ -1,0 +1,101 @@
+import { IdentityConfigIsInvalidException } from '../exceptions/identity-config-is-invalid.exception.js';
+import { IdentityAuthenticationProfile } from './identity-authentication-profile.entity.js';
+import { IdentitySettings } from './identity-settings.entity.js';
+import { LdapServerProfile } from './ldap-server-profile.entity.js';
+import { RadiusServerProfile } from './radius-server-profile.entity.js';
+
+export class IdentityConfiguration {
+  private constructor(
+    private readonly radiusServerProfiles: RadiusServerProfile[],
+    private readonly ldapServerProfiles: LdapServerProfile[],
+    private readonly authenticationProfiles: IdentityAuthenticationProfile[],
+    private readonly settings: IdentitySettings,
+  ) {}
+
+  public static empty(): IdentityConfiguration {
+    return IdentityConfiguration.create(
+      [],
+      [],
+      [],
+      IdentitySettings.create(null, null, null, null),
+    );
+  }
+
+  public static create(
+    radiusServerProfiles: RadiusServerProfile[],
+    ldapServerProfiles: LdapServerProfile[],
+    authenticationProfiles: IdentityAuthenticationProfile[],
+    settings: IdentitySettings,
+  ): IdentityConfiguration {
+    assertUnique(radiusServerProfiles.map((p) => p.getId()), 'radius profile id');
+    assertUnique(radiusServerProfiles.map((p) => p.getName()), 'radius profile name');
+    assertUnique(ldapServerProfiles.map((p) => p.getId()), 'ldap profile id');
+    assertUnique(ldapServerProfiles.map((p) => p.getName()), 'ldap profile name');
+    assertUnique(authenticationProfiles.map((p) => p.getId()), 'authentication profile id');
+    assertUnique(authenticationProfiles.map((p) => p.getName()), 'authentication profile name');
+
+    const radiusIds = new Set(radiusServerProfiles.map((p) => p.getId()));
+    const ldapIds = new Set(ldapServerProfiles.map((p) => p.getId()));
+
+    for (const profile of authenticationProfiles) {
+      const radiusProfileId = profile.getRadiusProfileId();
+      const ldapProfileId = profile.getLdapProfileId();
+
+      if (radiusProfileId && !radiusIds.has(radiusProfileId)) {
+        throw new IdentityConfigIsInvalidException(`authentication profile ${profile.getId()} references missing radius profile ${radiusProfileId}`);
+      }
+
+      if (ldapProfileId && !ldapIds.has(ldapProfileId)) {
+        throw new IdentityConfigIsInvalidException(`authentication profile ${profile.getId()} references missing ldap profile ${ldapProfileId}`);
+      }
+    }
+
+    const authIds = new Set(authenticationProfiles.map((p) => p.getId()));
+    assertSettingsReference(settings.getPortalAuthenticationProfileId(), authIds, 'portalAuthenticationProfileId');
+    assertSettingsReference(settings.getAdminAuthenticationProfileId(), authIds, 'adminAuthenticationProfileId');
+
+    return new IdentityConfiguration(
+      [...radiusServerProfiles],
+      [...ldapServerProfiles],
+      [...authenticationProfiles],
+      settings,
+    );
+  }
+
+  public getRadiusServerProfiles(): RadiusServerProfile[] {
+    return [...this.radiusServerProfiles];
+  }
+
+  public getLdapServerProfiles(): LdapServerProfile[] {
+    return [...this.ldapServerProfiles];
+  }
+
+  public getAuthenticationProfiles(): IdentityAuthenticationProfile[] {
+    return [...this.authenticationProfiles];
+  }
+
+  public getSettings(): IdentitySettings {
+    return this.settings;
+  }
+}
+
+function assertUnique(values: string[], field: string): void {
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    if (seen.has(value)) {
+      throw new IdentityConfigIsInvalidException(`duplicate ${field}: ${value}`);
+    }
+    seen.add(value);
+  }
+}
+
+function assertSettingsReference(
+  profileId: string | null,
+  authIds: Set<string>,
+  field: string,
+): void {
+  if (profileId && !authIds.has(profileId)) {
+    throw new IdentityConfigIsInvalidException(`${field} references missing authentication profile ${profileId}`);
+  }
+}

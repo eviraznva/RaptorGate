@@ -1,0 +1,16 @@
+/var/log/raptorgate/.logrotate-trigger {
+    daily
+    rotate 1
+    missingok
+    create 0644 root root
+    nocompress
+    sharedscripts
+    postrotate
+        today="$(date +%F)"
+        for dir in /var/log/raptorgate/firewall /var/log/raptorgate/backend; do
+            [ -d "$dir" ] || continue
+            find "$dir" -maxdepth 1 -type f -name "*.log" ! -name "$today.log" -exec gzip -n -f {} +
+            find "$dir" -maxdepth 1 -type f -name "*.log.gz" -mtime +14 -delete
+        done
+    endscript
+}

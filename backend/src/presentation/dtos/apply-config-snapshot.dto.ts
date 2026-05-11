@@ -1,3 +1,4 @@
+import { ApiProperty } from "@nestjs/swagger";
 import {
   IsBoolean,
   IsIn,
@@ -5,17 +6,16 @@ import {
   IsOptional,
   IsString,
   MaxLength,
-} from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+} from "class-validator";
 
 export class ApplyConfigSnapshotDto {
   @ApiProperty({
-    example: 'manual_import',
-    enum: ['manual_import', 'rollback_point', 'auto_save'],
+    example: "manual_import",
+    enum: ["manual_import", "rollback_point", "auto_save"],
   })
   @IsString()
   @IsNotEmpty()
-  @IsIn(['manual_import', 'rollback_point', 'auto_save'])
+  @IsIn(["manual_import", "rollback_point", "auto_save"])
   snapshotType: string;
 
   @ApiProperty({ example: true })
@@ -23,7 +23,7 @@ export class ApplyConfigSnapshotDto {
   isActive: boolean;
 
   @ApiProperty({
-    example: 'Imported configuration from admin panel',
+    example: "Imported configuration from admin panel",
     required: false,
     nullable: true,
   })

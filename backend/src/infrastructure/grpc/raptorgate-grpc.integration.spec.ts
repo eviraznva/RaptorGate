@@ -1,23 +1,23 @@
-import type { ConfigSnapshotPayload } from '../../domain/value-objects/config-snapshot-payload.interface.js';
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
-import { ConfigurationSnapshot } from '../../domain/entities/configuration-snapshot.entity.js';
-import { SnapshotType } from '../../domain/value-objects/snapshot-type.vo.js';
-import { MicroserviceOptions, Transport } from '@nestjs/microservices';
-import { Checksum } from '../../domain/value-objects/checksum.vo.js';
-import { type LoggerService, type LogLevel } from '@nestjs/common';
-import { type ChildProcess, spawn } from 'node:child_process';
-import { Test, type TestingModule } from '@nestjs/testing';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { GrpcModule } from './grpc.module.js';
-import { join, resolve } from 'node:path';
-import { jest } from '@jest/globals';
-import { tmpdir } from 'node:os';
+import { type ChildProcess, spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { jest } from "@jest/globals";
+import { type LoggerService, type LogLevel } from "@nestjs/common";
+import { MicroserviceOptions, Transport } from "@nestjs/microservices";
+import { Test, type TestingModule } from "@nestjs/testing";
+import { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
+import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from "../../domain/repositories/config-snapshot.repository.js";
+import { Checksum } from "../../domain/value-objects/checksum.vo.js";
+import type { ConfigSnapshotPayload } from "../../domain/value-objects/config-snapshot-payload.interface.js";
+import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
+import { GrpcModule } from "./grpc.module.js";
 
-const runIntegration = process.env.RUN_FIREWALL_INTEGRATION === '1';
+const runIntegration = process.env.RUN_FIREWALL_INTEGRATION === "1";
 const describeIntegration = runIntegration ? describe : describe.skip;
 
-const repoRoot = resolve(__dirname, '../../../../');
-const firewallBinaryPath = join(repoRoot, 'target', 'debug', 'ngfw');
+const repoRoot = resolve(__dirname, "../../../../");
+const firewallBinaryPath = join(repoRoot, "target", "debug", "ngfw");
 
 jest.setTimeout(30_000);
 
@@ -36,7 +36,7 @@ const TEST_PAYLOAD: ConfigSnapshotPayload = {
     identity: 1,
   },
   bundle: {
-    rules: { checksum: 'abc', items: [] },
+    rules: { checksum: "abc", items: [] },
     zones: { items: [] },
     zone_interfaces: { items: [] },
     zone_pairs: { items: [] },
@@ -45,10 +45,10 @@ const TEST_PAYLOAD: ConfigSnapshotPayload = {
     ssl_bypass_list: { items: [] },
     ips_signatures: { items: [] },
     ml_model: {
-      id: 'ml-1',
-      name: 'noop',
-      artifact_path: '/dev/null',
-      checksum: 'none',
+      id: "ml-1",
+      name: "noop",
+      artifact_path: "/dev/null",
+      checksum: "none",
     },
     firewall_certificates: { items: [] },
     identity: {
@@ -60,61 +60,61 @@ const TEST_PAYLOAD: ConfigSnapshotPayload = {
   },
 };
 
-const TEST_CHECKSUM = 'a'.repeat(64);
+const TEST_CHECKSUM = "a".repeat(64);
 
 const TEST_SNAPSHOT = ConfigurationSnapshot.create(
-  '00000000-0000-0000-0000-000000000001',
+  "00000000-0000-0000-0000-000000000001",
   1,
-  SnapshotType.create('manual_import'),
+  SnapshotType.create("manual_import"),
   Checksum.create(TEST_CHECKSUM),
   true,
   TEST_PAYLOAD,
   null,
   new Date(),
-  '00000000-0000-0000-0000-000000000099',
+  "00000000-0000-0000-0000-000000000099",
 );
 
 class TestLogger implements LoggerService {
   readonly messages: string[] = [];
 
   log(message: unknown, ...optionalParams: unknown[]) {
-    this.capture('LOG', message, optionalParams);
+    this.capture("LOG", message, optionalParams);
   }
   error(message: unknown, ...optionalParams: unknown[]) {
-    this.capture('ERROR', message, optionalParams);
+    this.capture("ERROR", message, optionalParams);
   }
   warn(message: unknown, ...optionalParams: unknown[]) {
-    this.capture('WARN', message, optionalParams);
+    this.capture("WARN", message, optionalParams);
   }
   debug(message: unknown, ...optionalParams: unknown[]) {
-    this.capture('DEBUG', message, optionalParams);
+    this.capture("DEBUG", message, optionalParams);
   }
   verbose(message: unknown, ...optionalParams: unknown[]) {
-    this.capture('VERBOSE', message, optionalParams);
+    this.capture("VERBOSE", message, optionalParams);
   }
 
   setLogLevels(_levels: LogLevel[]) {}
 
   private capture(level: string, message: unknown, params: unknown[]) {
-    const context = params.length > 0 ? ` [${params[params.length - 1]}]` : '';
+    const context = params.length > 0 ? ` [${params[params.length - 1]}]` : "";
     this.messages.push(`${level}${context} ${message}`);
   }
 }
 
-describeIntegration('gRPC integration: firewall ↔ backend', () => {
-  let app: ReturnType<TestingModule['createNestMicroservice']> extends Promise<
+describeIntegration("gRPC integration: firewall ↔ backend", () => {
+  let app: ReturnType<TestingModule["createNestMicroservice"]> extends Promise<
     infer T
   >
     ? T
     : never;
   let firewallProcess: ChildProcess | null = null;
   let runtimeDir: string;
-  let firewallLogs = '';
+  let firewallLogs = "";
   let testLogger: TestLogger;
 
   beforeAll(async () => {
-    runtimeDir = mkdtempSync(join(tmpdir(), 'raptorgate-grpc-it-'));
-    const backendSocketPath = join(runtimeDir, 'backend.sock');
+    runtimeDir = mkdtempSync(join(tmpdir(), "raptorgate-grpc-it-"));
+    const backendSocketPath = join(runtimeDir, "backend.sock");
 
     testLogger = new TestLogger();
 
@@ -130,9 +130,9 @@ describeIntegration('gRPC integration: firewall ↔ backend', () => {
     app = await moduleRef.createNestMicroservice<MicroserviceOptions>({
       transport: Transport.GRPC,
       options: {
-        package: ['raptorgate', 'raptorgate.config', 'raptorgate.events'],
-        protoPath: join(repoRoot, 'proto', 'raptorgate.proto'),
-        loader: { includeDirs: [join(repoRoot, 'proto')] },
+        package: ["raptorgate", "raptorgate.config", "raptorgate.events"],
+        protoPath: join(repoRoot, "proto", "raptorgate.proto"),
+        loader: { includeDirs: [join(repoRoot, "proto")] },
         url: `unix://${backendSocketPath}`,
       },
     });
@@ -142,7 +142,7 @@ describeIntegration('gRPC integration: firewall ↔ backend', () => {
 
     firewallProcess = spawnFirewall(runtimeDir, backendSocketPath);
 
-    await waitForFirewallLog('Config loaded, entering NORMAL mode', 15_000);
+    await waitForFirewallLog("Config loaded, entering NORMAL mode", 15_000);
 
     // Give time for the immediate heartbeat + EventStream setup
     await delay(3_000);
@@ -158,35 +158,35 @@ describeIntegration('gRPC integration: firewall ↔ backend', () => {
     rmSync(runtimeDir, { recursive: true, force: true });
   });
 
-  it('should complete GetActiveConfig flow on startup', () => {
-    const backendLogs = testLogger.messages.join('\n');
+  it("should complete GetActiveConfig flow on startup", () => {
+    const backendLogs = testLogger.messages.join("\n");
 
     // Backend should have logged the GetActiveConfig call with STARTUP reason
-    expect(backendLogs).toContain('[GetActiveConfig]');
+    expect(backendLogs).toContain("[GetActiveConfig]");
     expect(backendLogs).toMatch(/\[GetActiveConfig\].*reason=1/); // 1 = STARTUP
 
     // Firewall should have entered NORMAL mode
-    expect(firewallLogs).toContain('Config loaded, entering NORMAL mode');
+    expect(firewallLogs).toContain("Config loaded, entering NORMAL mode");
   });
 
-  it('should establish EventStream and receive heartbeats', () => {
-    const backendLogs = testLogger.messages.join('\n');
+  it("should establish EventStream and receive heartbeats", () => {
+    const backendLogs = testLogger.messages.join("\n");
 
-    expect(backendLogs).toContain('[EventStream] Firewall connected');
-    expect(backendLogs).toContain('fw.heartbeat');
+    expect(backendLogs).toContain("[EventStream] Firewall connected");
+    expect(backendLogs).toContain("fw.heartbeat");
   });
 
-  it('should follow correct bootstrap sequence', () => {
-    const lines = firewallLogs.split('\n');
+  it("should follow correct bootstrap sequence", () => {
+    const lines = firewallLogs.split("\n");
 
     const connectingIdx = lines.findIndex((l) =>
-      l.includes('Connecting to backend'),
+      l.includes("Connecting to backend"),
     );
     const fetchingIdx = lines.findIndex((l) =>
-      l.includes('Connected to backend, fetching config'),
+      l.includes("Connected to backend, fetching config"),
     );
     const normalIdx = lines.findIndex((l) =>
-      l.includes('Config loaded, entering NORMAL mode'),
+      l.includes("Config loaded, entering NORMAL mode"),
     );
 
     expect(connectingIdx).toBeGreaterThanOrEqual(0);
@@ -204,23 +204,23 @@ describeIntegration('gRPC integration: firewall ↔ backend', () => {
       cwd: repoRoot,
       env: {
         ...process.env,
-        DISABLE_DATA_PLANE: 'true',
+        DISABLE_DATA_PLANE: "true",
         GRPC_SOCKET_PATH: backendSocketPath,
         CONTROL_PLANE_GRPC_SOCKET_PATH: join(
           tmpRuntimeDir,
-          'control-plane.sock',
+          "control-plane.sock",
         ),
-        REDB_SNAPSHOT_PATH: join(tmpRuntimeDir, 'snapshot.redb'),
-        RAPTORGATE_PKI_DIR: join(tmpRuntimeDir, 'pki'),
-        HEARTBEAT_INTERVAL_SECS: '2',
+        REDB_SNAPSHOT_PATH: join(tmpRuntimeDir, "snapshot.redb"),
+        RAPTORGATE_PKI_DIR: join(tmpRuntimeDir, "pki"),
+        HEARTBEAT_INTERVAL_SECS: "2",
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
-    child.stdout?.on('data', (chunk: Buffer | string) => {
+    child.stdout?.on("data", (chunk: Buffer | string) => {
       firewallLogs += chunk.toString();
     });
-    child.stderr?.on('data', (chunk: Buffer | string) => {
+    child.stderr?.on("data", (chunk: Buffer | string) => {
       firewallLogs += chunk.toString();
     });
 
@@ -250,7 +250,7 @@ describeIntegration('gRPC integration: firewall ↔ backend', () => {
     throw new Error(
       `Timed out (${timeoutMs}ms) waiting for firewall log: "${needle}"\n` +
         `--- Firewall logs ---\n${firewallLogs}\n` +
-        `--- Backend logs ---\n${testLogger.messages.join('\n')}`,
+        `--- Backend logs ---\n${testLogger.messages.join("\n")}`,
     );
   }
 
@@ -268,16 +268,16 @@ describeIntegration('gRPC integration: firewall ↔ backend', () => {
       return;
     }
 
-    child.kill('SIGTERM');
+    child.kill("SIGTERM");
 
     await Promise.race([
       new Promise<void>((resolveExit) => {
-        child.once('exit', () => resolveExit());
+        child.once("exit", () => resolveExit());
       }),
       new Promise<void>((resolveTimeout) =>
         setTimeout(() => {
           if (child.exitCode === null) {
-            child.kill('SIGKILL');
+            child.kill("SIGKILL");
           }
           resolveTimeout();
         }, 3_000),

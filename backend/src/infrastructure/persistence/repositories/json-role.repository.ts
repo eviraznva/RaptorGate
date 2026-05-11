@@ -1,40 +1,40 @@
-import {
-  RolePermissionsFile,
-  RolePermissionsFileSchema,
-} from '../schemas/role-permissions.schema.js';
+import { join } from "node:path";
+import { Inject, Injectable } from "@nestjs/common";
+import { Role } from "../../../domain/entities/role.entity.js";
+import { IRoleRepository } from "../../../domain/repositories/role.repository.js";
+import { Mutex } from "../json/file-mutex.js";
+import { FileStore } from "../json/file-store.js";
+import { RoleJsonMapper } from "../mappers/role-json.mapper.js";
 import {
   PermissionsFile,
   PermissionsFileSchema,
-} from '../schemas/permissions.schema.js';
+} from "../schemas/permissions.schema.js";
+import {
+  RolePermissionsFile,
+  RolePermissionsFileSchema,
+} from "../schemas/role-permissions.schema.js";
+import { RolesFile, RolesFileSchema } from "../schemas/roles.schema.js";
 import {
   UserRolesFile,
   UserRolesFileSchema,
-} from '../schemas/user-roles.schema.js';
-import { IRoleRepository } from '../../../domain/repositories/role.repository.js';
-import { RolesFile, RolesFileSchema } from '../schemas/roles.schema.js';
-import { RoleJsonMapper } from '../mappers/role-json.mapper.js';
-import { Role } from '../../../domain/entities/role.entity.js';
-import { Inject, Injectable } from '@nestjs/common';
-import { FileStore } from '../json/file-store.js';
-import { Mutex } from '../json/file-mutex.js';
-import { join } from 'node:path';
+} from "../schemas/user-roles.schema.js";
 
 @Injectable()
 export class JsonRoleRepository implements IRoleRepository {
-  private readonly rolesPath = join(process.cwd(), 'data/json-db/roles.json');
+  private readonly rolesPath = join(process.cwd(), "data/json-db/roles.json");
   private readonly userRolesPath = join(
     process.cwd(),
-    'data/json-db/user_roles.json',
+    "data/json-db/user_roles.json",
   );
 
   private readonly rolePermissionsPath = join(
     process.cwd(),
-    'data/json-db/role_permissions.json',
+    "data/json-db/role_permissions.json",
   );
 
   private readonly permissionsPath = join(
     process.cwd(),
-    'data/json-db/permissions.json',
+    "data/json-db/permissions.json",
   );
 
   constructor(
@@ -97,9 +97,9 @@ export class JsonRoleRepository implements IRoleRepository {
 
   private buildRole(
     roleId: string,
-    roles: RolesFile['items'],
-    rolePermissions: RolePermissionsFile['items'],
-    permissions: PermissionsFile['items'],
+    roles: RolesFile["items"],
+    rolePermissions: RolePermissionsFile["items"],
+    permissions: PermissionsFile["items"],
   ): Role | null {
     const role = roles.find((r) => r.id === roleId);
     if (!role) return null;

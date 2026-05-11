@@ -1,26 +1,26 @@
-import type { ZonePairPolicy } from '../../domain/entities/zone-pair.entity.js';
-import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty } from "@nestjs/swagger";
+import { IsNotEmpty, IsString, IsUUID } from "class-validator";
+import type { ZonePairPolicy } from "../../domain/entities/zone-pair.entity.js";
 
 export class CreateZonePairDto {
   @ApiProperty({
-    example: 'c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4',
+    example: "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4",
   })
   @IsNotEmpty()
   @IsString()
-  @IsUUID('4')
+  @IsUUID("all")
   srcZoneId: string;
 
   @ApiProperty({
-    example: 'a0db06f9-5063-4035-aadd-845248db19e4',
+    example: "a0db06f9-5063-4035-aadd-845248db19e4",
   })
   @IsNotEmpty()
   @IsString()
-  @IsUUID('4')
+  @IsUUID("all")
   dstZoneId: string;
 
   @ApiProperty({
-    example: 'ALLOW',
+    example: "ALLOW",
   })
   @IsNotEmpty()
   @IsString()

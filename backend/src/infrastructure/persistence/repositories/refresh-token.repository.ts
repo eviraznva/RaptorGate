@@ -1,7 +1,7 @@
 // import {
 //   IRefreshTokenRepository,
 //   RefreshTokenRecord,
-// } from 'src/domain/repositories/refresh-token.repository';
+// } from '../../../domain/repositories/refresh-token.repository.js';
 // import { TokenFileGateway } from '../security/token-file-gateway';
 // import { Inject, Injectable } from '@nestjs/common';
 // import { Mutex } from '../json/file-mutex';
