@@ -447,7 +447,7 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
           <div className="border-t border-[#262626]" />
 
           {/* SMTP Matchers */}
-          {(["sender", "recipient", "message"] as const).map((category) => (
+          {(["recipient", "message", "sender"] as const).map((category) => (
             <div key={category}>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-[10px] text-[#8a8a8a] uppercase tracking-[0.25em]">
@@ -476,7 +476,7 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
                         onChange={(e) =>
                           updateSmtpMatcher(category, idx, "regex", e.target.value)
                         }
-                        className="input text-sm min-w-0 font-mono"
+                        className="input text-sm"
                       />
                       <div className="flex items-center gap-2">
                         <select
