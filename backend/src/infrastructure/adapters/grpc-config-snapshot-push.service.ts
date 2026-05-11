@@ -41,9 +41,11 @@ import {
   IpsAppProtocol,
   IpsMatchType,
   IpsPatternEncoding,
+  SmtpMatchAction as ProtoSmtpMatchAction,
   type DnsInspectionConfig as ProtoDnsInspectionConfig,
   type IpsConfig as ProtoIpsConfig,
   type NatRule as ProtoNatRule,
+  type SmtpMatchers as ProtoSmtpMatchers,
   type TlsInspectionPolicy,
 } from "../grpc/generated/config/config_models.js";
 import type { Timestamp } from "../grpc/generated/google/protobuf/timestamp.js";
@@ -54,6 +56,11 @@ import {
   type FirewallConfigSnapshotServiceClient,
   type PushActiveConfigSnapshotRequest,
 } from "../grpc/generated/services/config_snapshot_service.js";
+import type {
+  SmtpMatch as DomainSmtpMatch,
+  SmtpMatchAction as DomainSmtpMatchAction,
+  SmtpMatchers as DomainSmtpMatchers,
+} from "../../domain/value-objects/smtp-matchers.vo.js";
 
 export const CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN =
   "CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN";
@@ -236,6 +243,7 @@ export class GrpcConfigSnapshotPushService
         zonePairId: r.getZonePairId(),
         priority: r.getPriority().getValue(),
         content: r.getContent(),
+        smtpMatchers: this.toSmtpMatchers(r.getSmtpMatchers()),
       })),
       zones: b.zones.items.map((z) => ({
         id: z.getId(),
@@ -306,6 +314,32 @@ export class GrpcConfigSnapshotPushService
       ipsConfig: b.ips_config ? this.toIpsConfig(b.ips_config) : undefined,
       identity: undefined,
     };
+  }
+
+  private toSmtpMatchers(matchers: DomainSmtpMatchers): ProtoSmtpMatchers {
+    return {
+      sender: matchers.sender.map((match) => this.toSmtpMatch(match)),
+      recipient: matchers.recipient.map((match) => this.toSmtpMatch(match)),
+      message: matchers.message.map((match) => this.toSmtpMatch(match)),
+    };
+  }
+
+  private toSmtpMatch(match: DomainSmtpMatch) {
+    return {
+      regex: match.regex,
+      onMatch: this.toSmtpMatchAction(match.onMatch),
+    };
+  }
+
+  private toSmtpMatchAction(
+    value: DomainSmtpMatchAction,
+  ): ProtoSmtpMatchAction {
+    switch (value) {
+      case "allow":
+        return ProtoSmtpMatchAction.SMTP_MATCH_ACTION_ALLOW;
+      case "deny":
+        return ProtoSmtpMatchAction.SMTP_MATCH_ACTION_DENY;
+    }
   }
 
   private toNatRule(n: DomainNatRule): Record<string, unknown> {

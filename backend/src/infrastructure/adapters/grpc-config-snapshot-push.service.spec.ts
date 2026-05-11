@@ -7,6 +7,7 @@ import { ConfigurationSnapshot } from "../../domain/entities/configuration-snaps
 import { Checksum } from "../../domain/value-objects/checksum.vo.js";
 import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
 import { NatProtocol } from "../grpc/generated/common/common.js";
+import { SmtpMatchAction as GrpcSmtpMatchAction } from "../grpc/generated/config/config_models.js";
 import { GrpcConfigSnapshotPushService } from "./grpc-config-snapshot-push.service.js";
 
 function methodObject(methods: Record<string, unknown>) {
@@ -129,5 +130,80 @@ describe("GrpcConfigSnapshotPushService", () => {
       physical: { interfaceName: "eth2" },
     });
     expect(request.snapshot.bundle.zoneInterfaces[0].kind).toBeUndefined();
+  });
+
+  it("serializes smtp matchers into the gRPC payload", async () => {
+    let request: any;
+    const client = {
+      getService: () => ({
+        pushActiveConfigSnapshot: (value: any) => {
+          request = value;
+          return of({ accepted: true, appliedSnapshotId: value.snapshot.id });
+        },
+      }),
+    } as any;
+    const service = new GrpcConfigSnapshotPushService(client);
+    service.onModuleInit();
+
+    const rule = methodObject({
+      getId: () => "88888888-8888-4888-8888-888888888888",
+      getName: () => "SMTP allowlist",
+      getZonePairId: () => "33333333-3333-4333-8333-333333333333",
+      getPriority: () => Priority.create(10),
+      getContent: () => "match protocol { = smtp : verdict allow }",
+      getSmtpMatchers: () => ({
+        sender: [{ regex: "^.*@trusted\\.com$", onMatch: "allow" }],
+        recipient: [{ regex: "^ops@company\\.com$", onMatch: "deny" }],
+        message: [],
+      }),
+    });
+
+    const snapshot = ConfigurationSnapshot.create(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      1,
+      SnapshotType.create("auto_save"),
+      Checksum.create("0".repeat(64)),
+      true,
+      {
+        bundle: {
+          rules: { items: [rule] },
+          zones: { items: [] },
+          zone_interfaces: { items: [] },
+          zone_pairs: { items: [] },
+          nat_rules: { items: [] },
+          dns_blacklist: { items: [] },
+          ssl_bypass_list: { items: [] },
+          ips_signatures: { items: [] },
+          ml_model: null,
+          firewall_certificates: { items: [] },
+          tls_inspection_policy: undefined,
+        },
+      },
+      "test",
+      new Date("2026-05-09T00:00:00.000Z"),
+      "tester",
+    );
+
+    await service.pushActiveConfigSnapshot(snapshot, "apply");
+
+    expect(request.snapshot.bundle.rules[0]).toMatchObject({
+      id: "88888888-8888-4888-8888-888888888888",
+      name: "SMTP allowlist",
+      smtpMatchers: {
+        sender: [
+          {
+            regex: "^.*@trusted\\.com$",
+            onMatch: GrpcSmtpMatchAction.SMTP_MATCH_ACTION_ALLOW,
+          },
+        ],
+        recipient: [
+          {
+            regex: "^ops@company\\.com$",
+            onMatch: GrpcSmtpMatchAction.SMTP_MATCH_ACTION_DENY,
+          },
+        ],
+        message: [],
+      },
+    });
   });
 });

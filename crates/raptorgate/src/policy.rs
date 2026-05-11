@@ -145,31 +145,23 @@ impl Policy {
     }
 
     pub fn into_rule(&self, id: PolicyId) -> Rule {
-        let is_empty = self.smtp_policy.sender.is_empty()
-            && self.smtp_policy.recipient.is_empty()
-            && self.smtp_policy.message.is_empty();
+        use crate::proto::config::SmtpMatchAction as ProtoAction;
 
-        let smtp_matchers = if is_empty {
-            None
-        } else {
-            use crate::proto::config::SmtpMatchAction as ProtoAction;
-            
-            let to_proto_match = |m: &SmtpMatch| -> crate::proto::config::SmtpMatch {
-                crate::proto::config::SmtpMatch {
-                    regex: m.regex.as_str().to_string(),
-                    on_match: match m.on_match {
-                        crate::policy::SmtpMatchAction::Allow => ProtoAction::Allow as i32,
-                        crate::policy::SmtpMatchAction::Deny => ProtoAction::Deny as i32,
-                    },
-                }
-            };
-            
-            Some(crate::proto::config::SmtpMatchers {
-                sender: self.smtp_policy.sender.iter().map(to_proto_match).collect(),
-                recipient: self.smtp_policy.recipient.iter().map(to_proto_match).collect(),
-                message: self.smtp_policy.message.iter().map(to_proto_match).collect(),
-            })
+        let to_proto_match = |m: &SmtpMatch| -> crate::proto::config::SmtpMatch {
+            crate::proto::config::SmtpMatch {
+                regex: m.regex.as_str().to_string(),
+                on_match: match m.on_match {
+                    crate::policy::SmtpMatchAction::Allow => ProtoAction::Allow as i32,
+                    crate::policy::SmtpMatchAction::Deny => ProtoAction::Deny as i32,
+                },
+            }
         };
+
+        let smtp_matchers = Some(crate::proto::config::SmtpMatchers {
+            sender: self.smtp_policy.sender.iter().map(to_proto_match).collect(),
+            recipient: self.smtp_policy.recipient.iter().map(to_proto_match).collect(),
+            message: self.smtp_policy.message.iter().map(to_proto_match).collect(),
+        });
         
         Rule {
             id: Uuid::from(id).into(),
@@ -263,5 +255,24 @@ mod tests {
         assert_eq!(to_pairs(&policy.smtp_policy.sender), to_pairs(&roundtrip.smtp_policy.sender));
         assert_eq!(to_pairs(&policy.smtp_policy.recipient), to_pairs(&roundtrip.smtp_policy.recipient));
         assert_eq!(to_pairs(&policy.smtp_policy.message), to_pairs(&roundtrip.smtp_policy.message));
+    }
+
+    #[test]
+    fn policy_into_rule_keeps_empty_smtp_matchers_explicit() {
+        let policy = Policy {
+            name: "Empty SMTP".to_string(),
+            zone_pair_id: ZonePairId::from(Uuid::parse_str("60a19f28-39de-493a-a5f2-e47301149e36").unwrap()),
+            priority: 10,
+            rule_tree: RuleTree::new(parse_rule_tree("match protocol { = tcp : verdict allow }").unwrap()),
+            smtp_policy: SmtpPolicy::default(),
+        };
+
+        let rule = policy.into_rule(Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap().into());
+
+        assert!(rule.smtp_matchers.is_some());
+        let smtp_matchers = rule.smtp_matchers.unwrap();
+        assert!(smtp_matchers.sender.is_empty());
+        assert!(smtp_matchers.recipient.is_empty());
+        assert!(smtp_matchers.message.is_empty());
     }
 }
