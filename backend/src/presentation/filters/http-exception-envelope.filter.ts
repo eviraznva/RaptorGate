@@ -44,9 +44,9 @@ import { RadiusUnavailableException } from "../../domain/exceptions/radius-unava
 import { RaptorLangValidationException } from "../../domain/exceptions/raptor-lang-validation.exception.js";
 import { RefreshTokenIsInvalidException } from "../../domain/exceptions/refresh-token-is-invalid.exception.js";
 import { RegexPatternIsInvalidException } from "../../domain/exceptions/regex-pattern-is-invalid.exception.js";
+import { SemanticVersionIsInvalidException } from "../../domain/exceptions/semantic-version-is-invalid.exception.js";
 import { SecretIsInvalidException } from "../../domain/exceptions/secret-is-invalid.exception.js";
 import { SecretReferenceMissingException } from "../../domain/exceptions/secret-reference-missing.exception.js";
-import { SemanticVersionIsInvalidException } from "../../domain/exceptions/semantic-version-is-invalid.exception.js";
 import { SnapshotTypeIsInvalidException } from "../../domain/exceptions/snapshot-type-is-invalid.exception.js";
 import { UserAlreadyExistsException } from "../../domain/exceptions/user-already-exitst.exception.js";
 import { UserNotFoundException } from "../../domain/exceptions/user-not-found.exception.js";

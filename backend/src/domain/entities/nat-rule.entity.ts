@@ -1,7 +1,7 @@
-import { NatProtocol } from "../../infrastructure/grpc/generated/common/common.js";
-import { NatConfigIsInvalidException } from "../exceptions/nat-config-is-invalid.exception.js";
-import { Port } from "../value-objects/port.vo.js";
-import { Priority } from "../value-objects/priority.vo.js";
+import { NatProtocol } from '../../infrastructure/grpc/generated/common/common.js';
+import { NatConfigIsInvalidException } from '../exceptions/nat-config-is-invalid.exception.js';
+import { Port } from '../value-objects/port.vo.js';
+import { Priority } from '../value-objects/priority.vo.js';
 
 export interface SnatRuleAction {
   srcCidr: string;
@@ -30,10 +30,10 @@ export interface MasqueradeRuleAction {
 }
 
 export type NatRuleAction =
-  | { $case: "snat"; snat: SnatRuleAction }
-  | { $case: "dnat"; dnat: DnatRuleAction }
-  | { $case: "pat"; pat: PatRuleAction }
-  | { $case: "masquerade"; masquerade: MasqueradeRuleAction };
+  | { $case: 'snat'; snat: SnatRuleAction }
+  | { $case: 'dnat'; dnat: DnatRuleAction }
+  | { $case: 'pat'; pat: PatRuleAction }
+  | { $case: 'masquerade'; masquerade: MasqueradeRuleAction };
 
 export interface NatRuleBaseProps {
   id: string;
@@ -81,8 +81,8 @@ export class NatRule {
       };
     },
   ): NatRule {
-    return NatRule.createWithAction(props, {
-      $case: "snat",
+    return this.createWithAction(props, {
+      $case: 'snat',
       snat: {
         srcCidr: props.snat.srcCidr,
         translatedIp: props.snat.translatedIp,
@@ -100,15 +100,11 @@ export class NatRule {
 
   public static createDnatRule(
     props: NatRuleBaseProps & {
-      dnat: {
-        dstCidr: string;
-        translatedIp: string;
-        translatedPort?: number | null;
-      };
+      dnat: { dstCidr: string; translatedIp: string; translatedPort?: number | null };
     },
   ): NatRule {
-    return NatRule.createWithAction(props, {
-      $case: "dnat",
+    return this.createWithAction(props, {
+      $case: 'dnat',
       dnat: {
         dstCidr: props.dnat.dstCidr,
         translatedIp: props.dnat.translatedIp,
@@ -130,8 +126,8 @@ export class NatRule {
       };
     },
   ): NatRule {
-    return NatRule.createWithAction(props, {
-      $case: "pat",
+    return this.createWithAction(props, {
+      $case: 'pat',
       pat: {
         dstIp: props.pat.dstIp,
         dstPort: Port.create(props.pat.dstPort),
@@ -150,8 +146,8 @@ export class NatRule {
       };
     },
   ): NatRule {
-    return NatRule.createWithAction(props, {
-      $case: "masquerade",
+    return this.createWithAction(props, {
+      $case: 'masquerade',
       masquerade: {
         srcCidr: props.masquerade.srcCidr ?? undefined,
         srcPortMin:
@@ -245,7 +241,7 @@ export class NatRule {
     return this.action;
   }
 
-  public getActionKind(): NatRuleAction["$case"] {
+  public getActionKind(): NatRuleAction['$case'] {
     return this.action.$case;
   }
 
@@ -272,34 +268,34 @@ export class NatRule {
   private validate(): void {
     this.validateActionShape();
 
-    if (this.action.$case === "snat") {
-      this.requireText(this.action.snat.srcCidr, "snat", "srcCidr");
-      this.requireText(this.action.snat.translatedIp, "snat", "translatedIp");
+    if (this.action.$case === 'snat') {
+      this.requireText(this.action.snat.srcCidr, 'snat', 'srcCidr');
+      this.requireText(this.action.snat.translatedIp, 'snat', 'translatedIp');
       this.validatePortRange(
         this.action.snat.srcPortMin,
         this.action.snat.srcPortMax,
-        "snat",
-        "srcPort",
+        'snat',
+        'srcPort',
       );
     }
 
-    if (this.action.$case === "dnat") {
-      this.requireText(this.action.dnat.dstCidr, "dnat", "dstCidr");
-      this.requireText(this.action.dnat.translatedIp, "dnat", "translatedIp");
+    if (this.action.$case === 'dnat') {
+      this.requireText(this.action.dnat.dstCidr, 'dnat', 'dstCidr');
+      this.requireText(this.action.dnat.translatedIp, 'dnat', 'translatedIp');
     }
 
-    if (this.action.$case === "pat") {
-      this.requireText(this.action.pat.dstIp, "pat", "dstIp");
-      this.requireText(this.action.pat.translatedIp, "pat", "translatedIp");
+    if (this.action.$case === 'pat') {
+      this.requireText(this.action.pat.dstIp, 'pat', 'dstIp');
+      this.requireText(this.action.pat.translatedIp, 'pat', 'translatedIp');
     }
 
-    if (this.action.$case === "masquerade") {
-      this.requireText(this.outInterface, "masquerade", "outInterface");
+    if (this.action.$case === 'masquerade') {
+      this.requireText(this.outInterface, 'masquerade', 'outInterface');
       this.validatePortRange(
         this.action.masquerade.srcPortMin,
         this.action.masquerade.srcPortMax,
-        "masquerade",
-        "srcPort",
+        'masquerade',
+        'srcPort',
       );
     }
 
@@ -307,13 +303,13 @@ export class NatRule {
       this.matchSrcPortMin,
       this.matchSrcPortMax,
       this.action.$case,
-      "matchSrcPort",
+      'matchSrcPort',
     );
     this.validatePortRange(
       this.matchDstPortMin,
       this.matchDstPortMax,
       this.action.$case,
-      "matchDstPort",
+      'matchDstPort',
     );
   }
 
@@ -329,55 +325,39 @@ export class NatRule {
       | undefined;
 
     if (!action?.$case) {
-      throw new NatConfigIsInvalidException(
-        "unknown",
-        "action",
-        "action is required",
-      );
+      throw new NatConfigIsInvalidException('unknown', 'action', 'action is required');
     }
 
     switch (action.$case) {
-      case "snat":
+      case 'snat':
         if (!action.snat) {
-          throw new NatConfigIsInvalidException(
-            "snat",
-            "action",
-            "snat payload is required",
-          );
+          throw new NatConfigIsInvalidException('snat', 'action', 'snat payload is required');
         }
         return;
-      case "dnat":
+      case 'dnat':
         if (!action.dnat) {
-          throw new NatConfigIsInvalidException(
-            "dnat",
-            "action",
-            "dnat payload is required",
-          );
+          throw new NatConfigIsInvalidException('dnat', 'action', 'dnat payload is required');
         }
         return;
-      case "pat":
+      case 'pat':
         if (!action.pat) {
-          throw new NatConfigIsInvalidException(
-            "pat",
-            "action",
-            "pat payload is required",
-          );
+          throw new NatConfigIsInvalidException('pat', 'action', 'pat payload is required');
         }
         return;
-      case "masquerade":
+      case 'masquerade':
         if (!action.masquerade) {
           throw new NatConfigIsInvalidException(
-            "masquerade",
-            "action",
-            "masquerade payload is required",
+            'masquerade',
+            'action',
+            'masquerade payload is required',
           );
         }
         return;
       default:
         throw new NatConfigIsInvalidException(
           action.$case,
-          "action",
-          "unsupported action case",
+          'action',
+          'unsupported action case',
         );
     }
   }
@@ -388,11 +368,7 @@ export class NatRule {
     field: string,
   ): void {
     if (!value || value.trim().length === 0) {
-      throw new NatConfigIsInvalidException(
-        type,
-        field,
-        `${field} is required`,
-      );
+      throw new NatConfigIsInvalidException(type, field, `${field} is required`);
     }
   }
 

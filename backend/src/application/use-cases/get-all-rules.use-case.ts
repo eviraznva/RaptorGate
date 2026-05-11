@@ -1,9 +1,9 @@
-import { Inject, Injectable } from "@nestjs/common";
-import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
-import type { IRulesRepository } from "../../domain/repositories/rules-repository.js";
-import { RULES_REPOSITORY_TOKEN } from "../../domain/repositories/rules-repository.js";
-import { GetAllRulesResponseDto } from "../dtos/get-all-rules-response.dto.js";
-import { GetRulesDto } from "../dtos/get-rules.dto.js";
+import { Inject, Injectable } from '@nestjs/common';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import type { IRulesRepository } from '../../domain/repositories/rules-repository.js';
+import { RULES_REPOSITORY_TOKEN } from '../../domain/repositories/rules-repository.js';
+import { GetAllRulesResponseDto } from '../dtos/get-all-rules-response.dto.js';
+import { GetRulesDto } from '../dtos/get-rules.dto.js';
 
 @Injectable()
 export class GetAllRulesUseCase {
@@ -14,7 +14,7 @@ export class GetAllRulesUseCase {
 
   async execute(dto: GetRulesDto): Promise<GetAllRulesResponseDto> {
     const rules = await this.rulesRepository.findAll();
-    if (!rules) throw new EntityNotFoundException("rules", "all");
+    if (!rules) throw new EntityNotFoundException('rules', 'all');
     let result = rules;
 
     if (dto.isActive !== undefined)

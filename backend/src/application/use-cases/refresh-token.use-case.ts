@@ -1,5 +1,4 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import type { AdminAuthSession } from "../../domain/entities/admin-auth-session.entity.js";
 import { RefreshTokenIsInvalidException } from "../../domain/exceptions/refresh-token-is-invalid.exception.js";
 import { UserNotFoundException } from "../../domain/exceptions/user-not-found.exception.js";
 import {
@@ -8,16 +7,14 @@ import {
 } from "../../domain/repositories/admin-auth-session.repository.js";
 import type { IUserRepository } from "../../domain/repositories/user.repository.js";
 import { USER_REPOSITORY_TOKEN } from "../../domain/repositories/user.repository.js";
+import type { AdminAuthSession } from "../../domain/entities/admin-auth-session.entity.js";
 import { RefreshTokenDto } from "../dtos/refresh-token.dto.js";
 import { RefreshTokenResponseDto } from "../dtos/refresh-token-response.dto.js";
 import {
-  type IPasswordHasher,
   PASSWORD_HASHER_TOKEN,
+  type IPasswordHasher,
 } from "../ports/passowrd-hasher.interface.js";
-import type {
-  ITokenService,
-  TokenPayload,
-} from "../ports/token-service.interface.js";
+import type { ITokenService, TokenPayload } from "../ports/token-service.interface.js";
 import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
 @Injectable()
@@ -45,7 +42,7 @@ export class RefreshTokenUseCase {
     const payload = this.tokenService.decodeAccessToken(dto.accessToken);
     if (!payload) throw new RefreshTokenIsInvalidException();
 
-    if (payload.principalType === "external_admin") {
+    if (payload.principalType === 'external_admin') {
       return this.refreshExternalAdmin(payload, dto.refreshToken);
     }
 
@@ -140,12 +137,7 @@ export class RefreshTokenUseCase {
       throw new RefreshTokenIsInvalidException();
     }
 
-    if (
-      !(await this.passwordHasher.compare(
-        refreshToken,
-        session.getRefreshTokenHash(),
-      ))
-    ) {
+    if (!(await this.passwordHasher.compare(refreshToken, session.getRefreshTokenHash()))) {
       this.logger.warn({
         event: "auth.refresh.failed",
         message: "external admin refresh token mismatch",
@@ -177,9 +169,7 @@ export class RefreshTokenUseCase {
     const tokenPair = await this.tokenService.generateTokenPair(
       externalAdminPayload(session),
     );
-    const refreshTokenHash = await this.passwordHasher.hash(
-      tokenPair.refreshToken,
-    );
+    const refreshTokenHash = await this.passwordHasher.hash(tokenPair.refreshToken);
 
     session.rotateRefreshToken(refreshTokenHash, newExpiry);
     session.touch(now);
@@ -196,7 +186,7 @@ function externalAdminPayload(session: AdminAuthSession): TokenPayload {
   return {
     sub: session.getId(),
     username: session.getUsername(),
-    principalType: "external_admin",
+    principalType: 'external_admin',
     roles: session.getRoles(),
     authProvider: session.getProvider(),
     authProfileId: session.getAuthProfileId(),

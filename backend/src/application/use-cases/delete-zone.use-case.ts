@@ -1,11 +1,11 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
-import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
 import {
-  type IZoneRepository,
   ZONE_REPOSITORY_TOKEN,
-} from "../../domain/repositories/zone.repository.js";
-import type { IZonePairRepository } from "../../domain/repositories/zone-pair.repository.js";
-import { ZONE_PAIR_REPOSITORY_TOKEN } from "../../domain/repositories/zone-pair.repository.js";
+  type IZoneRepository,
+} from '../../domain/repositories/zone.repository.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { ZONE_PAIR_REPOSITORY_TOKEN } from '../../domain/repositories/zone-pair.repository.js';
+import type { IZonePairRepository } from '../../domain/repositories/zone-pair.repository.js';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class DeleteZoneUseCase {
@@ -20,7 +20,7 @@ export class DeleteZoneUseCase {
 
   async execute(id: string): Promise<void> {
     const isExisting = await this.zoneRepository.findById(id);
-    if (!isExisting) throw new EntityNotFoundException("zone", id);
+    if (!isExisting) throw new EntityNotFoundException('zone', id);
 
     const zonePairsByDst = await this.zonePairRepository.findByDstZoneId(id);
     const zonePairsBySrc = await this.zonePairRepository.findBySrcZoneId(id);
@@ -38,8 +38,8 @@ export class DeleteZoneUseCase {
     await this.zoneRepository.delete(id);
 
     this.logger.log({
-      event: "zone.delete.succeeded",
-      message: "zone deleted",
+      event: 'zone.delete.succeeded',
+      message: 'zone deleted',
       zoneId: isExisting.getId(),
       zoneName: isExisting.getName(),
       deletedZonePairs: zonePairsByDst.length + zonePairsBySrc.length,

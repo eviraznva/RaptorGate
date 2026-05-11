@@ -1,25 +1,25 @@
-import { join } from "node:path";
-import { Module } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { JwtService } from "@nestjs/jwt";
-import { ClientsModule, Transport } from "@nestjs/microservices";
-import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from "../application/ports/raptor-lang-validation-service.interface.js";
-import { TOKEN_SERVICE_TOKEN } from "../application/ports/token-service.interface.js";
-import { CreateRuleUseCase } from "../application/use-cases/create-rule.use-case.js";
-import { DeleteRuleUseCase } from "../application/use-cases/delete-rule.use-case.js";
-import { EditRuleUseCase } from "../application/use-cases/edit-rule.use-case.js";
-import { GetAllRulesUseCase } from "../application/use-cases/get-all-rules.use-case.js";
-import { RULES_REPOSITORY_TOKEN } from "../domain/repositories/rules-repository.js";
+import { join } from 'node:path';
+import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../application/ports/raptor-lang-validation-service.interface.js';
+import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
+import { CreateRuleUseCase } from '../application/use-cases/create-rule.use-case.js';
+import { DeleteRuleUseCase } from '../application/use-cases/delete-rule.use-case.js';
+import { EditRuleUseCase } from '../application/use-cases/edit-rule.use-case.js';
+import { GetAllRulesUseCase } from '../application/use-cases/get-all-rules.use-case.js';
+import { RULES_REPOSITORY_TOKEN } from '../domain/repositories/rules-repository.js';
 import {
   GrpcRaptorLangValidationService,
   RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
-} from "../infrastructure/adapters/grpc-raptor-lang-validation.service.js";
-import { TokenService } from "../infrastructure/adapters/jwt-token.service.js";
-import { Mutex } from "../infrastructure/persistence/json/file-mutex.js";
-import { FileStore } from "../infrastructure/persistence/json/file-store.js";
-import { JsonRuleRepository } from "../infrastructure/persistence/repositories/json-rule.repository.js";
-import { RulesController } from "../presentation/controllers/rule.controller.js";
-import { Env } from "../shared/config/env.validation.js";
+} from '../infrastructure/adapters/grpc-raptor-lang-validation.service.js';
+import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
+import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
+import { FileStore } from '../infrastructure/persistence/json/file-store.js';
+import { JsonRuleRepository } from '../infrastructure/persistence/repositories/json-rule.repository.js';
+import { RulesController } from '../presentation/controllers/rule.controller.js';
+import { Env } from '../shared/config/env.validation.js';
 
 @Module({
   imports: [
@@ -27,19 +27,19 @@ import { Env } from "../shared/config/env.validation.js";
       {
         name: RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
         useFactory: (configService: ConfigService<Env, true>) => {
-          const backendSocketPath = configService.get("GRPC_SOCKET_PATH", {
+          const backendSocketPath = configService.get('GRPC_SOCKET_PATH', {
             infer: true,
           });
 
           const firewallSocketPath = configService.get(
-            "FIREWALL_GRPC_SOCKET_PATH",
+            'FIREWALL_GRPC_SOCKET_PATH',
             {
               infer: true,
             },
           );
 
           const resolveGrpcUrl = (path: string): string =>
-            path.startsWith("unix://")
+            path.startsWith('unix://')
               ? path
               : `unix://${join(process.cwd(), path)}`;
 
@@ -48,7 +48,7 @@ import { Env } from "../shared/config/env.validation.js";
 
           if (backendGrpcUrl === firewallGrpcUrl) {
             throw new Error(
-              "FIREWALL_GRPC_SOCKET_PATH must point to firewall validation service and cannot equal GRPC_SOCKET_PATH.",
+              'FIREWALL_GRPC_SOCKET_PATH must point to firewall validation service and cannot equal GRPC_SOCKET_PATH.',
             );
           }
 
@@ -57,16 +57,16 @@ import { Env } from "../shared/config/env.validation.js";
           return {
             transport: Transport.GRPC,
             options: {
-              package: "raptorgate.control",
+              package: 'raptorgate.control',
               protoPath: join(
                 process.cwd(),
-                "..",
-                "proto",
-                "control",
-                "validation_service.proto",
+                '..',
+                'proto',
+                'control',
+                'validation_service.proto',
               ),
               loader: {
-                includeDirs: [join(process.cwd(), "..", "proto")],
+                includeDirs: [join(process.cwd(), '..', 'proto')],
               },
               url: grpcUrl,
             },

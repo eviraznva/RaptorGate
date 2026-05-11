@@ -1,7 +1,7 @@
 export class FirewallCertificate {
   private constructor(
     private readonly id: string,
-    private certType: "CA" | "TLS_SERVER",
+    private certType: 'CA' | 'TLS_SERVER',
     private commonName: string,
     private fingerprint: string,
     private certificatePem: string,
@@ -16,7 +16,7 @@ export class FirewallCertificate {
 
   public static create(
     id: string,
-    certType: "CA" | "TLS_SERVER",
+    certType: 'CA' | 'TLS_SERVER',
     commonName: string,
     fingerprint: string,
     certificatePem: string,
@@ -24,7 +24,7 @@ export class FirewallCertificate {
     isActive: boolean,
     expiresAt: Date,
     createdAt: Date,
-    bindAddress: string = "",
+    bindAddress: string = '',
     bindPort: number = 443,
     inspectionBypass: boolean = false,
   ): FirewallCertificate {
@@ -48,7 +48,7 @@ export class FirewallCertificate {
     return this.id;
   }
 
-  public getCertType(): "CA" | "TLS_SERVER" {
+  public getCertType(): 'CA' | 'TLS_SERVER' {
     return this.certType;
   }
 

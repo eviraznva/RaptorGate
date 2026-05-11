@@ -1,49 +1,49 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
-import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
 import {
   CONFIG_SNAPSHOT_REPOSITORY_TOKEN,
   type IConfigSnapshotRepository,
-} from "../../domain/repositories/config-snapshot.repository.js";
+} from '../../domain/repositories/config-snapshot.repository.js';
 import {
-  FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
   type IFirewallCertificateRepository,
-} from "../../domain/repositories/firewall-certificate.repository.js";
-import {
-  IDENTITY_CONFIG_REPOSITORY_TOKEN,
-  type IIdentityConfigRepository,
-} from "../../domain/repositories/identity-config.repository.js";
+  FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
+} from '../../domain/repositories/firewall-certificate.repository.js';
 import {
   type INatRulesRepository,
   NAT_RULES_REPOSITORY_TOKEN,
-} from "../../domain/repositories/nat-rules.repository.js";
+} from '../../domain/repositories/nat-rules.repository.js';
+import {
+  IDENTITY_CONFIG_REPOSITORY_TOKEN,
+  type IIdentityConfigRepository,
+} from '../../domain/repositories/identity-config.repository.js';
 import {
   type IRulesRepository,
   RULES_REPOSITORY_TOKEN,
-} from "../../domain/repositories/rules-repository.js";
+} from '../../domain/repositories/rules-repository.js';
 import {
   type ISslBypassRepository,
   SSL_BYPASS_REPOSITORY_TOKEN,
-} from "../../domain/repositories/ssl-bypass.repository.js";
+} from '../../domain/repositories/ssl-bypass.repository.js';
 import {
   type IZoneRepository,
   ZONE_REPOSITORY_TOKEN,
-} from "../../domain/repositories/zone.repository.js";
+} from '../../domain/repositories/zone.repository.js';
 import {
   type IZoneInterfaceRepository,
   ZONE_INTERFACE_REPOSITORY_TOKEN,
-} from "../../domain/repositories/zone-interface.repository.js";
+} from '../../domain/repositories/zone-interface.repository.js';
 import {
   type IZonePairRepository,
   ZONE_PAIR_REPOSITORY_TOKEN,
-} from "../../domain/repositories/zone-pair.repository.js";
-import { IdentityConfigJsonMapper } from "../../infrastructure/persistence/mappers/identity-config-json.mapper.js";
-import type { RollbackConfigDto } from "../dtos/rollback-config.dto.js";
-import type { RollbackConfigSnapshotResponseDto } from "../dtos/rollback-config-response.dto.js";
+} from '../../domain/repositories/zone-pair.repository.js';
+import { IdentityConfigJsonMapper } from '../../infrastructure/persistence/mappers/identity-config-json.mapper.js';
+import type { RollbackConfigDto } from '../dtos/rollback-config.dto.js';
+import type { RollbackConfigSnapshotResponseDto } from '../dtos/rollback-config-response.dto.js';
 import {
   CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN,
   type IConfigSnapshotPushService,
-} from "../ports/config-snapshot-push-service.interface.js";
-import { IdentitySecretReferenceValidatorService } from "../services/identity-secret-reference-validator.service.js";
+} from '../ports/config-snapshot-push-service.interface.js';
+import { IdentitySecretReferenceValidatorService } from '../services/identity-secret-reference-validator.service.js';
 
 @Injectable()
 export class RollbackConfigUseCase {
@@ -78,7 +78,7 @@ export class RollbackConfigUseCase {
   ): Promise<RollbackConfigSnapshotResponseDto> {
     const configSnapshot = await this.configSnapshotRepository.findById(dto.id);
     if (!configSnapshot)
-      throw new EntityNotFoundException("Config snpshot", dto.id);
+      throw new EntityNotFoundException('Config snpshot', dto.id);
 
     const configBundle = configSnapshot.deserializePayload();
 
@@ -125,7 +125,7 @@ export class RollbackConfigUseCase {
 
     await this.configSnapshotPushService.pushActiveConfigSnapshot(
       configSnapshot,
-      "rollback",
+      'rollback',
     );
 
     this.logger.log({
@@ -155,4 +155,5 @@ export class RollbackConfigUseCase {
       createdBy: configSnapshot.getCreatedBy(),
     };
   }
+
 }

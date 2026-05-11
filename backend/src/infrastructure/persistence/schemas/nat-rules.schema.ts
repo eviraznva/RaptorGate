@@ -1,13 +1,13 @@
-import { z } from "zod";
-import { isoDateTimeSchema, tableFileSchema, uuidSchema } from "./_common.js";
+import { z } from 'zod';
+import { isoDateTimeSchema, tableFileSchema, uuidSchema } from './_common.js';
 
 const portSchema = z.number().int().min(1).max(65535);
 
 export const NatProtocolRecordSchema = z.enum([
-  "NAT_PROTOCOL_ALL",
-  "NAT_PROTOCOL_TCP",
-  "NAT_PROTOCOL_UDP",
-  "NAT_PROTOCOL_ICMP",
+  'NAT_PROTOCOL_ALL',
+  'NAT_PROTOCOL_TCP',
+  'NAT_PROTOCOL_UDP',
+  'NAT_PROTOCOL_ICMP',
 ]);
 
 const snatActionSchema = z.object({
@@ -36,14 +36,11 @@ const masqueradeActionSchema = z.object({
   srcPortMax: portSchema.nullable().optional(),
 });
 
-export const NatRuleActionRecordSchema = z.discriminatedUnion("$case", [
-  z.object({ $case: z.literal("snat"), snat: snatActionSchema }),
-  z.object({ $case: z.literal("dnat"), dnat: dnatActionSchema }),
-  z.object({ $case: z.literal("pat"), pat: patActionSchema }),
-  z.object({
-    $case: z.literal("masquerade"),
-    masquerade: masqueradeActionSchema,
-  }),
+export const NatRuleActionRecordSchema = z.discriminatedUnion('$case', [
+  z.object({ $case: z.literal('snat'), snat: snatActionSchema }),
+  z.object({ $case: z.literal('dnat'), dnat: dnatActionSchema }),
+  z.object({ $case: z.literal('pat'), pat: patActionSchema }),
+  z.object({ $case: z.literal('masquerade'), masquerade: masqueradeActionSchema }),
 ]);
 
 export const ProtoNatRuleRecordSchema = z

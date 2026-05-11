@@ -1,14 +1,14 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
-import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
 import {
   type IRoleRepository,
   ROLE_REPOSITORY_TOKEN,
-} from "../../domain/repositories/role.repository.js";
+} from '../../domain/repositories/role.repository.js';
 import {
   type IUserRepository,
   USER_REPOSITORY_TOKEN,
-} from "../../domain/repositories/user.repository.js";
-import { DleteUserDto } from "../dtos/delete-user.dto";
+} from '../../domain/repositories/user.repository.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { DleteUserDto } from '../dtos/delete-user.dto';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class DeleteUserUseCase {
@@ -23,7 +23,7 @@ export class DeleteUserUseCase {
 
   async execute(dto: DleteUserDto): Promise<void> {
     const user = await this.userRepository.findById(dto.userId);
-    if (!user) throw new EntityNotFoundException("user", dto.userId);
+    if (!user) throw new EntityNotFoundException('user', dto.userId);
 
     const userRoles = await this.roleRepository.findByUserId(dto.userId);
 
@@ -37,8 +37,8 @@ export class DeleteUserUseCase {
     await this.userRepository.deleteById(user.getId());
 
     this.logger.log({
-      event: "user.delete.succeeded",
-      message: "user deleted",
+      event: 'user.delete.succeeded',
+      message: 'user deleted',
       userId: user.getId(),
       username: user.getUsername(),
       removedRoles: userRoles.map((role) => role.getName()),

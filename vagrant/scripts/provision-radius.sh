@@ -12,7 +12,7 @@ systemctl stop freeradius
 FR="/etc/freeradius/3.0"
 
 # --- Configure LDAP module ---
-cat >"$FR/mods-available/ldap" <<'LDAPCONF'
+cat > "$FR/mods-available/ldap" <<'LDAPCONF'
 ldap {
     server = "192.168.20.40"
     port = 389
@@ -44,7 +44,7 @@ ln -sf ../mods-available/ldap "$FR/mods-enabled/ldap"
 # Klient RADIUS tylko dla r1 (192.168.20.254). Autorytatywny test flow: test-identity na r1.
 # Idempotent: usun istniejacy blok ngfw_network (z dowolnego wczesniejszego runu) i dodaj raz.
 perl -i -0pe 's/\n*client ngfw_network\s*\{[^}]*\}\n*/\n/g' "$FR/clients.conf"
-cat >>"$FR/clients.conf" <<'CLIENTS'
+cat >> "$FR/clients.conf" <<'CLIENTS'
 
 client ngfw_network {
     ipaddr = 192.168.20.254/32

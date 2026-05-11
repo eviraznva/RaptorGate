@@ -1,8 +1,8 @@
-import type { NatProtocol } from "../../infrastructure/grpc/generated/common/common.js";
+import type { NatProtocol } from '../../infrastructure/grpc/generated/common/common.js';
 
 export type CreateNatRuleActionDto =
   | {
-      $case: "snat";
+      $case: 'snat';
       snat: {
         srcCidr: string;
         translatedIp: string;
@@ -10,16 +10,9 @@ export type CreateNatRuleActionDto =
         srcPortMax?: number | null;
       };
     }
+  | { $case: 'dnat'; dnat: { dstCidr: string; translatedIp: string; translatedPort?: number | null } }
   | {
-      $case: "dnat";
-      dnat: {
-        dstCidr: string;
-        translatedIp: string;
-        translatedPort?: number | null;
-      };
-    }
-  | {
-      $case: "pat";
+      $case: 'pat';
       pat: {
         dstIp: string;
         dstPort: number;
@@ -28,7 +21,7 @@ export type CreateNatRuleActionDto =
       };
     }
   | {
-      $case: "masquerade";
+      $case: 'masquerade';
       masquerade: {
         srcCidr?: string | null;
         srcPortMin?: number | null;

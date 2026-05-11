@@ -1,10 +1,10 @@
-import { Module } from "@nestjs/common";
-import { GetActiveConfigUseCase } from "../../application/use-cases/get-active-config.use-case.js";
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from "../../domain/repositories/config-snapshot.repository.js";
-import { Mutex } from "../persistence/json/file-mutex.js";
-import { FileStore } from "../persistence/json/file-store.js";
-import { JsonConfigSnapshotRepository } from "../persistence/repositories/json-config-snapshot.repository.js";
-import { RaptorGateController } from "./raptorgate.controller.js";
+import { Module } from '@nestjs/common';
+import { GetActiveConfigUseCase } from '../../application/use-cases/get-active-config.use-case.js';
+import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../../domain/repositories/config-snapshot.repository.js';
+import { Mutex } from '../persistence/json/file-mutex.js';
+import { FileStore } from '../persistence/json/file-store.js';
+import { JsonConfigSnapshotRepository } from '../persistence/repositories/json-config-snapshot.repository.js';
+import { RaptorGateController } from './raptorgate.controller.js';
 
 @Module({
   imports: [],

@@ -1,21 +1,21 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
-import { AtLeastOneFieldRequiredException } from "../../domain/exceptions/at-least-one-field-required.exception.js";
-import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
-import { RoleIsInvalidException } from "../../domain/exceptions/role-is-invalid.exception.js";
 import {
-  type IRoleRepository,
   ROLE_REPOSITORY_TOKEN,
-} from "../../domain/repositories/role.repository.js";
+  type IRoleRepository,
+} from '../../domain/repositories/role.repository.js';
 import {
-  type IUserRepository,
   USER_REPOSITORY_TOKEN,
-} from "../../domain/repositories/user.repository.js";
-import { EditUserDto } from "../dtos/edit-user.dto";
-import { EditUserResponseDto } from "../dtos/edit-user-response.dto";
+  type IUserRepository,
+} from '../../domain/repositories/user.repository.js';
 import {
-  type IPasswordHasher,
   PASSWORD_HASHER_TOKEN,
-} from "../ports/passowrd-hasher.interface";
+  type IPasswordHasher,
+} from '../ports/passowrd-hasher.interface';
+import { AtLeastOneFieldRequiredException } from '../../domain/exceptions/at-least-one-field-required.exception.js';
+import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
+import { RoleIsInvalidException } from '../../domain/exceptions/role-is-invalid.exception.js';
+import { EditUserResponseDto } from '../dtos/edit-user-response.dto';
+import { EditUserDto } from '../dtos/edit-user.dto';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class EditUserUseCase {
@@ -32,7 +32,7 @@ export class EditUserUseCase {
 
   async execute(dto: EditUserDto): Promise<EditUserResponseDto> {
     const user = await this.userRepository.findById(dto.id);
-    if (!user) throw new EntityNotFoundException("User", dto.id);
+    if (!user) throw new EntityNotFoundException('User', dto.id);
 
     const isAllUndefined = Object.values(dto).every(
       (value) => value == undefined,
@@ -77,13 +77,13 @@ export class EditUserUseCase {
     user.setRoles(userRoles);
 
     this.logger.log({
-      event: "user.update.succeeded",
-      message: "user updated",
+      event: 'user.update.succeeded',
+      message: 'user updated',
       userId: user.getId(),
       username: user.getUsername(),
       roles: userRoles.map((role) => role.getName()),
       changedFields: Object.entries(dto)
-        .filter(([key, value]) => key !== "id" && value !== undefined)
+        .filter(([key, value]) => key !== 'id' && value !== undefined)
         .map(([key]) => key),
     });
 
