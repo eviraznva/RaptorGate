@@ -104,20 +104,15 @@ export class ApplyConfigSnapshotUseCase {
     const claims = this.tokenService.decodeAccessToken(dto.accessToken);
     if (!claims) throw new AccessTokenIsInvalidException();
 
-    const activeNatRules = await this.natRulesRepository.findActive();
+    const allNatRules = await this.natRulesRepository.findAll();
     const ipsConfig = await this.ipsConfigRepository.get();
-    // const allRoles = await this.roleRepository.findAll();
-    // const allPermisions = await this.permissionRepository.findAll();
-    const activeRules = await this.rulesRepository.findActive();
+    const allRules = await this.rulesRepository.findAll();
     const allUsers = await this.userRepository.findAll();
-    const activeZones = await this.zoneRepository.findActive();
+    const allZones = await this.zoneRepository.findAll();
     const allZoneInterfaces = await this.resolveZoneInterfaces();
     const allZonePairs = await this.zonePairRepository.findAll();
     const allCerts = await this.firewallCertificateRepository.findAll();
-    const snapshotCerts = allCerts.filter((cert) =>
-      cert.getCertType() === "TLS_SERVER" ? true : cert.getIsActive(),
-    );
-    const activeBypass = await this.sslBypassRepository.findActive();
+    const allBypass = await this.sslBypassRepository.findAll();
     const identityConfig = await this.identityConfigRepository.find();
     if (dto.isActive) {
       await this.identitySecretReferenceValidator.validateActiveConfig(
@@ -140,10 +135,10 @@ export class ApplyConfigSnapshotUseCase {
     const configSnposhotPayload = {
       bundle: {
         rules: {
-          items: [...activeRules],
+          items: [...allRules],
         },
         zones: {
-          items: [...activeZones],
+          items: [...allZones],
         },
         zone_interfaces: {
           items: [...allZoneInterfaces],
@@ -152,13 +147,13 @@ export class ApplyConfigSnapshotUseCase {
           items: [...allZonePairs],
         },
         nat_rules: {
-          items: [...activeNatRules],
+          items: [...allNatRules],
         },
         dns_blacklist: {
           items: [], // TODO: implement dns blacklist repository and add to snapshot
         },
         ssl_bypass_list: {
-          items: [...activeBypass],
+          items: [...allBypass],
         },
         ips_signatures: {
           items: [], // TODO: implement ips signatures repository and add to snapshot
@@ -166,7 +161,7 @@ export class ApplyConfigSnapshotUseCase {
         ips_config: ipsConfig,
         ml_model: null,
         firewall_certificates: {
-          items: [...snapshotCerts],
+          items: [...allCerts],
         },
         tls_inspection_policy: tlsInspectionPolicy,
         identity_config: IdentityConfigJsonMapper.toPayload(identityConfig),
@@ -229,11 +224,11 @@ export class ApplyConfigSnapshotUseCase {
       checksum,
       isActive: dto.isActive,
       counts: {
-        rules: activeRules.length,
-        zones: activeZones.length,
+        rules: allRules.length,
+        zones: allZones.length,
         zoneInterfaces: allZoneInterfaces.length,
         zonePairs: allZonePairs.length,
-        natRules: activeNatRules.length,
+        natRules: allNatRules.length,
         users: allUsers.length,
       },
     });
