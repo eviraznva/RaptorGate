@@ -19,6 +19,17 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, "text/plain; charset=utf-8", b"not found\n")
 
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+
+        if self.path == "/api/ping":
+            self._send(200, "application/json", json.dumps({"status": "ok", "received_bytes": len(body)}).encode() + b"\n")
+        elif self.path == "/api/whoami":
+            self._send(200, "application/json", json.dumps({"service": "h2-http", "resource": "protected"}).encode() + b"\n")
+        else:
+            self._send(404, "text/plain; charset=utf-8", b"not found\n")
+
     def _send(self, code, ctype, body):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
