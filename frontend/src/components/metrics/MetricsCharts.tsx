@@ -1,5 +1,18 @@
+import { useMemo } from "react";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import type { DecisionMix } from "./metricsTypes";
-import { sparkPath } from "./metricsUtils";
 
 type MetricsChartsProps = {
   decisionMix: DecisionMix;
@@ -8,12 +21,58 @@ type MetricsChartsProps = {
   trafficValues: number[];
 };
 
+type TrafficChartPoint = {
+  drops?: number;
+  sample: string;
+  throughput?: number;
+};
+
+const decisionColors = {
+  alert: "#f59e0b",
+  allow: "#10b981",
+  block: "#f43f5e",
+};
+
+const tooltipContentStyle = {
+  background: "#101010",
+  border: "1px solid #262626",
+  color: "#f5f5f5",
+};
+
+const trafficChartMargin = { bottom: 8, left: 0, right: 12, top: 18 };
+
+function buildTrafficData(trafficValues: number[], dropValues: number[]): TrafficChartPoint[] {
+  const samples = Math.max(trafficValues.length, dropValues.length);
+
+  return Array.from({ length: samples }, (_, index) => ({
+    drops: dropValues[index],
+    sample: `${index + 1}`,
+    throughput: trafficValues[index],
+  }));
+}
+
 export default function MetricsCharts({
   decisionMix,
   eventsCount,
   dropValues,
   trafficValues,
 }: MetricsChartsProps) {
+  const trafficData = useMemo(
+    () => buildTrafficData(trafficValues, dropValues),
+    [dropValues, trafficValues],
+  );
+  const hasTrafficData = trafficData.length > 0;
+  const decisionData = useMemo(
+    () =>
+      [
+        { color: decisionColors.allow, name: "Observe/decrypt", value: decisionMix.allow },
+        { color: decisionColors.alert, name: "Alert/bypass", value: decisionMix.alert },
+        { color: decisionColors.block, name: "Block/error", value: decisionMix.block },
+      ].filter((item) => item.value > 0),
+    [decisionMix.alert, decisionMix.allow, decisionMix.block],
+  );
+  const hasDecisionData = eventsCount > 0 && decisionData.length > 0;
+
   return (
     <div className="charts-layout">
       <article className="chart-panel panel-inset wide">
@@ -25,34 +84,42 @@ export default function MetricsCharts({
           <span className="observability-panel-code">CHART-01</span>
         </div>
         <div className="traffic-chart">
-          <svg
-            viewBox="0 0 720 270"
-            role="img"
-            aria-label="Traffic pressure chart"
-          >
-            <path
-              d={`${sparkPath(trafficValues, 680, 190)} L 680 220 L 0 220 Z`}
-              transform="translate(20 22)"
-              fill="rgba(6, 182, 212, 0.13)"
-            />
-            <path
-              d={sparkPath(trafficValues, 680, 190)}
-              transform="translate(20 22)"
-              fill="none"
-              stroke="#06b6d4"
-              strokeWidth="3"
-              strokeLinecap="round"
-            />
-            <path
-              d={sparkPath(dropValues, 680, 150)}
-              transform="translate(20 64)"
-              fill="none"
-              stroke="#f43f5e"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeDasharray="7 8"
-            />
-          </svg>
+          {hasTrafficData ? (
+            <div className="chart-frame">
+              <ResponsiveContainer width="100%" height={310}>
+                <AreaChart data={trafficData} margin={trafficChartMargin}>
+                  <CartesianGrid stroke="rgba(255,255,255,0.07)" vertical={false} />
+                  <XAxis dataKey="sample" hide />
+                  <YAxis hide domain={["auto", "auto"]} />
+                  <Tooltip
+                    contentStyle={tooltipContentStyle}
+                    cursor={{ stroke: "rgba(6, 182, 212, 0.35)" }}
+                    labelFormatter={(label) => `Sample ${label}`}
+                  />
+                  <Area
+                    dataKey="throughput"
+                    dot={trafficValues.length === 1 ? { fill: "#06b6d4", r: 3 } : false}
+                    fill="rgba(6, 182, 212, 0.13)"
+                    name="Throughput"
+                    stroke="#06b6d4"
+                    strokeWidth={3}
+                    type="monotone"
+                  />
+                  <Line
+                    dataKey="drops"
+                    dot={dropValues.length === 1 ? { fill: "#f43f5e", r: 3 } : false}
+                    name="Drops"
+                    stroke="#f43f5e"
+                    strokeDasharray="7 8"
+                    strokeWidth={2}
+                    type="monotone"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="metrics-empty-state">No live metric samples</div>
+          )}
           <div className="chart-legend">
             <span>
               <i className="legend-cyan" />
@@ -75,15 +142,35 @@ export default function MetricsCharts({
           <span className="observability-panel-code">CHART-02</span>
         </div>
         <div className="decision-mix">
-          <div
-            className="decision-donut"
-            style={{
-              background: `conic-gradient(#10b981 0 ${decisionMix.allow}%, #f59e0b ${decisionMix.allow}% ${decisionMix.allow + decisionMix.alert}%, #f43f5e ${decisionMix.allow + decisionMix.alert}% 100%)`,
-            }}
-          >
-            <span>{eventsCount}</span>
-            <small>events</small>
-          </div>
+          {hasDecisionData ? (
+            <div className="decision-chart-wrap">
+              <ResponsiveContainer width="100%" height={250}>
+                <PieChart>
+                  <Pie
+                    data={decisionData}
+                    dataKey="value"
+                    innerRadius="68%"
+                    nameKey="name"
+                    outerRadius="94%"
+                    stroke="none"
+                  >
+                    {decisionData.map((entry) => (
+                      <Cell fill={entry.color} key={entry.name} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={tooltipContentStyle}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="decision-chart-center">
+                <span>{eventsCount}</span>
+                <small>events</small>
+              </div>
+            </div>
+          ) : (
+            <div className="metrics-empty-state">No firewall events</div>
+          )}
           <div className="decision-list">
             <span>
               <i className="legend-green" />

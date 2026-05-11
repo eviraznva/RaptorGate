@@ -23,6 +23,9 @@ export class ZoneInterfaceItemResponseDto {
   @ApiProperty({ type: [String], example: ['192.168.50.10/24'] })
   addresses: string[];
 
+  @ApiProperty({ example: false })
+  sniffed: boolean;
+
   @ApiProperty({ example: '2024-06-01T12:00:00Z' })
   createdAt: Date;
 }

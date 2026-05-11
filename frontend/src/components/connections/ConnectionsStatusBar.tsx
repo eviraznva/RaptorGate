@@ -1,5 +1,5 @@
 import type { TcpTrackedSession } from "../../types/sessions/TcpSession";
-import { countByState, getClosingCount } from "./connectionsUtils";
+import { countByState, formatBytes, getTotalSessionBytes } from "./connectionsUtils";
 
 type ConnectionsStatusBarProps = {
   sessions: TcpTrackedSession[];
@@ -28,8 +28,8 @@ export default function ConnectionsStatusBar({
       </div>
       <span className="connections-separator">|</span>
       <div className="connections-status-item">
-        <span className="label">Closing</span>
-        <strong className="warning">{getClosingCount(sessions)}</strong>
+        <span className="label">Bytes</span>
+        <strong className="warning">{formatBytes(getTotalSessionBytes(sessions))}</strong>
       </div>
     </section>
   );

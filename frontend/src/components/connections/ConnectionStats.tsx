@@ -1,9 +1,10 @@
 import type { TcpTrackedSession } from "../../types/sessions/TcpSession";
 import {
   countByState,
-  getClosingCount,
+  formatBytes,
   getEstablishedRatio,
-  getHandshakeCount,
+  getTotalSessionBytes,
+  getTotalSessionPackets,
 } from "./connectionsUtils";
 
 type ConnectionStatsProps = {
@@ -50,14 +51,14 @@ export default function ConnectionStats({
           <small>{establishedCount} stable flows</small>
         </article>
         <article className="connections-stat-card cyan">
-          <span className="stat-label">Handshake Pressure</span>
-          <strong>{getHandshakeCount(sessions)}</strong>
-          <small>SYN / SYN ACK sessions</small>
+          <span className="stat-label">Transferred Bytes</span>
+          <strong>{formatBytes(getTotalSessionBytes(sessions))}</strong>
+          <small>original + reply counters</small>
         </article>
         <article className="connections-stat-card warning">
-          <span className="stat-label">Closing Queue</span>
-          <strong>{getClosingCount(sessions)}</strong>
-          <small>FIN / ACK / TIME WAIT</small>
+          <span className="stat-label">Packets</span>
+          <strong>{getTotalSessionPackets(sessions).toLocaleString()}</strong>
+          <small>original + reply packets</small>
         </article>
       </div>
     </section>

@@ -1,18 +1,20 @@
-import { FirewallCertificate } from '../entities/firewall-certificate.entity.js';
-import { DnsBlacklistEntry } from '../entities/dns-blacklist-entry.entity.js';
-import { IdentityAuthenticationProfile } from '../entities/identity-authentication-profile.entity.js';
-import { IdentitySettings } from '../entities/identity-settings.entity.js';
-import { LdapServerProfile } from '../entities/ldap-server-profile.entity.js';
-import { RadiusServerProfile } from '../entities/radius-server-profile.entity.js';
-import { SslBypassEntry } from '../entities/ssl-bypass-entry.entity.js';
-import { ZoneInterface } from '../entities/zone-interface.entity.js';
-import { FirewallRule } from '../entities/firewall-rule.entity.js';
-import { IpsSignature } from '../entities/ips-signature.entity.js';
-import { ZonePair } from '../entities/zone-pair.entity.js';
-import { MlModel } from '../entities/ml-model.entity.js';
-import { NatRule } from '../entities/nat-rule.entity.js';
-import { Zone } from '../entities/zone.entity.js';
-import { User } from '../entities/user.entity.js';
+import { DnsBlacklistEntry } from "../entities/dns-blacklist-entry.entity.js";
+import { DnsInspectionConfig } from "../entities/dns-inspection-config.entity.js";
+import { FirewallCertificate } from "../entities/firewall-certificate.entity.js";
+import { FirewallRule } from "../entities/firewall-rule.entity.js";
+import { IdentityAuthenticationProfile } from "../entities/identity-authentication-profile.entity.js";
+import { IdentitySettings } from "../entities/identity-settings.entity.js";
+import { IpsConfig } from "../entities/ips-config.entity.js";
+import { IpsSignature } from "../entities/ips-signature.entity.js";
+import { LdapServerProfile } from "../entities/ldap-server-profile.entity.js";
+import { MlModel } from "../entities/ml-model.entity.js";
+import { NatRule } from "../entities/nat-rule.entity.js";
+import { RadiusServerProfile } from "../entities/radius-server-profile.entity.js";
+import { SslBypassEntry } from "../entities/ssl-bypass-entry.entity.js";
+import { User } from "../entities/user.entity.js";
+import { Zone } from "../entities/zone.entity.js";
+import { ZoneInterface } from "../entities/zone-interface.entity.js";
+import { ZonePair } from "../entities/zone-pair.entity.js";
 
 export interface TlsInspectionPolicyPayload {
   block_ech_no_sni: boolean;
@@ -42,7 +44,7 @@ export const DEFAULT_TLS_INSPECTION_POLICY: Readonly<TlsInspectionPolicyPayload>
     known_pinned_domains: [],
     decryption_mirror: {
       enabled: false,
-      target_host: '',
+      target_host: "",
       target_port: 0,
       include_client_to_server: true,
       include_server_to_client: true,
@@ -94,6 +96,8 @@ export interface ConfigBundlePayload {
   firewall_certificates: { items: FirewallCertificate[] };
   tls_inspection_policy?: TlsInspectionPolicyPayload | null;
   identity_config: IdentityConfigBundlePayload;
+  dns_inspection_config?: DnsInspectionConfig | null;
+  ips_config?: IpsConfig | null;
   users: { items: User[] };
   // roles: { items: Role[] };
   // permissions: { items: Permission[] };

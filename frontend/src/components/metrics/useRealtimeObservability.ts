@@ -53,10 +53,33 @@ export function useRealtimeObservability() {
       transports: ["websocket"],
     });
 
-    metricsSocket.on("connect", () => setMetricsConnected(true));
-    metricsSocket.on("disconnect", () => setMetricsConnected(false));
+    console.log("[metrics-ws] connecting", { path, url });
+
+    metricsSocket.on("connect", () => {
+      console.log("[metrics-ws] connected", { id: metricsSocket.id });
+      setMetricsConnected(true);
+    });
+    metricsSocket.on("disconnect", (reason) => {
+      console.log("[metrics-ws] disconnected", { reason });
+      setMetricsConnected(false);
+    });
+    metricsSocket.on("connect_error", (error) => {
+      console.log("[metrics-ws] connect_error", { message: error.message });
+    });
     metricsSocket.on("metrics", (metric: unknown) => {
-      if (!isRealtimeMetric(metric)) return;
+      if (!isRealtimeMetric(metric)) {
+        console.log("[metrics-ws] invalid metric payload", {
+          keys: metric && typeof metric === "object" ? Object.keys(metric) : [],
+        });
+        return;
+      }
+
+      console.log("[metrics-ws] metric", {
+        name: metric.name,
+        timestamp: metric.timestamp,
+        unit: metric.unit,
+        value: metric.value,
+      });
       setMetrics((current) => [metric, ...current].slice(0, MAX_METRICS));
     });
 
@@ -73,9 +96,25 @@ export function useRealtimeObservability() {
       transports: ["websocket"],
     });
 
-    alertsSocket.on("connect", () => setAlertsConnected(true));
-    alertsSocket.on("disconnect", () => setAlertsConnected(false));
+    console.log("[alerts-ws] connecting", { path, url });
+
+    alertsSocket.on("connect", () => {
+      console.log("[alerts-ws] connected", { id: alertsSocket.id });
+      setAlertsConnected(true);
+    });
+    alertsSocket.on("disconnect", (reason) => {
+      console.log("[alerts-ws] disconnected", { reason });
+      setAlertsConnected(false);
+    });
+    alertsSocket.on("connect_error", (error) => {
+      console.log("[alerts-ws] connect_error", { message: error.message });
+    });
     alertsSocket.on("firewall-events", (event: FirewallEvent) => {
+      console.log("[alerts-ws] firewall event", {
+        decision: event.decision,
+        eventType: event.event_type,
+        timestamp: event.timestamp,
+      });
       setEvents((current) => [event, ...current].slice(0, MAX_EVENTS));
       if (isFirewallAlert(event)) {
         setAlerts((current) =>

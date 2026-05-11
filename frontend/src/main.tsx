@@ -107,6 +107,10 @@ const router = createBrowserRouter([
             path: "identity",
             element: <Identity />,
           },
+          // {
+          //   path: "settings",
+          //   element: <Settings />,
+          // },
         ],
       },
     ],

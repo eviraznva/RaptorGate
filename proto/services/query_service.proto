@@ -6,13 +6,9 @@ import "google/protobuf/timestamp.proto";
 import "config/config_models.proto";
 
 service FirewallQueryService {
-  rpc GetTcpSessions  (GetTcpSessionsRequest) returns (GetTcpSessionsResponse);
-
   rpc GetPolicies   (GetPoliciesRequest)       returns (GetPoliciesResponse);
   rpc GetPolicy     (GetPolicyRequest)         returns (GetPolicyResponse);
   rpc GetNatBindings(GetNatBindingsRequest)    returns (GetNatBindingsResponse);
-  rpc SwapNatConfig (SwapNatConfigRequest)     returns (SwapNatConfigResponse);
-  rpc GetNatConfig  (GetNatConfigRequest)      returns (GetNatConfigResponse);
 
   rpc GetZones      (GetZonesRequest)          returns (GetZonesResponse);
   rpc GetZone       (GetZoneRequest)           returns (GetZoneResponse);
@@ -22,48 +18,13 @@ service FirewallQueryService {
   rpc GetZonePairs  (GetZonePairsRequest)      returns (GetZonePairsResponse);
   rpc GetZonePair   (GetZonePairRequest)       returns (GetZonePairResponse);
 
-  rpc SwapConfig    (SwapConfigRequest)        returns (SwapConfigResponse);
-  rpc GetConfig     (GetConfigRequest)         returns (GetConfigResponse);
-
   rpc GetSystemTime (GetSystemTimeRequest)     returns (GetSystemTimeResponse);
-  rpc SwapDnsInspectionConfig (SwapDnsInspectionConfigRequest) returns (SwapDnsInspectionConfigResponse);
-  rpc GetDnsInspectionConfig  (GetDnsInspectionConfigRequest)  returns (GetDnsInspectionConfigResponse);
-  rpc SwapIpsConfig           (SwapIpsConfigRequest)           returns (SwapIpsConfigResponse);
-  rpc GetIpsConfig            (GetIpsConfigRequest)            returns (GetIpsConfigResponse);
 
   rpc GetPinningStats  (GetPinningStatsRequest)  returns (GetPinningStatsResponse);
   rpc GetPinningBypass (GetPinningBypassRequest) returns (GetPinningBypassResponse);
 
   rpc SetInterfaceState (SetInterfaceStateRequest) returns (SetInterfaceStateResponse);
   rpc UpdatePhysicalInterfaceProperties (UpdatePhysicalInterfacePropertiesRequest) returns (UpdatePhysicalInterfacePropertiesResponse);
-}
-
-message GetTcpSessionsRequest {}
-message GetTcpSessionsResponse {
-  repeated TcpTrackedSession sessions = 1;
-}
-
-message TcpSessionEndpoint {
-  string ip = 1;
-  uint32 port = 2;
-}
-
-message TcpTrackedSession {
-  TcpSessionEndpoint endpoint_a = 1;
-  TcpSessionEndpoint endpoint_b = 2;
-  TcpTrackedSessionState state = 3;
-}
-
-enum TcpTrackedSessionState {
-  TCP_TRACKED_SESSION_STATE_UNSPECIFIED = 0;
-  TCP_TRACKED_SESSION_STATE_SYN_SENT = 1;
-  TCP_TRACKED_SESSION_STATE_SYN_ACK_RECEIVED = 2;
-  TCP_TRACKED_SESSION_STATE_ESTABLISHED = 3;
-  TCP_TRACKED_SESSION_STATE_FIN_SENT = 4;
-  TCP_TRACKED_SESSION_STATE_ACK_SENT = 5;
-  TCP_TRACKED_SESSION_STATE_ACK_FIN_SENT = 6;
-  TCP_TRACKED_SESSION_STATE_TIME_WAIT = 7;
-  TCP_TRACKED_SESSION_STATE_CLOSED = 8;
 }
 
 message GetPoliciesRequest {}
@@ -80,20 +41,23 @@ message GetPolicyResponse {
 }
 
 message GetNatBindingsRequest {}
-message GetNatBindingsResponse {}
 
-// ── NAT Config ──────────────────────────────────────────────────────────────
-
-message SwapNatConfigRequest {
-  config.NatRuleSet config = 1;
+message NatBinding {
+  uint64 binding_id      = 1;
+  string rule_id         = 2;
+  string original_src_ip = 3;
+  uint32 original_src_port = 4;
+  string original_dst_ip = 5;
+  uint32 original_dst_port = 6;
+  string translated_src_ip = 7;
+  uint32 translated_src_port = 8;
+  string translated_dst_ip = 9;
+  uint32 translated_dst_port = 10;
+  uint32 protocol         = 11;
 }
 
-message SwapNatConfigResponse {}
-
-message GetNatConfigRequest {}
-
-message GetNatConfigResponse {
-  config.NatRuleSet config = 1;
+message GetNatBindingsResponse {
+  repeated NatBinding bindings = 1;
 }
 
 message GetZonesRequest {}
@@ -130,8 +94,6 @@ message GetLiveZoneInterfacesResponse {
   repeated config.ZoneInterface zone_interfaces = 1;
 }
 
-// Zone Pairs
-
 message GetZonePairsRequest {}
 
 message GetZonePairsResponse {
@@ -146,54 +108,11 @@ message GetZonePairResponse {
   config.ZonePair zone_pair = 1;
 }
 
-// ── AppConfig ────────────────────────────────────────────────────────────────
-
-message SwapConfigRequest {
-  config.AppConfig config = 1;
-}
-
-message SwapConfigResponse {}
-
-message GetConfigRequest {}
-
-message GetConfigResponse {
-  config.AppConfig config = 1;
-}
-
 message GetSystemTimeRequest {}
 
 message GetSystemTimeResponse {
   google.protobuf.Timestamp time = 1;
 }
-// ── DNS Inspection Config ─────────────────────────────────────────────────────
-
-message SwapDnsInspectionConfigRequest {
-  config.DnsInspectionConfig config = 1;
-}
-
-message SwapDnsInspectionConfigResponse {}
-
-message GetDnsInspectionConfigRequest {}
-
-message GetDnsInspectionConfigResponse {
-  config.DnsInspectionConfig config = 1;
-}
-
-// ── IPS Config ───────────────────────────────────────────────────────────────
-
-message SwapIpsConfigRequest {
-  config.IpsConfig config = 1;
-}
-
-message SwapIpsConfigResponse {}
-
-message GetIpsConfigRequest {}
-
-message GetIpsConfigResponse {
-  config.IpsConfig config = 1;
-}
-
-// ── Pinning detector observability ───────────────────────────────────────────
 
 message GetPinningStatsRequest {}
 
@@ -212,8 +131,6 @@ message GetPinningBypassResponse {
   string reason = 2;
   uint32 failure_count = 3;
 }
-
-// ── Interface Management ─────────────────────────────────────────────────────
 
 message SetInterfaceStateRequest {
   string id = 1;

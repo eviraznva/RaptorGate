@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { Module } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ClientsModule, Transport } from "@nestjs/microservices";
+import { GrpcFirewallConntrackMetricsStreamService } from "../infrastructure/adapters/grpc-firewall-conntrack-metrics-stream.service.js";
 import {
   FIREWALL_METRICS_GRPC_CLIENT_TOKEN,
   GrpcFirewallMetricsStreamService,
@@ -47,6 +48,11 @@ import type { Env } from "../shared/config/env.validation.js";
       },
     ]),
   ],
-  providers: [GrpcFirewallMetricsStreamService, MetricsGateway],
+  providers: [
+    GrpcFirewallMetricsStreamService,
+    GrpcFirewallConntrackMetricsStreamService,
+    MetricsGateway,
+  ],
+  exports: [GrpcFirewallConntrackMetricsStreamService],
 })
 export class RealtimeMetricsModule {}

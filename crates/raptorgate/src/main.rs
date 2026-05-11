@@ -1,4 +1,5 @@
 mod config;
+mod conntrack;
 mod control_server;
 mod data_plane;
 mod disk_store;
@@ -24,6 +25,7 @@ mod tls;
 mod zones;
 mod swapper;
 mod validation;
+mod nat;
 
 use crate::config::provider::AppConfigProvider;
 use crate::control_server::ControlServer;
@@ -33,19 +35,27 @@ use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
-use crate::data_plane::nat::{NatConfigProvider, NatEngine};
+use crate::nat::{NatConfigProvider, NatEngine};
 use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
 use crate::identity::IdentitySessionStore;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
+<<<<<<< HEAD
     DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
     IdentityLookupStage, IpsStage, LocalOwnershipStage, MetricsStage, MlAlertStage,
     NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage,
     TlsPortEnforcementStage, ValidationStage,
+=======
+    ConntrackConfirmStage, ConntrackInStage, DnsBlockListStage, DnsEchMitigationStage,
+    DnsTunnelingStage, DpiStage, FtpAlgStage, IpsStage, L4StateStage, LocalOwnershipStage,
+    MetricsStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
+    TlsPortEnforcementStage, ValidationStage, SmtpStage,
+>>>>>>> origin/development
 };
-use crate::pipeline::{Chain, Stage, StageOutcome};
+use crate::pipeline::{Chain, ExecutionSink, ExecutionStage, Stage, StageOutcome};
+use tokio::sync::mpsc;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
@@ -62,6 +72,16 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use crate::conntrack::config::ConntrackConfig;
+use crate::conntrack::entry::{ConntrackEntry, CtStatus};
+use crate::conntrack::observer::{AnomalyKind, CtObserver, DestroyReason, ObserverRegistry};
+use crate::conntrack::proto::icmp::IcmpHandler;
+use crate::conntrack::proto::ProtoRegistry;
+use crate::conntrack::proto::tcp::TcpHandler;
+use crate::conntrack::proto::udp::UdpHandler;
+use crate::conntrack::reaper::Reaper;
+use crate::conntrack::table::Conntrack;
+use crate::conntrack::tuple::Direction as CtDirection;
 
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
@@ -73,7 +93,11 @@ async fn main() {
             Chain<
                 LocalOwnershipStage,
                 Chain<
+<<<<<<< HEAD
                     IdentityLookupStage,
+=======
+                    ConntrackInStage,
+>>>>>>> origin/development
                     Chain<
                         DpiStage,
                         Chain<
@@ -89,12 +113,30 @@ async fn main() {
                                             Chain<
                                                 NatPreroutingStage,
                                                 Chain<
+<<<<<<< HEAD
                                                     TcpClassificationStage,
                                                     Chain<
                                                         MlAlertStage,
                                                         Chain<
                                                             PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
                                                             Chain<NatPostroutingStage<M>, FtpAlgStage>,
+=======
+                                                    L4StateStage,
+                                                    Chain<
+                                                        MlAlertStage,
+                                                        Chain<
+                                                            PolicyEvalStage<zones::resolver::RoutingZoneResolver<M>>,
+                                                            Chain<
+                                                                NatPostroutingStage<M>,
+                                                                Chain<
+                                                                    FtpAlgStage,
+                                                                    Chain<
+                                                                        SmtpStage,
+                                                                        Chain<ExecutionStage, ConntrackConfirmStage>,
+                                                                    >,
+                                                                >,
+                                                            >,
+>>>>>>> origin/development
                                                         >,
                                                     >,
                                                 >,
@@ -186,6 +228,92 @@ async fn main() {
     ));
 
     let tcp_session_tracker = TcpSessionTracker::new();
+
+
+    let ct_observers = Arc::new(ObserverRegistry::default());
+
+    let mut proto_reg = ProtoRegistry::new();
+
+    proto_reg.register(Arc::new(TcpHandler::new(Arc::clone(&ct_observers))));
+    proto_reg.register(Arc::new(UdpHandler::new(Arc::clone(&ct_observers))));
+    proto_reg.register(Arc::new(IcmpHandler::v4()));
+    proto_reg.register(Arc::new(IcmpHandler::v6()));
+
+    let conntrack = Arc::new(Conntrack::new(Arc::new(proto_reg), ConntrackConfig::default()));
+
+    // Test-only logger observer. Loguje każdy event conntrack na poziomie info.
+    // Bug: handlery emit do `ct_observers`, core emit do wewnętrznego registry,
+    // więc rejestrujemy ten sam logger w obu — bez tego connection lifecycle
+    // (new/destroy) byłby niewidoczny przez ct_observers.
+    struct LoggingCtObserver;
+
+    impl CtObserver for LoggingCtObserver {
+        fn on_new(&self, entry: &ConntrackEntry) {
+            tracing::info!(
+                event = "ct.observer.new",
+                flow_id = entry.id,
+                zone = entry.zone,
+                proto = ?entry.original.protocol,
+                src = %entry.original.src_ip,
+                sport = entry.original.src_port,
+                dst = %entry.original.dst_ip,
+                dport = entry.original.dst_port,
+                "ct entry confirmed"
+            );
+        }
+
+        fn on_update(&self, entry: &ConntrackEntry, changed: CtStatus) {
+            tracing::info!(
+                event = "ct.observer.update",
+                flow_id = entry.id,
+                changed = ?changed,
+                status = ?entry.status(),
+                "ct entry updated"
+            );
+        }
+
+        fn on_destroy(&self, entry: &ConntrackEntry, reason: DestroyReason) {
+            tracing::info!(
+                event = "ct.observer.destroy",
+                flow_id = entry.id,
+                reason = ?reason,
+                bytes_orig = entry.bytes_orig.load(std::sync::atomic::Ordering::Relaxed),
+                bytes_reply = entry.bytes_reply.load(std::sync::atomic::Ordering::Relaxed),
+                packets_orig = entry.packets_orig.load(std::sync::atomic::Ordering::Relaxed),
+                packets_reply = entry.packets_reply.load(std::sync::atomic::Ordering::Relaxed),
+                "ct entry destroyed"
+            );
+        }
+
+        fn on_anomaly(&self, entry: &ConntrackEntry, kind: AnomalyKind) {
+            tracing::warn!(
+                event = "ct.observer.anomaly",
+                flow_id = entry.id,
+                kind = ?kind,
+                "ct anomaly"
+            );
+        }
+
+        fn on_payload(&self, entry: &ConntrackEntry, dir: CtDirection, payload: &[u8]) {
+            tracing::info!(
+                event = "ct.observer.payload",
+                flow_id = entry.id,
+                proto = ?entry.original.protocol,
+                dir = ?dir,
+                len = payload.len(),
+                preview = %String::from_utf8_lossy(&payload[..payload.len().min(32)]),
+                "ct payload chunk"
+            );
+        }
+    }
+
+    let ct_logger: Arc<dyn CtObserver> = Arc::new(LoggingCtObserver);
+    ct_observers.register(Arc::clone(&ct_logger));         // handlery: payload, anomaly
+    conntrack.register_observer(Arc::clone(&ct_logger));    // core: new, update, destroy
+    tracing::info!(event = "ct.logger.registered", "conntrack debug observer attached");
+
+    let _ct_reaper = Reaper::spawn(Arc::clone(&conntrack));
+
     let metrics_collector = Arc::new(metrics::MetricsCollector::new());
     let policy_provider = Arc::new(
         DiskPolicyProvider::from_loaded(&config)
@@ -214,7 +342,7 @@ async fn main() {
         NetlinkInterfaceController::new().expect("Failed to initialize interface controller"),
     );
     
-    let routing_table = match RoutingTable::new(&netlink_listener, netlink_cancel).await {
+    let routing_table = match RoutingTable::new(&netlink_listener, netlink_cancel.clone()).await {
         Ok(table) => table,
         Err(err) => {
             tracing::error!(
@@ -245,6 +373,14 @@ async fn main() {
         Arc::clone(&routing_table),
         Arc::clone(&interface_monitor),
     ));
+
+    let smtp_policy_retriever = Arc::new(crate::dpi::smtp_policy_retriever::SmtpPolicyRetriever::new(
+        Arc::clone(&zone_resolver),
+        Arc::clone(&policy_provider),
+    ));
+
+    let smtp_tracker = Arc::new(crate::dpi::smtp::SmtpTracker::new(Arc::clone(&smtp_policy_retriever)));
+    conntrack.register_observer(Arc::clone(&smtp_tracker) as Arc<dyn crate::conntrack::observer::CtObserver>);
 
     let policy_engine = Arc::new(
         crate::policy::engine::PolicyEngine::from_policies(
@@ -278,11 +414,67 @@ async fn main() {
             None
         }
     };
-    let nat_engine = Arc::new(Mutex::new(NatEngine::new(&nat_rules, interface_ips)));
+
+    let nat_engine = NatEngine::new(nat_rules, interface_ips);
+
+    // Late binding NatEngine ⇄ Conntrack: attach Weak ref + register observer
+    // dla port_release on destroy.
+    nat_engine.attach_conntrack(&conntrack);
+    conntrack.register_observer(Arc::clone(&nat_engine) as Arc<dyn CtObserver>);
+
+    // HelperRegistry — FtpHelper instaluje expectations dla data channel.
+    let helpers = {
+        let mut r = crate::conntrack::helper::HelperRegistry::new();
+        r.register(Arc::new(crate::conntrack::helper::ftp::FtpHelper::new()));
+
+        Arc::new(r)
+    };
+
+    // MASQUERADE flush: subskrypcja netlink → przy zmianie IP rebuild snapshot
+    // i wywołanie replace_interface_ips. Conntrack flushuje stare entries.
+    {
+        let nat_engine_for_addr = Arc::clone(&nat_engine);
+        let monitor_for_addr = Arc::clone(&interface_monitor);
+
+        let mut rx = netlink_listener.subscribe();
+
+        let cancel_for_addr = netlink_cancel.clone();
+
+        tokio::spawn(async move {
+            use netlink_packet_route::RouteNetlinkMessage;
+
+            loop {
+                tokio::select! {
+                    _ = cancel_for_addr.cancelled() => break,
+
+                    msg = rx.recv() => {
+                        match msg {
+                            Ok(RouteNetlinkMessage::NewAddress(_)) | Ok(RouteNetlinkMessage::DelAddress(_)) => {
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+                                let snapshot = monitor_for_addr.snapshot();
+
+                                let new_ips: HashMap<String, Vec<IpAddr>> = snapshot.into_iter()
+                                    .map(|(name, iface)| {
+                                        let ips: Vec<IpAddr> = iface.addresses.iter().map(|n| n.addr()).collect();
+                                        (name, ips)
+                                    }).collect();
+
+                                nat_engine_for_addr.replace_interface_ips(new_ips);
+                            }
+                            Ok(_) => {}
+                            Err(_) => {}
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Inicjalizacja providera konfiguracji DNS inspection.
     let dns_inspection_store =
         Arc::new(DnsInspectionConfigProvider::from_disk(config.data_dir.clone()).await);
+
     let dns_initial_config = dns_inspection_store.get_config().clone();
 
     let dns_inspection = match DnsInspection::new((*dns_initial_config).clone()) {
@@ -331,6 +523,8 @@ async fn main() {
         Arc::new(crate::ml::MlDetector::from_env());
     let pipeline_interface_monitor: Arc<dyn InterfaceMonitor> = interface_monitor.clone();
 
+    let (exec_tx, exec_rx) = mpsc::unbounded_channel();
+
     let pipeline: DataPipeline<NetworkInterfaceMonitor> = DataPipeline {
         head: ValidationStage,
         tail: Chain {
@@ -344,8 +538,13 @@ async fn main() {
                     local_ips: Arc::new(local_ips.clone()),
                 },
                 tail: Chain {
+<<<<<<< HEAD
                     head: IdentityLookupStage {
                         store: Arc::clone(&identity_sessions),
+=======
+                    head: ConntrackInStage {
+                        ct: Arc::clone(&conntrack),
+>>>>>>> origin/development
                     },
                     tail: Chain {
                         head: DpiStage {
@@ -378,8 +577,12 @@ async fn main() {
                                                     engine: Arc::clone(&nat_engine),
                                                 },
                                                 tail: Chain {
+<<<<<<< HEAD
                                                     head: TcpClassificationStage {
                                                         tracker: Arc::clone(&tcp_session_tracker),
+=======
+                                                    head: L4StateStage {
+>>>>>>> origin/development
                                                         flow_stats: Arc::clone(&ml_flow_stats),
                                                     },
                                                     tail: Chain {
@@ -396,8 +599,27 @@ async fn main() {
                                                                     routing_table: Arc::clone(&routing_table),
                                                                     interface_monitor: Arc::clone(&interface_monitor),
                                                                 },
+<<<<<<< HEAD
                                                                 tail: FtpAlgStage {
                                                                     engine: Arc::clone(&nat_engine),
+=======
+                                                                tail: Chain {
+                                                                    head: FtpAlgStage {
+                                                                        conntrack: Arc::clone(&conntrack),
+                                                                        helpers: Arc::clone(&helpers),
+                                                                    },
+                                                                    tail: Chain {
+                                                                        head: SmtpStage {
+                                                                            tracker: Arc::clone(&smtp_tracker),
+                                                                        },
+                                                                        tail: Chain {
+                                                                            head: ExecutionStage { tx: exec_tx.clone() },
+                                                                            tail: ConntrackConfirmStage {
+                                                                                ct: Arc::clone(&conntrack),
+                                                                            },
+                                                                        }
+                                                                    }
+>>>>>>> origin/development
                                                                 },
                                                             },
                                                         },
@@ -415,6 +637,27 @@ async fn main() {
         },
     };
 
+    let mut sniffed_names: Vec<String> = loaded_zone_interfaces
+        .iter()
+        .filter(|(_, zi)| zi.sniffed)
+        .filter_map(|(id, _)| crate::zones::resolve_os_name(&loaded_zone_interfaces, id))
+        .collect();
+
+    if sniffed_names.is_empty() {
+        if let Ok(env_ifaces) = std::env::var("CAPTURE_INTERFACES") {
+            for name in env_ifaces.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                sniffed_names.push(name.to_string());
+            }
+            if !sniffed_names.is_empty() {
+                tracing::warn!(
+                    event = "sniffer.fallback.env",
+                    interfaces = ?sniffed_names,
+                    "no sniffed interfaces in zone_interfaces.json, using CAPTURE_INTERFACES env"
+                );
+            }
+        }
+    }
+
     if config.ssl_inspection_enabled {
         let tls_runtime_cancel = CancellationToken::new();
         decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
@@ -426,16 +669,9 @@ async fn main() {
                     .parse()
                     .expect("MITM_LISTEN_ADDR must be a valid socket address");
 
-                let sniffed_names: Vec<String> = zone_interfaces
-                    .get_zone_interfaces()
-                    .iter()
-                    .filter(|(_, zi)| zi.sniffed)
-                    .filter_map(|(id, _)| crate::zones::resolve_os_name(&zone_interfaces.get_zone_interfaces(), id))
-                    .collect();
-
                 match TransparentRedirect::new(
                     listen_addr,
-                    sniffed_names,
+                    sniffed_names.clone(),
                     config.tls_inspection_ports.clone(),
                     local_ips.iter().copied().collect(),
                 )
@@ -488,15 +724,17 @@ async fn main() {
         .register(Arc::clone(&tun), "TunForwarder")
         .await;
 
+    tokio::spawn(ExecutionSink::new(Arc::clone(&tun), Arc::clone(&metrics_collector), exec_rx).run());
+
     let (sniffer, mut raw_rx) = InterfaceSniffer::with_sniffing(config.pcap_timeout_ms);
     let sniffer = Arc::new(sniffer);
     
     // Startup sniffer reconciliation
-    let sniffed_names: Vec<String> = loaded_zone_interfaces
-        .iter()
-        .filter(|(_, zi)| zi.sniffed)
-        .filter_map(|(id, _)| crate::zones::resolve_os_name(&loaded_zone_interfaces, id))
-        .collect();
+    tracing::info!(
+        event = "sniffer.reconcile.start",
+        interfaces = ?sniffed_names,
+        "starting capture on interfaces"
+    );
     sniffer.reconcile_capture_interfaces(&sniffed_names);
     
     config_provider
@@ -506,6 +744,7 @@ async fn main() {
     // QueryHandler construction moved here to have access to both vlan_reconciler and sniffer
     let query_server = QueryServer::<DiskPolicyProvider, NetworkInterfaceMonitor, NetlinkInterfaceController>::new(
         QueryHandler {
+            conntrack: Arc::clone(&conntrack),
             tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
             nat_store: Arc::clone(&nat_store),
@@ -544,11 +783,18 @@ async fn main() {
     );
     tokio::spawn(server_cert_server.serve());
 
+    tracing::info!(event = "pipeline.loop.start", "entering packet processing loop");
+
+    let pkt_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
     while let Some(raw_packet) = raw_rx.recv().await {
         if let Some(mut ctx) = defrag.process_raw(raw_packet) {
             let pipeline = pipeline.clone();
             let tun = Arc::clone(&tun);
             let metrics_collector = Arc::clone(&metrics_collector);
+            let counter = Arc::clone(&pkt_counter);
+            let exec_tx = exec_tx.clone();
+
             tokio::spawn(async move {
                 if !matches!(
                     &ctx.borrow_sliced_packet().net,
@@ -557,7 +803,12 @@ async fn main() {
                     return;
                 }
 
-                let result: StageOutcome = pipeline.process(&mut ctx).await;
+                let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n == 1 || n % 1000 == 0 {
+                    tracing::info!(event = "pipeline.packet.tick", count = n, "pipeline processed packet");
+                }
+
+                let result: StageOutcome = pipeline.process(&mut ctx, &exec_tx).await;
 
                 if matches!(result, StageOutcome::Continue) {
                     tun.forward(&ctx).await;

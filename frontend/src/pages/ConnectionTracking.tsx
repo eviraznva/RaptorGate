@@ -1,4 +1,12 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { Socket } from "socket.io-client";
 import { useAppDispatch, useAppSelector } from "../app/hooks";
 import ConnectionInspector from "../components/connections/ConnectionInspector";
 import ConnectionsFooter from "../components/connections/ConnectionsFooter";
@@ -9,10 +17,10 @@ import ConnectionsTable from "../components/connections/ConnectionsTable";
 import "../components/connections/ConnectionsStyles.css";
 import { setTcpSessions } from "../features/sessionsSlice";
 import {
-  useGetTcpSessionsQuery,
-  type TcpSessionsPayload,
+  createSessionsSocket,
+  isTcpSessionsPayload,
+  normalizeTcpSessionsPayload,
 } from "../services/sessions";
-import type { ApiSuccess } from "../types/ApiResponse";
 import type {
   TcpTrackedSession,
   TcpTrackedSessionState,
@@ -21,7 +29,10 @@ import type {
 export default function ConnectionTracking() {
   const dispatch = useAppDispatch();
   const sessions = useAppSelector((state) => state.sessions.tcpSessions);
-  const { data, isFetching, isError, refetch } = useGetTcpSessionsQuery();
+  const accessToken = useAppSelector((state) => state.user.accessToken);
+  const socketRef = useRef<Socket | null>(null);
+  const [isFetching, setIsFetching] = useState(false);
+  const [isError, setIsError] = useState(false);
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<
     TcpTrackedSessionState | "all"
@@ -30,12 +41,44 @@ export default function ConnectionTracking() {
   const deferredSearch = useDeferredValue(search);
 
   useEffect(() => {
-    if (!data || "error" in data) return;
+    if (!accessToken) {
+      setIsFetching(false);
+      setIsError(true);
+      dispatch(setTcpSessions([]));
+      return;
+    }
 
-    const payload = data as ApiSuccess<TcpSessionsPayload>;
+    const socket = createSessionsSocket(accessToken);
+    socketRef.current = socket;
+    setIsFetching(true);
+    setIsError(false);
 
-    dispatch(setTcpSessions(payload.data.tcpSessions));
-  }, [data, dispatch]);
+    socket.on("connect", () => {
+      setIsFetching(false);
+      setIsError(false);
+    });
+    socket.on("connect_error", () => {
+      setIsFetching(false);
+      setIsError(true);
+    });
+    socket.on("disconnect", () => {
+      setIsFetching(false);
+    });
+    socket.on("tcpSessions", (payload: unknown) => {
+      if (!isTcpSessionsPayload(payload)) return;
+      const normalizedPayload = normalizeTcpSessionsPayload(payload);
+      dispatch(setTcpSessions(normalizedPayload.tcpSessions));
+      setIsFetching(false);
+      setIsError(false);
+    });
+
+    socket.connect();
+
+    return () => {
+      socketRef.current = null;
+      socket.disconnect();
+    };
+  }, [accessToken, dispatch]);
 
   const filteredSessions = useMemo(() => {
     const normalizedSearch = deferredSearch.trim().toLowerCase();
@@ -45,11 +88,20 @@ export default function ConnectionTracking() {
       if (normalizedSearch.length === 0) return true;
 
       return [
+        session.id,
         session.endpointA.ip,
         session.endpointA.port,
         session.endpointB.ip,
         session.endpointB.port,
         session.state,
+        session.lifecycle,
+        session.lastDirection,
+        session.interfaces.originalIngress,
+        session.interfaces.originalEgress,
+        session.interfaces.replyIngress,
+        session.interfaces.replyEgress,
+        session.natInfo?.ruleId,
+        session.natInfo?.bindingId,
       ]
         .join(" ")
         .toLowerCase()
@@ -64,8 +116,13 @@ export default function ConnectionTracking() {
   }, [filteredSessions, selectedIndex]);
 
   const handleRefresh = useCallback(() => {
-    refetch();
-  }, [refetch]);
+    const socket = socketRef.current;
+    if (!socket) return;
+
+    setIsFetching(true);
+    if (socket.connected) socket.disconnect();
+    socket.connect();
+  }, []);
 
   const handleSelect = useCallback((index: number) => {
     setSelectedIndex(index);
@@ -95,7 +152,7 @@ export default function ConnectionTracking() {
         <ConnectionsStatusBar sessions={sessions} isFetching={isFetching} />
         {isError ? (
           <div className="connections-error">
-            Could not load TCP sessions from /tcp-sessions
+            Could not load TCP sessions from /sessions
           </div>
         ) : null}
         <ConnectionStats

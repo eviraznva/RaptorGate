@@ -8,7 +8,7 @@ import {
 import { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
 import { FirewallCertificate } from "../../domain/entities/firewall-certificate.entity.js";
 import { FirewallRule } from "../../domain/entities/firewall-rule.entity.js";
-import { NatRule } from "../../domain/entities/nat-rule.entity.js";
+import { NatRuleJsonMapper } from "../../infrastructure/persistence/mappers/nat-rule-json.mapper.js";
 import { SslBypassEntry } from "../../domain/entities/ssl-bypass-entry.entity.js";
 import { User } from "../../domain/entities/user.entity.js";
 import { Zone } from "../../domain/entities/zone.entity.js";
@@ -56,9 +56,6 @@ import {
   normalizeTlsInspectionPolicy,
   type ConfigSnapshotPayload,
 } from "../../domain/value-objects/config-snapshot-payload.interface.js";
-import { IpAddress } from "../../domain/value-objects/ip-address.vo.js";
-import { NatType } from "../../domain/value-objects/nat-type.vo.js";
-import { Port } from "../../domain/value-objects/port.vo.js";
 import { Priority } from "../../domain/value-objects/priority.vo.js";
 import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
 import { IdentityConfigJsonMapper } from "../../infrastructure/persistence/mappers/identity-config-json.mapper.js";
@@ -202,26 +199,7 @@ export class ImportConfigUseCase {
     );
 
     const importedNatRules = payload.bundle.nat_rules.items.map((n: any) =>
-      NatRule.create(
-        n.id,
-        NatType.create(n.type),
-        n.isActive,
-        n.srcIp ? IpAddress.create(n.srcIp) : null,
-        n.dstIp ? IpAddress.create(n.dstIp) : null,
-        n.srcPort !== null && n.srcPort !== undefined
-          ? Port.create(n.srcPort)
-          : null,
-        n.dstPort !== null && n.dstPort !== undefined
-          ? Port.create(n.dstPort)
-          : null,
-        n.translatedIp ? IpAddress.create(n.translatedIp) : null,
-        n.translatedPort !== null && n.translatedPort !== undefined
-          ? Port.create(n.translatedPort)
-          : null,
-        Priority.create(n.priority),
-        new Date(n.createdAt),
-        new Date(n.updatedAt),
-      ),
+      NatRuleJsonMapper.toDomain(n),
     );
 
     const importedCerts = payload.bundle.firewall_certificates.items.map(

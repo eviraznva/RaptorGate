@@ -1,84 +1,91 @@
-import { join } from 'node:path';
-import { Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
-import { ClientsModule, Transport } from '@nestjs/microservices';
-import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from '../application/ports/config-snapshot-push-service.interface.js';
-import { LDAP_DIRECTORY_TOKEN } from '../application/ports/ldap-directory.interface.js';
-import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../application/ports/raptor-lang-validation-service.interface.js';
-import { RADIUS_AUTHENTICATOR_TOKEN } from '../application/ports/radius-authenticator.interface.js';
-import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
-import { ConfigSnapshotDiffService } from '../application/services/config-snapshot-diff.service.js';
-import { IdentityConfigMutationService } from '../application/services/identity-config-mutation.service.js';
-import { IdentitySecretReferenceValidatorService } from '../application/services/identity-secret-reference-validator.service.js';
-import { ApplyConfigSnapshotUseCase } from '../application/use-cases/apply-config-snapshot.use-case.js';
-import { CreateAuthenticationProfileUseCase } from '../application/use-cases/create-authentication-profile.use-case.js';
-import { CreateLdapProfileUseCase } from '../application/use-cases/create-ldap-profile.use-case.js';
-import { CreateRadiusProfileUseCase } from '../application/use-cases/create-radius-profile.use-case.js';
-import { DeleteAuthenticationProfileUseCase } from '../application/use-cases/delete-authentication-profile.use-case.js';
-import { DeleteLdapProfileUseCase } from '../application/use-cases/delete-ldap-profile.use-case.js';
-import { DeleteRadiusProfileUseCase } from '../application/use-cases/delete-radius-profile.use-case.js';
-import { ExportConfigUseCase } from '../application/use-cases/export-config.use-case.js';
-import { FactoryResetUseCase } from '../application/use-cases/factory-reset.use-case.js';
-import { GetConfigDiffUseCase } from '../application/use-cases/get-config-diff.use-case.js';
-import { GetConfigHistoryUseCase } from '../application/use-cases/get-config-history.use-case.js';
-import { GetDecryptionMirrorConfigUseCase } from '../application/use-cases/get-decryption-mirror-config.use-case.js';
-import { GetIdentityConfigUseCase } from '../application/use-cases/get-identity-config.use-case.js';
-import { ImportConfigUseCase } from '../application/use-cases/import-config.use-case.js';
-import { RollbackConfigUseCase } from '../application/use-cases/rollback-config.use-case.js';
-import { TestLdapProfileUseCase } from '../application/use-cases/test-ldap-profile.use-case.js';
-import { TestRadiusProfileUseCase } from '../application/use-cases/test-radius-profile.use-case.js';
-import { UpdateAuthenticationProfileUseCase } from '../application/use-cases/update-authentication-profile.use-case.js';
-import { UpdateDecryptionMirrorConfigUseCase } from '../application/use-cases/update-decryption-mirror-config.use-case.js';
-import { UpdateIdentitySettingsUseCase } from '../application/use-cases/update-identity-settings.use-case.js';
-import { UpdateLdapProfileUseCase } from '../application/use-cases/update-ldap-profile.use-case.js';
-import { UpdateRadiusProfileUseCase } from '../application/use-cases/update-radius-profile.use-case.js';
-import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from '../domain/repositories/config-snapshot.repository.js';
-import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from '../domain/repositories/firewall-certificate.repository.js';
-import { NAT_RULES_REPOSITORY_TOKEN } from '../domain/repositories/nat-rules.repository.js';
-import { SSL_BYPASS_REPOSITORY_TOKEN } from '../domain/repositories/ssl-bypass.repository.js';
-import { PERMISSION_REPOSITORY_TOKEN } from '../domain/repositories/permission.repository.js';
-import { ROLE_REPOSITORY_TOKEN } from '../domain/repositories/role.repository.js';
-import { ROLE_PERMISSIONS_REPOSITORY_TOKEN } from '../domain/repositories/role-permissions.repository.js';
-import { RULES_REPOSITORY_TOKEN } from '../domain/repositories/rules-repository.js';
-import { USER_REPOSITORY_TOKEN } from '../domain/repositories/user.repository.js';
-import { USER_ROLES_REPOSITORY_TOKEN } from '../domain/repositories/user-roles.repository.js';
-import { ZONE_REPOSITORY_TOKEN } from '../domain/repositories/zone.repository.js';
-import { ZONE_INTERFACE_REPOSITORY_TOKEN } from '../domain/repositories/zone-interface.repository.js';
-import { ZONE_PAIR_REPOSITORY_TOKEN } from '../domain/repositories/zone-pair.repository.js';
+import { join } from "node:path";
+import { Module } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { JwtService } from "@nestjs/jwt";
+import { ClientsModule, Transport } from "@nestjs/microservices";
+import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from "../application/ports/config-snapshot-push-service.interface.js";
+import { FIREWALL_ZONE_QUERY_SERVICE_TOKEN } from "../application/ports/firewall-zone-query-service.interface.js";
+import { LDAP_DIRECTORY_TOKEN } from "../application/ports/ldap-directory.interface.js";
+import { RADIUS_AUTHENTICATOR_TOKEN } from "../application/ports/radius-authenticator.interface.js";
+import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from "../application/ports/raptor-lang-validation-service.interface.js";
+import { TOKEN_SERVICE_TOKEN } from "../application/ports/token-service.interface.js";
+import { ConfigSnapshotDiffService } from "../application/services/config-snapshot-diff.service.js";
+import { IdentityConfigMutationService } from "../application/services/identity-config-mutation.service.js";
+import { IdentitySecretReferenceValidatorService } from "../application/services/identity-secret-reference-validator.service.js";
+import { ApplyConfigSnapshotUseCase } from "../application/use-cases/apply-config-snapshot.use-case.js";
+import { CreateAuthenticationProfileUseCase } from "../application/use-cases/create-authentication-profile.use-case.js";
+import { CreateLdapProfileUseCase } from "../application/use-cases/create-ldap-profile.use-case.js";
+import { CreateRadiusProfileUseCase } from "../application/use-cases/create-radius-profile.use-case.js";
+import { DeleteAuthenticationProfileUseCase } from "../application/use-cases/delete-authentication-profile.use-case.js";
+import { DeleteLdapProfileUseCase } from "../application/use-cases/delete-ldap-profile.use-case.js";
+import { DeleteRadiusProfileUseCase } from "../application/use-cases/delete-radius-profile.use-case.js";
+import { ExportConfigUseCase } from "../application/use-cases/export-config.use-case.js";
+import { FactoryResetUseCase } from "../application/use-cases/factory-reset.use-case.js";
+import { GetConfigDiffUseCase } from "../application/use-cases/get-config-diff.use-case.js";
+import { GetConfigHistoryUseCase } from "../application/use-cases/get-config-history.use-case.js";
+import { GetDecryptionMirrorConfigUseCase } from "../application/use-cases/get-decryption-mirror-config.use-case.js";
+import { GetIdentityConfigUseCase } from "../application/use-cases/get-identity-config.use-case.js";
+import { ImportConfigUseCase } from "../application/use-cases/import-config.use-case.js";
+import { RollbackConfigUseCase } from "../application/use-cases/rollback-config.use-case.js";
+import { TestLdapProfileUseCase } from "../application/use-cases/test-ldap-profile.use-case.js";
+import { TestRadiusProfileUseCase } from "../application/use-cases/test-radius-profile.use-case.js";
+import { UpdateAuthenticationProfileUseCase } from "../application/use-cases/update-authentication-profile.use-case.js";
+import { UpdateDecryptionMirrorConfigUseCase } from "../application/use-cases/update-decryption-mirror-config.use-case.js";
+import { UpdateIdentitySettingsUseCase } from "../application/use-cases/update-identity-settings.use-case.js";
+import { UpdateLdapProfileUseCase } from "../application/use-cases/update-ldap-profile.use-case.js";
+import { UpdateRadiusProfileUseCase } from "../application/use-cases/update-radius-profile.use-case.js";
+import { CONFIG_SNAPSHOT_REPOSITORY_TOKEN } from "../domain/repositories/config-snapshot.repository.js";
+import { DNS_INSPECTION_REPOSITORY_TOKEN } from "../domain/repositories/dns-inspection.repository.js";
+import { FIREWALL_CERTIFICATE_REPOSITORY_TOKEN } from "../domain/repositories/firewall-certificate.repository.js";
+import { IPS_CONFIG_REPOSITORY_TOKEN } from "../domain/repositories/ips-config.repository.js";
+import { NAT_RULES_REPOSITORY_TOKEN } from "../domain/repositories/nat-rules.repository.js";
+import { PERMISSION_REPOSITORY_TOKEN } from "../domain/repositories/permission.repository.js";
+import { ROLE_REPOSITORY_TOKEN } from "../domain/repositories/role.repository.js";
+import { ROLE_PERMISSIONS_REPOSITORY_TOKEN } from "../domain/repositories/role-permissions.repository.js";
+import { RULES_REPOSITORY_TOKEN } from "../domain/repositories/rules-repository.js";
+import { SSL_BYPASS_REPOSITORY_TOKEN } from "../domain/repositories/ssl-bypass.repository.js";
+import { USER_REPOSITORY_TOKEN } from "../domain/repositories/user.repository.js";
+import { USER_ROLES_REPOSITORY_TOKEN } from "../domain/repositories/user-roles.repository.js";
+import { ZONE_REPOSITORY_TOKEN } from "../domain/repositories/zone.repository.js";
+import { ZONE_INTERFACE_REPOSITORY_TOKEN } from "../domain/repositories/zone-interface.repository.js";
+import { ZONE_PAIR_REPOSITORY_TOKEN } from "../domain/repositories/zone-pair.repository.js";
 import {
   CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN,
   GrpcConfigSnapshotPushService,
-} from '../infrastructure/adapters/grpc-config-snapshot-push.service.js';
+} from "../infrastructure/adapters/grpc-config-snapshot-push.service.js";
+import { FIREWALL_QUERY_GRPC_CLIENT_TOKEN } from "../infrastructure/adapters/grpc-firewall-dns-inspection-query.service.js";
+import { GrpcFirewallZoneQueryService } from "../infrastructure/adapters/grpc-firewall-zone-query.service.js";
 import {
   GrpcRaptorLangValidationService,
   RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
-} from '../infrastructure/adapters/grpc-raptor-lang-validation.service.js';
-import { TcpLdapDirectoryAdapter } from '../infrastructure/adapters/ldap/tcp-ldap-directory.js';
-import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
-import { UdpRadiusAuthenticator } from '../infrastructure/adapters/udp-radius-authenticator.js';
-import { IdentityBootstrapSeedService } from '../infrastructure/identity/identity-bootstrap-seed.service.js';
-import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
-import { FileStore } from '../infrastructure/persistence/json/file-store.js';
-import { JsonConfigSnapshotRepository } from '../infrastructure/persistence/repositories/json-config-snapshot.repository.js';
-import { JsonFirewallCertificateRepository } from '../infrastructure/persistence/repositories/json-firewall-certificate.repository.js';
-import { JsonNatRuleRepository } from '../infrastructure/persistence/repositories/json-nat-rule.repository.js';
-import { JsonSslBypassRepository } from '../infrastructure/persistence/repositories/json-ssl-bypass.repository.js';
-import { JsonPermissionRepository } from '../infrastructure/persistence/repositories/json-permission.repository.js';
-import { JsonRoleRepository } from '../infrastructure/persistence/repositories/json-role.repository.js';
-import { JsonRolePermissionsRepository } from '../infrastructure/persistence/repositories/json-role-permissions.repository.js';
-import { JsonRuleRepository } from '../infrastructure/persistence/repositories/json-rule.repository.js';
-import { JsonUserRepository } from '../infrastructure/persistence/repositories/json-user.repository.js';
-import { JsonUserRoleRepository } from '../infrastructure/persistence/repositories/json-user-role.repository.js';
-import { JsonZoneInterfaceRepository } from '../infrastructure/persistence/repositories/json-zone-interface.repository.js';
-import { JsonZoneRepository } from '../infrastructure/persistence/repositories/json-zone.repository.js';
-import { JsonZonePairRepository } from '../infrastructure/persistence/repositories/json-zone-pair.repository.js';
-import { ConfigController } from '../presentation/controllers/config.controller.js';
-import { DecryptionMirrorController } from '../presentation/controllers/decryption-mirror.controller.js';
-import { IdentityConfigController } from '../presentation/controllers/identity-config.controller.js';
-import { Env } from '../shared/config/env.validation.js';
-import { IdentityConfigStoreModule } from './identity-config-store.module.js';
-import { SecretModule } from './secret.module.js';
+} from "../infrastructure/adapters/grpc-raptor-lang-validation.service.js";
+import { TokenService } from "../infrastructure/adapters/jwt-token.service.js";
+import { TcpLdapDirectoryAdapter } from "../infrastructure/adapters/ldap/tcp-ldap-directory.js";
+import { UdpRadiusAuthenticator } from "../infrastructure/adapters/udp-radius-authenticator.js";
+import { IdentityBootstrapSeedService } from "../infrastructure/identity/identity-bootstrap-seed.service.js";
+import { Mutex } from "../infrastructure/persistence/json/file-mutex.js";
+import { FileStore } from "../infrastructure/persistence/json/file-store.js";
+import { JsonConfigSnapshotRepository } from "../infrastructure/persistence/repositories/json-config-snapshot.repository.js";
+import { JsonDnsInspectionRepository } from "../infrastructure/persistence/repositories/json-dns-inspection.repository.js";
+import { JsonFirewallCertificateRepository } from "../infrastructure/persistence/repositories/json-firewall-certificate.repository.js";
+import { JsonIpsConfigRepository } from "../infrastructure/persistence/repositories/json-ips-config.repository.js";
+import { JsonNatRuleRepository } from "../infrastructure/persistence/repositories/json-nat-rule.repository.js";
+import { JsonPermissionRepository } from "../infrastructure/persistence/repositories/json-permission.repository.js";
+import { JsonRoleRepository } from "../infrastructure/persistence/repositories/json-role.repository.js";
+import { JsonRolePermissionsRepository } from "../infrastructure/persistence/repositories/json-role-permissions.repository.js";
+import { JsonRuleRepository } from "../infrastructure/persistence/repositories/json-rule.repository.js";
+import { JsonSslBypassRepository } from "../infrastructure/persistence/repositories/json-ssl-bypass.repository.js";
+import { JsonUserRepository } from "../infrastructure/persistence/repositories/json-user.repository.js";
+import { JsonUserRoleRepository } from "../infrastructure/persistence/repositories/json-user-role.repository.js";
+import { JsonZoneRepository } from "../infrastructure/persistence/repositories/json-zone.repository.js";
+import { JsonZoneInterfaceRepository } from "../infrastructure/persistence/repositories/json-zone-interface.repository.js";
+import { JsonZonePairRepository } from "../infrastructure/persistence/repositories/json-zone-pair.repository.js";
+import { ConfigController } from "../presentation/controllers/config.controller.js";
+import { DecryptionMirrorController } from "../presentation/controllers/decryption-mirror.controller.js";
+import { IdentityConfigController } from "../presentation/controllers/identity-config.controller.js";
+import { Env } from "../shared/config/env.validation.js";
+import { IdentityConfigStoreModule } from "./identity-config-store.module.js";
+import { SecretModule } from "./secret.module.js";
 
 @Module({
   imports: [
@@ -89,29 +96,29 @@ import { SecretModule } from './secret.module.js';
         name: CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN,
         useFactory: (configService: ConfigService<Env, true>) => {
           const firewallSocketPath = configService.get(
-            'FIREWALL_QUERY_GRPC_SOCKET_PATH',
+            "FIREWALL_QUERY_GRPC_SOCKET_PATH",
             {
               infer: true,
             },
           );
 
-          const grpcUrl = firewallSocketPath.startsWith('unix://')
+          const grpcUrl = firewallSocketPath.startsWith("unix://")
             ? firewallSocketPath
             : `unix://${join(process.cwd(), firewallSocketPath)}`;
 
           return {
             transport: Transport.GRPC,
             options: {
-              package: 'raptorgate.services',
+              package: "raptorgate.services",
               protoPath: join(
                 process.cwd(),
-                '..',
-                'proto',
-                'services',
-                'config_snapshot_service.proto',
+                "..",
+                "proto",
+                "services",
+                "config_snapshot_service.proto",
               ),
               loader: {
-                includeDirs: [join(process.cwd(), '..', 'proto')],
+                includeDirs: [join(process.cwd(), "..", "proto")],
               },
               url: grpcUrl,
             },
@@ -120,21 +127,54 @@ import { SecretModule } from './secret.module.js';
         inject: [ConfigService],
       },
       {
+        name: FIREWALL_QUERY_GRPC_CLIENT_TOKEN,
+        useFactory: (configService: ConfigService<Env, true>) => {
+          const firewallQuerySocketPath = configService.get(
+            "FIREWALL_QUERY_GRPC_SOCKET_PATH",
+            { infer: true },
+          );
+
+          const resolveGrpcUrl = (path: string): string =>
+            path.startsWith("unix://")
+              ? path
+              : `unix://${join(process.cwd(), path)}`;
+
+          return {
+            transport: Transport.GRPC,
+            options: {
+              package: "raptorgate.services",
+              protoPath: join(
+                process.cwd(),
+                "..",
+                "proto",
+                "services",
+                "query_service.proto",
+              ),
+              loader: {
+                includeDirs: [join(process.cwd(), "..", "proto")],
+              },
+              url: resolveGrpcUrl(firewallQuerySocketPath),
+            },
+          };
+        },
+        inject: [ConfigService],
+      },
+      {
         name: RAPTOR_LANG_VALIDATION_GRPC_CLIENT_TOKEN,
         useFactory: (configService: ConfigService<Env, true>) => {
-          const backendSocketPath = configService.get('GRPC_SOCKET_PATH', {
+          const backendSocketPath = configService.get("GRPC_SOCKET_PATH", {
             infer: true,
           });
 
           const firewallSocketPath = configService.get(
-            'FIREWALL_GRPC_SOCKET_PATH',
+            "FIREWALL_GRPC_SOCKET_PATH",
             {
               infer: true,
             },
           );
 
           const resolveGrpcUrl = (path: string): string =>
-            path.startsWith('unix://')
+            path.startsWith("unix://")
               ? path
               : `unix://${join(process.cwd(), path)}`;
 
@@ -143,7 +183,7 @@ import { SecretModule } from './secret.module.js';
 
           if (backendGrpcUrl === firewallGrpcUrl) {
             throw new Error(
-              'FIREWALL_GRPC_SOCKET_PATH must point to firewall validation service and cannot equal GRPC_SOCKET_PATH.',
+              "FIREWALL_GRPC_SOCKET_PATH must point to firewall validation service and cannot equal GRPC_SOCKET_PATH.",
             );
           }
 
@@ -152,16 +192,16 @@ import { SecretModule } from './secret.module.js';
           return {
             transport: Transport.GRPC,
             options: {
-              package: 'raptorgate.control',
+              package: "raptorgate.control",
               protoPath: join(
                 process.cwd(),
-                '..',
-                'proto',
-                'control',
-                'validation_service.proto',
+                "..",
+                "proto",
+                "control",
+                "validation_service.proto",
               ),
               loader: {
-                includeDirs: [join(process.cwd(), '..', 'proto')],
+                includeDirs: [join(process.cwd(), "..", "proto")],
               },
               url: grpcUrl,
             },
@@ -171,7 +211,11 @@ import { SecretModule } from './secret.module.js';
       },
     ]),
   ],
-  controllers: [ConfigController, DecryptionMirrorController, IdentityConfigController],
+  controllers: [
+    ConfigController,
+    DecryptionMirrorController,
+    IdentityConfigController,
+  ],
   providers: [
     ApplyConfigSnapshotUseCase,
     CreateAuthenticationProfileUseCase,
@@ -221,6 +265,14 @@ import { SecretModule } from './secret.module.js';
     {
       provide: NAT_RULES_REPOSITORY_TOKEN,
       useClass: JsonNatRuleRepository,
+    },
+    {
+      provide: DNS_INSPECTION_REPOSITORY_TOKEN,
+      useClass: JsonDnsInspectionRepository,
+    },
+    {
+      provide: IPS_CONFIG_REPOSITORY_TOKEN,
+      useClass: JsonIpsConfigRepository,
     },
     {
       provide: PERMISSION_REPOSITORY_TOKEN,
@@ -273,6 +325,10 @@ import { SecretModule } from './secret.module.js';
     {
       provide: RAPTOR_LANG_VALIDATION_SERVICE_TOKEN,
       useClass: GrpcRaptorLangValidationService,
+    },
+    {
+      provide: FIREWALL_ZONE_QUERY_SERVICE_TOKEN,
+      useClass: GrpcFirewallZoneQueryService,
     },
     JwtService,
   ],

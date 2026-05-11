@@ -1,32 +1,208 @@
 pub mod wrappers;
 
-use std::any::Any;
+use std::collections::VecDeque;
+
+use tokio::sync::mpsc;
 
 use crate::data_plane::packet_context::PacketContext;
 
-pub trait Stage: Send + Sync {
-    fn is_applicable(&self, ctx: &PacketContext) -> bool { true }
-    fn process(&self, ctx: &mut PacketContext) -> impl std::future::Future<Output = StageOutcome> + Send;
+#[derive(Debug)]
+pub enum ExecutionAction { Forward, Drop }
+
+#[derive(Debug)]
+pub struct ExecutionItem {
+    pub packet: PacketContext,
+    pub action: ExecutionAction,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum StageOutcome { Continue, Halt }
+pub type ExecutionSender = mpsc::UnboundedSender<ExecutionItem>;
+pub type ExecutionReceiver = mpsc::UnboundedReceiver<ExecutionItem>;
+
+pub struct ExecutionSink {
+    tun: std::sync::Arc<crate::data_plane::tun_forwarder::TunForwarder>,
+    metrics: std::sync::Arc<crate::metrics::MetricsCollector>,
+    receiver: ExecutionReceiver,
+}
+
+impl ExecutionSink {
+    pub fn new(
+        tun: std::sync::Arc<crate::data_plane::tun_forwarder::TunForwarder>,
+        metrics: std::sync::Arc<crate::metrics::MetricsCollector>,
+        receiver: ExecutionReceiver,
+    ) -> Self {
+        Self { tun, metrics, receiver }
+    }
+
+    pub async fn run(mut self) {
+        while let Some(item) = self.receiver.recv().await {
+            match item.action {
+                ExecutionAction::Forward => self.tun.forward(&item.packet).await,
+                ExecutionAction::Drop => self.metrics.observe_drop(),
+            }
+        }
+    }
+}
+
+pub trait Stage: Send + Sync {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool { true }
+    fn process(&self, ctx: &mut PacketContext, tx: &ExecutionSender) -> impl std::future::Future<Output = StageOutcome> + Send;
+}
+
+#[derive(Debug, Clone)]
+pub enum StageOutcome { Continue, Halt, ReleaseBatch(VecDeque<PacketContext>) }
+
+impl PartialEq for StageOutcome {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (StageOutcome::ReleaseBatch(_), StageOutcome::ReleaseBatch(_)) => { true }
+            (StageOutcome::Continue, StageOutcome::Continue) => { true }
+            (StageOutcome::Halt, StageOutcome::Halt) => { true }
+            (_, _) => { false }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Chain<A: Stage + Clone, B: Stage + Clone> { pub head: A, pub tail: B }
 impl<A, B> Stage for Chain<A, B> where A: Stage + Clone, B: Stage + Clone {
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
-        tracing::debug!(intf = %ctx.borrow_src_interface(), protocol = ?ctx.borrow_sliced_packet().transport, "iface for policy");
-        
-
+    async fn process(&self, ctx: &mut PacketContext, tx: &ExecutionSender) -> StageOutcome {
         let outcome = if self.head.is_applicable(ctx) {
-            self.head.process(ctx).await
+            self.head.process(ctx, tx).await
         } else {
             StageOutcome::Continue
         };
         match outcome {
-            StageOutcome::Continue => self.tail.process(ctx).await,
-            StageOutcome::Halt     => StageOutcome::Halt,
+            StageOutcome::Continue => self.tail.process(ctx, tx).await,
+            StageOutcome::Halt => {
+                let _ = tx.send(ExecutionItem { packet: ctx.clone(), action: ExecutionAction::Drop });
+                StageOutcome::Halt
+            }
+            StageOutcome::ReleaseBatch(packets) => {
+                for mut packet in packets {
+                    self.tail.process(&mut packet, tx).await;
+                }
+                StageOutcome::Halt
+            }
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct ExecutionStage {
+    pub tx: ExecutionSender,
+}
+
+impl Stage for ExecutionStage {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+        let _ = self.tx.send(ExecutionItem { packet: ctx.clone(), action: ExecutionAction::Forward });
+        StageOutcome::Continue
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[derive(Clone)]
+    struct PassStage;
+    impl Stage for PassStage {
+        async fn process(&self, _ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+            StageOutcome::Continue
+        }
+    }
+
+    #[derive(Clone)]
+    struct HaltStage;
+    impl Stage for HaltStage {
+        async fn process(&self, _ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+            StageOutcome::Halt
+        }
+    }
+
+    #[derive(Clone)]
+    struct ReleaseBatchStage;
+    impl Stage for ReleaseBatchStage {
+        async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+            let mut batch = VecDeque::new();
+            batch.push_back(ctx.clone());
+            batch.push_back(ctx.clone());
+            StageOutcome::ReleaseBatch(batch)
+        }
+    }
+
+    fn test_packet() -> PacketContext {
+        use etherparse::PacketBuilder;
+        let mut raw = Vec::new();
+        PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+            .tcp(12345, 80, 1, 65535)
+            .write(&mut raw, b"test")
+            .unwrap();
+        PacketContext::from_raw(raw, Arc::from("eth0")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn execution_stage_emits_forward() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let stage = ExecutionStage { tx: tx.clone() };
+        let mut ctx = test_packet();
+
+        let outcome = stage.process(&mut ctx, &tx).await;
+
+        assert!(matches!(outcome, StageOutcome::Continue));
+        let item = rx.recv().await.unwrap();
+        assert!(matches!(item.action, ExecutionAction::Forward));
+    }
+
+    #[tokio::test]
+    async fn chain_emits_drop_on_halt() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let chain = Chain {
+            head: HaltStage,
+            tail: PassStage,
+        };
+        let mut ctx = test_packet();
+
+        let outcome = chain.process(&mut ctx, &tx).await;
+
+        assert!(matches!(outcome, StageOutcome::Halt));
+        let item = rx.recv().await.unwrap();
+        assert!(matches!(item.action, ExecutionAction::Drop));
+    }
+
+    #[tokio::test]
+    async fn chain_replays_batch_through_tail() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let chain = Chain {
+            head: ReleaseBatchStage,
+            tail: ExecutionStage { tx: tx.clone() },
+        };
+        let mut ctx = test_packet();
+
+        let outcome = chain.process(&mut ctx, &tx).await;
+
+        assert!(matches!(outcome, StageOutcome::Halt));
+        
+        let item1 = rx.recv().await.unwrap();
+        assert!(matches!(item1.action, ExecutionAction::Forward));
+        
+        let item2 = rx.recv().await.unwrap();
+        assert!(matches!(item2.action, ExecutionAction::Forward));
+    }
+
+    #[tokio::test]
+    async fn normal_packet_reaches_execution_stage() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let chain = Chain {
+            head: PassStage,
+            tail: ExecutionStage { tx: tx.clone() },
+        };
+        let mut ctx = test_packet();
+
+        chain.process(&mut ctx, &tx).await;
+
+        let item = rx.recv().await.unwrap();
+        assert!(matches!(item.action, ExecutionAction::Forward));
     }
 }

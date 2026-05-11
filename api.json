@@ -832,6 +832,191 @@
         ]
       }
     },
+    "/config/factory-reset": {
+      "post": {
+        "description": "Resets firewall local configuration to safe defaults and removes working key material on the firewall.",
+        "operationId": "ConfigController_factoryReset",
+        "parameters": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FactoryResetDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 200
+                        },
+                        "message": {
+                          "example": "Firewall factory reset completed"
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/FactoryResetResponseDto"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 400
+                        },
+                        "message": {
+                          "example": "Validation failed"
+                        },
+                        "error": {
+                          "example": "Bad Request"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 401
+                        },
+                        "message": {
+                          "example": "Access token is missing, invalid, or expired"
+                        },
+                        "error": {
+                          "example": "Unauthorized"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 403
+                        },
+                        "message": {
+                          "example": "Insufficient permissions to factory reset firewall"
+                        },
+                        "error": {
+                          "example": "Forbidden"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 429
+                        },
+                        "message": {
+                          "example": "Too many requests"
+                        },
+                        "error": {
+                          "example": "Too Many Requests"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvelopeDto"
+                    },
+                    {
+                      "properties": {
+                        "statusCode": {
+                          "example": 500
+                        },
+                        "message": {
+                          "example": "Internal server error while factory resetting firewall"
+                        },
+                        "error": {
+                          "example": "Internal Server Error"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Factory reset firewall configuration",
+        "tags": [
+          "Config"
+        ]
+      }
+    },
     "/config/export": {
       "get": {
         "description": "Exports the active configuration snapshot. This will return the current active configuration in a format that can be saved or used for backup purposes.",
@@ -8043,6 +8228,65 @@
           "createdBy"
         ]
       },
+      "FactoryResetResponseDto": {
+        "type": "object",
+        "properties": {
+          "correlationId": {
+            "type": "string",
+            "example": "123e4567-e89b-12d3-a456-426614174000"
+          },
+          "accepted": {
+            "type": "boolean",
+            "example": true
+          },
+          "message": {
+            "type": "string",
+            "example": ""
+          },
+          "safeStateApplied": {
+            "type": "boolean",
+            "example": true
+          },
+          "removedServerKeys": {
+            "type": "number",
+            "example": 2
+          },
+          "removedServerKeyFiles": {
+            "type": "number",
+            "example": 4
+          },
+          "removedCaFiles": {
+            "type": "number",
+            "example": 6
+          }
+        },
+        "required": [
+          "correlationId",
+          "accepted",
+          "message",
+          "safeStateApplied",
+          "removedServerKeys",
+          "removedServerKeyFiles",
+          "removedCaFiles"
+        ]
+      },
+      "FactoryResetDto": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "example": "operator requested reset"
+          },
+          "clearPki": {
+            "type": "boolean",
+            "default": true
+          },
+          "clearServerKeys": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
       "ExportConfigResponseDto": {
         "type": "object",
         "properties": {
@@ -9684,60 +9928,84 @@
             "type": "string",
             "example": "123e4567-e89b-12d3-a456-426614174000"
           },
-          "type": {
-            "type": "string",
-            "example": "SNAT",
-            "enum": [
-              "SNAT",
-              "DNAT",
-              "PAT"
-            ]
-          },
           "isActive": {
             "type": "boolean",
             "example": true
-          },
-          "sourceIp": {
-            "type": "object",
-            "example": "192.168.1.10",
-            "nullable": true
-          },
-          "destinationIp": {
-            "type": "object",
-            "example": "10.0.0.5",
-            "nullable": true
-          },
-          "sourcePort": {
-            "type": "object",
-            "example": 443,
-            "nullable": true,
-            "minimum": 1,
-            "maximum": 65535
-          },
-          "destinationPort": {
-            "type": "object",
-            "example": 8080,
-            "nullable": true,
-            "minimum": 1,
-            "maximum": 65535
-          },
-          "translatedIp": {
-            "type": "object",
-            "example": "172.16.0.20",
-            "nullable": true
-          },
-          "translatedPort": {
-            "type": "object",
-            "example": 8443,
-            "nullable": true,
-            "minimum": 1,
-            "maximum": 65535
           },
           "priority": {
             "type": "number",
             "example": 10,
             "minimum": 1,
             "maximum": 100
+          },
+          "protocol": {
+            "type": "number",
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              -1
+            ],
+            "example": 0
+          },
+          "inInterface": {
+            "type": "object",
+            "example": "lan0",
+            "nullable": true
+          },
+          "outInterface": {
+            "type": "object",
+            "example": "wan0",
+            "nullable": true
+          },
+          "inZone": {
+            "type": "object",
+            "example": "lan",
+            "nullable": true
+          },
+          "outZone": {
+            "type": "object",
+            "example": "wan",
+            "nullable": true
+          },
+          "matchSrcPortMin": {
+            "type": "object",
+            "example": 1024,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "matchSrcPortMax": {
+            "type": "object",
+            "example": 65535,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "matchDstPortMin": {
+            "type": "object",
+            "example": 443,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "matchDstPortMax": {
+            "type": "object",
+            "example": 443,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "action": {
+            "type": "object",
+            "example": {
+              "$case": "dnat",
+              "dnat": {
+                "dstCidr": "203.0.113.10/32",
+                "translatedIp": "10.0.0.10"
+              }
+            }
           },
           "createdAt": {
             "type": "string",
@@ -9750,9 +10018,10 @@
         },
         "required": [
           "id",
-          "type",
           "isActive",
           "priority",
+          "protocol",
+          "action",
           "createdAt",
           "updatedAt"
         ]
@@ -9789,66 +10058,90 @@
       "CreateNatRuleDto": {
         "type": "object",
         "properties": {
-          "type": {
-            "type": "string",
-            "example": "SNAT",
-            "enum": [
-              "SNAT",
-              "DNAT",
-              "PAT"
-            ]
-          },
           "isActive": {
             "type": "boolean",
             "example": true
-          },
-          "sourceIp": {
-            "type": "object",
-            "example": "192.168.1.10",
-            "nullable": true
-          },
-          "destinationIp": {
-            "type": "object",
-            "example": "10.0.0.5",
-            "nullable": true
-          },
-          "sourcePort": {
-            "type": "object",
-            "example": 443,
-            "nullable": true,
-            "minimum": 1,
-            "maximum": 65535
-          },
-          "destinationPort": {
-            "type": "object",
-            "example": 8080,
-            "nullable": true,
-            "minimum": 1,
-            "maximum": 65535
-          },
-          "translatedIp": {
-            "type": "object",
-            "example": "172.16.0.20",
-            "nullable": true
-          },
-          "translatedPort": {
-            "type": "object",
-            "example": 8443,
-            "nullable": true,
-            "minimum": 1,
-            "maximum": 65535
           },
           "priority": {
             "type": "number",
             "example": 10,
             "minimum": 1,
             "maximum": 100
+          },
+          "protocol": {
+            "type": "string",
+            "example": "NAT_PROTOCOL_ALL",
+            "enum": [
+              "NAT_PROTOCOL_ALL",
+              "NAT_PROTOCOL_TCP",
+              "NAT_PROTOCOL_UDP",
+              "NAT_PROTOCOL_ICMP"
+            ]
+          },
+          "inInterface": {
+            "type": "object",
+            "example": "lan0",
+            "nullable": true
+          },
+          "outInterface": {
+            "type": "object",
+            "example": "wan0",
+            "nullable": true
+          },
+          "inZone": {
+            "type": "object",
+            "example": "lan",
+            "nullable": true
+          },
+          "outZone": {
+            "type": "object",
+            "example": "wan",
+            "nullable": true
+          },
+          "matchSrcPortMin": {
+            "type": "object",
+            "example": 1024,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "matchSrcPortMax": {
+            "type": "object",
+            "example": 65535,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "matchDstPortMin": {
+            "type": "object",
+            "example": 443,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "matchDstPortMax": {
+            "type": "object",
+            "example": 443,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "action": {
+            "type": "object",
+            "example": {
+              "$case": "dnat",
+              "dnat": {
+                "dstCidr": "203.0.113.10/32",
+                "translatedIp": "10.0.0.10"
+              }
+            }
           }
         },
         "required": [
-          "type",
           "isActive",
-          "priority"
+          "priority",
+          "protocol",
+          "action"
         ]
       },
       "GetAllNatRulesResponseDto": {
@@ -9922,60 +10215,85 @@
       "EditNatRuleDto": {
         "type": "object",
         "properties": {
-          "type": {
-            "type": "string",
-            "example": "DNAT",
-            "enum": [
-              "SNAT",
-              "DNAT",
-              "PAT"
-            ]
-          },
           "isActive": {
             "type": "boolean",
             "example": true
-          },
-          "sourceIp": {
-            "type": "object",
-            "example": "192.168.1.10",
-            "nullable": true
-          },
-          "destinationIp": {
-            "type": "object",
-            "example": "10.0.0.5",
-            "nullable": true
-          },
-          "sourcePort": {
-            "type": "object",
-            "example": 443,
-            "nullable": true,
-            "minimum": 1,
-            "maximum": 65535
-          },
-          "destinationPort": {
-            "type": "object",
-            "example": 8080,
-            "nullable": true,
-            "minimum": 1,
-            "maximum": 65535
-          },
-          "translatedIp": {
-            "type": "object",
-            "example": "172.16.0.20",
-            "nullable": true
-          },
-          "translatedPort": {
-            "type": "object",
-            "example": 8443,
-            "nullable": true,
-            "minimum": 1,
-            "maximum": 65535
           },
           "priority": {
             "type": "number",
             "example": 10,
             "minimum": 1,
             "maximum": 100
+          },
+          "protocol": {
+            "type": "string",
+            "example": "NAT_PROTOCOL_ALL",
+            "enum": [
+              "NAT_PROTOCOL_ALL",
+              "NAT_PROTOCOL_TCP",
+              "NAT_PROTOCOL_UDP",
+              "NAT_PROTOCOL_ICMP"
+            ]
+          },
+          "inInterface": {
+            "type": "object",
+            "example": "lan0",
+            "nullable": true
+          },
+          "outInterface": {
+            "type": "object",
+            "example": "wan0",
+            "nullable": true
+          },
+          "inZone": {
+            "type": "object",
+            "example": "lan",
+            "nullable": true
+          },
+          "outZone": {
+            "type": "object",
+            "example": "wan",
+            "nullable": true
+          },
+          "matchSrcPortMin": {
+            "type": "object",
+            "example": 1024,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "matchSrcPortMax": {
+            "type": "object",
+            "example": 65535,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "matchDstPortMin": {
+            "type": "object",
+            "example": 443,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "matchDstPortMax": {
+            "type": "object",
+            "example": 443,
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "action": {
+            "type": "object",
+            "example": {
+              "$case": "pat",
+              "pat": {
+                "dstIp": "203.0.113.10",
+                "dstPort": 443,
+                "translatedIp": "10.0.0.10",
+                "translatedPort": 8443
+              }
+            }
           }
         }
       },

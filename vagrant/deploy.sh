@@ -150,7 +150,7 @@ rm -rf .router_sync/proto && mkdir -p .router_sync/proto
 rm -rf .router_sync/logrotate && mkdir -p .router_sync/logrotate
 rm -rf .router_sync/nginx && mkdir -p .router_sync/nginx
 rm -rf .router_sync/vector && mkdir -p .router_sync/vector
-rm -rf .router_sync/"$PROJECT_NAME"/ml && mkdir -p .router_sync/"$PROJECT_NAME"/ml
+rm -rf .router_sync/"$PROJECT_NAME" && mkdir -p .router_sync/"$PROJECT_NAME"/ml
 cp -f ../bin/"$PROJECT_NAME" .router_sync/"$PROJECT_NAME"/"$PROJECT_NAME"
 cp -f \
   ../"$MODEL_SRC"/"$MODEL_NAME".onnx \

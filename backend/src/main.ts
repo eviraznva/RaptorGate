@@ -176,6 +176,7 @@ async function bootstrap() {
   logger.log(`API: https://localhost:${httpPort}/api`);
   logger.log(`Docs: https://localhost:${httpPort}/reference`);
   logger.log(`Metrics WS: wss://localhost:${metricsWsPort}/metrics`);
+  logger.log(`Sessions WS: wss://localhost:${metricsWsPort}/sessions`);
   logger.log(`Alerts WS: wss://localhost:${alertsWsPort}/alerts`);
 }
 
