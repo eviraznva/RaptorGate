@@ -188,6 +188,8 @@ foreign_keys!(Policy { zone_pair_id: ZonePairId });
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     const EXPECTED_IDENTITY_RULES: [&str; 4] = [
         "Identity pre-auth portal gate",
@@ -213,5 +215,53 @@ mod tests {
         for item in items {
             parse_rule_tree(item["content"].as_str().unwrap()).unwrap();
         }
+    }
+
+    #[test]
+    fn policy_serde_roundtrip() {
+        let policy = Policy {
+            name: "Allow SMTP from trusted domains".to_string(),
+            zone_pair_id: ZonePairId::from(Uuid::parse_str("60a19f28-39de-493a-a5f2-e47301149e36").unwrap()),
+            priority: 10,
+            rule_tree: RuleTree::new(parse_rule_tree("match protocol { = tcp : verdict allow }").unwrap()),
+            smtp_policy: SmtpPolicy {
+                sender: vec![SmtpMatch {
+                    regex: Regex::new(r"^.*@trusted\\.com$").unwrap(),
+                    on_match: SmtpMatchAction::Allow,
+                }],
+                recipient: vec![SmtpMatch {
+                    regex: Regex::new(r"^ops@company\\.com$").unwrap(),
+                    on_match: SmtpMatchAction::Deny,
+                }],
+                message: vec![SmtpMatch {
+                    regex: Regex::new(r"^urgent:").unwrap(),
+                    on_match: SmtpMatchAction::Allow,
+                }],
+            },
+        };
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("policy.json");
+        let serialized = serde_json::to_string_pretty(&policy).unwrap();
+        fs::write(&path, serialized).unwrap();
+
+        let loaded = fs::read_to_string(&path).unwrap();
+        let roundtrip: Policy = serde_json::from_str(&loaded).unwrap();
+
+        assert_eq!(policy.name, roundtrip.name);
+        assert_eq!(policy.zone_pair_id, roundtrip.zone_pair_id);
+        assert_eq!(policy.priority, roundtrip.priority);
+        assert_eq!(policy.rule_tree.to_string(), roundtrip.rule_tree.to_string());
+
+        let to_pairs = |items: &[SmtpMatch]| -> Vec<(String, SmtpMatchAction)> {
+            items
+                .iter()
+                .map(|item| (item.regex.as_str().to_string(), item.on_match))
+                .collect()
+        };
+
+        assert_eq!(to_pairs(&policy.smtp_policy.sender), to_pairs(&roundtrip.smtp_policy.sender));
+        assert_eq!(to_pairs(&policy.smtp_policy.recipient), to_pairs(&roundtrip.smtp_policy.recipient));
+        assert_eq!(to_pairs(&policy.smtp_policy.message), to_pairs(&roundtrip.smtp_policy.message));
     }
 }

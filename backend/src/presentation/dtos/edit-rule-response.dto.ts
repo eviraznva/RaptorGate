@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { SmtpMatchersDto } from './smtp-matchers.dto';
 
 export class EditRuleResponseDto {
   @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
@@ -30,4 +31,7 @@ export class EditRuleResponseDto {
 
   @ApiProperty({ example: '345e4567-e89b-12d3-a456-426614174000' })
   createdBy: string;
+
+  @ApiProperty({ type: SmtpMatchersDto })
+  smtpMatchers: SmtpMatchersDto;
 }

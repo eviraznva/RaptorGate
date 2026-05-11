@@ -83,6 +83,7 @@ export class EditRuleUseCase {
       createdAt: rule.getCreatedAt(),
       updatedAt: rule.getUpdatedAt(),
       createdBy: rule.getCreatedBy(),
+      smtpMatchers: rule.getSmtpMatchers(),
     };
   }
 }

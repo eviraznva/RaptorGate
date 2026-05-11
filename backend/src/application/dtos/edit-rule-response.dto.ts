@@ -1,3 +1,5 @@
+import { SmtpMatchers } from '../../domain/value-objects/smtp-matchers.vo.js';
+
 export class EditRuleResponseDto {
   id: string;
   name: string;
@@ -9,4 +11,5 @@ export class EditRuleResponseDto {
   createdAt: Date;
   updatedAt: Date;
   createdBy: string;
+  smtpMatchers: SmtpMatchers;
 }
