@@ -140,7 +140,7 @@ async fn main() {
         tracing_subscriber::fmt()
             .with_env_filter(
                 tracing_subscriber::EnvFilter::try_from_env("RAPTORGATE_LOG_LEVEL")
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("debug")),
             )
             .with_target(false)
             .with_thread_ids(false)

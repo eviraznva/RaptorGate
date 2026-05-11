@@ -1,19 +1,19 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-use arc_swap::ArcSwap;
-use regex::bytes::Regex;
-use anyhow::{Context, Result};
-use etherparse::TransportSlice;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
+use anyhow::{Context, Result};
+use arc_swap::ArcSwap;
+use etherparse::TransportSlice;
+use regex::bytes::Regex;
 
 use crate::data_plane::ips::config::{
-    IpsAction, IpsAppProtocol, IpsConfig, IpsMatchType, IpsSeverity, IpsSignatureConfig,
-    decode_literal_pattern,
+    decode_literal_pattern, IpsAction, IpsAppProtocol, IpsConfig, IpsMatchType, IpsSeverity,
+    IpsSignatureConfig,
 };
 
-use crate::dpi::AppProto;
 use crate::data_plane::packet_context::PacketContext;
+use crate::dpi::AppProto;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpsVerdict {
@@ -103,8 +103,8 @@ impl Ips {
             .and_then(|dpi_ctx| {
                 (dpi_ctx.app_proto == Some(AppProto::Http)
                     && dpi_ctx.http_version.as_deref() == Some("2"))
-                    .then_some(dpi_ctx.http_normalized_payload.as_deref())
-                    .flatten()
+                .then_some(dpi_ctx.http_normalized_payload.as_deref())
+                .flatten()
             })
             .unwrap_or(payload);
         let inspected = if inspected_payload.len() > state.max_payload_bytes {
@@ -163,18 +163,20 @@ impl CompiledIpsState {
         let mut literal_ci_signatures = Vec::new();
         let mut regex_signatures = Vec::new();
 
-        for signature in config.signatures.iter().filter(|signature| signature.enabled) {
+        for signature in config
+            .signatures
+            .iter()
+            .filter(|signature| signature.enabled)
+        {
             let compiled = CompiledSignature::from_config(signature);
 
             match signature.match_type {
                 IpsMatchType::Literal => {
-                    let pattern = decode_literal_pattern(
-                        &signature.pattern,
-                        signature.pattern_encoding,
-                    )
-                    .with_context(|| {
-                        format!("failed to decode ips signature '{}'", signature.id)
-                    })?;
+                    let pattern =
+                        decode_literal_pattern(&signature.pattern, signature.pattern_encoding)
+                            .with_context(|| {
+                                format!("failed to decode ips signature '{}'", signature.id)
+                            })?;
 
                     if signature.case_insensitive {
                         literal_ci_patterns.push(pattern);
@@ -241,7 +243,10 @@ impl CompiledIpsState {
             if matches >= self.max_matches_per_packet {
                 break;
             }
-            if !signature.signature.matches_filters(app_proto, src_port, dst_port) {
+            if !signature
+                .signature
+                .matches_filters(app_proto, src_port, dst_port)
+            {
                 continue;
             }
             if !signature.regex.is_match(payload) {
@@ -447,7 +452,11 @@ mod tests {
         )
     }
 
-    fn build_tcp_packet_with_ctx(payload: &[u8], dst_port: u16, dpi_ctx: DpiContext) -> PacketContext {
+    fn build_tcp_packet_with_ctx(
+        payload: &[u8],
+        dst_port: u16,
+        dpi_ctx: DpiContext,
+    ) -> PacketContext {
         let builder = PacketBuilder::ethernet2([1, 1, 1, 1, 1, 1], [2, 2, 2, 2, 2, 2])
             .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
             .tcp(12345, dst_port, 1, 1024);
@@ -464,6 +473,10 @@ mod tests {
             SystemTime::now(),
             Some(dpi_ctx),
             None,
+            None,
+            None,
+            None,
+            false,
         )
         .expect("packet context should parse")
     }
@@ -486,7 +499,9 @@ mod tests {
         );
 
         let verdict = ips.inspect_packet(&ctx);
-        assert!(matches!(verdict, IpsVerdict::Alert(matches) if matches.iter().any(|matched| matched.name == "Curl UA")));
+        assert!(
+            matches!(verdict, IpsVerdict::Alert(matches) if matches.iter().any(|matched| matched.name == "Curl UA"))
+        );
     }
 
     #[test]
@@ -509,6 +524,10 @@ mod tests {
             SystemTime::now(),
             None,
             None,
+            None,
+            None,
+            None,
+            false,
         )
         .expect("packet context should parse");
 

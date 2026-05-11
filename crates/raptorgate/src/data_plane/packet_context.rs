@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use ouroboros::self_referencing;
 use etherparse::{err::packet, SlicedPacket};
+use ouroboros::self_referencing;
 
+use crate::conntrack::entry::{ConntrackEntry, CtInfo};
+use crate::conntrack::tuple::Direction;
 use crate::dpi::DpiContext;
 use crate::identity::IdentityContext;
 use crate::ml::MlFeatureVector;
-use crate::conntrack::tuple::Direction;
-use crate::conntrack::entry::{ConntrackEntry, CtInfo};
 
 #[self_referencing]
 #[derive(Debug)]
@@ -40,7 +40,12 @@ impl Clone for PacketContext {
             *self.borrow_arrival_time(),
             self.borrow_dpi_ctx().clone(),
             self.borrow_identity_ctx().clone(),
-        ).expect("cloning PacketContext should never fail since it's already been parsed once")
+            self.borrow_ct_entry().clone(),
+            *self.borrow_ct_info(),
+            *self.borrow_ct_direction(),
+            *self.borrow_ct_is_new(),
+        )
+        .expect("cloning PacketContext should never fail since it's already been parsed once")
     }
 }
 
@@ -53,6 +58,10 @@ impl PacketContext {
             SystemTime::now(),
             None,
             None,
+            None,
+            None,
+            None,
+            false,
         )
     }
 
@@ -63,6 +72,10 @@ impl PacketContext {
         arrival_time: SystemTime,
         dpi_ctx: Option<DpiContext>,
         identity_ctx: Option<IdentityContext>,
+        ct_entry: Option<Arc<ConntrackEntry>>,
+        ct_info: Option<CtInfo>,
+        ct_direction: Option<Direction>,
+        ct_is_new: bool,
     ) -> Result<Self, packet::SliceError> {
         let mut ctx = PacketContextTryBuilder {
             src_interface,
@@ -73,10 +86,10 @@ impl PacketContext {
             dpi_ctx,
             identity_ctx,
             ml_feature_vector: MlFeatureVector::default(),
-            ct_entry: None,
-            ct_info: None,
-            ct_direction: None,
-            ct_is_new: false,
+            ct_entry,
+            ct_info,
+            ct_direction,
+            ct_is_new,
         }
         .try_build()?;
 
@@ -90,7 +103,13 @@ impl PacketContext {
         Ok(ctx)
     }
 
-    pub fn set_conntrack(&mut self, entry: Arc<ConntrackEntry>, info: CtInfo, dir: Direction, is_new: bool) {
+    pub fn set_conntrack(
+        &mut self,
+        entry: Arc<ConntrackEntry>,
+        info: CtInfo,
+        dir: Direction,
+        is_new: bool,
+    ) {
         self.with_mut(|fields| {
             *fields.ct_entry = Some(entry);
             *fields.ct_info = Some(info);
@@ -99,8 +118,16 @@ impl PacketContext {
         });
     }
 
-    pub fn ct(&self) -> Option<&Arc<ConntrackEntry>> { self.borrow_ct_entry().as_ref() }
-    pub fn ct_info(&self) -> Option<CtInfo> { *self.borrow_ct_info() }
-    pub fn ct_direction(&self) -> Option<Direction> { *self.borrow_ct_direction() }
-    pub fn ct_is_new(&self) -> bool { *self.borrow_ct_is_new() }
+    pub fn ct(&self) -> Option<&Arc<ConntrackEntry>> {
+        self.borrow_ct_entry().as_ref()
+    }
+    pub fn ct_info(&self) -> Option<CtInfo> {
+        *self.borrow_ct_info()
+    }
+    pub fn ct_direction(&self) -> Option<Direction> {
+        *self.borrow_ct_direction()
+    }
+    pub fn ct_is_new(&self) -> bool {
+        *self.borrow_ct_is_new()
+    }
 }

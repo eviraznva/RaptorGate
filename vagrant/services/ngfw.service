@@ -22,7 +22,7 @@ Environment="CONTROL_PLANE_GRPC_SOCKET_PATH=/resources/ngfw/sockets/control-plan
 Environment="SERVER_CERT_GRPC_SOCKET_PATH=/resources/ngfw/sockets/server-cert.sock"
 Environment="DUMMY_NAT_ENABLED=true"
 Environment="DUMMY_NAT_ALLOW_ALL=true"
-Environment="RAPTORGATE_LOG_LEVEL=debug,ngfw::conntrack=debug,ngfw::pipeline::wrappers=debug"
+Environment="RAPTORGATE_LOG_LEVEL=debug"
 
 [Install]
 WantedBy=multi-user.target

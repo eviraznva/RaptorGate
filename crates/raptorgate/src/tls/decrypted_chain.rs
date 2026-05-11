@@ -208,6 +208,10 @@ fn build_packet_context(
         arrival_time,
         Some(seed_ctx.clone()),
         identity_ctx,
+        None,
+        None,
+        None,
+        false,
     )
     .context("failed to parse synthetic decrypted packet")
 }
