@@ -1,3 +1,5 @@
+import { SmtpMatchersDto } from '../../presentation/dtos/smtp-matchers.dto';
+
 export class EditRuleDto {
   id: string;
   name?: string;
@@ -6,4 +8,5 @@ export class EditRuleDto {
   isActive?: boolean;
   content?: string;
   priority?: number;
+  smtpMatchers?: SmtpMatchersDto;
 }

@@ -50,6 +50,7 @@ export class CreateRuleUseCase {
       new Date(),
       new Date(),
       claims.sub,
+      dto.smtpMatchers,
     );
 
     await this.rulesRepository.save(newRule);

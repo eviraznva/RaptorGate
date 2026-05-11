@@ -8,8 +8,11 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { SmtpMatchersDto } from './smtp-matchers.dto';
 
 export class EditRuleDto {
   @ApiProperty({
@@ -66,4 +69,12 @@ export class EditRuleDto {
   @Max(100)
   @IsOptional()
   priority: number;
+
+  @ApiProperty({ type: SmtpMatchersDto, required: false })
+  @ValidateNested()
+  @Type(() => SmtpMatchersDto)
+  @IsOptional()
+  smtpMatchers?: SmtpMatchersDto;
+
+  id: string;
 }

@@ -1,3 +1,5 @@
+import { SmtpMatchersDto } from '../../presentation/dtos/smtp-matchers.dto';
+
 export class CreateRuleDto {
   name: string;
   description?: string;
@@ -6,4 +8,5 @@ export class CreateRuleDto {
   content: string;
   priority: number;
   accessToken: string;
+  smtpMatchers: SmtpMatchersDto;
 }

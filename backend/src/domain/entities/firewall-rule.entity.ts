@@ -1,4 +1,8 @@
 import { Priority } from '../value-objects/priority.vo.js';
+import {
+  SmtpMatchers,
+  createEmptySmtpMatchers,
+} from '../value-objects/smtp-matchers.vo.js';
 
 export class FirewallRule {
   private constructor(
@@ -12,6 +16,7 @@ export class FirewallRule {
     private readonly createdAt: Date,
     private updatedAt: Date,
     private readonly createdBy: string,
+    private smtpMatchers: SmtpMatchers,
   ) {}
 
   public static create(
@@ -25,6 +30,7 @@ export class FirewallRule {
     createdAt: Date,
     updatedAt: Date,
     createdBy: string,
+    smtpMatchers?: SmtpMatchers,
   ): FirewallRule {
     return new FirewallRule(
       id,
@@ -37,6 +43,7 @@ export class FirewallRule {
       createdAt,
       updatedAt,
       createdBy,
+      smtpMatchers ?? createEmptySmtpMatchers(),
     );
   }
 
@@ -80,6 +87,10 @@ export class FirewallRule {
     return this.createdBy;
   }
 
+  public getSmtpMatchers(): SmtpMatchers {
+    return this.smtpMatchers;
+  }
+
   public setName(name: string): void {
     this.name = name;
   }
@@ -106,5 +117,9 @@ export class FirewallRule {
 
   public setUpdatedAt(updatedAt: Date): void {
     this.updatedAt = updatedAt;
+  }
+
+  public setSmtpMatchers(smtpMatchers: SmtpMatchers): void {
+    this.smtpMatchers = smtpMatchers;
   }
 }

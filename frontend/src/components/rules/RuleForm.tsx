@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Rule } from "../../types/rules/Rules";
+import type { Rule, SmtpMatchers, SmtpMatch } from "../../types/rules/Rules";
 import type { ApiSuccess } from "../../types/ApiResponse";
 import {
   useCreateRuleMutation,
@@ -29,6 +29,7 @@ interface FormState {
   content: string;
   description: string;
   isActive: boolean;
+  smtpMatchers: SmtpMatchers;
 }
 
 interface FormErrors {
@@ -47,6 +48,12 @@ interface ZonePairSelectOption {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const EMPTY_SMTP_MATCHERS: SmtpMatchers = {
+  sender: [],
+  recipient: [],
+  message: [],
+};
+
 const EMPTY: FormState = {
   name: "",
   priority: "10",
@@ -54,6 +61,7 @@ const EMPTY: FormState = {
   content: "",
   description: "",
   isActive: true,
+  smtpMatchers: EMPTY_SMTP_MATCHERS,
 };
 
 function fromRule(r: Rule): FormState {
@@ -64,6 +72,7 @@ function fromRule(r: Rule): FormState {
     content: r.content,
     description: r.description ?? "",
     isActive: r.isActive,
+    smtpMatchers: r.smtpMatchers ?? EMPTY_SMTP_MATCHERS,
   };
 }
 
@@ -151,6 +160,49 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
     }
   }
 
+  function addSmtpMatcher(
+    category: keyof SmtpMatchers,
+  ) {
+    const newMatch: SmtpMatch = { regex: "", onMatch: "allow" };
+    setForm((prev) => ({
+      ...prev,
+      smtpMatchers: {
+        ...prev.smtpMatchers,
+        [category]: [...prev.smtpMatchers[category], newMatch],
+      },
+    }));
+  }
+
+  function removeSmtpMatcher(
+    category: keyof SmtpMatchers,
+    index: number,
+  ) {
+    setForm((prev) => ({
+      ...prev,
+      smtpMatchers: {
+        ...prev.smtpMatchers,
+        [category]: prev.smtpMatchers[category].filter((_, i) => i !== index),
+      },
+    }));
+  }
+
+  function updateSmtpMatcher(
+    category: keyof SmtpMatchers,
+    index: number,
+    field: keyof SmtpMatch,
+    value: string,
+  ) {
+    setForm((prev) => ({
+      ...prev,
+      smtpMatchers: {
+        ...prev.smtpMatchers,
+        [category]: prev.smtpMatchers[category].map((m, i) =>
+          i === index ? { ...m, [field]: value } : m
+        ),
+      },
+    }));
+  }
+
   const handleSelectZonePair = function (
     e: React.ChangeEvent<HTMLSelectElement>,
   ) {
@@ -175,6 +227,7 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
       isActive: form.isActive,
       content: form.content.trim(),
       priority: Number(form.priority),
+      smtpMatchers: form.smtpMatchers,
     };
 
     try {
@@ -389,6 +442,65 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
               placeholder="Allow outgoing HTTPS traffic to external APIs"
             />
           </div>
+
+          {/* Visual separator */}
+          <div className="border-t border-[#262626]" />
+
+          {/* SMTP Matchers */}
+          {(["sender", "recipient", "message"] as const).map((category) => (
+            <div key={category}>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[10px] text-[#8a8a8a] uppercase tracking-[0.25em]">
+                  SMTP {category}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => addSmtpMatcher(category)}
+                  className="text-[10px] text-[#06b6d4] hover:text-[#0891b2] uppercase tracking-wider"
+                >
+                  + Add
+                </button>
+              </div>
+              {form.smtpMatchers[category].length === 0 ? (
+                <div className="text-[10px] text-[#4a4a4a] italic">
+                  No {category} matchers
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {form.smtpMatchers[category].map((match, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="Regex pattern"
+                        value={match.regex}
+                        onChange={(e) =>
+                          updateSmtpMatcher(category, idx, "regex", e.target.value)
+                        }
+                        className="input text-xs flex-1 font-mono"
+                      />
+                      <select
+                        value={match.onMatch}
+                        onChange={(e) =>
+                          updateSmtpMatcher(category, idx, "onMatch", e.target.value)
+                        }
+                        className="input text-xs w-20"
+                      >
+                        <option value="allow">Allow</option>
+                        <option value="deny">Deny</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => removeSmtpMatcher(category, idx)}
+                        className="text-[#f43f5e] hover:text-[#fb7185] text-sm px-1"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
 
           {/* Is Active toggle */}
           <div className="flex items-center justify-between py-3 border-t border-[#262626]">

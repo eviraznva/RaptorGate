@@ -14,6 +14,7 @@ export class RuleResponseMapper {
       createdBy: rule.getCreatedBy(),
       createdAt: rule.getCreatedAt().toISOString(),
       updatedAt: rule.getUpdatedAt().toISOString(),
+      smtpMatchers: rule.getSmtpMatchers() as RuleItemResponseDto['smtpMatchers'],
     };
   }
 }
