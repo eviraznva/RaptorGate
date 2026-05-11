@@ -23,9 +23,7 @@ use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::nat::{NatConfigProvider, NatEngine};
 use crate::factory_reset::{safe_app_config, FactoryResetOptions, FactoryResetReport};
-use crate::data_plane::tcp_session_tracker::{
-    EndpointIdentifier, TcpClosingState, TcpHandshakeState, TcpSessionState, TcpSessionTracker,
-};
+use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::identity::{IdentitySessionHandler, IdentitySessionStore};
 use crate::metrics::{MetricsCollector, MetricsService};
 use crate::nat::config::NatRules;
@@ -221,30 +219,6 @@ where
         .collect()
 }
 
-<<<<<<< HEAD
-fn tcp_endpoint_into_proto(endpoint: EndpointIdentifier) -> TcpSessionEndpoint {
-    TcpSessionEndpoint {
-        ip: endpoint.ip.to_string(),
-        port: u16::from(endpoint.port) as u32,
-    }
-}
-
-fn tcp_session_state_into_proto(state: TcpSessionState) -> TcpTrackedSessionState {
-    match state {
-        TcpSessionState::Handshake(TcpHandshakeState::SynSent) =>
-            TcpTrackedSessionState::SynSent,
-        TcpSessionState::Handshake(TcpHandshakeState::SynAckReceived) =>
-            TcpTrackedSessionState::SynAckReceived,
-        TcpSessionState::Established => TcpTrackedSessionState::Established,
-        TcpSessionState::Closed => TcpTrackedSessionState::Closed,
-        TcpSessionState::Closing(TcpClosingState::FinSent) => TcpTrackedSessionState::FinSent,
-        TcpSessionState::Closing(TcpClosingState::AckSent) => TcpTrackedSessionState::AckSent,
-        TcpSessionState::Closing(TcpClosingState::AckFinSent) =>
-            TcpTrackedSessionState::AckFinSent,
-        TcpSessionState::TimeWait => TcpTrackedSessionState::TimeWait,
-    }
-}
-
 fn decryption_mirror_config_from_proto(
     config: Option<&crate::proto::config::DecryptionMirrorConfig>,
 ) -> Result<DecryptionMirrorConfig, String> {
@@ -288,8 +262,6 @@ fn decryption_mirror_config_from_proto(
     })
 }
 
-=======
->>>>>>> origin/development
 #[tonic::async_trait]
 impl<Swapper, Monitor, Controller> FirewallQueryService for QueryHandler<Swapper, Monitor, Controller>
 where

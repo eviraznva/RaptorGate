@@ -42,17 +42,10 @@ use crate::dpi::DpiClassifier;
 use crate::identity::IdentitySessionStore;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
 use crate::pipeline::wrappers::{
-<<<<<<< HEAD
-    DnsBlockListStage, DnsEchMitigationStage, DnsTunnelingStage, DpiStage, FtpAlgStage,
-    IdentityLookupStage, IpsStage, LocalOwnershipStage, MetricsStage, MlAlertStage,
-    NatPostroutingStage, NatPreroutingStage, PolicyEvalStage, TcpClassificationStage,
-    TlsPortEnforcementStage, ValidationStage,
-=======
     ConntrackConfirmStage, ConntrackInStage, DnsBlockListStage, DnsEchMitigationStage,
-    DnsTunnelingStage, DpiStage, FtpAlgStage, IpsStage, L4StateStage, LocalOwnershipStage,
+    DnsTunnelingStage, DpiStage, FtpAlgStage, IdentityLookupStage, IpsStage, L4StateStage, LocalOwnershipStage,
     MetricsStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
     TlsPortEnforcementStage, ValidationStage, SmtpStage,
->>>>>>> origin/development
 };
 use crate::pipeline::{Chain, ExecutionSink, ExecutionStage, Stage, StageOutcome};
 use tokio::sync::mpsc;
@@ -93,50 +86,40 @@ async fn main() {
             Chain<
                 LocalOwnershipStage,
                 Chain<
-<<<<<<< HEAD
                     IdentityLookupStage,
-=======
-                    ConntrackInStage,
->>>>>>> origin/development
                     Chain<
-                        DpiStage,
+                        ConntrackInStage,
                         Chain<
-                            TlsPortEnforcementStage,
+                            DpiStage,
                             Chain<
-                                DnsBlockListStage,
+                                TlsPortEnforcementStage,
                                 Chain<
-                                    DnsTunnelingStage,
+                                    DnsBlockListStage,
                                     Chain<
-                                        DnsEchMitigationStage,
+                                        DnsTunnelingStage,
                                         Chain<
-                                            IpsStage,
+                                            DnsEchMitigationStage,
                                             Chain<
-                                                NatPreroutingStage,
+                                                IpsStage,
                                                 Chain<
-<<<<<<< HEAD
-                                                    TcpClassificationStage,
+                                                    NatPreroutingStage,
                                                     Chain<
-                                                        MlAlertStage,
+                                                        L4StateStage,
                                                         Chain<
-                                                            PolicyEvalStage<crate::zones::resolver::RoutingZoneResolver<M>>,
-                                                            Chain<NatPostroutingStage<M>, FtpAlgStage>,
-=======
-                                                    L4StateStage,
-                                                    Chain<
-                                                        MlAlertStage,
-                                                        Chain<
-                                                            PolicyEvalStage<zones::resolver::RoutingZoneResolver<M>>,
+                                                            MlAlertStage,
                                                             Chain<
-                                                                NatPostroutingStage<M>,
+                                                                PolicyEvalStage<zones::resolver::RoutingZoneResolver<M>>,
                                                                 Chain<
-                                                                    FtpAlgStage,
+                                                                    NatPostroutingStage<M>,
                                                                     Chain<
-                                                                        SmtpStage,
-                                                                        Chain<ExecutionStage, ConntrackConfirmStage>,
+                                                                        FtpAlgStage,
+                                                                        Chain<
+                                                                            SmtpStage,
+                                                                            Chain<ExecutionStage, ConntrackConfirmStage>,
+                                                                        >,
                                                                     >,
                                                                 >,
                                                             >,
->>>>>>> origin/development
                                                         >,
                                                     >,
                                                 >,
@@ -538,21 +521,20 @@ async fn main() {
                     local_ips: Arc::new(local_ips.clone()),
                 },
                 tail: Chain {
-<<<<<<< HEAD
                     head: IdentityLookupStage {
                         store: Arc::clone(&identity_sessions),
-=======
-                    head: ConntrackInStage {
-                        ct: Arc::clone(&conntrack),
->>>>>>> origin/development
                     },
                     tail: Chain {
-                        head: DpiStage {
-                            classifier: Arc::clone(&dpi_classifier),
-                            flow_stats: Arc::clone(&ml_flow_stats),
-                            pinning_detector: Some(decision_engine.pinning_detector_arc()),
+                        head: ConntrackInStage {
+                            ct: Arc::clone(&conntrack),
                         },
                         tail: Chain {
+                            head: DpiStage {
+                                classifier: Arc::clone(&dpi_classifier),
+                                flow_stats: Arc::clone(&ml_flow_stats),
+                                pinning_detector: Some(decision_engine.pinning_detector_arc()),
+                            },
+                            tail: Chain {
                             head: TlsPortEnforcementStage {
                                 config_provider: Arc::clone(&config_provider),
                             },
@@ -577,12 +559,7 @@ async fn main() {
                                                     engine: Arc::clone(&nat_engine),
                                                 },
                                                 tail: Chain {
-<<<<<<< HEAD
-                                                    head: TcpClassificationStage {
-                                                        tracker: Arc::clone(&tcp_session_tracker),
-=======
                                                     head: L4StateStage {
->>>>>>> origin/development
                                                         flow_stats: Arc::clone(&ml_flow_stats),
                                                     },
                                                     tail: Chain {
@@ -599,10 +576,6 @@ async fn main() {
                                                                     routing_table: Arc::clone(&routing_table),
                                                                     interface_monitor: Arc::clone(&interface_monitor),
                                                                 },
-<<<<<<< HEAD
-                                                                tail: FtpAlgStage {
-                                                                    engine: Arc::clone(&nat_engine),
-=======
                                                                 tail: Chain {
                                                                     head: FtpAlgStage {
                                                                         conntrack: Arc::clone(&conntrack),
@@ -619,7 +592,6 @@ async fn main() {
                                                                             },
                                                                         }
                                                                     }
->>>>>>> origin/development
                                                                 },
                                                             },
                                                         },
@@ -631,6 +603,7 @@ async fn main() {
                                 },
                             },
                         },
+                    },
                     },
                 },
             },

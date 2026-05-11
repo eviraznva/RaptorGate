@@ -141,7 +141,7 @@ impl Stage for IdentityLookupStage {
         !packet_is_decrypted(ctx) && packet_source_ip(ctx).is_some()
     }
 
-    async fn process(&self, ctx: &mut PacketContext) -> StageOutcome {
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let Some(src_ip) = packet_source_ip(ctx) else {
             return StageOutcome::Continue;
         };
@@ -296,38 +296,25 @@ impl Stage for FtpAlgStage {
                         let arrival_time = *ctx.borrow_arrival_time();
                         let warnings = ctx.with_warnings_mut(std::mem::take);
                         let dpi_ctx_taken = ctx.with_dpi_ctx_mut(|dpi| dpi.take());
+                        let identity_ctx_taken = ctx.with_identity_ctx_mut(|identity| identity.take());
+                        let ct_info = ctx.ct_info();
+                        let ct_direction = ctx.ct_direction();
+                        let ct_is_new = ctx.ct_is_new();
 
-<<<<<<< HEAD
-        {
-            let mut engine = self.engine.lock().await;
-            engine.process_ftp_alg(&mut raw_copy, &dpi_ctx);
-        }
-
-        if raw_copy.len() != original_len {
-            let src_interface = ctx.borrow_src_interface().clone();
-            let arrival_time = *ctx.borrow_arrival_time();
-            let warnings = ctx.with_warnings_mut(std::mem::take);
-            let dpi_ctx = ctx.with_dpi_ctx_mut(|dpi| dpi.take());
-            let identity_ctx = ctx.with_identity_ctx_mut(|identity| identity.take());
-
-            match PacketContext::from_raw_full(
-                raw_copy,
-                src_interface,
-                warnings,
-                arrival_time,
-                dpi_ctx,
-                identity_ctx,
-            ) {
-                Ok(new_ctx) => *ctx = new_ctx,
-=======
                         match PacketContext::from_raw_full(
                             raw_copy,
                             src_interface,
                             warnings,
                             arrival_time,
                             dpi_ctx_taken,
+                            identity_ctx_taken,
                         ) {
-                            Ok(new_ctx) => *ctx = new_ctx,
+                            Ok(mut new_ctx) => {
+                                if let (Some(info), Some(direction)) = (ct_info, ct_direction) {
+                                    new_ctx.set_conntrack(ct.clone(), info, direction, ct_is_new);
+                                }
+                                *ctx = new_ctx;
+                            }
                             Err(err) => {
                                 tracing::warn!(
                                     event = "ftp_alg.reparse.failed",
@@ -345,7 +332,6 @@ impl Stage for FtpAlgStage {
                     }
                 }
                 Ok(false) => {}
->>>>>>> origin/development
                 Err(err) => {
                     tracing::warn!(error = %err, "ftp alg rewrite failed");
                     return StageOutcome::Halt;

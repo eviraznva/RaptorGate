@@ -39,6 +39,7 @@ impl Clone for PacketContext {
             self.borrow_warnings().clone(),
             *self.borrow_arrival_time(),
             self.borrow_dpi_ctx().clone(),
+            self.borrow_identity_ctx().clone(),
         ).expect("cloning PacketContext should never fail since it's already been parsed once")
     }
 }
