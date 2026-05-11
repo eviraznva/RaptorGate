@@ -90,14 +90,22 @@ impl<A, B> Stage for Chain<A, B> where A: Stage + Clone, B: Stage + Clone {
             StageOutcome::Continue
         };
         match outcome {
-            StageOutcome::Continue => self.tail.process(ctx, tx).await,
+            StageOutcome::Continue => {
+                if self.tail.is_applicable(ctx) {
+                    self.tail.process(ctx, tx).await
+                } else {
+                    StageOutcome::Continue
+                }
+            }
             StageOutcome::Halt => {
                 let _ = tx.send(ExecutionItem { packet: ctx.clone(), action: ExecutionAction::Drop });
                 StageOutcome::Halt
             }
             StageOutcome::ReleaseBatch(packets) => {
                 for mut packet in packets {
-                    self.tail.process(&mut packet, tx).await;
+                    if self.tail.is_applicable(&packet) {
+                        self.tail.process(&mut packet, tx).await;
+                    }
                 }
                 StageOutcome::Halt
             }
@@ -152,6 +160,16 @@ mod tests {
             batch.push_back(ctx.clone());
             batch.push_back(ctx.clone());
             StageOutcome::ReleaseBatch(batch)
+        }
+    }
+
+    #[derive(Clone)]
+    struct InapplicableStage;
+    impl Stage for InapplicableStage {
+        fn is_applicable(&self, _ctx: &PacketContext) -> bool { false }
+
+        async fn process(&self, _ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+            panic!("inapplicable stage should not run");
         }
     }
 
@@ -213,6 +231,20 @@ mod tests {
         
         let item2 = rx.recv().await.unwrap();
         assert!(matches!(item2.action, ExecutionAction::Forward));
+    }
+
+    #[tokio::test]
+    async fn chain_skips_inapplicable_tail_stage() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let chain = Chain {
+            head: PassStage,
+            tail: InapplicableStage,
+        };
+        let mut ctx = test_packet();
+
+        let outcome = chain.process(&mut ctx, &tx).await;
+
+        assert!(matches!(outcome, StageOutcome::Continue));
     }
 
     #[tokio::test]
