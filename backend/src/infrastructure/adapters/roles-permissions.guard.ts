@@ -106,7 +106,9 @@ export class RolesPermissionsGuard implements CanActivate {
       names.map((name) => this.roleRepository.findByName(name)),
     );
 
-    return roles.filter((role): role is NonNullable<typeof role> => role !== null);
+    return roles.filter(
+      (role): role is NonNullable<typeof role> => role !== null,
+    );
   }
 }
 

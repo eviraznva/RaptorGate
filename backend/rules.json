@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "id": "a1c6151b-e916-456d-b4f9-2d57d2075aff",
+      "name": "Allow HTTPS",
+      "description": "Allow outgoing HTTPS traffic to external APIs",
+      "zonePairId": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
+      "isActive": true,
+      "content": "allow tcp any any eq 443",
+      "priority": 10,
+      "createdAt": "2026-03-22T17:26:23.485Z",
+      "updatedAt": "2026-03-22T17:26:23.485Z",
+      "createdBy": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "88263938-f3db-4d2c-8b4a-4db7bd379057",
+      "name": "Allow HTTP",
+      "zonePairId": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
+      "isActive": true,
+      "content": "match ip_ver { = v4 : match protocol { = tcp : match dst_port { = 443 : verdict allow _ : verdict drop } = udp : verdict drop } = v6 : verdict drop }",
+      "priority": 10,
+      "createdBy": "00000000-0000-4000-8000-000000000001",
+      "createdAt": "2026-03-23T10:24:10.635Z",
+      "updatedAt": "2026-03-23T10:24:10.635Z",
+      "description": "Allow outgoing HTTPS traffic to external APIs"
+    }
+  ]
+}

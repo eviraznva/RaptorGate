@@ -1,4 +1,4 @@
-import { FirewallRule } from '../../domain/entities/firewall-rule.entity.js';
+import { FirewallRule } from "../../domain/entities/firewall-rule.entity.js";
 
 export class CreateRuleResponseDto {
   // id: string;

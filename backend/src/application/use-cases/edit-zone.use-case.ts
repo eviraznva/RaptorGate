@@ -47,7 +47,10 @@ export class EditZoneUseCase {
       zoneName: zone.getName(),
       isActive: zone.getIsActive(),
       changedFields: Object.entries(dto)
-        .filter(([key, value]) => key !== "id" && key !== "accessToken" && value !== undefined)
+        .filter(
+          ([key, value]) =>
+            key !== "id" && key !== "accessToken" && value !== undefined,
+        )
         .map(([key]) => key),
     });
     return { zone };

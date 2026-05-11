@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { AdminAuthSession } from "../../domain/entities/admin-auth-session.entity.js";
+import { User } from "../../domain/entities/user.entity.js";
 import { AuthenticationMisconfiguredException } from "../../domain/exceptions/authentication-misconfigured.exception.js";
 import { AuthenticationUnavailableException } from "../../domain/exceptions/authentication-unavailable.exception.js";
 import { InvalidCredentialsException } from "../../domain/exceptions/invalid-credentials.exception.js";
@@ -7,10 +8,10 @@ import {
   ADMIN_AUTH_SESSION_REPOSITORY_TOKEN,
   type IAdminAuthSessionRepository,
 } from "../../domain/repositories/admin-auth-session.repository.js";
-import type { IUserRepository } from "../../domain/repositories/user.repository.js";
-import { USER_REPOSITORY_TOKEN } from "../../domain/repositories/user.repository.js";
 import type { IRoleRepository } from "../../domain/repositories/role.repository.js";
 import { ROLE_REPOSITORY_TOKEN } from "../../domain/repositories/role.repository.js";
+import type { IUserRepository } from "../../domain/repositories/user.repository.js";
+import { USER_REPOSITORY_TOKEN } from "../../domain/repositories/user.repository.js";
 import { LoginDto } from "../dtos/login.dto.js";
 import { LoginResponseDto } from "../dtos/login-response.dto.js";
 import type { IPasswordHasher } from "../ports/passowrd-hasher.interface.js";
@@ -21,7 +22,6 @@ import type { ITokenService } from "../ports/token-service.interface.js";
 import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 import { AdminAuthorizationService } from "../services/admin-authorization.service.js";
 import { AuthenticationEngineService } from "../services/authentication-engine.service.js";
-import { User } from "../../domain/entities/user.entity.js";
 
 @Injectable()
 export class LoginUserUseCase {
@@ -106,7 +106,8 @@ export class LoginUserUseCase {
         message: "external admin authentication did not accept credentials",
         username: dto.username,
         result: externalResult.kind,
-        provider: "provider" in externalResult ? externalResult.provider : undefined,
+        provider:
+          "provider" in externalResult ? externalResult.provider : undefined,
       });
       if (!user) {
         throw new InvalidCredentialsException();
@@ -131,7 +132,8 @@ export class LoginUserUseCase {
       if (!user) {
         this.logger.warn({
           event: "auth.admin.ldap_authorization_denied",
-          message: "LDAP admin authentication accepted but local admin user was not found",
+          message:
+            "LDAP admin authentication accepted but local admin user was not found",
           username: dto.username,
           profileId: externalResult.profileId,
         });
@@ -140,7 +142,8 @@ export class LoginUserUseCase {
       return this.completeLogin(user, "ldap");
     }
 
-    const authorization = await this.adminAuthorization.authorize(externalResult);
+    const authorization =
+      await this.adminAuthorization.authorize(externalResult);
     if (authorization.kind === "misconfigured") {
       throw new AuthenticationMisconfiguredException(authorization.reason);
     }
@@ -238,7 +241,9 @@ export class LoginUserUseCase {
       authProfileId: result.profileId,
       externalId: result.externalId,
     });
-    const refreshTokenHash = await this.passwordHasher.hash(tokenPair.refreshToken);
+    const refreshTokenHash = await this.passwordHasher.hash(
+      tokenPair.refreshToken,
+    );
 
     const session = AdminAuthSession.create(
       sessionId,

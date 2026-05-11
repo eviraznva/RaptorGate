@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package raptorgate;
+
+import "events/backend_events.proto";
+import "config/config_service.proto";
+import "events/firewall_events.proto";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RaptorGate gRPC Service
+//
+// Hostowany przez Backend (NestJS / grpc-js).
+// Firewall jest zawsze klientem (Rust / tonic).
+// Transport: gRPC over Unix Domain Socket (np.
+// /var/run/raptorgate/backend.sock)
+//
+// Importowane typy:
+//   raptorgate.config.GetConfigRequest    — config/config_service.proto
+//   raptorgate.config.ConfigResponse      — config/config_service.proto
+//   raptorgate.events.FirewallEvent       — events/firewall_events.proto
+//   raptorgate.events.BackendEvent        — events/backend_events.proto
+// ─────────────────────────────────────────────────────────────────────────────
+service RaptorGateService {
+  // Unary — firewall pobiera konfigurację.
+  //
+  // Mechanizm delty: firewall dołącza wersje sekcji z lokalnego snapshotu Redb
+  // (pole known_versions). Backend odsyła tylko sekcje których wersja jest
+  // nowsza. Sekcje niezmienione mają wartość null w odpowiedzi.
+  // Przy braku known_versions (brak snapshotu) — backend wysyła pełny bundle.
+  rpc GetActiveConfig(raptorgate.config.GetConfigRequest)
+      returns (raptorgate.config.ConfigResponse);
+
+  // Bidirectional streaming — główny event bus.
+  //
+  // Firewall inicjuje połączenie po starcie.
+  // Brak połączenia przez 30 s od startu backendu → firewall nie wystartował.
+  // Po nawiązaniu połączenia: firewall wysyła HeartbeatEvent co np. 10 s.
+  // Brak HeartbeatEvent przez np. >10 s → firewall nie odpowiada.
+  rpc EventStream(stream raptorgate.events.FirewallEvent)
+      returns (stream raptorgate.events.BackendEvent);
+}

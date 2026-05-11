@@ -1,14 +1,16 @@
-import { AtLeastOneFieldRequiredException } from '../../domain/exceptions/at-least-one-field-required.exception.js';
-import { RAPTOR_LANG_VALIDATION_SERVICE_TOKEN } from '../ports/raptor-lang-validation-service.interface.js';
-import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-already-exists-exception.js';
-import { type IRaptorLangValidationService } from '../ports/raptor-lang-validation-service.interface.js';
-import { EntityNotFoundException } from '../../domain/exceptions/entity-not-found-exception.js';
-import { RULES_REPOSITORY_TOKEN } from '../../domain/repositories/rules-repository.js';
-import { EditRuleResponseDto } from '../dtos/edit-rule-response.dto.js';
-import type { IRulesRepository } from '../../domain/repositories/rules-repository.js';
-import { Priority } from '../../domain/value-objects/priority.vo.js';
-import { EditRuleDto } from '../dtos/edit-rule.dto.js';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { AtLeastOneFieldRequiredException } from "../../domain/exceptions/at-least-one-field-required.exception.js";
+import { EntityAlreadyExistsException } from "../../domain/exceptions/entity-already-exists-exception.js";
+import { EntityNotFoundException } from "../../domain/exceptions/entity-not-found-exception.js";
+import type { IRulesRepository } from "../../domain/repositories/rules-repository.js";
+import { RULES_REPOSITORY_TOKEN } from "../../domain/repositories/rules-repository.js";
+import { Priority } from "../../domain/value-objects/priority.vo.js";
+import { EditRuleDto } from "../dtos/edit-rule.dto.js";
+import { EditRuleResponseDto } from "../dtos/edit-rule-response.dto.js";
+import {
+  type IRaptorLangValidationService,
+  RAPTOR_LANG_VALIDATION_SERVICE_TOKEN,
+} from "../ports/raptor-lang-validation-service.interface.js";
 
 @Injectable()
 export class EditRuleUseCase {
@@ -23,7 +25,7 @@ export class EditRuleUseCase {
 
   async execute(dto: EditRuleDto): Promise<EditRuleResponseDto> {
     const rule = await this.rulesRepository.findById(dto.id);
-    if (!rule) throw new EntityNotFoundException('Nat rule', dto.id);
+    if (!rule) throw new EntityNotFoundException("Nat rule", dto.id);
 
     if (
       dto.name === undefined &&
@@ -38,7 +40,7 @@ export class EditRuleUseCase {
     if (dto.name !== undefined) {
       const ruleByName = await this.rulesRepository.finfByName(dto.name);
       if (ruleByName && ruleByName.getId() !== dto.id)
-        throw new EntityAlreadyExistsException('Nat rule', 'name', dto.name);
+        throw new EntityAlreadyExistsException("Nat rule", "name", dto.name);
 
       rule.setName(dto.name);
     }
@@ -57,15 +59,15 @@ export class EditRuleUseCase {
     await this.rulesRepository.save(rule);
 
     this.logger.log({
-      event: 'rule.update.succeeded',
-      message: 'firewall rule updated',
+      event: "rule.update.succeeded",
+      message: "firewall rule updated",
       ruleId: rule.getId(),
       ruleName: rule.getName(),
       zonePairId: rule.getZonePairId(),
       isActive: rule.getIsActive(),
       priority: rule.getPriority().getValue(),
       changedFields: Object.entries(dto)
-        .filter(([key, value]) => key !== 'id' && value !== undefined)
+        .filter(([key, value]) => key !== "id" && value !== undefined)
         .map(([key]) => key),
     });
 

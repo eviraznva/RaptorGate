@@ -1,13 +1,13 @@
-import { AccessTokenIsInvalidException } from '../../domain/exceptions/acces-token-is-invalid.exception.js';
-import { EntityAlreadyExistsException } from '../../domain/exceptions/entity-already-exists-exception.js';
-import { ZONE_REPOSITORY_TOKEN } from '../../domain/repositories/zone.repository.js';
-import type { IZoneRepository } from '../../domain/repositories/zone.repository.js';
-import { TOKEN_SERVICE_TOKEN } from '../ports/token-service.interface.js';
-import { CreateZoneResponseDto } from '../dtos/create-zone-response.dto.js';
-import type { ITokenService } from '../ports/token-service.interface.js';
-import { Zone } from '../../domain/entities/zone.entity.js';
-import { CreateZoneDto } from '../dtos/create-zone.dto.js';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Zone } from "../../domain/entities/zone.entity.js";
+import { AccessTokenIsInvalidException } from "../../domain/exceptions/acces-token-is-invalid.exception.js";
+import { EntityAlreadyExistsException } from "../../domain/exceptions/entity-already-exists-exception.js";
+import type { IZoneRepository } from "../../domain/repositories/zone.repository.js";
+import { ZONE_REPOSITORY_TOKEN } from "../../domain/repositories/zone.repository.js";
+import { CreateZoneDto } from "../dtos/create-zone.dto.js";
+import { CreateZoneResponseDto } from "../dtos/create-zone-response.dto.js";
+import type { ITokenService } from "../ports/token-service.interface.js";
+import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
 @Injectable()
 export class CreateZoneUseCase {
@@ -22,7 +22,7 @@ export class CreateZoneUseCase {
   async execute(dto: CreateZoneDto): Promise<CreateZoneResponseDto> {
     const findExisting = await this.zoneRepository.findByName(dto.name);
     if (findExisting)
-      throw new EntityAlreadyExistsException('zone', 'name', dto.name);
+      throw new EntityAlreadyExistsException("zone", "name", dto.name);
 
     const claims = this.tokenService.decodeAccessToken(dto.accessToken);
     if (!claims) throw new AccessTokenIsInvalidException();
@@ -39,8 +39,8 @@ export class CreateZoneUseCase {
     await this.zoneRepository.save(newZone, claims.sub);
 
     this.logger.log({
-      event: 'zone.create.succeeded',
-      message: 'zone created',
+      event: "zone.create.succeeded",
+      message: "zone created",
       actorId: claims.sub,
       zoneId: newZone.getId(),
       zoneName: newZone.getName(),

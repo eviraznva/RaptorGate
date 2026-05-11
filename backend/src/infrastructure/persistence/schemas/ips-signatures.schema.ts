@@ -32,7 +32,11 @@ export const IpsPatternEncodingSchema = z.enum([
 function isValidHexPattern(pattern: string): boolean {
   const normalized = pattern.replace(/\s+/g, "");
 
-  return normalized.length > 0 && normalized.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(normalized);
+  return (
+    normalized.length > 0 &&
+    normalized.length % 2 === 0 &&
+    /^[0-9a-fA-F]+$/.test(normalized)
+  );
 }
 
 export const IpsSignatureRecordSchema = z
@@ -49,7 +53,9 @@ export const IpsSignatureRecordSchema = z
       { message: "Invalid IPS pattern" },
     ),
     matchType: IpsMatchTypeSchema.default("IPS_MATCH_TYPE_REGEX"),
-    patternEncoding: IpsPatternEncodingSchema.default("IPS_PATTERN_ENCODING_TEXT"),
+    patternEncoding: IpsPatternEncodingSchema.default(
+      "IPS_PATTERN_ENCODING_TEXT",
+    ),
     caseInsensitive: z.boolean().default(false),
     severity: SignatureSeveritySchema,
     action: IpsActionSchema,

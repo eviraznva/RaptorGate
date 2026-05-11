@@ -2,7 +2,11 @@ import "module-alias/register";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { cwd } from "node:process";
-import { BadRequestException, type LogLevel, ValidationPipe } from "@nestjs/common";
+import {
+  BadRequestException,
+  type LogLevel,
+  ValidationPipe,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { type MicroserviceOptions, Transport } from "@nestjs/microservices";
@@ -161,9 +165,7 @@ async function bootstrap() {
   const metricsWsPort = configService.get("METRICS_WS_PORT", { infer: true });
   const alertsWsPort = configService.get("ALERTS_WS_PORT", { infer: true });
 
-  app.useWebSocketAdapter(
-    new MultiPortSocketIoAdapter(app, httpsOptions),
-  );
+  app.useWebSocketAdapter(new MultiPortSocketIoAdapter(app, httpsOptions));
 
   await app.startAllMicroservices();
 

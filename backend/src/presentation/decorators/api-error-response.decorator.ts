@@ -1,16 +1,16 @@
+import { applyDecorators } from "@nestjs/common";
 import {
-  getSchemaPath,
-  ApiExtraModels,
   ApiBadRequestResponse,
-  ApiUnauthorizedResponse,
-  ApiForbiddenResponse,
-  ApiNotFoundResponse,
   ApiConflictResponse,
-  ApiTooManyRequestsResponse,
+  ApiExtraModels,
+  ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
-} from '@nestjs/swagger';
-import { ErrorEnvelopeDto } from '../dtos/api-envelope.dto.js';
-import { applyDecorators } from '@nestjs/common';
+  ApiNotFoundResponse,
+  ApiTooManyRequestsResponse,
+  ApiUnauthorizedResponse,
+  getSchemaPath,
+} from "@nestjs/swagger";
+import { ErrorEnvelopeDto } from "../dtos/api-envelope.dto.js";
 
 const err = (status: number, message: string, error: string) => ({
   allOf: [
@@ -25,46 +25,46 @@ const err = (status: number, message: string, error: string) => ({
   ],
 });
 
-export const ApiError400 = (m = 'Validation failed') =>
+export const ApiError400 = (m = "Validation failed") =>
   applyDecorators(
     ApiExtraModels(ErrorEnvelopeDto),
-    ApiBadRequestResponse({ schema: err(400, m, 'Bad Request') }),
+    ApiBadRequestResponse({ schema: err(400, m, "Bad Request") }),
   );
 
-export const ApiError401 = (m = 'Missing or invalid token') =>
+export const ApiError401 = (m = "Missing or invalid token") =>
   applyDecorators(
     ApiExtraModels(ErrorEnvelopeDto),
-    ApiUnauthorizedResponse({ schema: err(401, m, 'Unauthorized') }),
+    ApiUnauthorizedResponse({ schema: err(401, m, "Unauthorized") }),
   );
 
-export const ApiError403 = (m = 'Forbidden: insufficient permissions') =>
+export const ApiError403 = (m = "Forbidden: insufficient permissions") =>
   applyDecorators(
     ApiExtraModels(ErrorEnvelopeDto),
-    ApiForbiddenResponse({ schema: err(403, m, 'Forbidden') }),
+    ApiForbiddenResponse({ schema: err(403, m, "Forbidden") }),
   );
 
-export const ApiError404 = (m = 'Resource not found') =>
+export const ApiError404 = (m = "Resource not found") =>
   applyDecorators(
     ApiExtraModels(ErrorEnvelopeDto),
-    ApiNotFoundResponse({ schema: err(404, m, 'Not Found') }),
+    ApiNotFoundResponse({ schema: err(404, m, "Not Found") }),
   );
 
-export const ApiError409 = (m = 'Resource already exists') =>
+export const ApiError409 = (m = "Resource already exists") =>
   applyDecorators(
     ApiExtraModels(ErrorEnvelopeDto),
-    ApiConflictResponse({ schema: err(409, m, 'Conflict') }),
+    ApiConflictResponse({ schema: err(409, m, "Conflict") }),
   );
 
-export const ApiError429 = (m = 'Too many requests') =>
+export const ApiError429 = (m = "Too many requests") =>
   applyDecorators(
     ApiExtraModels(ErrorEnvelopeDto),
-    ApiTooManyRequestsResponse({ schema: err(429, m, 'Too Many Requests') }),
+    ApiTooManyRequestsResponse({ schema: err(429, m, "Too Many Requests") }),
   );
 
-export const ApiError500 = (m = 'Internal server error') =>
+export const ApiError500 = (m = "Internal server error") =>
   applyDecorators(
     ApiExtraModels(ErrorEnvelopeDto),
     ApiInternalServerErrorResponse({
-      schema: err(500, m, 'Internal Server Error'),
+      schema: err(500, m, "Internal Server Error"),
     }),
   );

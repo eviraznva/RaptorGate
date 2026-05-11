@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package raptorgate.telemetry;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Modele telemetryczne — używane jako payload eventu "fw.metrics"
+// Wysyłane co np. 10 sekund, równolegle z HeartbeatEvent.
+// ─────────────────────────────────────────────────────────────────────────────
+
+message MetricsBatch {
+  NetworkCounters    network     = 1;
+  ConnectionCounters connections = 2;
+  SystemLoad         system      = 3;
+  InspectionCounters inspection  = 4;
+
+  // Okres pomiarowy w sekundach (zwykle 10).
+  uint32 interval_seconds = 5;
+
+  // Wersja konfiguracji aktywnej podczas pomiaru.
+  uint64 config_version = 6;
+}
+
+message NetworkCounters {
+  uint64 packets_total            = 1;
+  uint64 bytes_total              = 2;
+  double packets_per_sec          = 3;
+  double bytes_per_sec            = 4;
+  uint64 accepted_packets_total   = 5;
+  uint64 dropped_packets_total    = 6;
+  double accepted_packets_per_sec = 7;
+  double dropped_packets_per_sec  = 8;
+}
+
+message ConnectionCounters {
+  uint64 active_connections      = 1;
+  double new_connections_per_sec = 2;
+  uint64 nat_translations_active = 3;
+}
+
+message SystemLoad {
+  double cpu_usage_percent       = 1;
+  double memory_usage_percent    = 2;
+  uint64 memory_usage_bytes      = 3;
+  double conntrack_usage_percent = 4;
+}
+
+message InspectionCounters {
+  double dns_queries_per_sec     = 1;
+  double tls_inspections_per_sec = 2;
+  double ips_matches_per_sec     = 3;
+  double ml_inferences_per_sec   = 4;
+  uint64 alerts_total            = 5;
+  double alerts_per_sec          = 6;
+}
