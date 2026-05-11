@@ -442,10 +442,12 @@ export class GrpcConfigSnapshotPushService
             address: dnssec.resolver.primary.address?.getValue ?? "",
             port: dnssec.resolver.primary.port.getValue,
           },
-          secondary: {
-            address: dnssec.resolver.secondary.address?.getValue ?? "",
-            port: dnssec.resolver.secondary.port.getValue,
-          },
+          secondary: dnssec.resolver.secondary.address?.getValue
+            ? {
+                address: dnssec.resolver.secondary.address.getValue,
+                port: dnssec.resolver.secondary.port.getValue,
+              }
+            : undefined,
           transport: this.toDnssecTransport(dnssec.resolver.transport),
           timeoutMs: dnssec.resolver.timeoutMs,
           retries: dnssec.resolver.retries,

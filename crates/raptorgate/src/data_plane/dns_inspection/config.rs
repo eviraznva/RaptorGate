@@ -40,8 +40,12 @@ impl DnsInspectionConfig {
 
     pub fn from_proto(proto_config: proto::DnsInspectionConfig) -> Result<Self> {
         Ok(Self {
-            general: DnsInspectionGeneralConfig::from_proto(proto_config.general.unwrap_or_default()),
-            blocklist: DnsInspectionBlocklistConfig::from_proto(proto_config.blocklist.unwrap_or_default()),
+            general: DnsInspectionGeneralConfig::from_proto(
+                proto_config.general.unwrap_or_default(),
+            ),
+            blocklist: DnsInspectionBlocklistConfig::from_proto(
+                proto_config.blocklist.unwrap_or_default(),
+            ),
             dns_tunneling: DnsInspectionDnsTunnelingConfig::from_proto(
                 proto_config.dns_tunneling.unwrap_or_default(),
             )?,
@@ -251,8 +255,12 @@ impl DnsInspectionDnssecConfig {
             default_on_resolver_failure: DnsInspectionDnssecFailureAction::from_proto(
                 proto_config.default_on_resolver_failure,
             )?,
-            resolver: DnsInspectionDnssecResolverConfig::from_proto(proto_config.resolver.unwrap_or_default())?,
-            cache: DnsInspectionDnssecCacheConfig::from_proto(proto_config.cache.unwrap_or_default())?,
+            resolver: DnsInspectionDnssecResolverConfig::from_proto(
+                proto_config.resolver.unwrap_or_default(),
+            )?,
+            cache: DnsInspectionDnssecCacheConfig::from_proto(
+                proto_config.cache.unwrap_or_default(),
+            )?,
         })
     }
 }
@@ -284,7 +292,10 @@ impl DnsInspectionDnssecResolverConfig {
     fn to_proto(&self) -> proto::DnsInspectionDnssecResolverConfig {
         proto::DnsInspectionDnssecResolverConfig {
             primary: Some(self.primary.to_proto()),
-            secondary: self.secondary.as_ref().map(DnsInspectionDnssecResolverEndpoint::to_proto),
+            secondary: self
+                .secondary
+                .as_ref()
+                .map(DnsInspectionDnssecResolverEndpoint::to_proto),
             transport: self.transport.to_proto() as i32,
             timeout_ms: duration_millis_u32(self.timeout_ms),
             retries: u32::from(self.retries),
@@ -293,9 +304,12 @@ impl DnsInspectionDnssecResolverConfig {
 
     fn from_proto(proto_config: proto::DnsInspectionDnssecResolverConfig) -> Result<Self> {
         Ok(Self {
-            primary: DnsInspectionDnssecResolverEndpoint::from_proto(proto_config.primary.unwrap_or_default())?,
+            primary: DnsInspectionDnssecResolverEndpoint::from_proto(
+                proto_config.primary.unwrap_or_default(),
+            )?,
             secondary: proto_config
                 .secondary
+                .filter(|ep| !ep.address.is_empty())
                 .map(DnsInspectionDnssecResolverEndpoint::from_proto)
                 .transpose()?,
             transport: DnsInspectionDnssecTransport::from_proto(proto_config.transport)?,
@@ -496,16 +510,18 @@ mod duration_seconds {
     use super::*;
 
     pub fn serialize<S>(value: &Duration, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where S: Serializer,
+    where
+        S: Serializer,
     {
         serializer.serialize_u64(value.as_secs())
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<Duration, D::Error>
-    where D: Deserializer<'de>,
+    where
+        D: Deserializer<'de>,
     {
         let seconds = u64::deserialize(deserializer)?;
-        
+
         Ok(Duration::from_secs(seconds))
     }
 }
@@ -514,13 +530,15 @@ mod duration_millis {
     use super::*;
 
     pub fn serialize<S>(value: &Duration, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where S: Serializer,
+    where
+        S: Serializer,
     {
         serializer.serialize_u64(value.as_millis().min(u128::from(u64::MAX)) as u64)
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<Duration, D::Error>
-    where D: Deserializer<'de>,
+    where
+        D: Deserializer<'de>,
     {
         let millis = u64::deserialize(deserializer)?;
         Ok(Duration::from_millis(millis))
