@@ -49,6 +49,8 @@ import { Env } from '../shared/config/env.validation.js';
               ),
               loader: {
                 includeDirs: [join(process.cwd(), '..', 'proto')],
+                longs: Number,
+                defaults: true,
               },
               url: grpcUrl,
             },

@@ -63,6 +63,14 @@ impl TunForwarder {
                         error = %e,
                         "failed to forward packet to TUN"
                     );
+                } else {
+                    tracing::trace!(
+                        event = "tun.forward.succeeded",
+                        iface = %ctx.borrow_src_interface(),
+                        raw_len = raw.len(),
+                        tun_payload_len = raw.len() - ETH_HDR,
+                        "packet forwarded to TUN"
+                    );
                 }
             },
             None => tracing::warn!(

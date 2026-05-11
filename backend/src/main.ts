@@ -90,6 +90,8 @@ async function bootstrap() {
       protoPath: join(protoRoot, "services", "event_service.proto"),
       loader: {
         includeDirs: [protoRoot],
+        longs: Number,
+        defaults: true,
       },
       url: `unix://${absoluteSocketPath}`,
     },

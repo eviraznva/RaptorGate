@@ -20,15 +20,37 @@ impl RaptorLangValidationService for RaptorLangValidationHandler {
         &self,
         request: Request<ValidateRaptorLangRequest>,
     ) -> Result<Response<ValidateRaptorLangResponse>, Status> {
-        match parse_rule_tree(&request.into_inner().dsl) {
-            Ok(_) => Ok(Response::new(ValidateRaptorLangResponse {
-                is_valid: true,
-                error_message: String::new(),
-            })),
-            Err(err) => Ok(Response::new(ValidateRaptorLangResponse {
-                is_valid: false,
-                error_message: err.to_string(),
-            })),
+        let dsl = request.into_inner().dsl;
+        tracing::debug!(
+            event = "grpc.control.validate_raptor_lang.request",
+            dsl_len = dsl.len(),
+            "validating RaptorLang DSL"
+        );
+
+        match parse_rule_tree(&dsl) {
+            Ok(_) => {
+                tracing::info!(
+                    event = "grpc.control.validate_raptor_lang.succeeded",
+                    dsl_len = dsl.len(),
+                    "RaptorLang DSL validated successfully"
+                );
+                Ok(Response::new(ValidateRaptorLangResponse {
+                    is_valid: true,
+                    error_message: String::new(),
+                }))
+            }
+            Err(err) => {
+                tracing::warn!(
+                    event = "grpc.control.validate_raptor_lang.failed",
+                    dsl_len = dsl.len(),
+                    error = %err,
+                    "RaptorLang DSL validation failed"
+                );
+                Ok(Response::new(ValidateRaptorLangResponse {
+                    is_valid: false,
+                    error_message: err.to_string(),
+                }))
+            }
         }
     }
 }

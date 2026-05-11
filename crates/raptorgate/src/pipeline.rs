@@ -34,12 +34,30 @@ impl ExecutionSink {
     }
 
     pub async fn run(mut self) {
+        tracing::info!(event = "execution_sink.started", "execution sink started");
         while let Some(item) = self.receiver.recv().await {
             match item.action {
-                ExecutionAction::Forward => self.tun.forward(&item.packet).await,
-                ExecutionAction::Drop => self.metrics.observe_drop(),
+                ExecutionAction::Forward => {
+                    tracing::trace!(
+                        event = "execution.forward",
+                        iface = %item.packet.borrow_src_interface(),
+                        packet_len = item.packet.borrow_raw().len(),
+                        "forwarding packet to TUN"
+                    );
+                    self.tun.forward(&item.packet).await;
+                }
+                ExecutionAction::Drop => {
+                    tracing::trace!(
+                        event = "execution.drop",
+                        iface = %item.packet.borrow_src_interface(),
+                        packet_len = item.packet.borrow_raw().len(),
+                        "recording packet drop"
+                    );
+                    self.metrics.observe_drop();
+                }
             }
         }
+        tracing::info!(event = "execution_sink.stopped", "execution sink stopped");
     }
 }
 
@@ -94,6 +112,12 @@ pub struct ExecutionStage {
 
 impl Stage for ExecutionStage {
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+        tracing::trace!(
+            event = "execution.enqueue.forward",
+            iface = %ctx.borrow_src_interface(),
+            packet_len = ctx.borrow_raw().len(),
+            "enqueueing packet for forwarding"
+        );
         let _ = self.tx.send(ExecutionItem { packet: ctx.clone(), action: ExecutionAction::Forward });
         StageOutcome::Continue
     }

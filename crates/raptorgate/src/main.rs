@@ -150,6 +150,12 @@ async fn main() {
             .init();
     }
 
+    tracing::info!(
+        event = "startup.process.started",
+        pid = std::process::id(),
+        "raptorgate firewall process started"
+    );
+
     let config_provider = match AppConfigProvider::from_env().await {
         Ok(provider) => Arc::new(provider),
         Err(err) => {
@@ -278,7 +284,7 @@ async fn main() {
         }
 
         fn on_payload(&self, entry: &ConntrackEntry, dir: CtDirection, payload: &[u8]) {
-            tracing::info!(
+            tracing::trace!(
                 event = "ct.observer.payload",
                 flow_id = entry.id,
                 proto = ?entry.original.protocol,
@@ -365,12 +371,23 @@ async fn main() {
     let smtp_tracker = Arc::new(crate::dpi::smtp::SmtpTracker::new(Arc::clone(&smtp_policy_retriever)));
     conntrack.register_observer(Arc::clone(&smtp_tracker) as Arc<dyn crate::conntrack::observer::CtObserver>);
 
+    let loaded_policies = policy_provider.get_policies();
+    let loaded_zones = zones.get_zones();
+    let loaded_zone_pairs = zone_pairs.get_zone_pairs();
     let policy_engine = Arc::new(
         crate::policy::engine::PolicyEngine::from_policies(
-            &policy_provider.get_policies(),
-            &zone_pairs.get_zone_pairs(),
+            &loaded_policies,
+            &loaded_zone_pairs,
         )
         .expect("Failed to initialize policy engine"),
+    );
+    tracing::info!(
+        event = "startup.config_inventory.loaded",
+        policy_count = loaded_policies.len(),
+        zone_count = loaded_zones.len(),
+        zone_pair_count = loaded_zone_pairs.len(),
+        zone_interface_count = loaded_zone_interfaces.len(),
+        "runtime config inventory loaded"
     );
 
     config_provider
@@ -398,6 +415,11 @@ async fn main() {
         }
     };
 
+    tracing::info!(
+        event = "startup.nat.loaded",
+        has_nat_rules = nat_rules.is_some(),
+        "NAT runtime rules loaded"
+    );
     let nat_engine = NatEngine::new(nat_rules, interface_ips);
 
     // Late binding NatEngine ⇄ Conntrack: attach Weak ref + register observer
@@ -494,6 +516,11 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(control_server.serve());
+    tracing::info!(
+        event = "startup.control_server.spawned",
+        socket = %config.control_plane_socket_path,
+        "control server spawned"
+    );
 
     // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
     let dnssec_provider: Arc<dyn DnssecProvider> =
@@ -650,7 +677,15 @@ async fn main() {
                 )
                 .and_then(|redirect| redirect.install())
                 {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        tracing::info!(
+                            event = "startup.tls_redirect.installed",
+                            listen_addr = %listen_addr,
+                            ports = ?config.tls_inspection_ports,
+                            interfaces = ?sniffed_names,
+                            "TLS transparent redirect installed"
+                        );
+                    }
                     Err(e) => {
                         tracing::error!(error = %e, "Failed to install TLS transparent redirect");
                     }
@@ -677,7 +712,11 @@ async fn main() {
                 match MitmProxy::bind(proxy_config).await {
                     Ok(proxy) => {
                         tokio::spawn(proxy.serve());
-                        tracing::info!("SSL/TLS inspection enabled");
+                        tracing::info!(
+                            event = "startup.mitm_proxy.spawned",
+                            listen_addr = %listen_addr,
+                            "SSL/TLS inspection enabled"
+                        );
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "Failed to start MITM proxy");
@@ -698,6 +737,10 @@ async fn main() {
         .await;
 
     tokio::spawn(ExecutionSink::new(Arc::clone(&tun), Arc::clone(&metrics_collector), exec_rx).run());
+    tracing::info!(
+        event = "startup.execution_sink.spawned",
+        "execution sink spawned"
+    );
 
     let (sniffer, mut raw_rx) = InterfaceSniffer::with_sniffing(config.pcap_timeout_ms);
     let sniffer = Arc::new(sniffer);
@@ -747,6 +790,11 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(query_server.serve());
+    tracing::info!(
+        event = "startup.query_server.spawned",
+        socket = %config.query_socket_path,
+        "query server spawned"
+    );
     let server_cert_server = server_certificate_server::ServerCertificateServer::new(
         server_certificate_server::ServerCertificateHandler {
             server_key_store: Arc::clone(&server_key_store),
@@ -755,8 +803,17 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(server_cert_server.serve());
+    tracing::info!(
+        event = "startup.server_certificate_server.spawned",
+        socket = %config.server_cert_socket_path,
+        "server certificate server spawned"
+    );
 
-    tracing::info!(event = "pipeline.loop.start", "entering packet processing loop");
+    tracing::info!(
+        event = "pipeline.loop.start",
+        sniffed_interfaces = ?sniffed_names,
+        "entering packet processing loop"
+    );
 
     let pkt_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
 

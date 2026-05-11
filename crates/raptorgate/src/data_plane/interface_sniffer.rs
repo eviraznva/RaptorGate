@@ -49,6 +49,14 @@ impl InterfaceSniffer {
 
     pub fn reconcile_capture_interfaces(&self, sniffed_interfaces: &[String]) {
         let old: Vec<String> = self.handles.iter().map(|e| e.key().clone()).collect();
+        tracing::debug!(
+            event = "sniffer.reconcile.requested",
+            requested = ?sniffed_interfaces,
+            active = ?old,
+            requested_count = sniffed_interfaces.len(),
+            active_count = old.len(),
+            "reconciling packet capture interfaces"
+        );
         for iface in &old {
             if !sniffed_interfaces.contains(iface) {
                 self.cancel_sniffing(iface);
@@ -56,6 +64,11 @@ impl InterfaceSniffer {
         }
         for iface in sniffed_interfaces {
             if !self.handles.contains_key(iface) {
+                tracing::info!(
+                    event = "sniffer.reconcile.start_interface",
+                    iface = %iface,
+                    "starting capture for reconciled interface"
+                );
                 if let Err(e) = self.sniff_new(iface.clone()) {
                     tracing::error!(
                         event = "sniffer.reconcile.failed",
@@ -129,11 +142,18 @@ impl InterfaceSniffer {
 
                     match cap.next_packet() {
                         Ok(pkt) => {
+                            let packet_len = pkt.data.len();
                             let packet = RawPacket {
                                 raw: pkt.data.to_vec(),
                                 iface: Arc::clone(&iface_arc),
                             };
 
+                            tracing::trace!(
+                                event = "sniffer.packet.captured",
+                                iface = %name,
+                                packet_len,
+                                "packet captured from interface"
+                            );
                             if tx.blocking_send(packet).is_err() {
                                 tracing::info!(
                                     event = "sniffer.capture.stopped",
@@ -143,6 +163,12 @@ impl InterfaceSniffer {
                                 );
                                 break 'reconnect;
                             }
+                            tracing::trace!(
+                                event = "sniffer.packet.enqueued",
+                                iface = %name,
+                                packet_len,
+                                "captured packet enqueued for pipeline"
+                            );
                         }
                         Err(pcap::Error::TimeoutExpired) => {}
                         Err(e) => {
