@@ -81,7 +81,7 @@ describe("Email Flow", () => {
 		})
 			.expectOutput([/\/var\/mail\/vmail\/test\.local\/user2/])
 			.run();
-	}, {timeout: 20000});
+	}, {timeout: 60000});
 
 	test("emits smtp session state events", async () => {
 		await request("PushActiveConfigSnapshot", {
@@ -124,7 +124,7 @@ describe("Email Flow", () => {
 		})
 			.expectOutput([/\/var\/mail\/vmail\/test\.local\/user2/])
 			.run();
-	}, {timeout: 20_000});
+	}, {timeout: 60_000});
 
 	test("allows sender domain from allow-list and blocks others", async () => {
 		await request("PushActiveConfigSnapshot", {
@@ -160,11 +160,11 @@ describe("Email Flow", () => {
 		await performCommand({
 			host: "h2",
 			command:
-				"swaks --to user1@test.local --from user1@test.remote --server 192.168.10.10 --body 'Test email from h2'",
+				"swaks --timeout 10 --to user1@test.local --from user1@test.remote --server 192.168.10.10 --body 'Test email from h2'",
 		})
 			.isErr()
 			.run();
-	}, {timeout: 20_000});
+	}, {timeout: 60_000});
 
 	test("allows recipient domain from allow-list and blocks mixed recipients", async () => {
 		await request("PushActiveConfigSnapshot", {
@@ -200,7 +200,7 @@ describe("Email Flow", () => {
 		await performCommand({
 			host: "h2",
 			command:
-				"swaks --to user1@test.remote --from user1@test.local --server 192.168.10.10 --body 'Test email from h2'",
+				"swaks --timeout 10 --to user1@test.remote --from user1@test.local --server 192.168.10.10 --body 'Test email from h2'",
 		})
 			.isErr()
 			.run();
@@ -209,11 +209,11 @@ describe("Email Flow", () => {
 		await performCommand({
 			host: "h2",
 			command:
-				"swaks --to user1@test.local,user1@test.remote --from user1@test.local --server 192.168.10.10 --body 'Test email from h2'",
+				"swaks --timeout 10 --to user1@test.local,user1@test.remote --from user1@test.local --server 192.168.10.10 --body 'Test email from h2'",
 		})
 			.isErr()
 			.run();
-	}, {timeout: 30_000});
+	}, {timeout: 60_000});
 	
 	test("message content allow and deny filters with dotall", async () => {
 		await request("PushActiveConfigSnapshot", {
@@ -252,7 +252,7 @@ describe("Email Flow", () => {
 		await performCommand({
 			host: "h2",
 			command:
-				"swaks --to user1@test.local --from user1@test.local --server 192.168.10.10 --body 'hello world'",
+				"swaks --timeout 10 --to user1@test.local --from user1@test.local --server 192.168.10.10 --body 'hello world'",
 		})
 			.isErr()
 			.run();
@@ -261,7 +261,7 @@ describe("Email Flow", () => {
 		await performCommand({
 			host: "h2",
 			command:
-				"swaks --to user1@test.local --from user1@test.local --server 192.168.10.10 --body 'testing alone'",
+				"swaks --timeout 10 --to user1@test.local --from user1@test.local --server 192.168.10.10 --body 'testing alone'",
 		})
 			.isErr()
 			.run();

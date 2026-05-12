@@ -50,7 +50,7 @@ describe("Rule Tests", () => {
 
 		const server12346 = await performCommand({
 			host: "h1",
-			command: "ncat -l 12346",
+			command: "nc -l -p 12346",
 		}).runDetached();
 
 		try {
@@ -66,7 +66,7 @@ describe("Rule Tests", () => {
 
 		const server12345 = await performCommand({
 			host: "h1",
-			command: "ncat -l 12345",
+			command: "nc -l -p 12345",
 		}).runDetached();
 
 		try {
