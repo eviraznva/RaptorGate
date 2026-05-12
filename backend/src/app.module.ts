@@ -12,7 +12,6 @@ import { AuthModule } from "./modules/auth.module.js";
 import { ConfigSnapshotModule } from "./modules/config-snapshot.module.js";
 import { DnsBlacklistModule } from "./modules/dns-blacklist.module.js";
 import { DnsInspectionModule } from "./modules/dns-inspection.module.js";
-import { FirewallEventsModule as FirewallEventsRestModule } from "./modules/firewall-events/firewall-events.module.js";
 import { IdentityModule } from "./modules/identity.module.js";
 import { IdentitySessionModule } from "./modules/identity-session.module.js";
 import { FirewallEventsModule } from "./modules/firewall-events.module.js";
@@ -56,7 +55,6 @@ import { validate } from "./shared/config/env.validation.js";
     UserModule,
     GrpcModule,
     FirewallEventsModule,
-    FirewallEventsRestModule,
     AuthModule,
     ZoneModule,
     NatModule,

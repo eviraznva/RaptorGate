@@ -13,11 +13,13 @@ pub fn init() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let log_dir = std::env::var(FIREWALL_LOG_DIR_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(DEFAULT_FIREWALL_LOG_DIR));
+    let log_dir_display = log_dir.display().to_string();
+    let filter = log_filter();
 
     let writer = DailyLogMakeWriter::new(log_dir)?;
 
     tracing_subscriber::fmt()
-        .with_env_filter(log_filter())
+        .with_env_filter(EnvFilter::new(filter.clone()))
         .with_target(false)
         .with_thread_ids(false)
         .with_thread_names(false)
@@ -26,12 +28,23 @@ pub fn init() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .flatten_event(true)
         .try_init()?;
 
+    tracing::info!(
+        event = "logging.initialized",
+        service = "firewall",
+        log_dir = %log_dir_display,
+        log_format = "json",
+        filter = %filter,
+        "firewall logging initialized"
+    );
+
     Ok(())
 }
 
-fn log_filter() -> EnvFilter {
-    EnvFilter::try_from_env("RAPTORGATE_LOG_LEVEL")
-        .unwrap_or_else(|_| EnvFilter::new("info"))
+fn log_filter() -> String {
+    std::env::var("RAPTORGATE_LOG_LEVEL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "debug".to_string())
 }
 
 #[derive(Clone)]

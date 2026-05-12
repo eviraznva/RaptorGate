@@ -150,6 +150,12 @@ async fn main() {
             .init();
     }
 
+    tracing::info!(
+        event = "startup.process.started",
+        pid = std::process::id(),
+        "raptorgate firewall process started"
+    );
+
     let config_provider = match AppConfigProvider::from_env().await {
         Ok(provider) => Arc::new(provider),
         Err(err) => {
@@ -278,7 +284,7 @@ async fn main() {
         }
 
         fn on_payload(&self, entry: &ConntrackEntry, dir: CtDirection, payload: &[u8]) {
-            tracing::info!(
+            tracing::trace!(
                 event = "ct.observer.payload",
                 flow_id = entry.id,
                 proto = ?entry.original.protocol,
@@ -365,12 +371,23 @@ async fn main() {
     let smtp_tracker = Arc::new(crate::dpi::smtp::SmtpTracker::new(Arc::clone(&smtp_policy_retriever)));
     conntrack.register_observer(Arc::clone(&smtp_tracker) as Arc<dyn crate::conntrack::observer::CtObserver>);
 
+    let loaded_policies = policy_provider.get_policies();
+    let loaded_zones = zones.get_zones();
+    let loaded_zone_pairs = zone_pairs.get_zone_pairs();
     let policy_engine = Arc::new(
         crate::policy::engine::PolicyEngine::from_policies(
-            &policy_provider.get_policies(),
-            &zone_pairs.get_zone_pairs(),
+            &loaded_policies,
+            &loaded_zone_pairs,
         )
         .expect("Failed to initialize policy engine"),
+    );
+    tracing::info!(
+        event = "startup.config_inventory.loaded",
+        policy_count = loaded_policies.len(),
+        zone_count = loaded_zones.len(),
+        zone_pair_count = loaded_zone_pairs.len(),
+        zone_interface_count = loaded_zone_interfaces.len(),
+        "runtime config inventory loaded"
     );
 
     config_provider
@@ -387,7 +404,24 @@ async fn main() {
         .await;
 
     tokio::spawn(events::init_event_system(config.event_socket_path.clone()));
-    let interface_ips = resolve_interface_ips(&vec![]);
+    let mut sniffed_names = sniffed_interface_names(&loaded_zone_interfaces);
+
+    if sniffed_names.is_empty() {
+        if let Ok(env_ifaces) = std::env::var("CAPTURE_INTERFACES") {
+            for name in env_ifaces.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                sniffed_names.push(name.to_string());
+            }
+            if !sniffed_names.is_empty() {
+                tracing::warn!(
+                    event = "sniffer.fallback.env",
+                    interfaces = ?sniffed_names,
+                    "no sniffed interfaces in zone_interfaces.json, using CAPTURE_INTERFACES env"
+                );
+            }
+        }
+    }
+
+    let interface_ips = resolve_interface_ips(&sniffed_names);
     let local_ips = collect_local_ips(&interface_ips);
     let nat_store = Arc::new(NatConfigProvider::from_disk(config.data_dir.clone()).await);
     let nat_rules = match nat_store.get_config().to_runtime_rules() {
@@ -398,6 +432,11 @@ async fn main() {
         }
     };
 
+    tracing::info!(
+        event = "startup.nat.loaded",
+        has_nat_rules = nat_rules.is_some(),
+        "NAT runtime rules loaded"
+    );
     let nat_engine = NatEngine::new(nat_rules, interface_ips);
 
     // Late binding NatEngine ⇄ Conntrack: attach Weak ref + register observer
@@ -494,6 +533,11 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(control_server.serve());
+    tracing::info!(
+        event = "startup.control_server.spawned",
+        socket = %config.control_plane_socket_path,
+        "control server spawned"
+    );
 
     // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
     let dnssec_provider: Arc<dyn DnssecProvider> =
@@ -610,27 +654,6 @@ async fn main() {
         },
     };
 
-    let mut sniffed_names: Vec<String> = loaded_zone_interfaces
-        .iter()
-        .filter(|(_, zi)| zi.sniffed)
-        .filter_map(|(id, _)| crate::zones::resolve_os_name(&loaded_zone_interfaces, id))
-        .collect();
-
-    if sniffed_names.is_empty() {
-        if let Ok(env_ifaces) = std::env::var("CAPTURE_INTERFACES") {
-            for name in env_ifaces.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                sniffed_names.push(name.to_string());
-            }
-            if !sniffed_names.is_empty() {
-                tracing::warn!(
-                    event = "sniffer.fallback.env",
-                    interfaces = ?sniffed_names,
-                    "no sniffed interfaces in zone_interfaces.json, using CAPTURE_INTERFACES env"
-                );
-            }
-        }
-    }
-
     if config.ssl_inspection_enabled {
         let tls_runtime_cancel = CancellationToken::new();
         decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
@@ -650,7 +673,15 @@ async fn main() {
                 )
                 .and_then(|redirect| redirect.install())
                 {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        tracing::info!(
+                            event = "startup.tls_redirect.installed",
+                            listen_addr = %listen_addr,
+                            ports = ?config.tls_inspection_ports,
+                            interfaces = ?sniffed_names,
+                            "TLS transparent redirect installed"
+                        );
+                    }
                     Err(e) => {
                         tracing::error!(error = %e, "Failed to install TLS transparent redirect");
                     }
@@ -677,7 +708,11 @@ async fn main() {
                 match MitmProxy::bind(proxy_config).await {
                     Ok(proxy) => {
                         tokio::spawn(proxy.serve());
-                        tracing::info!("SSL/TLS inspection enabled");
+                        tracing::info!(
+                            event = "startup.mitm_proxy.spawned",
+                            listen_addr = %listen_addr,
+                            "SSL/TLS inspection enabled"
+                        );
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "Failed to start MITM proxy");
@@ -698,6 +733,10 @@ async fn main() {
         .await;
 
     tokio::spawn(ExecutionSink::new(Arc::clone(&tun), Arc::clone(&metrics_collector), exec_rx).run());
+    tracing::info!(
+        event = "startup.execution_sink.spawned",
+        "execution sink spawned"
+    );
 
     let (sniffer, mut raw_rx) = InterfaceSniffer::with_sniffing(config.pcap_timeout_ms);
     let sniffer = Arc::new(sniffer);
@@ -747,6 +786,11 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(query_server.serve());
+    tracing::info!(
+        event = "startup.query_server.spawned",
+        socket = %config.query_socket_path,
+        "query server spawned"
+    );
     let server_cert_server = server_certificate_server::ServerCertificateServer::new(
         server_certificate_server::ServerCertificateHandler {
             server_key_store: Arc::clone(&server_key_store),
@@ -755,8 +799,17 @@ async fn main() {
         CancellationToken::new(),
     );
     tokio::spawn(server_cert_server.serve());
+    tracing::info!(
+        event = "startup.server_certificate_server.spawned",
+        socket = %config.server_cert_socket_path,
+        "server certificate server spawned"
+    );
 
-    tracing::info!(event = "pipeline.loop.start", "entering packet processing loop");
+    tracing::info!(
+        event = "pipeline.loop.start",
+        sniffed_interfaces = ?sniffed_names,
+        "entering packet processing loop"
+    );
 
     let pkt_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
@@ -793,6 +846,16 @@ async fn main() {
     }
 }
 
+fn sniffed_interface_names<S: std::hash::BuildHasher>(
+    loaded_zone_interfaces: &HashMap<crate::zones::ZoneInterfaceId, crate::zones::ZoneInterface, S>,
+) -> Vec<String> {
+    loaded_zone_interfaces
+        .iter()
+        .filter(|(_, zi)| zi.sniffed)
+        .filter_map(|(id, _)| crate::zones::resolve_os_name(loaded_zone_interfaces, id))
+        .collect()
+}
+
 fn resolve_interface_ips(capture_interfaces: &[String]) -> HashMap<String, Vec<IpAddr>> {
     let mut interface_ips = HashMap::new();
 
@@ -823,4 +886,47 @@ fn collect_local_ips(interface_ips: &HashMap<String, Vec<IpAddr>>) -> HashSet<Ip
         .values()
         .flat_map(|ips| ips.iter().copied())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zones::{
+        InterfaceStatus, PhysicalInterface, ZoneId, ZoneInterface, ZoneInterfaceId, ZoneInterfaceKind,
+    };
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    fn zone_interface_id(value: u128) -> ZoneInterfaceId {
+        ZoneInterfaceId::from(Uuid::from_u128(value))
+    }
+
+    fn zone_id(value: u128) -> ZoneId {
+        ZoneId::from(Uuid::from_u128(value))
+    }
+
+    fn physical_zone_interface(name: &str, sniffed: bool) -> ZoneInterface {
+        ZoneInterface {
+            zone_id: zone_id(1),
+            kind: ZoneInterfaceKind::Physical(PhysicalInterface {
+                interface_name: name.to_string(),
+            }),
+            status: InterfaceStatus::Active,
+            addresses: vec![],
+            sniffed,
+        }
+    }
+
+    #[test]
+    fn sniffed_interface_names_resolves_configured_interfaces() {
+        let mut interfaces = HashMap::new();
+        interfaces.insert(zone_interface_id(1), physical_zone_interface("eth1", true));
+        interfaces.insert(zone_interface_id(2), physical_zone_interface("eth2", true));
+        interfaces.insert(zone_interface_id(3), physical_zone_interface("eth3", false));
+
+        let mut names = sniffed_interface_names(&interfaces);
+        names.sort();
+
+        assert_eq!(names, vec!["eth1".to_string(), "eth2".to_string()]);
+    }
 }

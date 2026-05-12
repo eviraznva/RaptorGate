@@ -52,7 +52,10 @@ impl Stage for ValidationStage {
 
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         match validate(ctx.borrow_sliced_packet()) {
-            Ok(()) => StageOutcome::Continue,
+            Ok(()) => {
+                log_packet_trace(ctx, "packet.validation.passed", "validation", "continue");
+                StageOutcome::Continue
+            }
             Err(e) => {
                 log_packet_decision(
                     ctx,
@@ -216,7 +219,16 @@ impl Stage for NatPreroutingStage {
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        let _ = self.engine.prerouting(raw_mut, &ct, info, &iface, None);
+        let result = self.engine.prerouting(raw_mut, &ct, info, &iface, None);
+        tracing::trace!(
+            event = "nat.prerouting.completed",
+            stage = "nat_prerouting",
+            flow_id = ct.id,
+            info = ?info,
+            iface = %iface,
+            result = ?result,
+            "NAT prerouting completed"
+        );
         StageOutcome::Continue
     }
 }
@@ -261,7 +273,18 @@ impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        let _ = self.engine.postrouting(raw_mut, &ct, info, &out_iface_sys.name, None);
+        let result = self.engine.postrouting(raw_mut, &ct, info, &out_iface_sys.name, None);
+        tracing::trace!(
+            event = "nat.postrouting.completed",
+            stage = "nat_postrouting",
+            flow_id = ct.id,
+            info = ?info,
+            out_iface = %out_iface_sys.name,
+            out_iface_idx = ?out_iface_idx,
+            dst_ip = %dst_ip,
+            result = ?result,
+            "NAT postrouting completed"
+        );
         StageOutcome::Continue
     }
 }
@@ -291,6 +314,15 @@ impl Stage for FtpAlgStage {
 
             match crate::nat::alg::ftp::ftp_alg_rewrite(&mut raw_copy, &dpi_ctx) {
                 Ok(true) => {
+                    tracing::debug!(
+                        event = "ftp_alg.rewrite.applied",
+                        stage = "ftp_alg",
+                        flow_id = ct.id,
+                        original_len,
+                        rewritten_len = raw_copy.len(),
+                        endpoint = ?dpi_ctx.ftp_data_endpoint,
+                        "FTP ALG payload rewrite applied"
+                    );
                     if raw_copy.len() != original_len {
                         let src_interface = ctx.borrow_src_interface().clone();
                         let arrival_time = *ctx.borrow_arrival_time();
@@ -330,7 +362,14 @@ impl Stage for FtpAlgStage {
                         }
                     }
                 }
-                Ok(false) => {}
+                Ok(false) => {
+                    tracing::trace!(
+                        event = "ftp_alg.rewrite.skipped",
+                        stage = "ftp_alg",
+                        flow_id = ct.id,
+                        "FTP ALG had no rewrite to apply"
+                    );
+                }
                 Err(err) => {
                     tracing::warn!(error = %err, "ftp alg rewrite failed");
                     return StageOutcome::Halt;
@@ -346,6 +385,16 @@ impl Stage for FtpAlgStage {
             let dir = ctx.ct_direction().unwrap_or(crate::conntrack::tuple::Direction::Original);
             let payload = transport_payload_slice(ctx.borrow_raw());
 
+            tracing::trace!(
+                event = "ftp_helper.dispatch",
+                stage = "ftp_alg",
+                flow_id = ct.id,
+                proto = ?key_proto,
+                port = key_port,
+                dir = ?dir,
+                payload_len = payload.len(),
+                "dispatching conntrack helper"
+            );
             helper.install_expectations(&ct, payload, dir, &self.conntrack);
         }
 
@@ -391,7 +440,15 @@ impl Stage for DnsBlockListStage {
         };
 
         match self.inspection.check_blocklist(&domain) {
-            BlocklistVerdict::Allow => StageOutcome::Continue,
+            BlocklistVerdict::Allow => {
+                tracing::trace!(
+                    event = "dns.blocklist.allowed",
+                    stage = "dns_blocklist",
+                    domain = %domain,
+                    "DNS blocklist allowed domain"
+                );
+                StageOutcome::Continue
+            }
             BlocklistVerdict::Block(msg) => {
                 log_packet_decision(
                     ctx,
@@ -436,7 +493,16 @@ impl Stage for DnsTunnelingStage {
         };
 
         match self.inspection.inspect_tunneling(&domain, &qtype) {
-            DnsInspectionVerdict::Allow => StageOutcome::Continue,
+            DnsInspectionVerdict::Allow => {
+                tracing::trace!(
+                    event = "dns.tunneling.allowed",
+                    stage = "dns_tunneling",
+                    domain = %domain,
+                    qtype = ?qtype,
+                    "DNS tunneling inspection allowed query"
+                );
+                StageOutcome::Continue
+            }
             DnsInspectionVerdict::Alert(msg) => {
                 log_packet_decision(
                     ctx,
@@ -495,7 +561,15 @@ impl Stage for DnsEchMitigationStage {
         };
 
         match self.inspection.inspect_ech(&domain, true) {
-            EchMitigationVerdict::Allow => StageOutcome::Continue,
+            EchMitigationVerdict::Allow => {
+                tracing::trace!(
+                    event = "dns.ech.allowed",
+                    stage = "dns_ech_mitigation",
+                    domain = %domain,
+                    "DNS ECH mitigation allowed response"
+                );
+                StageOutcome::Continue
+            }
             EchMitigationVerdict::Block(msg) => {
                 tracing::debug!(reason = %msg, "DNS ECH mitigation block");
                 ctx.with_warnings_mut(|w| w.push(msg));
@@ -528,7 +602,10 @@ impl Stage for IpsStage {
         });
 
         match self.inspection.inspect_packet(ctx) {
-            IpsVerdict::Allow => StageOutcome::Continue,
+            IpsVerdict::Allow => {
+                log_packet_trace(ctx, "ips.packet.allowed", "ips", "continue");
+                StageOutcome::Continue
+            }
             IpsVerdict::Alert(matches) => {
                 let msg = matches
                     .iter()
@@ -690,6 +767,7 @@ impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneRes
                     dst_ip = %dst_ip,
                     "no matching zone pair, allowing (dev fallback)"
                 );
+                log_packet_trace(ctx, "policy.zone_pair.missing_allowed", "policy_eval", "continue");
                 return StageOutcome::Continue;
             }
         };
@@ -735,7 +813,10 @@ impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneRes
         });
 
         match verdict {
-            Some(Verdict::Allow) => StageOutcome::Continue,
+            Some(Verdict::Allow) => {
+                log_packet_trace(ctx, "policy.packet.allowed", "policy_eval", "continue");
+                StageOutcome::Continue
+            }
             Some(Verdict::Drop) => {
                 log_packet_decision(
                     ctx,
@@ -773,7 +854,10 @@ impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneRes
             None => {
                 let fallback = pair.map(|p| p.default_policy).unwrap_or(crate::zones::DefaultPolicy::Drop);
                 match fallback {
-                    crate::zones::DefaultPolicy::Allow => StageOutcome::Continue,
+                    crate::zones::DefaultPolicy::Allow => {
+                        log_packet_trace(ctx, "policy.packet.allowed_by_default", "policy_eval", "continue");
+                        StageOutcome::Continue
+                    }
                     _ => {
                         log_packet_decision(
                             ctx,
@@ -1041,9 +1125,14 @@ impl Stage for DpiStage {
                     mlv.set_pinning_failures(pinning_failures);
                 });
                 ctx.with_dpi_ctx_mut(|c| *c = Some(dpi_ctx));
+                log_packet_trace(ctx, "dpi.classification.completed", "dpi", "continue");
             }
-            InspectResult::NeedMore => {}
-            InspectResult::Skipped => {}
+            InspectResult::NeedMore => {
+                log_packet_trace(ctx, "dpi.classification.need_more", "dpi", "continue");
+            }
+            InspectResult::Skipped => {
+                log_packet_trace(ctx, "dpi.classification.skipped", "dpi", "continue");
+            }
         }
         StageOutcome::Continue
     }
@@ -1072,11 +1161,12 @@ impl Stage for TlsPortEnforcementStage {
         };
 
         if !tls_port_enforcement_blocks(&config, dst_port) {
+            log_packet_trace(ctx, "tls.port.allowed", "tls_port_enforcement", "continue");
             return StageOutcome::Continue;
         }
 
         let msg = format!("TLS detected on undeclared port {dst_port}");
-        tracing::debug!(dst_port, "TLS enforcement block");
+        log_packet_decision(ctx, "tls.port.blocked", "tls_port_enforcement", "drop", &msg);
         ctx.with_warnings_mut(|w| w.push(msg));
         StageOutcome::Halt
     }
@@ -1112,13 +1202,61 @@ fn log_packet_decision(
         reason,
         iface = %ctx.borrow_src_interface(),
         packet_len = fields.packet_len,
+        payload_length = fields.payload_length,
         src_ip = fields.src_ip.as_deref().unwrap_or(""),
         dst_ip = fields.dst_ip.as_deref().unwrap_or(""),
         src_port = fields.src_port.unwrap_or_default(),
         dst_port = fields.dst_port.unwrap_or_default(),
         protocol = fields.protocol.unwrap_or(""),
         app_proto = fields.app_proto.as_deref().unwrap_or(""),
+        decrypted = fields.decrypted,
+        dns_query_name = fields.dns_query_name.as_deref().unwrap_or(""),
+        dns_query_type = fields.dns_query_type.as_deref().unwrap_or(""),
+        tls_sni = fields.tls_sni.as_deref().unwrap_or(""),
+        http_host = fields.http_host.as_deref().unwrap_or(""),
+        ct_flow_id = fields.ct_flow_id.unwrap_or_default(),
+        ct_info = fields.ct_info.as_deref().unwrap_or(""),
+        ct_direction = fields.ct_direction.as_deref().unwrap_or(""),
+        ct_is_new = fields.ct_is_new.unwrap_or(false),
+        identity_auth_state = fields.identity_auth_state.as_deref().unwrap_or(""),
+        identity_username = fields.identity_username.as_deref().unwrap_or(""),
         "packet decision"
+    );
+}
+
+fn log_packet_trace(
+    ctx: &PacketContext,
+    event: &'static str,
+    stage: &'static str,
+    status: &'static str,
+) {
+    let fields = packet_log_fields(ctx);
+
+    tracing::trace!(
+        event,
+        stage,
+        status,
+        iface = %ctx.borrow_src_interface(),
+        packet_len = fields.packet_len,
+        payload_length = fields.payload_length,
+        src_ip = fields.src_ip.as_deref().unwrap_or(""),
+        dst_ip = fields.dst_ip.as_deref().unwrap_or(""),
+        src_port = fields.src_port.unwrap_or_default(),
+        dst_port = fields.dst_port.unwrap_or_default(),
+        protocol = fields.protocol.unwrap_or(""),
+        app_proto = fields.app_proto.as_deref().unwrap_or(""),
+        decrypted = fields.decrypted,
+        dns_query_name = fields.dns_query_name.as_deref().unwrap_or(""),
+        dns_query_type = fields.dns_query_type.as_deref().unwrap_or(""),
+        tls_sni = fields.tls_sni.as_deref().unwrap_or(""),
+        http_host = fields.http_host.as_deref().unwrap_or(""),
+        ct_flow_id = fields.ct_flow_id.unwrap_or_default(),
+        ct_info = fields.ct_info.as_deref().unwrap_or(""),
+        ct_direction = fields.ct_direction.as_deref().unwrap_or(""),
+        ct_is_new = fields.ct_is_new.unwrap_or(false),
+        identity_auth_state = fields.identity_auth_state.as_deref().unwrap_or(""),
+        identity_username = fields.identity_username.as_deref().unwrap_or(""),
+        "packet stage trace"
     );
 }
 
@@ -1131,6 +1269,17 @@ struct PacketLogFields {
     dst_port: Option<u16>,
     protocol: Option<&'static str>,
     app_proto: Option<String>,
+    decrypted: bool,
+    dns_query_name: Option<String>,
+    dns_query_type: Option<String>,
+    tls_sni: Option<String>,
+    http_host: Option<String>,
+    ct_flow_id: Option<u64>,
+    ct_info: Option<String>,
+    ct_direction: Option<String>,
+    ct_is_new: Option<bool>,
+    identity_auth_state: Option<String>,
+    identity_username: Option<String>,
 }
 
 fn packet_log_fields(ctx: &PacketContext) -> PacketLogFields {
@@ -1165,11 +1314,34 @@ fn packet_log_fields(ctx: &PacketContext) -> PacketLogFields {
         _ => (None, None, None, 0),
     };
 
-    let app_proto = ctx
-        .borrow_dpi_ctx()
+    let dpi_ctx = ctx.borrow_dpi_ctx();
+    let app_proto = dpi_ctx
         .as_ref()
         .and_then(|dpi_ctx| dpi_ctx.app_proto)
         .map(|proto| proto.to_string().to_lowercase());
+    let decrypted = dpi_ctx.as_ref().is_some_and(|dpi_ctx| dpi_ctx.decrypted);
+    let dns_query_name = dpi_ctx.as_ref().and_then(|dpi_ctx| dpi_ctx.dns_query_name.clone());
+    let dns_query_type = dpi_ctx
+        .as_ref()
+        .and_then(|dpi_ctx| dpi_ctx.dns_query_type)
+        .map(|qtype| format!("{qtype:?}"));
+    let tls_sni = dpi_ctx.as_ref().and_then(|dpi_ctx| dpi_ctx.tls_sni.clone());
+    let http_host = dpi_ctx.as_ref().and_then(|dpi_ctx| dpi_ctx.http_host.clone());
+    drop(dpi_ctx);
+
+    let identity_ctx = ctx.borrow_identity_ctx();
+    let identity_auth_state = identity_ctx
+        .as_ref()
+        .map(|identity| identity.auth_state.to_string());
+    let identity_username = identity_ctx
+        .as_ref()
+        .and_then(|identity| identity.session.as_ref().map(|session| session.username.clone()));
+    drop(identity_ctx);
+
+    let ct_flow_id = ctx.ct().map(|entry| entry.id);
+    let ct_info = ctx.ct_info().map(|info| format!("{info:?}"));
+    let ct_direction = ctx.ct_direction().map(|direction| format!("{direction:?}"));
+    let ct_is_new = ctx.ct().map(|_| ctx.ct_is_new());
 
     PacketLogFields {
         packet_len: ctx.borrow_raw().len(),
@@ -1180,6 +1352,17 @@ fn packet_log_fields(ctx: &PacketContext) -> PacketLogFields {
         dst_port,
         protocol,
         app_proto,
+        decrypted,
+        dns_query_name,
+        dns_query_type,
+        tls_sni,
+        http_host,
+        ct_flow_id,
+        ct_info,
+        ct_direction,
+        ct_is_new,
+        identity_auth_state,
+        identity_username,
     }
 }
 

@@ -54,13 +54,21 @@ impl AppConfigProvider {
             Ok(p) => Some(p),
             Err(std::env::VarError::NotPresent) => None,
             Err(e) => {
-                eprintln!("WARNING: Failed to read DEV_OVERRIDE_POLICY: {e}");
+                tracing::warn!(
+                    event = "config.env.read_failed",
+                    variable = "DEV_OVERRIDE_POLICY",
+                    error = %e,
+                    "failed to read environment variable"
+                );
                 None
             }
         };
 
         if dev_mode && dev_policy.is_none() {
-            eprintln!("WARNING: DEV_MODE is enabled but DEV_OVERRIDE_POLICY is not set. Using default policy.");
+            tracing::warn!(
+                event = "config.dev_mode.policy_missing",
+                "DEV_MODE is enabled but DEV_OVERRIDE_POLICY is not set, using default policy"
+            );
         }
 
         let dev_config = dev_mode.then_some(crate::config::DevConfig {
@@ -165,10 +173,22 @@ impl AppConfigProvider {
         let old = self.config.load();
         let mut new = new_config;
 
+        tracing::info!(
+            event = "config.swap.started",
+            old_data_dir = %old.data_dir.display(),
+            new_data_dir = %new.data_dir.display(),
+            old_tun_device = %old.tun_device_name,
+            new_tun_device = %new.tun_device_name,
+            old_ssl_inspection_enabled = old.ssl_inspection_enabled,
+            new_ssl_inspection_enabled = new.ssl_inspection_enabled,
+            "AppConfig swap started"
+        );
+
         new.dev_config = old.dev_config.clone();
 
         self.store.save(new.clone()).await
             .context("failed to persist new AppConfig to disk")?;
+        tracing::debug!(event = "config.swap.persisted", "new AppConfig persisted to disk");
 
         let loaded = self.store.load().await
             .context("failed to verify AppConfig round-trip after save");
@@ -179,19 +199,56 @@ impl AppConfigProvider {
                 let mut applied: Vec<usize> = Vec::new();
 
                 for (i, (observer, name)) in observers.iter().enumerate() {
+                    tracing::debug!(
+                        event = "config.swap.observer.started",
+                        observer = *name,
+                        observer_index = i,
+                        "applying config to observer"
+                    );
                     if let Err(e) = observer.on_config_change(&new).await {
+                        tracing::error!(
+                            event = "config.swap.observer.failed",
+                            observer = *name,
+                            observer_index = i,
+                            error = %e,
+                            "observer rejected config change"
+                        );
                         let original_error = e.context(format!("{name} rejected config change"));
                         let mut rollback_failures = Vec::new();
 
                         for idx in applied.iter().rev() {
                             let (obs, obs_name) = &observers[*idx];
+                            tracing::warn!(
+                                event = "config.swap.rollback.observer.started",
+                                observer = *obs_name,
+                                observer_index = *idx,
+                                "rolling observer back to previous config"
+                            );
                             if let Err(rollback_err) = obs.on_config_change(&old).await {
+                                tracing::error!(
+                                    event = "config.swap.rollback.observer.failed",
+                                    observer = *obs_name,
+                                    observer_index = *idx,
+                                    error = %rollback_err,
+                                    "observer rollback failed"
+                                );
                                 rollback_failures.push((*obs_name, rollback_err));
+                            } else {
+                                tracing::info!(
+                                    event = "config.swap.rollback.observer.succeeded",
+                                    observer = *obs_name,
+                                    observer_index = *idx,
+                                    "observer rollback succeeded"
+                                );
                             }
                         }
 
                         if let Err(disk_err) = self.store.save((**old).clone()).await {
-                            tracing::error!(error = %disk_err, "CRITICAL: failed to rollback AppConfig to disk after observer failure");
+                            tracing::error!(
+                                event = "config.swap.rollback.disk.failed",
+                                error = %disk_err,
+                                "CRITICAL: failed to rollback AppConfig to disk after observer failure"
+                            );
                         }
 
                         drop(observers);
@@ -205,18 +262,29 @@ impl AppConfigProvider {
                             rollback_failures,
                         }));
                     }
+                    tracing::debug!(
+                        event = "config.swap.observer.succeeded",
+                        observer = *name,
+                        observer_index = i,
+                        "observer accepted config change"
+                    );
                     applied.push(i);
                 }
 
                 drop(observers);
                 self.config.swap(Arc::new(new));
-                tracing::info!("AppConfig swapped successfully");
+                tracing::info!(event = "config.swap.completed", "AppConfig swapped successfully");
                 Ok(())
             }
             Err(err) => {
-                tracing::error!(error = %err, "AppConfig round-trip verification failed, rolling back");
+                tracing::error!(
+                    event = "config.swap.verify.failed",
+                    error = %err,
+                    "AppConfig round-trip verification failed, rolling back"
+                );
                 self.store.save((**old).clone()).await
                     .context("CRITICAL: failed to rollback AppConfig after verification failure")?;
+                tracing::warn!(event = "config.swap.rollback.disk.succeeded", "AppConfig disk rollback succeeded");
                 Err(err)
             }
         }

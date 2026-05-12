@@ -119,6 +119,8 @@ import { SecretModule } from "./secret.module.js";
               ),
               loader: {
                 includeDirs: [join(process.cwd(), "..", "proto")],
+                longs: Number,
+                defaults: true,
               },
               url: grpcUrl,
             },
@@ -152,6 +154,8 @@ import { SecretModule } from "./secret.module.js";
               ),
               loader: {
                 includeDirs: [join(process.cwd(), "..", "proto")],
+                longs: Number,
+                defaults: true,
               },
               url: resolveGrpcUrl(firewallQuerySocketPath),
             },
@@ -202,6 +206,8 @@ import { SecretModule } from "./secret.module.js";
               ),
               loader: {
                 includeDirs: [join(process.cwd(), "..", "proto")],
+                longs: Number,
+                defaults: true,
               },
               url: grpcUrl,
             },

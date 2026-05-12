@@ -281,6 +281,11 @@ where
             .map(|(id, pol)| pol.clone().into_rule(id.clone()))
             .collect::<Vec<_>>();
 
+        tracing::debug!(
+            event = "grpc.query.get_policies.succeeded",
+            policy_count = rules.len(),
+            "returned policies"
+        );
         Ok(Response::new(GetPoliciesResponse { rules }))
     }
 
@@ -323,6 +328,11 @@ where
                 })
             }).collect();
 
+        tracing::debug!(
+            event = "grpc.query.get_nat_bindings.succeeded",
+            binding_count = bindings.len(),
+            "returned NAT bindings"
+        );
         Ok(Response::new(GetNatBindingsResponse { bindings }))
     }
 
@@ -337,6 +347,11 @@ where
             .map(|(id, pol)| pol.clone().into_proto(id.clone()))
             .collect::<Vec<_>>();
 
+        tracing::debug!(
+            event = "grpc.query.get_zones.succeeded",
+            zone_count = zones.len(),
+            "returned zones"
+        );
         Ok(Response::new(GetZonesResponse { zones }))
     }
 
@@ -416,6 +431,11 @@ where
             .map(|(id, pair)| pair.clone().into_proto(id.clone()))
             .collect::<Vec<_>>();
 
+        tracing::debug!(
+            event = "grpc.query.get_zone_pairs.succeeded",
+            zone_pair_count = zone_pairs.len(),
+            "returned zone pairs"
+        );
         Ok(Response::new(GetZonePairsResponse { zone_pairs }))
     }
 
@@ -501,11 +521,26 @@ where
 
         let up = matches!(state, crate::proto::config::InterfaceAdministrativeState::Up);
 
+        tracing::info!(
+            event = "grpc.query.set_interface_state.started",
+            zone_interface_id = %id,
+            os_name = %os_name,
+            up,
+            "setting interface administrative state"
+        );
+
         self.interface_controller
             .set_interface_state(&os_name, up)
             .await
             .map_err(|e| Status::internal(format!("failed to set interface state: {e}")))?;
 
+        tracing::info!(
+            event = "grpc.query.set_interface_state.succeeded",
+            zone_interface_id = %id,
+            os_name = %os_name,
+            up,
+            "interface administrative state changed"
+        );
         Ok(Response::new(crate::proto::services::SetInterfaceStateResponse {}))
     }
 
@@ -531,6 +566,15 @@ where
         let os_name = self.zone_interface_store.resolve_os_name(&id)
             .ok_or_else(|| Status::not_found(format!("OS name for interface {id} could not be resolved")))?;
 
+        tracing::info!(
+            event = "grpc.query.update_physical_interface_properties.started",
+            zone_interface_id = %id,
+            os_name = %os_name,
+            new_name = req.new_name.as_deref().unwrap_or(""),
+            new_address = req.new_address.as_deref().unwrap_or(""),
+            "updating physical interface properties"
+        );
+
         self.interface_controller
             .set_interface_properties(
                 &os_name,
@@ -540,6 +584,12 @@ where
             .await
             .map_err(|e| Status::internal(format!("failed to set interface properties: {e}")))?;
 
+        tracing::info!(
+            event = "grpc.query.update_physical_interface_properties.succeeded",
+            zone_interface_id = %id,
+            os_name = %os_name,
+            "physical interface properties updated"
+        );
         Ok(Response::new(UpdatePhysicalInterfacePropertiesResponse {
             message: "Physical interface properties updated successfully".to_string(),
         }))
