@@ -192,13 +192,13 @@ describe("GrpcConfigSnapshotPushService", () => {
       smtpMatchers: {
         sender: [
           {
-            regex: "^.*@trusted\\.com$",
+            regex: "(?s)^.*@trusted\\.com$",
             onMatch: GrpcSmtpMatchAction.SMTP_MATCH_ACTION_ALLOW,
           },
         ],
         recipient: [
           {
-            regex: "^ops@company\\.com$",
+            regex: "(?s)^ops@company\\.com$",
             onMatch: GrpcSmtpMatchAction.SMTP_MATCH_ACTION_DENY,
           },
         ],

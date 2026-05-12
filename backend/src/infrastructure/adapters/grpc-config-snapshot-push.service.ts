@@ -325,8 +325,11 @@ export class GrpcConfigSnapshotPushService
   }
 
   private toSmtpMatch(match: DomainSmtpMatch) {
+    const regex = match.regex.startsWith("(?s)")
+      ? match.regex
+      : `(?s)${match.regex}`;
     return {
-      regex: match.regex,
+      regex,
       onMatch: this.toSmtpMatchAction(match.onMatch),
     };
   }
