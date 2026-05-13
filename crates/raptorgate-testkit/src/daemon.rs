@@ -128,6 +128,7 @@ fn parse_bundle(
     Vec<(ngfw::zones::ZonePairId, ZonePair)>,
     Vec<(ngfw::zones::ZoneInterfaceId, ZoneInterface)>,
     Vec<ngfw::proto::config::NatRule>,
+    Option<ngfw::proto::config::AppConfig>,
 )> {
     let ConfigBundle {
         rules,
@@ -135,6 +136,7 @@ fn parse_bundle(
         zone_pairs,
         zone_interfaces,
         nat_rules,
+        app_config,
         ..
     } = bundle;
 
@@ -158,7 +160,14 @@ fn parse_bundle(
         .map(ZoneInterface::try_from_proto)
         .collect::<Result<_, _>>()?;
 
-    Ok((policies, zones, zone_pairs, zone_interfaces, nat_rules))
+    Ok((
+        policies,
+        zones,
+        zone_pairs,
+        zone_interfaces,
+        nat_rules,
+        app_config,
+    ))
 }
 
 pub struct TestDaemon {
@@ -194,7 +203,6 @@ impl TestDaemon {
 
 pub struct TestDaemonBuilder {
     bundle: Option<ConfigBundle>,
-    app_config: Option<AppConfig>,
 }
 
 impl Default for TestDaemonBuilder {
@@ -206,22 +214,12 @@ impl Default for TestDaemonBuilder {
 impl TestDaemonBuilder {
     #[must_use] 
     pub fn new() -> Self {
-        Self {
-            bundle: None,
-            app_config: None,
-        }
+        Self { bundle: None }
     }
 
     #[must_use] 
     pub fn with_bundle(mut self, bundle: ConfigBundle) -> Self {
         self.bundle = Some(bundle);
-        self
-    }
-
-    /// Uses this [`AppConfig`] instead of the built-in defaults. `data_dir`, `pki_dir`, and socket paths are still forced to the daemon temp dir so stores and the bundle stay aligned.
-    #[must_use]
-    pub fn with_app_config(mut self, app_config: AppConfig) -> Self {
-        self.app_config = Some(app_config);
         self
     }
 
@@ -232,7 +230,8 @@ impl TestDaemonBuilder {
         let bundle = self
             .bundle
             .unwrap_or_else(|| crate::config_bundle::ConfigBundleBuilder::new().build());
-        let (policies, zones, zone_pairs, zone_interfaces, nat_rules) = parse_bundle(bundle)?;
+        let (policies, zones, zone_pairs, zone_interfaces, nat_rules, bundle_app_config) =
+            parse_bundle(bundle)?;
         let temp = Arc::new(tempfile::tempdir().map_err(anyhow::Error::from)?);
         let data_dir = temp.path().join("data");
         tokio::fs::create_dir_all(&data_dir).await.map_err(anyhow::Error::from)?;
@@ -245,24 +244,28 @@ impl TestDaemonBuilder {
         let pki_dir = temp.path().join("pki");
         tokio::fs::create_dir_all(&pki_dir).await.map_err(anyhow::Error::from)?;
 
-        let mut app_config = self.app_config.unwrap_or_else(|| AppConfig {
-            pcap_timeout_ms: 3000,
-            tun_device_name: "tun0".into(),
-            tun_address: "10.254.254.1".parse().unwrap(),
-            tun_netmask: "255.255.255.0".parse().unwrap(),
-            data_dir: data_dir.clone(),
-            event_socket_path: String::new(),
-            query_socket_path: String::new(),
-            dev_config: None,
-            pki_dir: String::new(),
-            ssl_inspection_enabled: false,
-            mitm_listen_addr: "127.0.0.1:8443".into(),
-            control_plane_socket_path: String::new(),
-            server_cert_socket_path: String::new(),
-            ssl_bypass_domains: vec![],
-            tls_inspection_ports: vec![443],
-            block_tls_on_undeclared_ports: false,
-        });
+        let mut app_config = if let Some(proto_cfg) = bundle_app_config {
+            AppConfig::from_proto(proto_cfg)?
+        } else {
+            AppConfig {
+                pcap_timeout_ms: 3000,
+                tun_device_name: "tun0".into(),
+                tun_address: "10.254.254.1".parse().unwrap(),
+                tun_netmask: "255.255.255.0".parse().unwrap(),
+                data_dir: data_dir.clone(),
+                event_socket_path: String::new(),
+                query_socket_path: String::new(),
+                dev_config: None,
+                pki_dir: String::new(),
+                ssl_inspection_enabled: false,
+                mitm_listen_addr: "127.0.0.1:8443".into(),
+                control_plane_socket_path: String::new(),
+                server_cert_socket_path: String::new(),
+                ssl_bypass_domains: vec![],
+                tls_inspection_ports: vec![443],
+                block_tls_on_undeclared_ports: false,
+            }
+        };
         ensure_test_daemon_app_paths(&mut app_config, temp.path(), &data_dir);
 
         let app_store = SingleDiskStore::new("app_config", app_config_store_dir.clone());
