@@ -5,11 +5,10 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use etherparse::{NetSlice, TransportSlice};
-use tokio::sync::Mutex;
 
 use crate::dpi::smtp::{PacketAction, SmtpTracker, UnitStatus};
 use crate::{
-    config::{provider::AppConfigProvider, AppConfig},
+    config::{provider::{AppConfigProvider, AppConfigStore}, AppConfig},
     data_plane::{
         dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection, EchMitigationVerdict},
         ips::ips::{Ips, IpsSignatureMatch, IpsVerdict},
@@ -37,6 +36,7 @@ use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 use crate::dpi::AppProto;
 use crate::interfaces::InterfaceMonitor;
+use crate::netlink::routing_table::RouteLookup;
 use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext};
 
 #[derive(Clone)]
@@ -82,14 +82,23 @@ impl Stage for MetricsStage {
     }
 }
 
-#[derive(Clone)]
-pub struct LocalOwnershipStage {
-    pub config_provider: Arc<AppConfigProvider>,
+pub struct LocalOwnershipStage<Store: AppConfigStore> {
+    pub config_provider: Arc<AppConfigProvider<Store>>,
     pub zone_interface_provider: Arc<ZoneInterfaceProvider>,
     pub local_ips: Arc<HashSet<IpAddr>>,
 }
 
-impl Stage for LocalOwnershipStage {
+impl<Store: AppConfigStore> Clone for LocalOwnershipStage<Store> {
+    fn clone(&self) -> Self {
+        Self {
+            config_provider: Arc::clone(&self.config_provider),
+            zone_interface_provider: Arc::clone(&self.zone_interface_provider),
+            local_ips: Arc::clone(&self.local_ips),
+        }
+    }
+}
+
+impl<Store: AppConfigStore> Stage for LocalOwnershipStage<Store> {
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         if packet_is_decrypted(ctx) {
             return StageOutcome::Continue;
@@ -233,14 +242,23 @@ impl Stage for NatPreroutingStage {
     }
 }
 
-#[derive(Clone)]
-pub struct NatPostroutingStage<M: InterfaceMonitor> {
+pub struct NatPostroutingStage<M: InterfaceMonitor, Routes: RouteLookup> {
     pub engine: Arc<NatEngine>,
-    pub routing_table: Arc<crate::netlink::routing_table::RoutingTable>,
+    pub routes: Arc<Routes>,
     pub interface_monitor: Arc<M>,
 }
 
-impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
+impl<M: InterfaceMonitor, Routes: RouteLookup> Clone for NatPostroutingStage<M, Routes> {
+    fn clone(&self) -> Self {
+        Self {
+            engine: Arc::clone(&self.engine),
+            routes: Arc::clone(&self.routes),
+            interface_monitor: Arc::clone(&self.interface_monitor),
+        }
+    }
+}
+
+impl<M: InterfaceMonitor, Routes: RouteLookup> Stage for NatPostroutingStage<M, Routes> {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
         !packet_is_decrypted(ctx) && ctx.ct().is_some()
     }
@@ -255,7 +273,7 @@ impl<M: InterfaceMonitor> Stage for NatPostroutingStage<M> {
             _ => return StageOutcome::Continue,
         };
 
-        let Some(out_iface_idx) = self.routing_table.route_lookup(dst_ip) else {
+        let Some(out_iface_idx) = self.routes.route_lookup(dst_ip) else {
             return StageOutcome::Continue;
         };
 
@@ -786,10 +804,14 @@ impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneRes
                 let qtype = ctx.borrow_dpi_ctx().as_ref().and_then(|d| d.dns_query_type);
 
                 if let Some(domain) = domain {
-                    let p = Arc::clone(provider);
-                    tokio::task::spawn_blocking(move || p.check_domain(&domain, qtype).status)
-                        .await
-                        .ok()
+                    if provider.check_domain_in_spawn_blocking_context() {
+                        let p = Arc::clone(provider);
+                        tokio::task::spawn_blocking(move || p.check_domain(&domain, qtype).status)
+                            .await
+                            .ok()
+                    } else {
+                        Some(provider.check_domain(&domain, qtype).status)
+                    }
                 } else {
                     None
                 }
@@ -1138,12 +1160,19 @@ impl Stage for DpiStage {
     }
 }
 
-#[derive(Clone)]
-pub struct TlsPortEnforcementStage {
-    pub config_provider: Arc<AppConfigProvider>,
+pub struct TlsPortEnforcementStage<Store: AppConfigStore> {
+    pub config_provider: Arc<AppConfigProvider<Store>>,
 }
 
-impl Stage for TlsPortEnforcementStage {
+impl<Store: AppConfigStore> Clone for TlsPortEnforcementStage<Store> {
+    fn clone(&self) -> Self {
+        Self {
+            config_provider: Arc::clone(&self.config_provider),
+        }
+    }
+}
+
+impl<Store: AppConfigStore> Stage for TlsPortEnforcementStage<Store> {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
         matches!(
             ctx.borrow_dpi_ctx(),

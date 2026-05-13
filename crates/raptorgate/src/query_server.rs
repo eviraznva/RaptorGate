@@ -14,7 +14,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::config::provider::AppConfigProvider;
+use crate::config::provider::{DiskAppConfigProvider};
 use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -148,7 +148,7 @@ where
     pub zone_store: Arc<ZoneProvider>,
     pub zone_pair_store: Arc<ZonePairProvider>,
     pub zone_interface_store: Arc<crate::zones::provider::ZoneInterfaceProvider>,
-    pub config_provider: Arc<AppConfigProvider>,
+    pub config_provider: Arc<DiskAppConfigProvider>,
     /// Provider konfiguracji inspekcji DNS — zarządza trwałym przechowywaniem.
     pub dns_inspection_store: Arc<DnsInspectionConfigProvider>,
     /// Aktywna instancja agregatora inspekcji DNS — hot-swap przez `update_config`.

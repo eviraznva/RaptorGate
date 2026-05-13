@@ -178,6 +178,10 @@ impl RoutingTable {
     }
 
     pub fn route_lookup(&self, ip: IpAddr) -> Option<SystemInterfaceId> {
+        self.lookup_out_if_index(ip)
+    }
+
+    fn lookup_out_if_index(&self, ip: IpAddr) -> Option<SystemInterfaceId> {
         let routes = self.routes.load();
         // Since routes is sorted by prefix_len (asc) and then priority (desc),
         // we should look for matches and take the one with highest prefix_len.
@@ -186,6 +190,16 @@ impl RoutingTable {
             .filter(|r| r.destination.contains(&ip))
             .last()
             .map(|r| r.out_interface_index)
+    }
+}
+
+pub trait RouteLookup: Send + Sync + 'static {
+    fn route_lookup(&self, ip: IpAddr) -> Option<SystemInterfaceId>;
+}
+
+impl RouteLookup for RoutingTable {
+    fn route_lookup(&self, ip: IpAddr) -> Option<SystemInterfaceId> {
+        self.lookup_out_if_index(ip)
     }
 }
 

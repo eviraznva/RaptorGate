@@ -27,7 +27,9 @@ mod swapper;
 mod validation;
 mod nat;
 
-use crate::config::provider::AppConfigProvider;
+use crate::config::provider::{AppConfigProvider, DiskAppConfigProvider};
+use crate::config::AppConfig;
+use crate::disk_store::SingleDiskStore;
 use crate::control_server::ControlServer;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
@@ -79,12 +81,13 @@ use crate::conntrack::tuple::Direction as CtDirection;
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() {
-    type DataPipeline<M> = Chain<
+    type PipelineConfigStore = SingleDiskStore<AppConfig>;
+    type DataPipeline<M, Routes> = Chain<
         ValidationStage,
         Chain<
             MetricsStage,
             Chain<
-                LocalOwnershipStage,
+                LocalOwnershipStage<PipelineConfigStore>,
                 Chain<
                     IdentityLookupStage,
                     Chain<
@@ -92,7 +95,7 @@ async fn main() {
                         Chain<
                             DpiStage,
                             Chain<
-                                TlsPortEnforcementStage,
+                                TlsPortEnforcementStage<PipelineConfigStore>,
                                 Chain<
                                     DnsBlockListStage,
                                     Chain<
@@ -110,7 +113,7 @@ async fn main() {
                                                             Chain<
                                                                 PolicyEvalStage<zones::resolver::RoutingZoneResolver<M>>,
                                                                 Chain<
-                                                                    NatPostroutingStage<M>,
+                                                                    NatPostroutingStage<M, Routes>,
                                                                     Chain<
                                                                         FtpAlgStage,
                                                                         Chain<
@@ -156,7 +159,7 @@ async fn main() {
         "raptorgate firewall process started"
     );
 
-    let config_provider = match AppConfigProvider::from_env().await {
+    let config_provider: Arc<DiskAppConfigProvider> = match AppConfigProvider::from_env().await {
         Ok(provider) => Arc::new(provider),
         Err(err) => {
             tracing::error!(
@@ -552,7 +555,7 @@ async fn main() {
 
     let (exec_tx, exec_rx) = mpsc::unbounded_channel();
 
-    let pipeline: DataPipeline<NetworkInterfaceMonitor> = DataPipeline {
+    let pipeline: DataPipeline<NetworkInterfaceMonitor, RoutingTable> = DataPipeline {
         head: ValidationStage,
         tail: Chain {
             head: MetricsStage {
@@ -617,7 +620,7 @@ async fn main() {
                                                             tail: Chain {
                                                                 head: NatPostroutingStage {
                                                                     engine: Arc::clone(&nat_engine),
-                                                                    routing_table: Arc::clone(&routing_table),
+                                                                    routes: Arc::clone(&routing_table),
                                                                     interface_monitor: Arc::clone(&interface_monitor),
                                                                 },
                                                                 tail: Chain {

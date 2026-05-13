@@ -28,6 +28,11 @@ use crate::data_plane::dns_inspection::types::DnssecStatus;
 pub trait DnssecProvider: Send + Sync {
     /// Sprawdza status DNSSEC dla podanej domeny.
     fn check_domain(&self, domain: &str, qtype: Option<DnsRecordType>) -> DnssecResult;
+
+    /// Gdy `true`, [`crate::pipeline::wrappers::PolicyEvalStage`] wywołuje `check_domain` w `spawn_blocking`.
+    fn check_domain_in_spawn_blocking_context(&self) -> bool {
+        true
+    }
 }
 
 const DEFAULT_EDNS_UDP_PAYLOAD_SIZE: u16 = 1232;

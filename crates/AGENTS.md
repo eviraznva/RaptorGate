@@ -2,3 +2,4 @@
 2. Do not *ever* use mod.rs files. Use the new modules system instead. For example, if you have a module named `foo`, create a file named `foo.rs` and put the module code there, all additional files would then go to `./foo/` Do not create a `foo/mod.rs` file.
 3. Do not use fully qualified names for items in the same crate. For example, if you have a struct named `Foo` in the `foo` module, do not refer to it as `crate::foo::Foo` within the same crate. Instead, simply use `Foo`. The exception being if there is a name conflict.
 4. When running tests, default to plain `cargo test`, don't try testing specific packages, cargo takes care of doing a comprehensive test run
+5. In production code, we should avoid using `dyn` in scenarios where the concrete type is know at compile time. For exmaple, if we're injecting a struct that implements a trait that's also implemented by a mock, we always know which struct we're injecting, depending on if we're in tests or in prod.

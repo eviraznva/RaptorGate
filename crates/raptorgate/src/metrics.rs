@@ -52,13 +52,13 @@ pub struct MetricsSnapshot {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct CpuSample {
-    idle: u64,
-    total: u64,
+pub struct CpuSample {
+    pub idle: u64,
+    pub total: u64,
 }
 
 #[derive(Debug, Error)]
-enum SystemMetricError {
+pub enum SystemMetricError {
     #[error("failed to read {path}: {source}")]
     Read {
         path: &'static str,
@@ -117,17 +117,45 @@ pub fn metric_interval(interval_ms: Option<u64>) -> Duration {
         .max(MIN_INTERVAL)
 }
 
-pub struct SystemMetricsSampler {
-    previous_cpu: Option<CpuSample>,
+pub trait SystemMetricsSource: Send + Sync + Clone + 'static {
+    fn read_cpu_sample(&self) -> Result<CpuSample, SystemMetricError>;
+    fn read_memory_percent(&self) -> Result<f64, SystemMetricError>;
 }
 
-impl SystemMetricsSampler {
+#[derive(Clone, Copy, Default)]
+pub struct ProcFsSystemMetricsSource;
+
+impl SystemMetricsSource for ProcFsSystemMetricsSource {
+    fn read_cpu_sample(&self) -> Result<CpuSample, SystemMetricError> {
+        read_cpu_sample()
+    }
+
+    fn read_memory_percent(&self) -> Result<f64, SystemMetricError> {
+        read_memory_percent()
+    }
+}
+
+pub struct SystemMetricsSampler<SystemSource: SystemMetricsSource = ProcFsSystemMetricsSource> {
+    previous_cpu: Option<CpuSample>,
+    system_source: SystemSource,
+}
+
+impl SystemMetricsSampler<ProcFsSystemMetricsSource> {
     pub fn new() -> Self {
-        Self { previous_cpu: None }
+        Self::with_system_source(ProcFsSystemMetricsSource)
+    }
+}
+
+impl<SystemSource: SystemMetricsSource> SystemMetricsSampler<SystemSource> {
+    pub fn with_system_source(system_source: SystemSource) -> Self {
+        Self {
+            previous_cpu: None,
+            system_source,
+        }
     }
 
     pub fn cpu_percent(&mut self) -> f64 {
-        match read_cpu_sample() {
+        match self.system_source.read_cpu_sample() {
             Ok(current) => {
                 let value = self
                     .previous_cpu
@@ -144,7 +172,7 @@ impl SystemMetricsSampler {
     }
 
     pub fn memory_percent(&self) -> f64 {
-        match read_memory_percent() {
+        match self.system_source.read_memory_percent() {
             Ok(value) => value,
             Err(err) => {
                 tracing::warn!(error = %err, "failed to sample memory metric");
