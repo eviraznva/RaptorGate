@@ -1,25 +1,84 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use ngfw::daemon::Daemon;
+use ngfw::events::{EventCapture, EventPredicate, WaitForSubsequenceError};
+use thiserror::Error;
 
-use crate::{expect_events, EventCapture, EventKind, WaitForSubsequenceError};
+use crate::{
+    expect_events, EventKind, OutcomeMismatch, PipelineOutcome, ProcessOutputAssertExt, TestDaemon,
+};
 
-pub struct RawPacketStep {
-    pub raw: Vec<u8>,
-    pub iface: Arc<str>,
+pub(crate) struct SendStep {
+    pub(crate) raw: Vec<u8>,
+    pub(crate) iface: Arc<str>,
+    pub(crate) expect_packet: Option<PipelineOutcome>,
+}
+
+pub(crate) struct ScenarioPlan {
+    pub(crate) sends: Vec<SendStep>,
+    pub(crate) event_expectations: Vec<EventPredicate>,
+}
+
+#[derive(Debug, Error)]
+pub enum ScenarioRunError {
+    #[error("expect_packet called before any send")]
+    ExpectPacketWithoutSend,
+    #[error("packet outcome at send index {send_index}: {source}")]
+    PacketOutcome {
+        send_index: usize,
+        #[source]
+        source: OutcomeMismatch,
+    },
+    #[error(transparent)]
+    Events(#[from] WaitForSubsequenceError),
+}
+
+pub(crate) async fn execute_scenario_plan(
+    plan: ScenarioPlan,
+    daemon: &TestDaemon,
+    capture: &Arc<EventCapture>,
+) -> Result<(), ScenarioRunError> {
+    capture.clear();
+    capture.set_fence(std::time::SystemTime::now());
+    tokio::time::sleep(crate::FENCE_SETTLE).await;
+
+    let ScenarioPlan {
+        sends,
+        event_expectations: preds,
+    } = plan;
+
+    for (send_index, step) in sends.into_iter().enumerate() {
+        let out = daemon.process_raw(step.raw, step.iface).await;
+        if let Some(exp) = step.expect_packet {
+            out.assert_outcome(exp).map_err(|source| ScenarioRunError::PacketOutcome {
+                send_index,
+                source,
+            })?;
+        }
+    }
+
+    if !preds.is_empty() {
+        capture.wait_for_subsequence(&preds).await?;
+    }
+
+    Ok(())
 }
 
 pub struct PacketsScenario {
-    steps: Vec<RawPacketStep>,
     default_iface: Arc<str>,
+    plan: ScenarioPlan,
+    dangling_packet_expect: bool,
 }
 
 impl PacketsScenario {
     pub fn new() -> Self {
         Self {
-            steps: Vec::new(),
             default_iface: Arc::from("eth1"),
+            plan: ScenarioPlan {
+                sends: Vec::new(),
+                event_expectations: Vec::new(),
+            },
+            dangling_packet_expect: false,
         }
     }
 
@@ -29,17 +88,41 @@ impl PacketsScenario {
     }
 
     pub fn send(mut self, raw: Vec<u8>) -> Self {
-        self.steps.push(RawPacketStep {
+        self.dangling_packet_expect = false;
+        self.plan.sends.push(SendStep {
             raw,
             iface: self.default_iface.clone(),
+            expect_packet: None,
         });
         self
     }
 
-    pub async fn run<D: ngfw::daemon::DaemonDeps>(self, daemon: &Daemon<D>) {
-        for step in self.steps {
-            let _ = daemon.process_raw(step.raw, step.iface).await;
+    pub fn expect_packet(mut self, expected: PipelineOutcome) -> Self {
+        if let Some(last) = self.plan.sends.last_mut() {
+            last.expect_packet = Some(expected);
+            self.dangling_packet_expect = false;
+        } else {
+            self.dangling_packet_expect = true;
         }
+        self
+    }
+
+    pub fn expect_event(mut self, pred: EventPredicate) -> Self {
+        self.plan.event_expectations.push(pred);
+        self
+    }
+
+    /// Clears `capture`, sets a new fence, runs sends, then checks packet expectations and (if any) event subsequence on `capture`.
+    /// When running multiple tests in parallel, acquire [`crate::event_capture_concurrency_mutex`] before [`set_event_capture`] for the same `capture` instance this run uses.
+    pub async fn run(
+        self,
+        daemon: &TestDaemon,
+        capture: &Arc<EventCapture>,
+    ) -> Result<(), ScenarioRunError> {
+        if self.dangling_packet_expect {
+            return Err(ScenarioRunError::ExpectPacketWithoutSend);
+        }
+        execute_scenario_plan(self.plan, daemon, capture).await
     }
 }
 
@@ -53,6 +136,7 @@ pub struct SocketV4 {
     pub port: u16,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct TcpSessionV4 {
     pub client: SocketV4,
     pub server: SocketV4,
@@ -134,6 +218,134 @@ impl TcpSessionV4 {
             |b| b.ack(self.server_isn.wrapping_add(1)),
         )
     }
+
+    pub fn client_psh_ack_to_server(&self, seq: u32, ack: u32, payload: &[u8]) -> Vec<u8> {
+        let b = etherparse::PacketBuilder::ethernet2([0; 6], [0; 6])
+            .ipv4(self.client.ip, self.server.ip, 64)
+            .tcp(self.client.port, self.server.port, seq, self.window)
+            .psh()
+            .ack(ack);
+        let mut buf = Vec::with_capacity(b.size(payload.len()));
+        b.write(&mut buf, payload).unwrap();
+        buf
+    }
+
+    pub fn server_psh_ack_to_client(&self, seq: u32, ack: u32, payload: &[u8]) -> Vec<u8> {
+        let b = etherparse::PacketBuilder::ethernet2([0; 6], [0; 6])
+            .ipv4(self.server.ip, self.client.ip, 64)
+            .tcp(self.server.port, self.client.port, seq, self.window)
+            .psh()
+            .ack(ack);
+        let mut buf = Vec::with_capacity(b.size(payload.len()));
+        b.write(&mut buf, payload).unwrap();
+        buf
+    }
+}
+
+#[must_use]
+pub struct TcpSessionScenario {
+    session: TcpSessionV4,
+    client_iface: Arc<str>,
+    server_iface: Arc<str>,
+    plan: ScenarioPlan,
+    dangling_packet_expect: bool,
+    client_seq_next: u32,
+    server_seq_next: u32,
+}
+
+impl TcpSessionScenario {
+    pub fn new(session: TcpSessionV4) -> Self {
+        Self {
+            session,
+            client_iface: Arc::from("eth1"),
+            server_iface: Arc::from("eth2"),
+            plan: ScenarioPlan {
+                sends: Vec::new(),
+                event_expectations: Vec::new(),
+            },
+            dangling_packet_expect: false,
+            client_seq_next: 0,
+            server_seq_next: 0,
+        }
+    }
+
+    pub fn on_client_iface(mut self, iface: impl Into<Arc<str>>) -> Self {
+        self.client_iface = iface.into();
+        self
+    }
+
+    pub fn on_server_iface(mut self, iface: impl Into<Arc<str>>) -> Self {
+        self.server_iface = iface.into();
+        self
+    }
+
+    pub fn open(mut self) -> Self {
+        self.push_send(self.session.syn_from_client(), self.client_iface.clone());
+        self.push_send(self.session.syn_ack_from_server(), self.server_iface.clone());
+        self.push_send(self.session.ack_from_client(), self.client_iface.clone());
+        self.client_seq_next = self.session.client_isn.wrapping_add(1);
+        self.server_seq_next = self.session.server_isn.wrapping_add(1);
+        self
+    }
+
+    pub fn client_sends(mut self, payload: &[u8]) -> Self {
+        let raw = self
+            .session
+            .client_psh_ack_to_server(self.client_seq_next, self.server_seq_next, payload);
+        self.client_seq_next = self
+            .client_seq_next
+            .wrapping_add(payload.len() as u32);
+        self.push_send(raw, self.client_iface.clone());
+        self
+    }
+
+    pub fn server_sends(mut self, payload: &[u8]) -> Self {
+        let raw = self
+            .session
+            .server_psh_ack_to_client(self.server_seq_next, self.client_seq_next, payload);
+        self.server_seq_next = self
+            .server_seq_next
+            .wrapping_add(payload.len() as u32);
+        self.push_send(raw, self.server_iface.clone());
+        self
+    }
+
+    fn push_send(&mut self, raw: Vec<u8>, iface: Arc<str>) {
+        self.dangling_packet_expect = false;
+        self.plan.sends.push(SendStep {
+            raw,
+            iface,
+            expect_packet: None,
+        });
+    }
+
+    pub fn expect_packet(mut self, expected: PipelineOutcome) -> Self {
+        if let Some(last) = self.plan.sends.last_mut() {
+            last.expect_packet = Some(expected);
+            self.dangling_packet_expect = false;
+        } else {
+            self.dangling_packet_expect = true;
+        }
+        self
+    }
+
+    pub fn expect_event(mut self, pred: EventPredicate) -> Self {
+        self.plan.event_expectations.push(pred);
+        self
+    }
+
+    /// Clears `capture`, sets a new fence, runs sends, then checks packet expectations and (if any) event subsequence on `capture`.
+    /// When running multiple tests in parallel, acquire [`crate::event_capture_concurrency_mutex`] before [`set_event_capture`] for the same `capture` instance this run uses.
+    pub async fn run(
+        self,
+        daemon: &TestDaemon,
+        capture: &Arc<EventCapture>,
+    ) -> Result<(), ScenarioRunError> {
+        if self.dangling_packet_expect {
+            return Err(ScenarioRunError::ExpectPacketWithoutSend);
+        }
+        execute_scenario_plan(self.plan, daemon, capture).await
+    }
 }
 
 pub struct UdpSessionV4 {
@@ -208,8 +420,8 @@ impl Scenario {
         packets()
     }
 
-    pub fn tcp_session(client: SocketV4, server: SocketV4) -> TcpSessionV4 {
-        TcpSessionV4::new(client, server)
+    pub fn tcp(client: SocketV4, server: SocketV4) -> TcpSessionScenario {
+        TcpSessionScenario::new(TcpSessionV4::new(client, server))
     }
 
     pub fn udp_session(client: SocketV4, server: SocketV4) -> UdpSessionV4 {
@@ -230,5 +442,11 @@ impl Scenario {
         Fut: Future<Output = ()>,
     {
         expect_events(capture, stimulus, pattern_kinds).await
+    }
+}
+
+impl Default for PacketsScenario {
+    fn default() -> Self {
+        Self::new()
     }
 }

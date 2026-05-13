@@ -5,13 +5,16 @@ pub mod outcomes;
 pub mod scenario;
 pub mod static_infra;
 
-pub use config_bundle::{physical_zone_interface, ConfigBundleBuilder};
+pub use config_bundle::{
+    physical_zone_interface, smoke_icmp_allow_warn_bundle, smoke_tcp_allow_warn_bundle,
+    ConfigBundleBuilder,
+};
 pub use conntrack_queries::ConntrackSnapshotExt;
 pub use daemon::{TestDaemon, TestDaemonBuilder, TestDaemonBuildError, TestDeps};
 pub use outcomes::{OutcomeMismatch, PipelineOutcome, ProcessOutputAssertExt};
 pub use scenario::{
-    icmp_echo_ipv4, packets, IcmpSessionV4, PacketsScenario, Scenario, SocketV4, TcpSessionV4,
-    UdpSessionV4,
+    icmp_echo_ipv4, packets, IcmpSessionV4, PacketsScenario, Scenario, ScenarioRunError,
+    SocketV4, TcpSessionScenario, TcpSessionV4, UdpSessionV4,
 };
 
 pub use ngfw::daemon::ProcessOutput;
@@ -21,9 +24,18 @@ pub use ngfw::events::{
 };
 
 use std::future::Future;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
-const FENCE_SETTLE: Duration = Duration::from_millis(2);
+use tokio::sync::Mutex;
+
+pub(crate) const FENCE_SETTLE: Duration = Duration::from_millis(2);
+
+static EVENT_CAPTURE_CONCURRENCY: OnceLock<Mutex<()>> = OnceLock::new();
+
+pub fn event_capture_concurrency_mutex() -> &'static Mutex<()> {
+    EVENT_CAPTURE_CONCURRENCY.get_or_init(|| Mutex::new(()))
+}
 
 pub fn matchers_discriminant_only(pattern_kinds: &[EventKind]) -> Vec<EventPredicate> {
     pattern_kinds
@@ -86,27 +98,22 @@ macro_rules! events {
     };
 }
 
+#[macro_export]
+macro_rules! event {
+    ($pred:expr) => {
+        Box::new($pred) as ngfw::events::EventPredicate
+    };
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, OnceLock};
-    use std::time::SystemTime;
-
-    use ngfw::pipeline::ExecutionAction;
-    use tokio::sync::Mutex;
-
-    use crate::ProcessOutputAssertExt;
+    use std::sync::Arc;
 
     use super::*;
 
-    static GLOBAL_CAPTURE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn global_capture_lock() -> &'static Mutex<()> {
-        GLOBAL_CAPTURE_LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     #[tokio::test]
     async fn expect_events_sees_emitted_after_fence() {
-        let _guard = global_capture_lock().lock().await;
+        let _guard = event_capture_concurrency_mutex().lock().await;
         let cap = Arc::new(EventCapture::new());
         set_event_capture(Some(cap.clone()));
         let res = expect_events(&cap, || async {
@@ -119,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn expect_events_subsequence_two_kinds() {
-        let _guard = global_capture_lock().lock().await;
+        let _guard = event_capture_concurrency_mutex().lock().await;
         let cap = Arc::new(EventCapture::new());
         set_event_capture(Some(cap.clone()));
         let res = expect_events(&cap, || async {
@@ -142,11 +149,11 @@ mod tests {
 
     #[tokio::test]
     async fn smoke_icmp_allow_warn_forward_and_policy_warning_event() {
-        let _guard = global_capture_lock().lock().await;
+        let _guard = event_capture_concurrency_mutex().lock().await;
         let cap = Arc::new(EventCapture::new());
         set_event_capture(Some(cap.clone()));
 
-        let bundle = config_bundle::smoke_icmp_allow_warn_bundle();
+        let bundle = smoke_icmp_allow_warn_bundle();
         let td = TestDaemon::builder()
             .with_bundle(bundle)
             .build()
@@ -155,26 +162,77 @@ mod tests {
 
         let raw = icmp_echo_ipv4([192, 168, 10, 1], [192, 168, 20, 10]);
 
-        cap.clear();
-        cap.set_fence(SystemTime::now());
-        tokio::time::sleep(FENCE_SETTLE).await;
-
-        let out = td.daemon().process_raw(raw, Arc::from("eth1")).await;
-        out.assert_outcome(PipelineOutcome::Forward)
-            .expect("pipeline outcome");
-        assert!(
-            out.emitted
-                .iter()
-                .any(|i| matches!(i.action, ExecutionAction::Forward)),
-            "expected forward emission"
-        );
-
-        let preds = events![|e: &Event| {
-            matches!(&e.kind, EventKind::PolicyWarning { verdict, .. } if verdict == &"allow")
-        }];
-        cap.wait_for_subsequence(&preds)
+        Scenario::packets()
+            .on_iface("eth1")
+            .send(raw)
+            .expect_packet(PipelineOutcome::Forward)
+            .expect_event(event!(|e: &Event| {
+                matches!(&e.kind, EventKind::PolicyWarning { verdict, .. } if verdict == &"allow")
+            }))
+            .run(&td, &cap)
             .await
-            .expect("policy warning event");
+            .expect("scenario");
+
+        set_event_capture(None);
+    }
+
+    #[tokio::test]
+    async fn raw_packets_scenario_icmp_forward_only() {
+        let _guard = event_capture_concurrency_mutex().lock().await;
+        let cap = Arc::new(EventCapture::new());
+        set_event_capture(Some(cap.clone()));
+
+        let bundle = smoke_icmp_allow_warn_bundle();
+        let td = TestDaemon::builder()
+            .with_bundle(bundle)
+            .build()
+            .await
+            .expect("test daemon");
+
+        let raw = icmp_echo_ipv4([192, 168, 10, 2], [192, 168, 20, 11]);
+
+        Scenario::packets()
+            .send(raw)
+            .expect_packet(PipelineOutcome::Forward)
+            .run(&td, &cap)
+            .await
+            .expect("scenario");
+
+        set_event_capture(None);
+    }
+
+    #[tokio::test]
+    async fn tcp_session_scenario_handshake_and_data_forward() {
+        let _guard = event_capture_concurrency_mutex().lock().await;
+        let cap = Arc::new(EventCapture::new());
+        set_event_capture(Some(cap.clone()));
+
+        let bundle = smoke_tcp_allow_warn_bundle();
+        let td = TestDaemon::builder()
+            .with_bundle(bundle)
+            .build()
+            .await
+            .expect("test daemon");
+
+        let client = SocketV4 {
+            ip: [192, 168, 10, 3],
+            port: 40_000,
+        };
+        let server = SocketV4 {
+            ip: [192, 168, 20, 12],
+            port: 25,
+        };
+
+        Scenario::tcp(client, server)
+            .open()
+            .client_sends(b"ping")
+            .expect_event(event!(|e: &Event| {
+                matches!(&e.kind, EventKind::PolicyWarning { verdict, .. } if verdict == &"allow")
+            }))
+            .run(&td, &cap)
+            .await
+            .expect("scenario");
+
         set_event_capture(None);
     }
 }

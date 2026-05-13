@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
+use std::path::Path;
 use std::sync::Arc;
 
 use ngfw::conntrack::config::ConntrackConfig;
@@ -12,7 +13,7 @@ use ngfw::conntrack::proto::ProtoRegistry;
 use ngfw::conntrack::table::Conntrack;
 use ngfw::config::provider::AppConfigProvider;
 use ngfw::config::AppConfig;
-use ngfw::daemon::{Daemon, DaemonDeps, StaticDeps};
+use ngfw::daemon::{Daemon, DaemonDeps, ProcessOutput, StaticDeps};
 use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use ngfw::data_plane::dns_inspection::config::DnsInspectionConfig;
 use ngfw::data_plane::ips::config::IpsConfig;
@@ -42,6 +43,16 @@ use tempfile::TempDir;
 use thiserror::Error;
 
 use crate::static_infra::{iface_eth, static_monitor_from_pairs};
+
+fn ensure_test_daemon_app_paths(cfg: &mut AppConfig, temp: &Path, data_dir: &Path) {
+    let pki_dir = temp.join("pki");
+    cfg.data_dir = data_dir.to_path_buf();
+    cfg.event_socket_path = temp.join("evt.sock").to_string_lossy().into_owned();
+    cfg.query_socket_path = temp.join("qry.sock").to_string_lossy().into_owned();
+    cfg.pki_dir = pki_dir.to_string_lossy().into_owned();
+    cfg.control_plane_socket_path = temp.join("ctl.sock").to_string_lossy().into_owned();
+    cfg.server_cert_socket_path = temp.join("srv.sock").to_string_lossy().into_owned();
+}
 
 pub struct TestDeps {
     pub metrics_collector: Arc<MetricsCollector>,
@@ -175,10 +186,15 @@ impl TestDaemon {
             .metrics()
             .snapshot_flows(None, true)
     }
+
+    pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
+        self.daemon.process_raw(raw, iface).await
+    }
 }
 
 pub struct TestDaemonBuilder {
     bundle: Option<ConfigBundle>,
+    app_config: Option<AppConfig>,
 }
 
 impl Default for TestDaemonBuilder {
@@ -190,12 +206,22 @@ impl Default for TestDaemonBuilder {
 impl TestDaemonBuilder {
     #[must_use] 
     pub fn new() -> Self {
-        Self { bundle: None }
+        Self {
+            bundle: None,
+            app_config: None,
+        }
     }
 
     #[must_use] 
     pub fn with_bundle(mut self, bundle: ConfigBundle) -> Self {
         self.bundle = Some(bundle);
+        self
+    }
+
+    /// Uses this [`AppConfig`] instead of the built-in defaults. `data_dir`, `pki_dir`, and socket paths are still forced to the daemon temp dir so stores and the bundle stay aligned.
+    #[must_use]
+    pub fn with_app_config(mut self, app_config: AppConfig) -> Self {
+        self.app_config = Some(app_config);
         self
     }
 
@@ -219,24 +245,25 @@ impl TestDaemonBuilder {
         let pki_dir = temp.path().join("pki");
         tokio::fs::create_dir_all(&pki_dir).await.map_err(anyhow::Error::from)?;
 
-        let app_config = AppConfig {
+        let mut app_config = self.app_config.unwrap_or_else(|| AppConfig {
             pcap_timeout_ms: 3000,
             tun_device_name: "tun0".into(),
             tun_address: "10.254.254.1".parse().unwrap(),
             tun_netmask: "255.255.255.0".parse().unwrap(),
             data_dir: data_dir.clone(),
-            event_socket_path: temp.path().join("evt.sock").to_string_lossy().into(),
-            query_socket_path: temp.path().join("qry.sock").to_string_lossy().into(),
+            event_socket_path: String::new(),
+            query_socket_path: String::new(),
             dev_config: None,
-            pki_dir: pki_dir.to_string_lossy().into(),
+            pki_dir: String::new(),
             ssl_inspection_enabled: false,
             mitm_listen_addr: "127.0.0.1:8443".into(),
-            control_plane_socket_path: temp.path().join("ctl.sock").to_string_lossy().into(),
-            server_cert_socket_path: temp.path().join("srv.sock").to_string_lossy().into(),
+            control_plane_socket_path: String::new(),
+            server_cert_socket_path: String::new(),
             ssl_bypass_domains: vec![],
             tls_inspection_ports: vec![443],
             block_tls_on_undeclared_ports: false,
-        };
+        });
+        ensure_test_daemon_app_paths(&mut app_config, temp.path(), &data_dir);
 
         let app_store = SingleDiskStore::new("app_config", app_config_store_dir.clone());
         app_store
@@ -385,6 +412,7 @@ impl TestDaemonBuilder {
         let ml_flow_stats = Arc::new(FlowStatsAggregator::new(std::time::Duration::from_secs(60)));
         let ml_detector: Arc<dyn MlPacketInspector> = Arc::new(MlDetector::from_env());
 
+        //TODO: we should reuse bundle verifying logic
         config_provider
             .register(Arc::clone(&policy_store), "DiskPolicyProvider")
             .await;

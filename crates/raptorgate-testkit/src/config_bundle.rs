@@ -201,3 +201,87 @@ pub fn smoke_icmp_allow_warn_bundle() -> ConfigBundle {
         .with_rules(rules)
         .build()
 }
+
+pub fn smoke_tcp_allow_warn_bundle() -> ConfigBundle {
+    let z1 = Uuid::now_v7();
+    let z2 = Uuid::now_v7();
+    let zp = Uuid::now_v7();
+    let zq = Uuid::now_v7();
+    let zi1 = Uuid::now_v7();
+    let zi2 = Uuid::now_v7();
+
+    let zones = vec![
+        Zone {
+            id: Uuid::nil().to_string(),
+            name: "default".to_string(),
+        },
+        Zone {
+            id: z1.to_string(),
+            name: "zone1".to_string(),
+        },
+        Zone {
+            id: z2.to_string(),
+            name: "zone2".to_string(),
+        },
+    ];
+
+    let zone_interfaces = vec![
+        physical_zone_interface(zi1, &z1.to_string(), "eth1", true),
+        physical_zone_interface(zi2, &z2.to_string(), "eth2", true),
+    ];
+
+    let zone_pairs = vec![
+        ZonePair {
+            id: zp.to_string(),
+            src_zone_id: z1.to_string(),
+            dst_zone_id: z2.to_string(),
+            default_policy: DefaultPolicy::Unspecified as i32,
+        },
+        ZonePair {
+            id: zq.to_string(),
+            src_zone_id: z2.to_string(),
+            dst_zone_id: z1.to_string(),
+            default_policy: DefaultPolicy::Unspecified as i32,
+        },
+    ];
+
+    let rules = vec![
+        Rule {
+            id: Uuid::now_v7().to_string(),
+            name: "zone1-to-zone2".to_string(),
+            zone_pair_id: zp.to_string(),
+            priority: 0,
+            content: r#"
+            match protocol {
+              =icmp: verdict drop_warn "icmp dropped"
+              =tcp: verdict allow_warn "tcp allowed"
+              =udp: verdict drop_warn "udp dropped"
+            }
+          "#
+            .to_string(),
+            smtp_matchers: None,
+        },
+        Rule {
+            id: Uuid::now_v7().to_string(),
+            name: "zone2-to-zone1".to_string(),
+            zone_pair_id: zq.to_string(),
+            priority: 0,
+            content: r#"
+            match protocol {
+              =icmp: verdict drop_warn "icmp dropped"
+              =tcp: verdict allow_warn "tcp allowed"
+              =udp: verdict drop_warn "udp dropped"
+            }
+          "#
+            .to_string(),
+            smtp_matchers: None,
+        },
+    ];
+
+    ConfigBundleBuilder::new()
+        .with_zones(zones)
+        .with_zone_pairs(zone_pairs)
+        .with_zone_interfaces(zone_interfaces)
+        .with_rules(rules)
+        .build()
+}
