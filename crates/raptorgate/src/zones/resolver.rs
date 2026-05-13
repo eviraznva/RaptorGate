@@ -15,12 +15,22 @@ pub trait ZoneResolver: Send + Sync {
     fn resolve_bidirectional(&self, src_ip: IpAddr, dst_ip: IpAddr) -> DirectionalZonePairs;
 }
 
-#[derive(Clone)]
 pub struct RoutingZoneResolver<M: InterfaceMonitor> {
     interface_provider: Arc<ZoneInterfaceProvider>,
     pair_provider: Arc<ZonePairProvider>,
     routing_table: Arc<RoutingTable>,
     interface_monitor: Arc<M>,
+}
+
+impl<M: InterfaceMonitor> Clone for RoutingZoneResolver<M> {
+    fn clone(&self) -> Self {
+        Self {
+            interface_provider: Arc::clone(&self.interface_provider),
+            pair_provider: Arc::clone(&self.pair_provider),
+            routing_table: Arc::clone(&self.routing_table),
+            interface_monitor: Arc::clone(&self.interface_monitor),
+        }
+    }
 }
 
 impl<M: InterfaceMonitor> RoutingZoneResolver<M> {

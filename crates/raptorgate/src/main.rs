@@ -26,13 +26,13 @@ mod zones;
 mod swapper;
 mod validation;
 mod nat;
+mod daemon;
 
 use crate::config::provider::{AppConfigProvider, DiskAppConfigProvider};
 use crate::config::AppConfig;
-use crate::disk_store::SingleDiskStore;
+use crate::daemon::{Daemon, ProdDeps};
 use crate::control_server::ControlServer;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
-use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::ips::ips::Ips;
@@ -43,13 +43,7 @@ use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
 use crate::identity::IdentitySessionStore;
 use crate::ip_defrag::{DefragConfig, IpDefragEngine};
-use crate::pipeline::wrappers::{
-    ConntrackConfirmStage, ConntrackInStage, DnsBlockListStage, DnsEchMitigationStage,
-    DnsTunnelingStage, DpiStage, FtpAlgStage, IdentityLookupStage, IpsStage, L4StateStage, LocalOwnershipStage,
-    MetricsStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage, PolicyEvalStage,
-    TlsPortEnforcementStage, ValidationStage, SmtpStage,
-};
-use crate::pipeline::{Chain, ExecutionSink, ExecutionStage, Stage, StageOutcome};
+use crate::pipeline::{ExecutionSink, Stage, StageOutcome};
 use tokio::sync::mpsc;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
@@ -81,63 +75,6 @@ use crate::conntrack::tuple::Direction as CtDirection;
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() {
-    type PipelineConfigStore = SingleDiskStore<AppConfig>;
-    type DataPipeline<M, Routes> = Chain<
-        ValidationStage,
-        Chain<
-            MetricsStage,
-            Chain<
-                LocalOwnershipStage<PipelineConfigStore>,
-                Chain<
-                    IdentityLookupStage,
-                    Chain<
-                        ConntrackInStage,
-                        Chain<
-                            DpiStage,
-                            Chain<
-                                TlsPortEnforcementStage<PipelineConfigStore>,
-                                Chain<
-                                    DnsBlockListStage,
-                                    Chain<
-                                        DnsTunnelingStage,
-                                        Chain<
-                                            DnsEchMitigationStage,
-                                            Chain<
-                                                IpsStage,
-                                                Chain<
-                                                    NatPreroutingStage,
-                                                    Chain<
-                                                        L4StateStage,
-                                                        Chain<
-                                                            MlAlertStage,
-                                                            Chain<
-                                                                PolicyEvalStage<zones::resolver::RoutingZoneResolver<M>>,
-                                                                Chain<
-                                                                    NatPostroutingStage<M, Routes>,
-                                                                    Chain<
-                                                                        FtpAlgStage,
-                                                                        Chain<
-                                                                            SmtpStage,
-                                                                            Chain<ExecutionStage, ConntrackConfirmStage>,
-                                                                        >,
-                                                                    >,
-                                                                >,
-                                                            >,
-                                                        >,
-                                                    >,
-                                                >,
-                                            >,
-                                        >,
-                                    >,
-                                >,
-                            >,
-                        >,
-                    >,
-                >,
-            >,
-        >,
-    >;
-
     if let Err(err) = logging::init() {
         eprintln!("failed to initialize daily firewall logging: {err}");
         tracing_subscriber::fmt()
@@ -542,10 +479,6 @@ async fn main() {
         "control server spawned"
     );
 
-    // Rzutujemy DnsInspection na DnssecProvider i wstrzykujemy do PolicyEvalStage.
-    let dnssec_provider: Arc<dyn DnssecProvider> =
-        Arc::clone(&dns_inspection) as Arc<dyn DnssecProvider>;
-    
     let ml_flow_stats = Arc::new(crate::ml::FlowStatsAggregator::new(
         std::time::Duration::from_secs(60),
     ));
@@ -555,107 +488,33 @@ async fn main() {
 
     let (exec_tx, exec_rx) = mpsc::unbounded_channel();
 
-    let pipeline: DataPipeline<NetworkInterfaceMonitor, RoutingTable> = DataPipeline {
-        head: ValidationStage,
-        tail: Chain {
-            head: MetricsStage {
-                collector: Arc::clone(&metrics_collector),
-            },
-            tail: Chain {
-                head: LocalOwnershipStage {
-                    config_provider: Arc::clone(&config_provider),
-                    zone_interface_provider: Arc::clone(&zone_interfaces),
-                    local_ips: Arc::new(local_ips.clone()),
-                },
-                tail: Chain {
-                    head: IdentityLookupStage {
-                        store: Arc::clone(&identity_sessions),
-                    },
-                    tail: Chain {
-                        head: ConntrackInStage {
-                            ct: Arc::clone(&conntrack),
-                        },
-                        tail: Chain {
-                            head: DpiStage {
-                                classifier: Arc::clone(&dpi_classifier),
-                                flow_stats: Arc::clone(&ml_flow_stats),
-                                pinning_detector: Some(decision_engine.pinning_detector_arc()),
-                            },
-                            tail: Chain {
-                            head: TlsPortEnforcementStage {
-                                config_provider: Arc::clone(&config_provider),
-                            },
-                            tail: Chain {
-                                head: DnsBlockListStage {
-                                    inspection: Arc::clone(&dns_inspection),
-                                },
-                                tail: Chain {
-                                    head: DnsTunnelingStage {
-                                        inspection: Arc::clone(&dns_inspection),
-                                    },
-                                    tail: Chain {
-                                        head: DnsEchMitigationStage {
-                                            inspection: Arc::clone(&dns_inspection),
-                                        },
-                                        tail: Chain {
-                                            head: IpsStage {
-                                                inspection: Arc::clone(&ips),
-                                            },
-                                            tail: Chain {
-                                                head: NatPreroutingStage {
-                                                    engine: Arc::clone(&nat_engine),
-                                                },
-                                                tail: Chain {
-                                                    head: L4StateStage {
-                                                        flow_stats: Arc::clone(&ml_flow_stats),
-                                                    },
-                                                    tail: Chain {
-                                                        head: MlAlertStage::new(Arc::clone(&ml_detector)),
-                                                        tail: Chain {
-                                                            head: PolicyEvalStage {
-                                                                policy_engine: Arc::clone(&policy_engine),
-                                                                zone_resolver: Arc::clone(&zone_resolver),
-                                                                dnssec: Some(dnssec_provider),
-                                                            },
-                                                            tail: Chain {
-                                                                head: NatPostroutingStage {
-                                                                    engine: Arc::clone(&nat_engine),
-                                                                    routes: Arc::clone(&routing_table),
-                                                                    interface_monitor: Arc::clone(&interface_monitor),
-                                                                },
-                                                                tail: Chain {
-                                                                    head: FtpAlgStage {
-                                                                        conntrack: Arc::clone(&conntrack),
-                                                                        helpers: Arc::clone(&helpers),
-                                                                    },
-                                                                    tail: Chain {
-                                                                        head: SmtpStage {
-                                                                            tracker: Arc::clone(&smtp_tracker),
-                                                                        },
-                                                                        tail: Chain {
-                                                                            head: ExecutionStage { tx: exec_tx.clone() },
-                                                                            tail: ConntrackConfirmStage {
-                                                                                ct: Arc::clone(&conntrack),
-                                                                            },
-                                                                        }
-                                                                    }
-                                                                },
-                                                            },
-                                                        },
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                    },
-                    },
-                },
-            },
-        },
-    };
+    let defrag = IpDefragEngine::new(DefragConfig::default());
+    let daemon = Daemon::assemble(
+        Arc::new(ProdDeps {
+            metrics_collector: Arc::clone(&metrics_collector),
+            config_provider: Arc::clone(&config_provider),
+            zone_interfaces: Arc::clone(&zone_interfaces),
+            local_ips: Arc::new(local_ips.clone()),
+            identity_sessions: Arc::clone(&identity_sessions),
+            conntrack: Arc::clone(&conntrack),
+            dpi_classifier: Arc::clone(&dpi_classifier),
+            ml_flow_stats: Arc::clone(&ml_flow_stats),
+            decision_engine: Arc::clone(&decision_engine),
+            dns_inspection: Arc::clone(&dns_inspection),
+            ips: Arc::clone(&ips),
+            nat_engine: Arc::clone(&nat_engine),
+            ml_detector: Arc::clone(&ml_detector),
+            policy_engine: Arc::clone(&policy_engine),
+            zone_resolver: Arc::clone(&zone_resolver),
+            routing_table: Arc::clone(&routing_table),
+            interface_monitor: Arc::clone(&interface_monitor),
+            helpers: Arc::clone(&helpers),
+            smtp_tracker: Arc::clone(&smtp_tracker),
+        }),
+        defrag,
+        exec_tx.clone(),
+        None,
+    );
 
     if config.ssl_inspection_enabled {
         let tls_runtime_cancel = CancellationToken::new();
@@ -696,7 +555,7 @@ async fn main() {
                     untrust_forger: Arc::clone(untrust),
                     decision_engine: Arc::clone(&decision_engine),
                     decrypted_inspector: Arc::new(DecryptedChainInspector::with_identity_and_routing(
-                        pipeline.clone(),
+                        daemon.pipeline_clone(),
                         Arc::clone(&dpi_classifier),
                         Arc::clone(&identity_sessions),
                         crate::tls::decrypted_chain::DecryptedRoutingContext {
@@ -727,8 +586,6 @@ async fn main() {
             }
         }
     }
-
-    let defrag = IpDefragEngine::new(DefragConfig::default());
 
     let tun = TunForwarder::new(&config);
     config_provider
@@ -817,12 +674,12 @@ async fn main() {
     let pkt_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     while let Some(raw_packet) = raw_rx.recv().await {
-        if let Some(mut ctx) = defrag.process_raw(raw_packet) {
-            let pipeline = pipeline.clone();
+        if let Some(mut ctx) = daemon.defrag().process_raw(raw_packet) {
+            let pipeline = daemon.pipeline_clone();
             let tun = Arc::clone(&tun);
             let metrics_collector = Arc::clone(&metrics_collector);
             let counter = Arc::clone(&pkt_counter);
-            let exec_tx = exec_tx.clone();
+            let exec_tx = daemon.exec_sender();
 
             tokio::spawn(async move {
                 if !matches!(
@@ -833,7 +690,7 @@ async fn main() {
                 }
 
                 let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                if n == 1 || n % 1000 == 0 {
+                if n == 1 || n.is_multiple_of(1000) {
                     tracing::info!(event = "pipeline.packet.tick", count = n, "pipeline processed packet");
                 }
 

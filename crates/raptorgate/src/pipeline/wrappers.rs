@@ -754,15 +754,35 @@ fn emit_ml_threat_detected(ctx: &PacketContext, prediction: &MlPrediction) {
 /// Opcjonalnie przyjmuje dostawcę DNSSEC (`dnssec`) — jeśli jest obecny,
 /// dla pakietów DNS wywołuje walidację DNSSEC w `spawn_blocking` (blokujące I/O
 /// sieciowe nie może odbywać się bezpośrednio w kontekście async).
-#[derive(Clone)]
-pub struct PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneResolver {
+pub struct PolicyEvalStage<ZR, Dns>
+where
+    ZR: crate::zones::resolver::ZoneResolver,
+    Dns: DnssecProvider + Send + Sync + 'static,
+{
     pub policy_engine: Arc<PolicyEngine>,
     pub zone_resolver: Arc<ZR>,
-    /// Opcjonalny dostawca DNSSEC — wstrzykiwany z `DnsInspection`.
-    pub dnssec: Option<Arc<dyn DnssecProvider>>,
+    pub dnssec: Option<Arc<Dns>>,
 }
 
-impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneResolver {
+impl<ZR, Dns> Clone for PolicyEvalStage<ZR, Dns>
+where
+    ZR: crate::zones::resolver::ZoneResolver,
+    Dns: DnssecProvider + Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            policy_engine: Arc::clone(&self.policy_engine),
+            zone_resolver: Arc::clone(&self.zone_resolver),
+            dnssec: self.dnssec.as_ref().map(Arc::clone),
+        }
+    }
+}
+
+impl<ZR, Dns> Stage for PolicyEvalStage<ZR, Dns>
+where
+    ZR: crate::zones::resolver::ZoneResolver,
+    Dns: DnssecProvider + Send + Sync + 'static,
+{
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let arrival = ArrivalInfo::from_time(ctx.borrow_arrival_time());
 
@@ -804,7 +824,7 @@ impl<ZR> Stage for PolicyEvalStage<ZR> where ZR: crate::zones::resolver::ZoneRes
                 let qtype = ctx.borrow_dpi_ctx().as_ref().and_then(|d| d.dns_query_type);
 
                 if let Some(domain) = domain {
-                    if provider.check_domain_in_spawn_blocking_context() {
+                    if provider.as_ref().check_domain_in_spawn_blocking_context() {
                         let p = Arc::clone(provider);
                         tokio::task::spawn_blocking(move || p.check_domain(&domain, qtype).status)
                             .await
@@ -1614,6 +1634,21 @@ mod tests {
     use std::collections::HashMap;
     use uuid::Uuid;
     use crate::policy::Policy;
+    use crate::data_plane::dns_inspection::dnssec::DnssecResult;
+    use crate::dpi::parsers::dns::DnsRecordType;
+
+    #[derive(Clone)]
+    struct PolicyTestDnssec;
+
+    impl DnssecProvider for PolicyTestDnssec {
+        fn check_domain(&self, _domain: &str, _qtype: Option<DnsRecordType>) -> DnssecResult {
+            DnssecResult::not_checked()
+        }
+
+        fn check_domain_in_spawn_blocking_context(&self) -> bool {
+            false
+        }
+    }
 
     fn sample_config() -> AppConfig {
         AppConfig {
@@ -1777,7 +1812,7 @@ mod tests {
             }
         }
 
-        let stage = PolicyEvalStage {
+        let stage = PolicyEvalStage::<MockZoneResolverAllow, PolicyTestDnssec> {
             policy_engine: engine,
             zone_resolver: Arc::new(MockZoneResolverAllow(zp_id)),
             dnssec: None,
