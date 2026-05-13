@@ -162,14 +162,14 @@ mod tests {
 
         let raw = icmp_echo_ipv4([192, 168, 10, 1], [192, 168, 20, 10]);
 
-        Scenario::packets()
+        Box::pin(Scenario::packets()
             .on_iface("eth1")
             .send(raw)
             .expect_packet(PipelineOutcome::Forward)
             .expect_event(event!(|e: &Event| {
                 matches!(&e.kind, EventKind::PolicyWarning { verdict, .. } if verdict == &"allow")
             }))
-            .run(&td, &cap)
+            .run(&td, &cap))
             .await
             .expect("scenario");
 
@@ -191,10 +191,10 @@ mod tests {
 
         let raw = icmp_echo_ipv4([192, 168, 10, 2], [192, 168, 20, 11]);
 
-        Scenario::packets()
+        Box::pin(Scenario::packets()
             .send(raw)
             .expect_packet(PipelineOutcome::Forward)
-            .run(&td, &cap)
+            .run(&td, &cap))
             .await
             .expect("scenario");
 

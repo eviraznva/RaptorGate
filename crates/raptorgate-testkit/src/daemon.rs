@@ -197,7 +197,7 @@ impl TestDaemon {
     }
 
     pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
-        self.daemon.process_raw(raw, iface).await
+        Box::pin(self.daemon.process_raw(raw, iface)).await
     }
 }
 

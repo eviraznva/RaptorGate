@@ -48,7 +48,7 @@ pub(crate) async fn execute_scenario_plan(
     } = plan;
 
     for (send_index, step) in sends.into_iter().enumerate() {
-        let out = daemon.process_raw(step.raw, step.iface).await;
+        let out = Box::pin(daemon.process_raw(step.raw, step.iface)).await;
         if let Some(exp) = step.expect_packet {
             out.assert_outcome(exp).map_err(|source| ScenarioRunError::PacketOutcome {
                 send_index,
@@ -122,7 +122,7 @@ impl PacketsScenario {
         if self.dangling_packet_expect {
             return Err(ScenarioRunError::ExpectPacketWithoutSend);
         }
-        execute_scenario_plan(self.plan, daemon, capture).await
+        Box::pin(execute_scenario_plan(self.plan, daemon, capture)).await
     }
 }
 
@@ -344,7 +344,7 @@ impl TcpSessionScenario {
         if self.dangling_packet_expect {
             return Err(ScenarioRunError::ExpectPacketWithoutSend);
         }
-        execute_scenario_plan(self.plan, daemon, capture).await
+        Box::pin(execute_scenario_plan(self.plan, daemon, capture)).await
     }
 }
 
