@@ -1,0 +1,8 @@
+[package]
+name = "raptorgate-testkit"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ngfw = { path = "../raptorgate", features = ["test-capture"] }
+tokio = { version = "1.50.0", features = ["macros", "rt", "time"] }

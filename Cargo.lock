@@ -2317,6 +2317,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "raptorgate-testkit"
+version = "0.1.0"
+dependencies = [
+ "ngfw",
+ "tokio",
+]
+
+[[package]]
 name = "rawpointer"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -16,7 +16,7 @@ const INSPECT_BUF_CAP: usize = 16_384;
 const CHUNK_SIZE: usize = 8_192;
 const MAX_INSPECT_CHUNKS: u8 = 5;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     ClientToServer,
     ServerToClient,
@@ -31,7 +31,7 @@ pub struct SessionMeta {
     pub mode: InspectionMode,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectionMode {
     Inbound,
     Outbound,

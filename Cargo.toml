@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "crates/raptorgate",
+    "crates/raptorgate-testkit",
 ]
 resolver = "2"
