@@ -201,6 +201,22 @@ mod tests {
         assert_eq!(r.failed_at, Some(0));
     }
 
+
+    #[test]
+    fn subsequence_ignores_interruptions() {
+        let cap = EventCapture::new();
+        cap.push(mk_event(EventKind::EventBusConnectedEvent {}));
+        cap.push(mk_event(EventKind::RouteAdded { route: crate::events::RouteInfo { destination: "test".into(), out_interface_index: 0, priority: 0 } }));
+        cap.push(mk_event(EventKind::PolicyWarning {
+            message: "a".into(),
+            verdict: "allow",
+        }));
+        let p0: EventPredicate = Box::new(|e| matches!(e.kind, EventKind::EventBusConnectedEvent {}));
+        let p1: EventPredicate = Box::new(|e| matches!(e.kind, EventKind::PolicyWarning { .. }));
+        let r = cap.try_match_subsequence(&[p0, p1]);
+        assert!(r.matched);
+    }
+
     #[test]
     fn fence_filters_old() {
         let cap = EventCapture::new();

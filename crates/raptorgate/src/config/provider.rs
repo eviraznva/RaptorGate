@@ -183,6 +183,14 @@ impl AppConfigProvider<SingleDiskStore<AppConfig>> {
 }
 
 impl<Store: AppConfigStore> AppConfigProvider<Store> {
+    pub fn with_store_and_config(store: Store, config: AppConfig) -> Self {
+        Self {
+            config: ArcSwap::from_pointee(config),
+            store,
+            observers: Mutex::new(Vec::new()),
+        }
+    }
+
     pub async fn register<T: ConfigObserver + 'static>(&self, observer: Arc<T>, name: &'static str) {
         self.observers.lock().await.push((observer, name));
     }

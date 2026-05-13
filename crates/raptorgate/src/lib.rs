@@ -18,6 +18,7 @@ pub mod routing;
 pub mod rule_tree;
 pub mod tls;
 mod disk_store;
+pub use disk_store::SingleDiskStore;
 pub mod zones;
 mod swapper;
 pub mod validation;

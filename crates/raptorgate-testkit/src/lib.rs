@@ -1,10 +1,27 @@
-use std::future::Future;
-use std::time::{Duration, SystemTime};
+pub mod config_bundle;
+pub mod conntrack_queries;
+pub mod daemon;
+pub mod outcomes;
+pub mod scenario;
+pub mod static_infra;
 
+pub use config_bundle::{physical_zone_interface, ConfigBundleBuilder};
+pub use conntrack_queries::ConntrackSnapshotExt;
+pub use daemon::{TestDaemon, TestDaemonBuilder, TestDaemonBuildError, TestDeps};
+pub use outcomes::{OutcomeMismatch, PipelineOutcome, ProcessOutputAssertExt};
+pub use scenario::{
+    icmp_echo_ipv4, packets, IcmpSessionV4, PacketsScenario, Scenario, SocketV4, TcpSessionV4,
+    UdpSessionV4,
+};
+
+pub use ngfw::daemon::ProcessOutput;
 pub use ngfw::events::{
     set_event_capture, Event, EventCapture, EventKind, EventPredicate, WaitForSubsequenceError,
     WaitForSubsequenceResult,
 };
+
+use std::future::Future;
+use std::time::{Duration, SystemTime};
 
 const FENCE_SETTLE: Duration = Duration::from_millis(2);
 
@@ -62,25 +79,22 @@ where
     capture.wait_for_subsequence(&matchers).await
 }
 
-pub struct Scenario;
-
-impl Scenario {
-    pub async fn run_expect_events<F, Fut>(
-        capture: &EventCapture,
-        stimulus: F,
-        pattern_kinds: &[EventKind],
-    ) -> Result<(), WaitForSubsequenceError>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = ()>,
-    {
-        expect_events(capture, stimulus, pattern_kinds).await
-    }
+#[macro_export]
+macro_rules! events {
+    ($($pred:expr),* $(,)?) => {
+        vec![$(Box::new($pred) as ngfw::events::EventPredicate),*]
+    };
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, OnceLock};
+    use std::time::SystemTime;
+
+    use ngfw::pipeline::ExecutionAction;
+    use tokio::sync::Mutex;
+
+    use crate::ProcessOutputAssertExt;
 
     use super::*;
 
@@ -92,7 +106,7 @@ mod tests {
 
     #[tokio::test]
     async fn expect_events_sees_emitted_after_fence() {
-        let _guard = global_capture_lock().lock().unwrap();
+        let _guard = global_capture_lock().lock().await;
         let cap = Arc::new(EventCapture::new());
         set_event_capture(Some(cap.clone()));
         let res = expect_events(&cap, || async {
@@ -105,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn expect_events_subsequence_two_kinds() {
-        let _guard = global_capture_lock().lock().unwrap();
+        let _guard = global_capture_lock().lock().await;
         let cap = Arc::new(EventCapture::new());
         set_event_capture(Some(cap.clone()));
         let res = expect_events(&cap, || async {
@@ -124,5 +138,43 @@ mod tests {
         .await;
         set_event_capture(None);
         res.unwrap();
+    }
+
+    #[tokio::test]
+    async fn smoke_icmp_allow_warn_forward_and_policy_warning_event() {
+        let _guard = global_capture_lock().lock().await;
+        let cap = Arc::new(EventCapture::new());
+        set_event_capture(Some(cap.clone()));
+
+        let bundle = config_bundle::smoke_icmp_allow_warn_bundle();
+        let td = TestDaemon::builder()
+            .with_bundle(bundle)
+            .build()
+            .await
+            .expect("test daemon");
+
+        let raw = icmp_echo_ipv4([192, 168, 10, 1], [192, 168, 20, 10]);
+
+        cap.clear();
+        cap.set_fence(SystemTime::now());
+        tokio::time::sleep(FENCE_SETTLE).await;
+
+        let out = td.daemon().process_raw(raw, Arc::from("eth1")).await;
+        out.assert_outcome(PipelineOutcome::Forward)
+            .expect("pipeline outcome");
+        assert!(
+            out.emitted
+                .iter()
+                .any(|i| matches!(i.action, ExecutionAction::Forward)),
+            "expected forward emission"
+        );
+
+        let preds = events![|e: &Event| {
+            matches!(&e.kind, EventKind::PolicyWarning { verdict, .. } if verdict == &"allow")
+        }];
+        cap.wait_for_subsequence(&preds)
+            .await
+            .expect("policy warning event");
+        set_event_capture(None);
     }
 }

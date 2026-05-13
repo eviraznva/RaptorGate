@@ -2320,8 +2320,14 @@ dependencies = [
 name = "raptorgate-testkit"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "etherparse",
+ "ipnet",
  "ngfw",
+ "tempfile",
+ "thiserror 2.0.18",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

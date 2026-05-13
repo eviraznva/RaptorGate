@@ -22,6 +22,14 @@ pub struct RoutingTable {
 }
 
 impl RoutingTable {
+    #[cfg(any(test, feature = "test-capture"))]
+    pub fn from_static_routes(mut routes: Vec<RouteEntry>) -> Arc<Self> {
+        routes.sort_by_key(|r| (r.destination.prefix_len(), -i64::from(r.priority)));
+        Arc::new(Self {
+            routes: ArcSwap::from_pointee(routes),
+        })
+    }
+
     pub async fn new(
         listener: &NetlinkListener,
         cancel: CancellationToken
