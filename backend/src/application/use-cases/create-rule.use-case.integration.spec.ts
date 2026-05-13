@@ -126,6 +126,7 @@ describeIntegration(
           'match ip_ver { = v4 : match protocol { = tcp : match dst_port { = 443 : verdict allow _ : verdict drop } } }',
         priority: 100,
         accessToken: 'valid-token',
+        smtpMatchers: { sender: [], recipient: [], message: [] },
       };
 
       tokenService.decodeAccessToken.mockReturnValue(validClaims);
@@ -146,6 +147,7 @@ describeIntegration(
         content: 'match protocol { = tcp verdict allow }',
         priority: 50,
         accessToken: 'valid-token',
+        smtpMatchers: { sender: [], recipient: [], message: [] },
       };
 
       tokenService.decodeAccessToken.mockReturnValue(validClaims);

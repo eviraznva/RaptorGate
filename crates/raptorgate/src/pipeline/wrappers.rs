@@ -340,13 +340,12 @@ impl Stage for FtpAlgStage {
                             arrival_time,
                             dpi_ctx_taken,
                             identity_ctx_taken,
+                            Some(ct.clone()),
+                            ct_info,
+                            ct_direction,
+                            ct_is_new,
                         ) {
-                            Ok(mut new_ctx) => {
-                                if let (Some(info), Some(direction)) = (ct_info, ct_direction) {
-                                    new_ctx.set_conntrack(ct.clone(), info, direction, ct_is_new);
-                                }
-                                *ctx = new_ctx;
-                            }
+                            Ok(new_ctx) => *ctx = new_ctx,
                             Err(err) => {
                                 tracing::warn!(
                                     event = "ftp_alg.reparse.failed",

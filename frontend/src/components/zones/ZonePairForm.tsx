@@ -35,8 +35,8 @@ function validate(f: FormState): FormErrors {
   const e: FormErrors = {};
   if (!f.srcZoneId) e.srcZoneId = "Required";
   if (!f.dstZoneId) e.dstZoneId = "Required";
-  else if (f.srcZoneId && f.srcZoneId === f.dstZoneId)
-    e.dstZoneId = "Must differ from source zone";
+  // else if (f.srcZoneId && f.srcZoneId === f.dstZoneId)
+  //   e.dstZoneId = "Must differ from source zone";
   return e;
 }
 

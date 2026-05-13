@@ -1,6 +1,9 @@
 import { FirewallRule } from '../../../domain/entities/firewall-rule.entity.js';
 import { Priority } from '../../../domain/value-objects/priority.vo.js';
-import { RuleRecord } from '../schemas/rules.schema.js';
+import {
+  RuleRecord,
+  type SmtpMatchers,
+} from '../schemas/rules.schema.js';
 
 export class RuleJsonMapper {
   constructor() {}
@@ -17,6 +20,7 @@ export class RuleJsonMapper {
       new Date(record.createdAt),
       new Date(record.updatedAt),
       record.createdBy,
+      record.smtpMatchers,
     );
   }
 
@@ -32,6 +36,7 @@ export class RuleJsonMapper {
       createdAt: rule.getCreatedAt().toISOString(),
       updatedAt: rule.getUpdatedAt().toISOString(),
       description: rule.getDescription(),
+      smtpMatchers: rule.getSmtpMatchers() as SmtpMatchers,
     };
   }
 }

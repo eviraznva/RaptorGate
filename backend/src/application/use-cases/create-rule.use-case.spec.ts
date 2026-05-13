@@ -97,6 +97,7 @@ describe('CreateRuleUseCase', () => {
         'match ip_ver { = v4 : match protocol { = tcp : match dst_port { = 443 : verdict allow _ : verdict drop } } }',
       priority: 100,
       accessToken: 'valid-token',
+      smtpMatchers: { sender: [], recipient: [], message: [] },
     };
 
     tokenService.decodeAccessToken.mockReturnValue(validClaims);
@@ -134,6 +135,7 @@ describe('CreateRuleUseCase', () => {
       content: 'match protocol { = tcp verdict allow }',
       priority: 50,
       accessToken: 'valid-token',
+      smtpMatchers: { sender: [], recipient: [], message: [] },
     };
     const validationError = new RaptorLangValidationException(
       'Unexpected token at 1:26',
@@ -162,6 +164,7 @@ describe('CreateRuleUseCase', () => {
       content: 'match protocol { = udp : verdict allow }',
       priority: 20,
       accessToken: 'bad-token',
+      smtpMatchers: { sender: [], recipient: [], message: [] },
     };
 
     tokenService.decodeAccessToken.mockReturnValue(null);
@@ -186,6 +189,7 @@ describe('CreateRuleUseCase', () => {
       content: 'match protocol { = tcp : verdict allow }',
       priority: 10,
       accessToken: 'valid-token',
+      smtpMatchers: { sender: [], recipient: [], message: [] },
     };
 
     tokenService.decodeAccessToken.mockReturnValue(validClaims);

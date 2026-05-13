@@ -304,6 +304,14 @@ impl SmtpSession {
             },
             new_state: format!("{:?}", self.state),
         }));
+
+        tracing::info!(event=?Event::new(EventKind::SmtpSessionStateChanged {
+            session: SmtpSessionInfo {
+                client: self.client.clone(),
+                server: self.server.clone(),
+            },
+            new_state: format!("{:?}", self.state),
+        }), "Emitted SMTP session state change event");
     }
 }
 
@@ -757,7 +765,7 @@ impl<ZR: ZoneResolver> CtObserver for SmtpTracker<ZR> {
     fn on_destroy(&self, entry: &ConntrackEntry, _reason: DestroyReason) {
         let original_tuple = &entry.original;
         let reply_tuple = entry.reply();
-
+        
         let original_src = EndpointIdentifier {
             ip: original_tuple.src_ip,
             port: crate::rule_tree::types::Port::from(original_tuple.src_port),
@@ -766,11 +774,11 @@ impl<ZR: ZoneResolver> CtObserver for SmtpTracker<ZR> {
             ip: original_tuple.dst_ip,
             port: crate::rule_tree::types::Port::from(original_tuple.dst_port),
         };
-
+        
         let id = TcpIdentifier {
             endpoints: unordered_pair::UnorderedPair::from((original_src, original_dst)),
         };
-
+        
         self.sessions.remove(&id);
         self.rst_packets.remove(&id);
         self.terminated_sessions.remove(&id);
@@ -2217,15 +2225,15 @@ mod tests {
         use crate::conntrack::proto::ProtoState;
         use crate::conntrack::observer::DestroyReason;
         use std::time::Duration;
-
+    
         let tracker = SmtpTracker::new(mock_policy_retriever());
         let id = session_id();
-
+    
         prime_smtp_session(&tracker, &id);
         send_client_packet(&tracker, &id, b"MAIL FROM:<user1@test.local>\r\n");
-
+    
         assert!(tracker.sessions.contains_key(&id));
-
+    
         let flow_tuple = FlowTuple::new(
             client().ip,
             u16::from(client().port),
@@ -2233,7 +2241,7 @@ mod tests {
             u16::from(server().port),
             Protocol::Tcp,
         );
-
+    
         let entry = ConntrackEntry::new(
             1,
             flow_tuple,
@@ -2241,9 +2249,9 @@ mod tests {
             Duration::from_secs(30),
             0,
         );
-
+    
         tracker.on_destroy(&entry, DestroyReason::Timeout);
-
+    
         assert!(!tracker.sessions.contains_key(&id));
         assert!(!tracker.rst_packets.contains_key(&id));
         assert!(!tracker.terminated_sessions.contains_key(&id));

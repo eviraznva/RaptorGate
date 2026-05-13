@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
+use std::process::exit;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -691,6 +692,8 @@ where
         let bundle = snapshot
             .bundle
             .ok_or_else(|| Status::invalid_argument("missing bundle in snapshot"))?;
+
+        tracing::info!(policies=?bundle.rules, "pushing policies");
 
         tracing::info!(
             event = "config_snapshot.push.started",
