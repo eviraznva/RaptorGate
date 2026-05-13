@@ -450,3 +450,205 @@ impl Default for PacketsScenario {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use etherparse::PacketHeaders;
+
+    fn parse_tcp(raw: &[u8]) -> (etherparse::NetHeaders, etherparse::TcpHeader, Vec<u8>) {
+        let pkt = PacketHeaders::from_ethernet_slice(raw).expect("parse packet");
+        let ip = pkt.net.expect("ip header");
+        let tcp = pkt.transport.expect("transport header").tcp().expect("tcp header");
+        (ip, tcp, pkt.payload.slice().to_vec())
+    }
+
+    #[test]
+    fn tcp_builder_syn_from_client_fields() {
+        let client = SocketV4 {
+            ip: [192, 168, 10, 10],
+            port: 40_000,
+        };
+        let server = SocketV4 {
+            ip: [192, 168, 20, 20],
+            port: 25,
+        };
+        let session = TcpSessionV4::new(client, server).with_isns(1234, 4321).with_window(4096);
+
+        let raw = session.syn_from_client();
+        let (ip, tcp, payload) = parse_tcp(&raw);
+        let etherparse::NetHeaders::Ipv4(header, _) = ip else {
+            panic!("expected ipv4 header");
+        };
+
+        assert_eq!(header.source, client.ip);
+        assert_eq!(header.destination, server.ip);
+        assert!(tcp.syn);
+        assert!(!tcp.ack);
+        assert_eq!(tcp.sequence_number, 1234);
+        assert_eq!(tcp.destination_port, server.port);
+        assert_eq!(tcp.source_port, client.port);
+        assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn tcp_builder_syn_ack_from_server_fields() {
+        let client = SocketV4 {
+            ip: [192, 168, 10, 10],
+            port: 40_000,
+        };
+        let server = SocketV4 {
+            ip: [192, 168, 20, 20],
+            port: 25,
+        };
+        let session = TcpSessionV4::new(client, server).with_isns(1000, 2000);
+
+        let raw = session.syn_ack_from_server();
+        let (ip, tcp, payload) = parse_tcp(&raw);
+        let etherparse::NetHeaders::Ipv4(header, _) = ip else {
+            panic!("expected ipv4 header");
+        };
+
+        assert_eq!(header.source, server.ip);
+        assert_eq!(header.destination, client.ip);
+        assert!(tcp.syn);
+        assert!(tcp.ack);
+        assert_eq!(tcp.sequence_number, 2000);
+        assert_eq!(tcp.acknowledgment_number, 1001);
+        assert_eq!(tcp.destination_port, client.port);
+        assert_eq!(tcp.source_port, server.port);
+        assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn tcp_builder_ack_from_client_fields() {
+        let client = SocketV4 {
+            ip: [192, 168, 10, 10],
+            port: 40_000,
+        };
+        let server = SocketV4 {
+            ip: [192, 168, 20, 20],
+            port: 25,
+        };
+        let session = TcpSessionV4::new(client, server).with_isns(1000, 2000);
+
+        let raw = session.ack_from_client();
+        let (ip, tcp, payload) = parse_tcp(&raw);
+        let etherparse::NetHeaders::Ipv4(header, _) = ip else {
+            panic!("expected ipv4 header");
+        };
+
+        assert_eq!(header.source, client.ip);
+        assert_eq!(header.destination, server.ip);
+        assert!(!tcp.syn);
+        assert!(tcp.ack);
+        assert_eq!(tcp.sequence_number, 1001);
+        assert_eq!(tcp.acknowledgment_number, 2001);
+        assert_eq!(tcp.destination_port, server.port);
+        assert_eq!(tcp.source_port, client.port);
+        assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn tcp_builder_client_psh_ack_payload() {
+        let client = SocketV4 {
+            ip: [192, 168, 10, 10],
+            port: 40_000,
+        };
+        let server = SocketV4 {
+            ip: [192, 168, 20, 20],
+            port: 25,
+        };
+        let session = TcpSessionV4::new(client, server).with_window(2048);
+        let payload = b"ping";
+
+        let raw = session.client_psh_ack_to_server(77, 88, payload);
+        let (_ip, tcp, parsed_payload) = parse_tcp(&raw);
+
+        assert!(tcp.psh);
+        assert!(tcp.ack);
+        assert_eq!(tcp.sequence_number, 77);
+        assert_eq!(tcp.acknowledgment_number, 88);
+        assert_eq!(parsed_payload, payload);
+    }
+
+    #[test]
+    fn tcp_builder_server_psh_ack_payload() {
+        let client = SocketV4 {
+            ip: [192, 168, 10, 10],
+            port: 40_000,
+        };
+        let server = SocketV4 {
+            ip: [192, 168, 20, 20],
+            port: 25,
+        };
+        let session = TcpSessionV4::new(client, server).with_window(2048);
+        let payload = b"pong";
+
+        let raw = session.server_psh_ack_to_client(99, 111, payload);
+        let (_ip, tcp, parsed_payload) = parse_tcp(&raw);
+
+        assert!(tcp.psh);
+        assert!(tcp.ack);
+        assert_eq!(tcp.sequence_number, 99);
+        assert_eq!(tcp.acknowledgment_number, 111);
+        assert_eq!(parsed_payload, payload);
+    }
+
+    #[test]
+    fn udp_builder_fields() {
+        let client = SocketV4 {
+            ip: [192, 168, 10, 10],
+            port: 40_000,
+        };
+        let server = SocketV4 {
+            ip: [192, 168, 20, 20],
+            port: 53,
+        };
+        let session = UdpSessionV4::new(client, server);
+        let payload = b"dns";
+
+        let raw = session.datagram_client_to_server(payload);
+        let pkt = PacketHeaders::from_ethernet_slice(&raw).expect("parse packet");
+        let etherparse::NetHeaders::Ipv4(header, _) = pkt.net.expect("ip header") else {
+            panic!("expected ipv4 header");
+        };
+        let udp = pkt.transport.expect("transport header").udp().expect("udp header");
+
+        assert_eq!(header.source, client.ip);
+        assert_eq!(header.destination, server.ip);
+        assert_eq!(udp.source_port, client.port);
+        assert_eq!(udp.destination_port, server.port);
+        assert_eq!(pkt.payload.slice(), payload);
+    }
+
+    #[test]
+    fn icmp_builder_fields() {
+        let session = IcmpSessionV4::new([192, 168, 10, 10], [192, 168, 20, 20]);
+        let payload = b"ping";
+
+        let raw = session.echo_request(7, 9, payload);
+        let pkt = PacketHeaders::from_ethernet_slice(&raw).expect("parse packet");
+        let icmp = pkt.transport.expect("transport header").icmpv4().expect("icmp header");
+
+        assert!(matches!(icmp.icmp_type, etherparse::Icmpv4Type::EchoRequest(h) if h.id == 7 && h.seq == 9));
+        assert_eq!(pkt.payload.slice(), payload);
+
+        let raw = session.echo_reply(3, 4, payload);
+        let pkt = PacketHeaders::from_ethernet_slice(&raw).expect("parse packet");
+        let icmp = pkt.transport.expect("transport header").icmpv4().expect("icmp header");
+
+        assert!(matches!(icmp.icmp_type, etherparse::Icmpv4Type::EchoReply(h) if h.id == 3 && h.seq == 4));
+        assert_eq!(pkt.payload.slice(), payload);
+    }
+
+    #[test]
+    fn icmp_echo_ipv4_defaults() {
+        let raw = icmp_echo_ipv4([192, 168, 10, 10], [192, 168, 20, 20]);
+        let pkt = PacketHeaders::from_ethernet_slice(&raw).expect("parse packet");
+        let icmp = pkt.transport.expect("transport header").icmpv4().expect("icmp header");
+
+        assert!(matches!(icmp.icmp_type, etherparse::Icmpv4Type::EchoRequest(h) if h.id == 1 && h.seq == 1));
+        assert!(pkt.payload.slice().is_empty());
+    }
+}
