@@ -178,7 +178,10 @@ async fn tcp_session_emits_estabilished_event() {
     let expect_event = event!(|e: &Event| {
         matches!(
             &e.kind,
-            EventKind::TcpSessionEstabilished { .. }
+            EventKind::TcpSessionSubstateChanged {
+                new_state: ngfw::proto::events::TcpSessionState::Established,
+                ..
+            }
         )
     });
 
