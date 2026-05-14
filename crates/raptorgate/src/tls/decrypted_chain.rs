@@ -292,9 +292,14 @@ mod tests {
 
     fn test_meta() -> SessionMeta {
         SessionMeta {
+            session_id: uuid::Uuid::from_u128(0x22222222222222222222222222222222),
             peer: "10.0.0.1:12345".parse().unwrap(),
             server: "10.0.0.2:443".parse().unwrap(),
+            original_dst: "10.0.0.2:443".parse().unwrap(),
             sni: Some("example.com".into()),
+            alpn: Some(b"http/1.1".to_vec()),
+            client_interface: Some("lan0".into()),
+            server_interface: Some("wan0".into()),
             mode: crate::tls::inspection_relay::InspectionMode::Outbound,
         }
     }

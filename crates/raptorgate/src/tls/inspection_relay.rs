@@ -25,10 +25,26 @@ pub enum Direction {
 /// Metadane sesji TLS potrzebne do logowania i eventow.
 #[derive(Clone)]
 pub struct SessionMeta {
+    pub session_id: Uuid,
     pub peer: SocketAddr,
     pub server: SocketAddr,
+    pub original_dst: SocketAddr,
     pub sni: Option<String>,
+    pub alpn: Option<Vec<u8>>,
+    // TODO(issue 2): populate from redirect ingress and upstream egress resolution.
+    pub client_interface: Option<String>,
+    pub server_interface: Option<String>,
     pub mode: InspectionMode,
+}
+
+impl SessionMeta {
+    // TODO(issue 3): use this when building decrypted synthetic PacketContext.
+    pub fn source_interface_for_direction(&self, direction: Direction) -> Option<&str> {
+        match direction {
+            Direction::ClientToServer => self.client_interface.as_deref(),
+            Direction::ServerToClient => self.server_interface.as_deref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -76,7 +92,6 @@ impl InspectionRelay {
         let inspector_s2c = Arc::clone(&self.inspector);
         let mirror_c2s = Arc::clone(&self.mirror);
         let mirror_s2c = Arc::clone(&self.mirror);
-        let session_id = Uuid::now_v7();
 
         let c2s = tokio::spawn(async move {
             relay_one_direction(
@@ -86,7 +101,7 @@ impl InspectionRelay {
                 &c2s_meta,
                 inspector_c2s,
                 mirror_c2s,
-                session_id,
+                c2s_meta.session_id,
             )
             .await
         });
@@ -98,7 +113,7 @@ impl InspectionRelay {
                 &s2c_meta,
                 inspector_s2c,
                 mirror_s2c,
-                session_id,
+                s2c_meta.session_id,
             )
             .await
         });
@@ -106,7 +121,7 @@ impl InspectionRelay {
         let bytes_up = c2s.await.unwrap_or(0);
         let bytes_down = s2c.await.unwrap_or(0);
         self.inspector.close_session(meta);
-        self.mirror.finish_session(session_id);
+        self.mirror.finish_session(meta.session_id);
 
         (bytes_up, bytes_down)
     }
@@ -462,11 +477,52 @@ mod tests {
 
     fn test_meta() -> SessionMeta {
         SessionMeta {
+            session_id: Uuid::from_u128(0x11111111111111111111111111111111),
             peer: "10.0.0.1:12345".parse().unwrap(),
             server: "10.0.0.2:443".parse().unwrap(),
+            original_dst: "10.0.0.2:443".parse().unwrap(),
             sni: Some("example.com".into()),
+            alpn: Some(b"http/1.1".to_vec()),
+            client_interface: Some("lan0".into()),
+            server_interface: Some("wan0".into()),
             mode: InspectionMode::Outbound,
         }
+    }
+
+    #[test]
+    fn session_meta_resolves_source_interface_by_direction() {
+        let meta = test_meta();
+
+        assert_eq!(meta.source_interface_for_direction(Direction::ClientToServer), Some("lan0"));
+        assert_eq!(meta.source_interface_for_direction(Direction::ServerToClient), Some("wan0"));
+    }
+
+    #[tokio::test]
+    async fn mirror_uses_session_id_from_meta() {
+        let ips = Arc::new(RecordingInspector::new(InspectionDisposition::Forward));
+        let (mirror, mut rx) = DecryptionMirror::test_channel(DecryptionMirrorConfig {
+            enabled: true,
+            target: Some("collector.local:9000".into()),
+            ..Default::default()
+        });
+        let relay = InspectionRelay::with_mirror(ips, Arc::new(mirror));
+        let meta = test_meta();
+
+        let (mut c_w, c_r) = duplex(1024);
+        let (s_w, _s_r) = duplex(1024);
+        c_w.write_all(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await.unwrap();
+        drop(c_w);
+
+        let (mut empty_w, empty_r) = duplex(64);
+        let (empty_w2, _empty_r2) = duplex(64);
+        empty_w.shutdown().await.unwrap();
+
+        relay
+            .relay_bidirectional(c_r, s_w, empty_r, empty_w2, &meta)
+            .await;
+
+        let record = rx.try_recv().unwrap();
+        assert_eq!(record.frame().session_id(), meta.session_id);
     }
 
     #[tokio::test]

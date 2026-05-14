@@ -357,9 +357,14 @@ async fn handle_inbound_connection(
     let (sr, sw) = tokio::io::split(server_tls);
 
     let meta = SessionMeta {
+        session_id: uuid::Uuid::now_v7(),
         peer: peer_addr,
         server: server_addr,
+        original_dst: server_addr,
         sni: sni.clone(),
+        alpn: negotiated_alpn.clone(),
+        client_interface: None,
+        server_interface: None,
         mode: InspectionMode::Inbound,
     };
 
@@ -567,9 +572,14 @@ async fn handle_outbound_connection(
     let (server_read, server_write) = tokio::io::split(server_tls);
 
     let meta = SessionMeta {
+        session_id: uuid::Uuid::now_v7(),
         peer: peer_addr,
         server: original_dst,
+        original_dst,
         sni: sni.clone(),
+        alpn: negotiated_alpn.clone(),
+        client_interface: None,
+        server_interface: None,
         mode: InspectionMode::Outbound,
     };
 
