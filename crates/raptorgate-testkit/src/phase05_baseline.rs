@@ -148,8 +148,8 @@ async fn phase05_zone_policy_icmp_allow_warn_tcp_udp_drop_warn() {
         .expect("daemon");
 
     let raw_icmp = crate::icmp_echo_ipv4([192, 168, 10, 1], [192, 168, 20, 10]);
-    let out_icmp = td
-        .process_raw(raw_icmp, Arc::from("eth1"))
+    let out_icmp = Box::pin(td
+        .process_raw(raw_icmp, Arc::from("eth1")))
         .await;
     out_icmp
         .assert_outcome(PipelineOutcome::Forward)
@@ -174,9 +174,10 @@ async fn phase05_zone_policy_icmp_allow_warn_tcp_udp_drop_warn() {
             port: 4444,
         },
     );
-    let out_tcp = td
-        .process_raw(syn_only.syn_from_client(), Arc::from("eth1"))
-        .await;
+    let out_tcp = Box::pin(
+        td.process_raw(syn_only.syn_from_client(), Arc::from("eth1")),
+    )
+    .await;
     out_tcp
         .assert_outcome(PipelineOutcome::Drop)
         .expect("tcp syn drop");
@@ -200,12 +201,11 @@ async fn phase05_zone_policy_icmp_allow_warn_tcp_udp_drop_warn() {
             port: 5555,
         },
     );
-    let out_udp = td
-        .process_raw(
-            udp.datagram_client_to_server(b"ping"),
-            Arc::from("eth1"),
-        )
-        .await;
+    let out_udp = Box::pin(td.process_raw(
+        udp.datagram_client_to_server(b"ping"),
+        Arc::from("eth1"),
+    ))
+    .await;
     out_udp
         .assert_outcome(PipelineOutcome::Drop)
         .expect("udp drop");
@@ -532,11 +532,11 @@ async fn phase05_conntrack_tcp_established_after_handshake() {
     let cap = Arc::new(EventCapture::new());
     set_event_capture(Some(cap.clone()));
 
-    let td = TestDaemon::builder()
+    let td = Box::pin(TestDaemon::builder()
         .with_bundle(dual_zone_allow_ipv4_bundle())
         .build()
         .await
-        .expect("daemon");
+        .expect("daemon"));
 
     let s = TcpSessionV4::new(
         SocketV4 {
@@ -548,9 +548,9 @@ async fn phase05_conntrack_tcp_established_after_handshake() {
             port: 12_340,
         },
     );
-    td.process_raw(s.syn_from_client(), Arc::from("eth1")).await;
-    td.process_raw(s.syn_ack_from_server(), Arc::from("eth2")).await;
-    td.process_raw(s.ack_from_client(), Arc::from("eth1")).await;
+    let _ = Box::pin(td.process_raw(s.syn_from_client(), Arc::from("eth1"))).await;
+    let _ = Box::pin(td.process_raw(s.syn_ack_from_server(), Arc::from("eth2"))).await;
+    let _ = Box::pin(td.process_raw(s.ack_from_client(), Arc::from("eth1"))).await;
     let snap = td.conntrack_snapshot();
     assert!(
         snap.contains_flow_ipv4([192, 168, 10, 41], [192, 168, 20, 21]),
