@@ -448,7 +448,6 @@ impl<D: DaemonDeps> DaemonV2<D> {
             UdpL4PipelineFactory::default(),
             IcmpL4PipelineFactory::default(),
         );
-        s.conntrack.register_observer(Arc::clone(&sessions) as Arc<dyn crate::conntrack::observer::CtObserver>);
         Arc::new(Self {
             deps,
             pipeline,

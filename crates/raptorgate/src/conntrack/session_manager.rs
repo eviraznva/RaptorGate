@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 
 use dashmap::mapref::entry::Entry;
@@ -169,6 +170,7 @@ pub struct SessionManager {
     icmp_factory: IcmpL4PipelineFactory,
     handles: DashMap<FlowKey, mpsc::UnboundedSender<L4Input>>,
     trace: Option<Arc<StdMutex<Vec<String>>>>,
+    observer_events: AtomicUsize,
 }
 
 impl SessionManager {
@@ -186,6 +188,7 @@ impl SessionManager {
             icmp_factory,
             handles: DashMap::new(),
             trace: None,
+            observer_events: AtomicUsize::new(0),
         });
 
         sm.ct.register_observer(Arc::new(SessionManagerObs {
@@ -210,6 +213,7 @@ impl SessionManager {
             icmp_factory,
             handles: DashMap::new(),
             trace: Some(trace),
+            observer_events: AtomicUsize::new(0),
         });
 
         sm.ct.register_observer(Arc::new(SessionManagerObs {
@@ -227,6 +231,10 @@ impl SessionManager {
         self.handles.len()
     }
 
+    pub fn observer_event_count(&self) -> usize {
+        self.observer_events.load(Ordering::Relaxed)
+    }
+
     pub fn invalidate_session(&self, flow: &FlowKey) {
         let _ = self.ct.destroy_by_id(flow.entry_id, DestroyReason::InvalidatedByStage);
     }
@@ -237,6 +245,7 @@ impl SessionManager {
     }
 
     fn on_ct_new(&self, entry: &ConntrackEntry) {
+        self.observer_events.fetch_add(1, Ordering::Relaxed);
         let flow = flow_key_for(entry);
 
         let (tx, mut rx) = mpsc::unbounded_channel::<L4Input>();
@@ -304,6 +313,7 @@ impl SessionManager {
     fn on_ct_update(&self, _entry: &ConntrackEntry, _changed: CtStatus) {}
 
     fn on_ct_destroy(&self, entry: &ConntrackEntry, reason: DestroyReason) {
+        self.observer_events.fetch_add(1, Ordering::Relaxed);
         let flow = flow_key_for(entry);
         let Some((_, tx)) = self.handles.remove(&flow) else {
             return;
@@ -315,6 +325,7 @@ impl SessionManager {
     fn on_ct_anomaly(&self, _entry: &ConntrackEntry, _kind: AnomalyKind) {}
 
     fn on_ct_payload(&self, entry: &ConntrackEntry, dir: Direction, payload: &[u8]) {
+        self.observer_events.fetch_add(1, Ordering::Relaxed);
         if payload.is_empty() {
             return;
         }
