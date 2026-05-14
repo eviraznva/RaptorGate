@@ -8,3 +8,6 @@ pub mod config;
 pub mod observer;
 pub mod reassembler;
 pub mod expectation;
+
+#[cfg(test)]
+mod tcp_substate_emit_tests;

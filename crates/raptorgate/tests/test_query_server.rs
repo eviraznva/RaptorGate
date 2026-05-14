@@ -30,12 +30,14 @@ use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
 use serial_test::serial;
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 struct SharedServer {
     socket: String,
+    _data_dir: TempDir,
 }
 
 #[derive(Clone)]
@@ -115,11 +117,22 @@ static SHARED_SERVER: OnceLock<SharedServer> = OnceLock::new();
 
 fn shared_server() -> &'static SharedServer {
     SHARED_SERVER.get_or_init(|| {
-        unsafe { env::set_var("POLICIES_DIRECTORY", "/tmp") };
+        let data_dir = TempDir::new().expect("test_query_server data dir");
+        let data_path = data_dir.path().to_string_lossy().into_owned();
+        let pki_path = data_dir.path().join("pki");
+        std::fs::create_dir_all(&pki_path).expect("test_query_server pki dir");
+        let pki_path_str = pki_path.to_string_lossy().into_owned();
+        unsafe {
+            env::set_var("POLICIES_DIRECTORY", &data_path);
+            env::set_var("RAPTORGATE_PKI_DIR", &pki_path_str);
+        }
+        let socket_path = data_dir.path().join("query.sock");
+        let socket = socket_path.to_string_lossy().into_owned();
 
         // Channel lets us wait until the server is actually listening
         // before returning, without an arbitrary sleep.
         let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let socket_for_thread = socket.clone();
 
         std::thread::spawn(move || {
             // This runtime lives for the lifetime of the process —
@@ -219,21 +232,24 @@ fn shared_server() -> &'static SharedServer {
                     reset_lock: Arc::new(Mutex::new(())),
                 };
 
-                let socket = "/tmp/test-query-shared.sock".to_string();
                 let shutdown = CancellationToken::new();
                 let identity_sessions = IdentitySessionStore::new_shared();
                 let server =
-                    QueryServer::new(handler, identity_sessions, &socket, shutdown.clone());
-
-                // Signal the socket path before we start blocking on serve()
-                tx.send(socket).expect("receiver dropped");
-
-                server.serve().await;
+                    QueryServer::new(handler, identity_sessions, &socket_for_thread, shutdown.clone());
+                let socket_for_signal = socket_for_thread.clone();
+                server
+                    .serve_with_after_bind(move || {
+                        tx.send(socket_for_signal).expect("receiver dropped");
+                    })
+                    .await;
             });
         });
 
         let socket = rx.recv().expect("server thread died before signalling");
-        SharedServer { socket }
+        SharedServer {
+            socket,
+            _data_dir: data_dir,
+        }
     })
 }
 

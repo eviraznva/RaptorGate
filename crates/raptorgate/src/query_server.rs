@@ -94,6 +94,13 @@ where
     }
 
     pub async fn serve(self) {
+        self.serve_with_after_bind(|| {}).await
+    }
+
+    pub async fn serve_with_after_bind<F>(self, after_bind: F)
+    where
+        F: FnOnce() + Send,
+    {
         if let Err(e) = prepare_socket(&self.socket_path) {
             tracing::error!(socket = self.socket_path, error = %e, "failed to prepare query socket");
             return;
@@ -106,6 +113,8 @@ where
                 return;
             }
         };
+
+        after_bind();
 
         tracing::info!(
             event = "grpc.query_service.listening",

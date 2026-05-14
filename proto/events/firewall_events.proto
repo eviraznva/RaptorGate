@@ -70,6 +70,7 @@ message EventKind {
     RouteDeletedEvent  route_deleted  = 30;
     PolicyWarningEvent policy_warning = 31;
     SmtpSessionStateChangedEvent smtp_session_state_changed = 32;
+    TcpSessionSubstateChangedEvent tcp_session_substate_changed = 33;
   }
 }
 
@@ -151,6 +152,35 @@ message TcpSessionAbortedMidCloseEvent {
 message TcpSessionEnteredTimeWaitEvent {
   TcpEndpoint src = 1;
   TcpEndpoint dst = 2;
+}
+
+enum TcpSessionState {
+  TCP_SESSION_STATE_UNSPECIFIED = 0;
+  TCP_SESSION_STATE_NONE = 1;
+  TCP_SESSION_STATE_SYN_SENT = 2;
+  TCP_SESSION_STATE_SYN_RECV = 3;
+  TCP_SESSION_STATE_ESTABLISHED = 4;
+  TCP_SESSION_STATE_FIN_WAIT = 5;
+  TCP_SESSION_STATE_CLOSE_WAIT = 6;
+  TCP_SESSION_STATE_LAST_ACK = 7;
+  TCP_SESSION_STATE_TIME_WAIT = 8;
+  TCP_SESSION_STATE_CLOSE = 9;
+  TCP_SESSION_STATE_SYN_SENT2 = 10;
+}
+
+enum ConntrackPacketDirection {
+  CONNTRACK_PACKET_DIRECTION_UNSPECIFIED = 0;
+  CONNTRACK_PACKET_DIRECTION_ORIGINAL = 1;
+  CONNTRACK_PACKET_DIRECTION_REPLY = 2;
+}
+
+message TcpSessionSubstateChangedEvent {
+  uint64 flow_id = 1;
+  TcpEndpoint src = 2;
+  TcpEndpoint dst = 3;
+  ConntrackPacketDirection packet_direction = 4;
+  TcpSessionState previous_state = 5;
+  TcpSessionState new_state = 6;
 }
 
 message TlsInterceptStartedEvent {

@@ -5,7 +5,7 @@ use ngfw::events::{EventCapture, EventPredicate, WaitForSubsequenceError};
 use thiserror::Error;
 
 use crate::{
-    expect_events, EventKind, OutcomeMismatch, PipelineOutcome, ProcessOutputAssertExt, TestDaemon,
+    OutcomeMismatch, PipelineOutcome, ProcessOutputAssertExt, TestDaemon,
 };
 
 pub(crate) struct SendStep {
@@ -126,10 +126,6 @@ impl PacketsScenario {
     }
 }
 
-pub fn packets() -> PacketsScenario {
-    PacketsScenario::new()
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct SocketV4 {
     pub ip: [u8; 4],
@@ -191,7 +187,7 @@ impl TcpSessionV4 {
             self.server.port,
             self.client_isn,
             self.window,
-            |b| b.syn(),
+            etherparse::PacketBuilderStep::syn,
         )
     }
 
@@ -216,6 +212,54 @@ impl TcpSessionV4 {
             self.client_isn.wrapping_add(1),
             self.window,
             |b| b.ack(self.server_isn.wrapping_add(1)),
+        )
+    }
+
+    pub fn tcp_ack_client_to_server(&self, seq: u32, ack: u32) -> Vec<u8> {
+        Self::write_tcp_eth(
+            self.client.ip,
+            self.server.ip,
+            self.client.port,
+            self.server.port,
+            seq,
+            self.window,
+            |b| b.ack(ack),
+        )
+    }
+
+    pub fn tcp_fin_ack_client_to_server(&self, seq: u32, ack: u32) -> Vec<u8> {
+        Self::write_tcp_eth(
+            self.client.ip,
+            self.server.ip,
+            self.client.port,
+            self.server.port,
+            seq,
+            self.window,
+            |b| b.fin().ack(ack),
+        )
+    }
+
+    pub fn tcp_ack_server_to_client(&self, seq: u32, ack: u32) -> Vec<u8> {
+        Self::write_tcp_eth(
+            self.server.ip,
+            self.client.ip,
+            self.server.port,
+            self.client.port,
+            seq,
+            self.window,
+            |b| b.ack(ack),
+        )
+    }
+
+    pub fn tcp_fin_ack_server_to_client(&self, seq: u32, ack: u32) -> Vec<u8> {
+        Self::write_tcp_eth(
+            self.server.ip,
+            self.client.ip,
+            self.server.port,
+            self.client.port,
+            seq,
+            self.window,
+            |b| b.fin().ack(ack),
         )
     }
 
@@ -307,6 +351,40 @@ impl TcpSessionScenario {
             .server_seq_next
             .wrapping_add(payload.len() as u32);
         self.push_send(raw, self.server_iface.clone());
+        self
+    }
+
+    pub fn client_fin(mut self) -> Self {
+        let raw = self
+            .session
+            .tcp_fin_ack_client_to_server(self.client_seq_next, self.server_seq_next);
+        self.client_seq_next = self.client_seq_next.wrapping_add(1);
+        self.push_send(raw, self.client_iface.clone());
+        self
+    }
+
+    pub fn server_ack(mut self) -> Self {
+        let raw = self
+            .session
+            .tcp_ack_server_to_client(self.server_seq_next, self.client_seq_next);
+        self.push_send(raw, self.server_iface.clone());
+        self
+    }
+
+    pub fn server_fin(mut self) -> Self {
+        let raw = self
+            .session
+            .tcp_fin_ack_server_to_client(self.server_seq_next, self.client_seq_next);
+        self.server_seq_next = self.server_seq_next.wrapping_add(1);
+        self.push_send(raw, self.server_iface.clone());
+        self
+    }
+
+    pub fn client_final_ack(mut self) -> Self {
+        let raw = self
+            .session
+            .tcp_ack_client_to_server(self.client_seq_next, self.server_seq_next);
+        self.push_send(raw, self.client_iface.clone());
         self
     }
 
@@ -417,7 +495,7 @@ pub struct Scenario;
 
 impl Scenario {
     pub fn packets() -> PacketsScenario {
-        packets()
+        PacketsScenario::new()
     }
 
     pub fn tcp(client: SocketV4, server: SocketV4) -> TcpSessionScenario {
@@ -432,17 +510,17 @@ impl Scenario {
         IcmpSessionV4::new(client_ip, server_ip)
     }
 
-    pub async fn run_expect_events<F, Fut>(
-        capture: &EventCapture,
-        stimulus: F,
-        pattern_kinds: &[EventKind],
-    ) -> Result<(), WaitForSubsequenceError>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = ()>,
-    {
-        expect_events(capture, stimulus, pattern_kinds).await
-    }
+    // pub async fn run_expect_events<F, Fut>(
+    //     capture: &EventCapture,
+    //     stimulus: F,
+    //     pattern_kinds: &[EventKind],
+    // ) -> Result<(), WaitForSubsequenceError>
+    // where
+    //     F: FnOnce() -> Fut,
+    //     Fut: Future<Output = ()>,
+    // {
+    //     expect_events(capture, stimulus, pattern_kinds).await
+    // }
 }
 
 impl Default for PacketsScenario {

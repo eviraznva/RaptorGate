@@ -13,7 +13,7 @@ pub use conntrack_queries::ConntrackSnapshotExt;
 pub use daemon::{TestDaemon, TestDaemonBuilder, TestDaemonBuildError, TestDeps};
 pub use outcomes::{OutcomeMismatch, PipelineOutcome, ProcessOutputAssertExt};
 pub use scenario::{
-    icmp_echo_ipv4, packets, IcmpSessionV4, PacketsScenario, Scenario, ScenarioRunError,
+    icmp_echo_ipv4, IcmpSessionV4, PacketsScenario, Scenario, ScenarioRunError,
     SocketV4, TcpSessionScenario, TcpSessionV4, UdpSessionV4,
 };
 
@@ -104,6 +104,12 @@ macro_rules! event {
         Box::new($pred) as ngfw::events::EventPredicate
     };
 }
+
+#[cfg(test)]
+mod test_bundles;
+
+#[cfg(test)]
+mod phase05_baseline;
 
 #[cfg(test)]
 mod tests {

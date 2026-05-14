@@ -1,7 +1,5 @@
 use ngfw::proto::common::DefaultPolicy;
-use ngfw::proto::config::{
-    InterfaceStatus, PhysicalInterface, Rule, Zone, ZoneInterface, ZonePair,
-};
+use ngfw::proto::config::{InterfaceStatus, PhysicalInterface, Rule, Zone, ZoneInterface, ZonePair};
 use ngfw::proto::services::ConfigBundle;
 use uuid::Uuid;
 
