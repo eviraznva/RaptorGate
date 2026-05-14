@@ -2,7 +2,6 @@
 
 use std::collections::HashSet;
 use std::net::IpAddr;
-use std::ops::Deref;
 use std::sync::Arc;
 
 use etherparse::NetSlice;
@@ -194,6 +193,43 @@ pub type DataPipeline<D> = Chain<
         >,
     >,
 >;
+
+pub type V2Pipeline<D> = Chain<
+    ValidationStage,
+    Chain<
+        MetricsStage,
+        Chain<
+            LocalOwnershipStage<<D as DaemonDeps>::ConfigStore>,
+            Chain<ConntrackInStage, ExecutionStage>,
+        >,
+    >,
+>;
+
+fn build_v2_pipeline<D: DaemonDeps>(deps: &StaticDeps<D>, exec_tx: &ExecutionSender) -> V2Pipeline<D> {
+    V2Pipeline::<D> {
+        head: ValidationStage,
+        tail: Chain {
+            head: MetricsStage {
+                collector: Arc::clone(deps.metrics_collector),
+            },
+            tail: Chain {
+                head: LocalOwnershipStage {
+                    config_provider: Arc::clone(deps.config_provider),
+                    zone_interface_provider: Arc::clone(deps.zone_interfaces),
+                    local_ips: Arc::clone(deps.local_ips),
+                },
+                tail: Chain {
+                    head: ConntrackInStage {
+                        ct: Arc::clone(deps.conntrack),
+                    },
+                    tail: ExecutionStage {
+                        tx: exec_tx.clone(),
+                    },
+                },
+            },
+        },
+    }
+}
 
 fn build_pipeline<D: DaemonDeps>(deps: &Arc<D>, exec_tx: &ExecutionSender) -> DataPipeline<D> {
     let s = deps.static_dependencies();
@@ -389,7 +425,11 @@ impl<D: DaemonDeps> Daemon<D> {
 }
 
 pub struct DaemonV2<D: DaemonDeps> {
-    inner: Daemon<D>,
+    deps: Arc<D>,
+    pipeline: V2Pipeline<D>,
+    defrag: IpDefragEngine,
+    exec_tx: ExecutionSender,
+    test_exec_rx: Mutex<Option<ExecutionReceiver>>,
     sessions: Arc<SessionManager>,
 }
 
@@ -400,30 +440,64 @@ impl<D: DaemonDeps> DaemonV2<D> {
         exec_tx: ExecutionSender,
         test_exec_rx: Option<ExecutionReceiver>,
     ) -> Arc<Self> {
-        let inner = Daemon::assemble(deps.clone(), defrag, exec_tx, test_exec_rx);
-        let ct = deps.static_dependencies().conntrack.clone();
+        let s = deps.static_dependencies();
+        let pipeline = build_v2_pipeline(&s, &exec_tx);
         let sessions = SessionManager::new(
-            ct,
+            Arc::clone(s.conntrack),
             TcpL4PipelineFactory::default(),
             UdpL4PipelineFactory::default(),
             IcmpL4PipelineFactory::default(),
         );
-        Arc::new(Self { inner, sessions })
+        s.conntrack.register_observer(Arc::clone(&sessions) as Arc<dyn crate::conntrack::observer::CtObserver>);
+        Arc::new(Self {
+            deps,
+            pipeline,
+            defrag,
+            exec_tx,
+            test_exec_rx: Mutex::new(test_exec_rx),
+            sessions,
+        })
     }
 
-    pub fn daemon(&self) -> &Daemon<D> {
-        &self.inner
+    pub fn deps(&self) -> &Arc<D> {
+        &self.deps
     }
 
     pub fn sessions(&self) -> &Arc<SessionManager> {
         &self.sessions
     }
-}
 
-impl<D: DaemonDeps> Deref for DaemonV2<D> {
-    type Target = Daemon<D>;
+    pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
+        let packet = RawPacket { raw, iface };
+        let Some(mut ctx) = self.defrag.process_raw(packet) else {
+            return ProcessOutput {
+                emitted: Vec::new(),
+                stage_outcome: None,
+            };
+        };
 
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+        if !matches!(
+            &ctx.borrow_sliced_packet().net,
+            Some(NetSlice::Ipv4(_) | NetSlice::Ipv6(_))
+        ) {
+            return ProcessOutput {
+                emitted: Vec::new(),
+                stage_outcome: None,
+            };
+        }
+
+        let stage_outcome = self.pipeline.process(&mut ctx, &self.exec_tx).await;
+
+        let mut emitted = Vec::new();
+        if let Some(rx) = self.test_exec_rx.lock().as_mut() {
+            while let Ok(item) = rx.try_recv() {
+                emitted.push(item);
+            }
+        }
+
+        ProcessOutput {
+            emitted,
+            stage_outcome: Some(stage_outcome),
+        }
     }
 }

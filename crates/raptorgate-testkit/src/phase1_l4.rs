@@ -144,6 +144,29 @@ async fn testkit_daemon_v2_exposes_session_layer() {
     let _ = td.sessions();
 }
 
+#[tokio::test]
+async fn v2_daemon_processes_packet_through_l3_chain() {
+    let td = TestDaemon::builder().build().await.expect("daemon");
+    
+    let mut raw = Vec::new();
+    PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+        .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+        .udp(12345, 53)
+        .write(&mut raw, b"test")
+        .expect("packet");
+    
+    let output = td.daemon_v2().process_raw(raw, Arc::from("eth0")).await;
+    
+    assert!(
+        matches!(output.stage_outcome, Some(StageOutcome::Continue) | Some(StageOutcome::Halt)),
+        "expected Continue or Halt, got {:?}",
+        output.stage_outcome
+    );
+    
+    let events = td.sessions().observer_event_count();
+    assert!(events > 0, "expected observer events from conntrack, got {}", events);
+}
+
 #[test]
 fn production_stage_outcome_release_batch_still_exists() {
     let q: VecDeque<PacketContext> = VecDeque::new();

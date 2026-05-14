@@ -1,10 +1,12 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dashmap::DashMap;
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex};
 
 use crate::conntrack::entry::ConntrackEntry;
+use crate::conntrack::observer::{CtObserver, DestroyReason};
 use crate::conntrack::proto::ProtoState;
 use crate::conntrack::table::Conntrack;
 use crate::conntrack::tuple::{Direction, FlowTuple};
@@ -102,6 +104,7 @@ pub struct SessionManager {
     icmp_factory: IcmpL4PipelineFactory,
     handles: DashMap<FlowKey, SessionHandle>,
     trace: Option<Arc<Mutex<Vec<String>>>>,
+    observer_events: AtomicUsize,
 }
 
 impl SessionManager {
@@ -118,6 +121,7 @@ impl SessionManager {
             icmp_factory,
             handles: DashMap::new(),
             trace: None,
+            observer_events: AtomicUsize::new(0),
         })
     }
 
@@ -135,6 +139,7 @@ impl SessionManager {
             icmp_factory,
             handles: DashMap::new(),
             trace: Some(trace),
+            observer_events: AtomicUsize::new(0),
         })
     }
 
@@ -185,6 +190,38 @@ impl SessionManager {
         });
 
         SessionHandle { tx }
+    }
+
+    pub fn observer_event_count(&self) -> usize {
+        self.observer_events.load(Ordering::Relaxed)
+    }
+}
+
+impl CtObserver for SessionManager {
+    fn on_new(&self, entry: &ConntrackEntry) {
+        self.observer_events.fetch_add(1, Ordering::Relaxed);
+        tracing::debug!(event = "session_manager.on_new", entry_id = entry.id, "conntrack new entry");
+    }
+
+    fn on_payload(&self, entry: &ConntrackEntry, dir: Direction, payload: &[u8]) {
+        self.observer_events.fetch_add(1, Ordering::Relaxed);
+        tracing::trace!(
+            event = "session_manager.on_payload",
+            entry_id = entry.id,
+            dir = ?dir,
+            len = payload.len(),
+            "conntrack payload"
+        );
+    }
+
+    fn on_destroy(&self, entry: &ConntrackEntry, reason: DestroyReason) {
+        self.observer_events.fetch_add(1, Ordering::Relaxed);
+        tracing::debug!(
+            event = "session_manager.on_destroy",
+            entry_id = entry.id,
+            reason = ?reason,
+            "conntrack destroy entry"
+        );
     }
 }
 
