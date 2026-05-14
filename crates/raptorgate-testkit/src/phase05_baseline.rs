@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use ngfw::events::Event;
 use ngfw::proto::config::{SmtpMatch, SmtpMatchAction, SmtpMatchers};
+use ngfw::proto::events::{ConntrackPacketDirection, TcpSessionState};
 
 use crate::{
     conntrack_queries::ConntrackSnapshotExt,
@@ -638,10 +639,70 @@ async fn phase05_tcp_established_and_timewait_on_close() {
         .server_fin()
         .client_final_ack()
         .expect_event(event!(|e: &Event| {
-            matches!(&e.kind, EventKind::TcpSessionEstabilished { .. })
+            matches!(
+                &e.kind,
+                EventKind::TcpSessionSubstateChanged {
+                    packet_direction: ConntrackPacketDirection::Reply,
+                    previous_state: TcpSessionState::SynSent,
+                    new_state: TcpSessionState::SynRecv,
+                    ..
+                }
+            )
         }))
         .expect_event(event!(|e: &Event| {
-            matches!(&e.kind, EventKind::TcpSessionEnteredTimeWait { .. })
+            matches!(
+                &e.kind,
+                EventKind::TcpSessionSubstateChanged {
+                    packet_direction: ConntrackPacketDirection::Original,
+                    previous_state: TcpSessionState::SynRecv,
+                    new_state: TcpSessionState::Established,
+                    ..
+                }
+            )
+        }))
+        .expect_event(event!(|e: &Event| {
+            matches!(
+                &e.kind,
+                EventKind::TcpSessionSubstateChanged {
+                    packet_direction: ConntrackPacketDirection::Original,
+                    previous_state: TcpSessionState::Established,
+                    new_state: TcpSessionState::FinWait,
+                    ..
+                }
+            )
+        }))
+        .expect_event(event!(|e: &Event| {
+            matches!(
+                &e.kind,
+                EventKind::TcpSessionSubstateChanged {
+                    packet_direction: ConntrackPacketDirection::Reply,
+                    previous_state: TcpSessionState::FinWait,
+                    new_state: TcpSessionState::CloseWait,
+                    ..
+                }
+            )
+        }))
+        .expect_event(event!(|e: &Event| {
+            matches!(
+                &e.kind,
+                EventKind::TcpSessionSubstateChanged {
+                    packet_direction: ConntrackPacketDirection::Reply,
+                    previous_state: TcpSessionState::CloseWait,
+                    new_state: TcpSessionState::LastAck,
+                    ..
+                }
+            )
+        }))
+        .expect_event(event!(|e: &Event| {
+            matches!(
+                &e.kind,
+                EventKind::TcpSessionSubstateChanged {
+                    packet_direction: ConntrackPacketDirection::Original,
+                    previous_state: TcpSessionState::LastAck,
+                    new_state: TcpSessionState::TimeWait,
+                    ..
+                }
+            )
         }))
         .run(&td, &cap)
         .await

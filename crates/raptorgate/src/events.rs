@@ -330,6 +330,14 @@ pub struct SmtpSessionInfo {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
+    TcpSessionSubstateChanged {
+        flow_id: u64,
+        src: EndpointIdentifier,
+        dst: EndpointIdentifier,
+        packet_direction: proto::ConntrackPacketDirection,
+        previous_state: proto::TcpSessionState,
+        new_state: proto::TcpSessionState,
+    },
     TcpSessionEstabilished { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpConnectionRejected { src: EndpointIdentifier, dst: EndpointIdentifier },
@@ -403,7 +411,8 @@ impl EventKind {
     pub const fn is_immediate(&self) -> bool {
         use EventKind as E;
         match self {
-            E::TcpSessionEstabilished { .. }
+            E::TcpSessionSubstateChanged { .. }
+            | E::TcpSessionEstabilished { .. }
             | E::TcpSessionRemoved { .. }
             | E::TcpConnectionRejected { .. }
             | E::TcpSessionAbortedMidClose { .. }
@@ -466,6 +475,22 @@ impl From<EventKind> for proto::EventKind {
         use proto::event_kind::Item;
         proto::EventKind {
             item: Some(match kind {
+                EventKind::TcpSessionSubstateChanged {
+                    flow_id,
+                    src,
+                    dst,
+                    packet_direction,
+                    previous_state,
+                    new_state,
+                } =>
+                    Item::TcpSessionSubstateChanged(proto::TcpSessionSubstateChangedEvent {
+                        flow_id,
+                        src: Some(src.into()),
+                        dst: Some(dst.into()),
+                        packet_direction: packet_direction as i32,
+                        previous_state: previous_state as i32,
+                        new_state: new_state as i32,
+                    }),
                 EventKind::TcpSessionEstabilished { src, dst } =>
                     Item::TcpSessionEstablished(proto::TcpSessionEstablishedEvent {
                         src: Some(src.into()),

@@ -12,8 +12,13 @@ use crate::conntrack::config::{ConntrackConfig, ConfigError};
 use crate::conntrack::tuple::{Direction, FlowTuple, Protocol};
 use crate::conntrack::entry::{ConntrackEntry, ConntrackInterfacePath, CtInfo, CtStatus};
 use crate::conntrack::expectation::{ExpectationConfig, ExpectationTable};
-use crate::conntrack::proto::{CtVerdict, NewStateOutcome, ProtoRegistry};
+use crate::conntrack::proto::{CtVerdict, NewStateOutcome, ProtoRegistry, ProtoState};
+use crate::conntrack::proto::tcp::TcpConntrack;
 use crate::conntrack::observer::{CtObserver, DestroyReason, ObserverRegistry};
+use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
+use crate::events::{emit, Event, EventKind};
+use crate::proto::events as pe;
+use crate::rule_tree::types::Port;
 
 #[derive(Debug)]
 pub struct ConntrackMetrics {
@@ -305,6 +310,41 @@ pub enum ProcessOutcome {
     Invalid,
     Drop,
     TableFull,
+}
+
+fn tcp_conntrack_to_pe_state(s: TcpConntrack) -> pe::TcpSessionState {
+    match s {
+        TcpConntrack::None => pe::TcpSessionState::None,
+        TcpConntrack::SynSent => pe::TcpSessionState::SynSent,
+        TcpConntrack::SynRecv => pe::TcpSessionState::SynRecv,
+        TcpConntrack::Established => pe::TcpSessionState::Established,
+        TcpConntrack::FinWait => pe::TcpSessionState::FinWait,
+        TcpConntrack::CloseWait => pe::TcpSessionState::CloseWait,
+        TcpConntrack::LastAck => pe::TcpSessionState::LastAck,
+        TcpConntrack::TimeWait => pe::TcpSessionState::TimeWait,
+        TcpConntrack::Close => pe::TcpSessionState::Close,
+        TcpConntrack::SynSent2 => pe::TcpSessionState::SynSent2,
+    }
+}
+
+fn ct_direction_to_pe(d: Direction) -> pe::ConntrackPacketDirection {
+    match d {
+        Direction::Original => pe::ConntrackPacketDirection::Original,
+        Direction::Reply => pe::ConntrackPacketDirection::Reply,
+    }
+}
+
+fn original_tuple_endpoints(orig: &FlowTuple) -> (EndpointIdentifier, EndpointIdentifier) {
+    (
+        EndpointIdentifier {
+            ip: orig.src_ip,
+            port: Port::from(orig.src_port),
+        },
+        EndpointIdentifier {
+            ip: orig.dst_ip,
+            port: Port::from(orig.dst_port),
+        },
+    )
 }
 
 pub struct Conntrack {
@@ -628,10 +668,41 @@ impl Conntrack {
             return ProcessOutcome::Invalid;
         };
 
+        let prev_tcp = if proto == Protocol::Tcp {
+            match &*entry.proto_state.lock() {
+                ProtoState::Tcp(t) => Some(t.state),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         let verdict = handler.update(entry, pkt, direction, now, config);
 
         match verdict {
             CtVerdict::Accept => {
+                if let Some(prev) = prev_tcp {
+                    let new_tcp = match &*entry.proto_state.lock() {
+                        ProtoState::Tcp(t) => Some(t.state),
+                        _ => None,
+                    };
+
+                    if let Some(new) = new_tcp {
+                        if prev != new {
+                            let (src, dst) = original_tuple_endpoints(&entry.original);
+
+                            emit(Event::new(EventKind::TcpSessionSubstateChanged {
+                                flow_id: entry.id,
+                                src,
+                                dst,
+                                packet_direction: ct_direction_to_pe(direction),
+                                previous_state: tcp_conntrack_to_pe_state(prev),
+                                new_state: tcp_conntrack_to_pe_state(new),
+                            }));
+                        }
+                    }
+                }
+
                 let prev_status = if self.observers.observer_count() > 0 {
                     Some(entry.status())
                 } else {
