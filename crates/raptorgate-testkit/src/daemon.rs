@@ -172,6 +172,7 @@ fn parse_bundle(
 }
 
 pub struct TestDaemon {
+    daemon: Arc<Daemon<TestDeps>>,
     daemon_v2: Arc<DaemonV2<TestDeps>>,
     deps: Arc<TestDeps>,
     _temp: Arc<TempDir>,
@@ -183,7 +184,11 @@ impl TestDaemon {
     }
 
     pub fn daemon(&self) -> &Daemon<TestDeps> {
-        self.daemon_v2.daemon()
+        &self.daemon
+    }
+
+    pub fn daemon_v2(&self) -> &DaemonV2<TestDeps> {
+        &self.daemon_v2
     }
 
     pub fn deps(&self) -> &Arc<TestDeps> {
@@ -202,7 +207,7 @@ impl TestDaemon {
     }
 
     pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
-        Box::pin(self.daemon_v2.process_raw(raw, iface)).await
+        self.daemon.process_raw(raw, iface).await
     }
 }
 
@@ -457,10 +462,15 @@ impl TestDaemonBuilder {
         });
 
         let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (exec_tx_v2, exec_rx_v2) = tokio::sync::mpsc::unbounded_channel();
         let defrag = IpDefragEngine::new(DefragConfig::default());
-        let daemon_v2 = DaemonV2::assemble_v2(deps.clone(), defrag, exec_tx, Some(exec_rx));
+        let defrag_v2 = IpDefragEngine::new(DefragConfig::default());
+        
+        let daemon = Arc::new(Daemon::assemble(deps.clone(), defrag, exec_tx, Some(exec_rx)));
+        let daemon_v2 = DaemonV2::assemble_v2(deps.clone(), defrag_v2, exec_tx_v2, Some(exec_rx_v2));
 
         Ok(TestDaemon {
+            daemon,
             daemon_v2,
             deps,
             _temp: temp,
