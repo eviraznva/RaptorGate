@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use crate::dpi::{AppProto, DpiClassifier, DpiContext};
 use crate::events;
+use crate::interfaces::InterfaceMonitor;
+use crate::netlink::routing_table::RoutingTable;
 use crate::tls::decrypted_chain::{
     DecryptedTrafficInspector, InspectionDisposition,
 };
@@ -22,6 +24,44 @@ pub enum Direction {
     ServerToClient,
 }
 
+#[derive(Clone, Default)]
+pub struct SessionInterfaces {
+    pub client_side_interface: Option<String>,
+    pub server_side_interface: Option<String>,
+}
+
+pub trait SessionInterfaceLookup: Send + Sync {
+    fn resolve_session_interfaces(&self, peer: SocketAddr, server: SocketAddr) -> SessionInterfaces;
+}
+
+pub struct RoutingSessionInterfaceLookup {
+    routing_table: Arc<RoutingTable>,
+    interface_monitor: Arc<dyn InterfaceMonitor>,
+}
+
+impl RoutingSessionInterfaceLookup {
+    pub fn new(routing_table: Arc<RoutingTable>, interface_monitor: Arc<dyn InterfaceMonitor>) -> Self {
+        Self { routing_table, interface_monitor }
+    }
+
+    fn interface_for_ip(&self, ip: IpAddr) -> Option<String> {
+        self.routing_table
+            .route_lookup(ip)
+            .and_then(|idx| self.interface_monitor.get_by_index(idx))
+            .map(|iface| iface.name)
+    }
+}
+
+impl SessionInterfaceLookup for RoutingSessionInterfaceLookup {
+    fn resolve_session_interfaces(&self, peer: SocketAddr, server: SocketAddr) -> SessionInterfaces {
+        // TODO(issue 2): reuse server_side_interface in upstream connector egress logging.
+        SessionInterfaces {
+            client_side_interface: self.interface_for_ip(peer.ip()),
+            server_side_interface: self.interface_for_ip(server.ip()),
+        }
+    }
+}
+
 /// Metadane sesji TLS potrzebne do logowania i eventow.
 #[derive(Clone)]
 pub struct SessionMeta {
@@ -31,18 +71,16 @@ pub struct SessionMeta {
     pub original_dst: SocketAddr,
     pub sni: Option<String>,
     pub alpn: Option<Vec<u8>>,
-    // TODO(issue 2): populate from redirect ingress and upstream egress resolution.
-    pub client_interface: Option<String>,
-    pub server_interface: Option<String>,
+    pub client_side_interface: Option<String>,
+    pub server_side_interface: Option<String>,
     pub mode: InspectionMode,
 }
 
 impl SessionMeta {
-    // TODO(issue 3): use this when building decrypted synthetic PacketContext.
     pub fn source_interface_for_direction(&self, direction: Direction) -> Option<&str> {
         match direction {
-            Direction::ClientToServer => self.client_interface.as_deref(),
-            Direction::ServerToClient => self.server_interface.as_deref(),
+            Direction::ClientToServer => self.client_side_interface.as_deref(),
+            Direction::ServerToClient => self.server_side_interface.as_deref(),
         }
     }
 }
@@ -483,8 +521,8 @@ mod tests {
             original_dst: "10.0.0.2:443".parse().unwrap(),
             sni: Some("example.com".into()),
             alpn: Some(b"http/1.1".to_vec()),
-            client_interface: Some("lan0".into()),
-            server_interface: Some("wan0".into()),
+            client_side_interface: Some("lan0".into()),
+            server_side_interface: Some("wan0".into()),
             mode: InspectionMode::Outbound,
         }
     }

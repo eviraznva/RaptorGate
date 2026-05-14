@@ -345,8 +345,8 @@ mod tests {
             original_dst: "142.250.203.132:443".parse::<SocketAddr>().unwrap(),
             sni: Some("www.google.com".into()),
             alpn: Some(b"http/1.1".to_vec()),
-            client_interface: Some("lan0".into()),
-            server_interface: Some("wan0".into()),
+            client_side_interface: Some("lan0".into()),
+            server_side_interface: Some("wan0".into()),
             mode: InspectionMode::Outbound,
         }
     }

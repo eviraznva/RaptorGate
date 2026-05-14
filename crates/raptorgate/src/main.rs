@@ -692,16 +692,16 @@ async fn main() {
                     cert_forger: Arc::clone(forger),
                     untrust_forger: Arc::clone(untrust),
                     decision_engine: Arc::clone(&decision_engine),
-                    decrypted_inspector: Arc::new(DecryptedChainInspector::with_identity_and_routing(
+                    decrypted_inspector: Arc::new(DecryptedChainInspector::with_identity(
                         pipeline.clone(),
                         Arc::clone(&dpi_classifier),
                         Arc::clone(&identity_sessions),
-                        crate::tls::decrypted_chain::DecryptedRoutingContext {
-                            interface_monitor: Arc::clone(&pipeline_interface_monitor),
-                            zone_interface_store: Arc::clone(&zone_interfaces),
-                        },
                     )),
                     decryption_mirror: Arc::clone(&decryption_mirror),
+                    session_interface_lookup: Arc::new(crate::tls::inspection_relay::RoutingSessionInterfaceLookup::new(
+                        Arc::clone(&routing_table),
+                        Arc::clone(&pipeline_interface_monitor),
+                    )),
                     cancel: tls_runtime_cancel,
                 };
 

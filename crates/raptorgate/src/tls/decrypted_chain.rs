@@ -11,11 +11,8 @@ use crate::dpi::{DpiClassifier, DpiContext};
 use crate::identity::{
     resolve_identity, IdentityContext, IdentitySessionStore,
 };
-use crate::interfaces::InterfaceMonitor;
 use crate::pipeline::{Stage, StageOutcome};
-use crate::routing::resolve_egress_for_ip;
 use crate::tls::inspection_relay::{Direction, SessionMeta};
-use crate::zones::provider::ZoneInterfaceProvider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectionDisposition {
@@ -65,13 +62,6 @@ pub struct DecryptedChainInspector<P> {
     pipeline: P,
     dpi_classifier: Arc<DpiClassifier>,
     identity_sessions: Arc<IdentitySessionStore>,
-    routing: Option<DecryptedRoutingContext>,
-}
-
-#[derive(Clone)]
-pub struct DecryptedRoutingContext {
-    pub interface_monitor: Arc<dyn InterfaceMonitor>,
-    pub zone_interface_store: Arc<ZoneInterfaceProvider>,
 }
 
 impl<P> DecryptedChainInspector<P> {
@@ -92,21 +82,6 @@ impl<P> DecryptedChainInspector<P> {
             pipeline,
             dpi_classifier,
             identity_sessions,
-            routing: None,
-        }
-    }
-
-    pub fn with_identity_and_routing(
-        pipeline: P,
-        dpi_classifier: Arc<DpiClassifier>,
-        identity_sessions: Arc<IdentitySessionStore>,
-        routing: DecryptedRoutingContext,
-    ) -> Self {
-        Self {
-            pipeline,
-            dpi_classifier,
-            identity_sessions,
-            routing: Some(routing),
         }
     }
 }
@@ -135,7 +110,7 @@ where
             endpoints.1,
             arrival_time,
             Some(identity),
-            self.routing.as_ref(),
+            meta.source_interface_for_direction(direction),
         ) {
             Ok(ctx) => ctx,
             Err(err) => {
@@ -196,14 +171,14 @@ fn build_packet_context(
     dst: SocketAddr,
     arrival_time: SystemTime,
     identity_ctx: Option<IdentityContext>,
-    routing: Option<&DecryptedRoutingContext>,
+    source_interface: Option<&str>,
 ) -> anyhow::Result<PacketContext> {
     let raw = build_tcp_packet(payload, src, dst)?;
-    let src_interface = resolve_decrypted_source_interface(src.ip(), routing);
+    let src_interface = source_interface.unwrap_or("tls-decrypted");
 
     PacketContext::from_raw_full(
         raw,
-        Arc::from(src_interface.as_str()),
+        Arc::from(src_interface),
         Vec::new(),
         arrival_time,
         Some(seed_ctx.clone()),
@@ -214,23 +189,6 @@ fn build_packet_context(
         false,
     )
     .context("failed to parse synthetic decrypted packet")
-}
-
-fn resolve_decrypted_source_interface(src_ip: IpAddr, routing: Option<&DecryptedRoutingContext>) -> String {
-    let Some(routing) = routing else {
-        return "tls-decrypted".into();
-    };
-    let zone_interfaces = routing
-        .zone_interface_store
-        .get_zone_interfaces()
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
-    let live_interfaces = routing.interface_monitor.snapshot();
-
-    resolve_egress_for_ip(src_ip, &live_interfaces, &zone_interfaces)
-        .map(|resolved| resolved.interface_name)
-        .unwrap_or_else(|| "tls-decrypted".into())
 }
 
 fn build_tcp_packet(payload: &[u8], src: SocketAddr, dst: SocketAddr) -> anyhow::Result<Vec<u8>> {
@@ -274,6 +232,7 @@ fn transport_payload(ctx: &PacketContext) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::pipeline::Stage;
+    use std::sync::Mutex;
     use std::time::Duration;
 
     #[derive(Clone)]
@@ -290,6 +249,18 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct RecordingInterfaceStage {
+        seen_interfaces: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Stage for RecordingInterfaceStage {
+        async fn process(&self, ctx: &mut PacketContext, _tx: &crate::pipeline::ExecutionSender) -> StageOutcome {
+            self.seen_interfaces.lock().unwrap().push(ctx.borrow_src_interface().to_string());
+            StageOutcome::Continue
+        }
+    }
+
     fn test_meta() -> SessionMeta {
         SessionMeta {
             session_id: uuid::Uuid::from_u128(0x22222222222222222222222222222222),
@@ -298,8 +269,8 @@ mod tests {
             original_dst: "10.0.0.2:443".parse().unwrap(),
             sni: Some("example.com".into()),
             alpn: Some(b"http/1.1".to_vec()),
-            client_interface: Some("lan0".into()),
-            server_interface: Some("wan0".into()),
+            client_side_interface: Some("lan0".into()),
+            server_side_interface: Some("wan0".into()),
             mode: crate::tls::inspection_relay::InspectionMode::Outbound,
         }
     }
@@ -342,6 +313,41 @@ mod tests {
         assert!(decision.ctx.decrypted);
         assert_eq!(decision.ctx.src_port, Some(12345));
         assert_eq!(decision.ctx.dst_port, Some(443));
+    }
+
+    #[tokio::test]
+    async fn synthetic_packet_uses_session_interface_for_direction() {
+        let seen_interfaces = Arc::new(Mutex::new(Vec::new()));
+        let inspector = DecryptedChainInspector::new(
+            RecordingInterfaceStage { seen_interfaces: Arc::clone(&seen_interfaces) },
+            Arc::new(DpiClassifier::new()),
+        );
+        let seed_ctx = DpiContext {
+            decrypted: true,
+            src_port: Some(12345),
+            dst_port: Some(443),
+            ..Default::default()
+        };
+        let meta = test_meta();
+
+        inspector
+            .inspect(
+                b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+                &seed_ctx,
+                Direction::ClientToServer,
+                &meta,
+            )
+            .await;
+        inspector
+            .inspect(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+                &seed_ctx,
+                Direction::ServerToClient,
+                &meta,
+            )
+            .await;
+
+        assert_eq!(*seen_interfaces.lock().unwrap(), vec!["lan0".to_string(), "wan0".to_string()]);
     }
 
     #[tokio::test]
