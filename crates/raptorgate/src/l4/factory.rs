@@ -12,7 +12,7 @@ pub type IcmpNoopPipeline = NoopIcmpStage;
 pub struct TcpL4PipelineFactory;
 
 impl TcpL4PipelineFactory {
-    pub fn build() -> TcpNoopPipeline {
+    pub fn build(&self) -> TcpNoopPipeline {
         NoopTcpStage::default()
     }
 }
@@ -21,7 +21,7 @@ impl TcpL4PipelineFactory {
 pub struct UdpL4PipelineFactory;
 
 impl UdpL4PipelineFactory {
-    pub fn build() -> UdpNoopPipeline {
+    pub fn build(&self) -> UdpNoopPipeline {
         NoopUdpStage::default()
     }
 }
@@ -30,7 +30,7 @@ impl UdpL4PipelineFactory {
 pub struct IcmpL4PipelineFactory;
 
 impl IcmpL4PipelineFactory {
-    pub fn build() -> IcmpNoopPipeline {
+    pub fn build(&self) -> IcmpNoopPipeline {
         NoopIcmpStage::default()
     }
 }
@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn tcp_factory_pipeline_forwards() {
-        let mut pipe = TcpL4PipelineFactory::build();
+        let mut pipe = TcpL4PipelineFactory::default().build();
         let mut ctx = ();
         let mut pkt = sample_packet();
         let o = pipe.on_packet(&mut ctx, &mut pkt, Direction::Original);
@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn udp_factory_pipeline_forwards() {
-        let mut pipe = UdpL4PipelineFactory::build();
+        let mut pipe = UdpL4PipelineFactory::default().build();
         let mut ctx = ();
         let mut pkt = sample_packet();
         let o = pipe.on_packet(&mut ctx, &mut pkt, Direction::Original);
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     fn icmp_factory_pipeline_forwards() {
-        let mut pipe = IcmpL4PipelineFactory::build();
+        let mut pipe = IcmpL4PipelineFactory::default().build();
         let mut ctx = ();
         let mut pkt = sample_packet();
         let o = pipe.on_packet(&mut ctx, &mut pkt, Direction::Original);
