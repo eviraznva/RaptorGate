@@ -556,6 +556,15 @@ impl Conntrack {
             .map(|kv| kv.value().entry.clone())
     }
 
+    pub fn destroy_by_id(&self, id: u64, reason: DestroyReason) -> bool {
+        let Some(entry) = self.find_by_id(id) else {
+            return false;
+        };
+
+        self.destroy(&entry, reason);
+        true
+    }
+
     fn create_new(&self, tuple: FlowTuple, pkt: &SlicedPacket, zone: u16, _now: Instant, config: &ConntrackConfig) -> ProcessOutcome {
         if self.entries_count() >= config.max_entries as usize {
             self.metrics.drops_table_full.fetch_add(1, Ordering::Relaxed);
@@ -962,6 +971,17 @@ mod tests {
         let v = ct.iter_entries();
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].id, entry.id);
+    }
+
+    #[test]
+    fn destroy_by_id_removes_confirmed_entry() {
+        let (ct, _h) = build_ct();
+        let entry = make_entry(&ct, tuple_a());
+        assert!(ct.confirm(&entry));
+        let id = entry.id;
+        assert!(ct.destroy_by_id(id, DestroyReason::InvalidatedByStage));
+        assert_eq!(ct.entries_count(), 0);
+        assert!(!ct.destroy_by_id(id, DestroyReason::Manual));
     }
 
     #[test]

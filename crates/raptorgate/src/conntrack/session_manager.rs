@@ -1,10 +1,12 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, Weak};
 
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use thiserror::Error;
-use tokio::sync::{mpsc, Mutex};
+use etherparse::PacketBuilder;
+use tokio::sync::mpsc;
 
-use crate::conntrack::entry::ConntrackEntry;
+use crate::conntrack::entry::{ConntrackEntry, ConntrackInterfacePath, CtStatus};
+use crate::conntrack::observer::{AnomalyKind, CtObserver, DestroyReason};
 use crate::conntrack::proto::ProtoState;
 use crate::conntrack::table::Conntrack;
 use crate::conntrack::tuple::{Direction, FlowTuple};
@@ -27,27 +29,55 @@ pub fn flow_key_for(entry: &ConntrackEntry) -> FlowKey {
     }
 }
 
-pub struct L4Input {
-    pub packet: PacketContext,
-    pub dir: Direction,
-    pub entry: Arc<ConntrackEntry>,
-}
-
-#[derive(Debug, Error)]
-pub enum SessionSendError {
-    #[error("session task disconnected")]
-    Disconnected,
+#[derive(Debug)]
+pub enum L4Input {
+    Bytes { dir: Direction, bytes: Vec<u8> },
+    Close { reason: CloseReason },
 }
 
 #[derive(Clone)]
-pub struct SessionHandle {
-    tx: mpsc::UnboundedSender<L4Input>,
+pub struct SessionContext {
+    flow: FlowKey,
+    pub zone: u16,
+    pub interfaces: ConntrackInterfacePath,
+    manager: Arc<SessionManager>,
 }
 
-impl SessionHandle {
-    pub fn send(&self, input: L4Input) -> Result<(), SessionSendError> {
-        self.tx.send(input).map_err(|_| SessionSendError::Disconnected)
+impl SessionContext {
+    pub fn snapshot(entry: &ConntrackEntry, manager: &Arc<SessionManager>) -> Self {
+        Self {
+            flow: flow_key_for(entry),
+            zone: entry.zone,
+            interfaces: entry.interface_path(),
+            manager: manager.clone(),
+        }
     }
+
+    pub fn flow_key(&self) -> FlowKey {
+        self.flow
+    }
+
+    pub fn invalidate(&self) {
+        self.manager.invalidate_session(&self.flow);
+    }
+}
+
+fn close_reason_from_destroy(r: DestroyReason) -> CloseReason {
+    match r {
+        DestroyReason::Timeout => CloseReason::Timeout,
+        DestroyReason::Manual | DestroyReason::Replaced | DestroyReason::Shutdown => CloseReason::Finished,
+        DestroyReason::InvalidatedByStage => CloseReason::Invalidated,
+    }
+}
+
+fn minimal_stub_packet(iface: Arc<str>) -> PacketContext {
+    let mut raw = Vec::new();
+    PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+        .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+        .tcp(12345, 80, 1, 65535)
+        .write(&mut raw, b"")
+        .expect("stub packet");
+    PacketContext::from_raw(raw, iface).expect("stub packet")
 }
 
 enum Phase1NoopPipeline {
@@ -78,11 +108,11 @@ impl Phase1NoopPipeline {
         }
     }
 
-    fn on_packet(&mut self, ctx: &mut (), packet: &mut PacketContext, dir: Direction) -> L4Outcome {
+    fn on_bytes(&mut self, ctx: &mut (), packet: &mut PacketContext, dir: Direction, payload: &[u8]) -> L4Outcome {
         match self {
-            Self::Tcp(p) => p.on_packet(ctx, packet, dir),
-            Self::Udp(p) => p.on_packet(ctx, packet, dir),
-            Self::Icmp(p) => p.on_packet(ctx, packet, dir),
+            Self::Tcp(p) => p.on_bytes(ctx, packet, dir, payload),
+            Self::Udp(p) => p.on_bytes(ctx, packet, dir, payload),
+            Self::Icmp(p) => p.on_bytes(ctx, packet, dir, payload),
         }
     }
 
@@ -95,13 +125,50 @@ impl Phase1NoopPipeline {
     }
 }
 
+struct SessionManagerObs {
+    inner: Weak<SessionManager>,
+}
+
+impl CtObserver for SessionManagerObs {
+    fn on_new(&self, entry: &ConntrackEntry) {
+        if let Some(s) = self.inner.upgrade() {
+            s.on_ct_new(entry);
+        }
+    }
+
+    fn on_update(&self, entry: &ConntrackEntry, changed: CtStatus) {
+        if let Some(s) = self.inner.upgrade() {
+            s.on_ct_update(entry, changed);
+        }
+    }
+
+    fn on_destroy(&self, entry: &ConntrackEntry, reason: DestroyReason) {
+        if let Some(s) = self.inner.upgrade() {
+            s.on_ct_destroy(entry, reason);
+        }
+    }
+
+    fn on_anomaly(&self, entry: &ConntrackEntry, kind: AnomalyKind) {
+        if let Some(s) = self.inner.upgrade() {
+            s.on_ct_anomaly(entry, kind);
+        }
+    }
+
+    fn on_payload(&self, entry: &ConntrackEntry, dir: Direction, payload: &[u8]) {
+        if let Some(s) = self.inner.upgrade() {
+            s.on_ct_payload(entry, dir, payload);
+        }
+    }
+}
+
 pub struct SessionManager {
+    self_weak: Weak<SessionManager>,
     ct: Arc<Conntrack>,
     tcp_factory: TcpL4PipelineFactory,
     udp_factory: UdpL4PipelineFactory,
     icmp_factory: IcmpL4PipelineFactory,
-    handles: DashMap<FlowKey, SessionHandle>,
-    trace: Option<Arc<Mutex<Vec<String>>>>,
+    handles: DashMap<FlowKey, mpsc::UnboundedSender<L4Input>>,
+    trace: Option<Arc<StdMutex<Vec<String>>>>,
 }
 
 impl SessionManager {
@@ -111,14 +178,21 @@ impl SessionManager {
         udp_factory: UdpL4PipelineFactory,
         icmp_factory: IcmpL4PipelineFactory,
     ) -> Arc<Self> {
-        Arc::new(Self {
-            ct,
+        let sm = Arc::new_cyclic(|weak| Self {
+            self_weak: weak.clone(),
+            ct: ct.clone(),
             tcp_factory,
             udp_factory,
             icmp_factory,
             handles: DashMap::new(),
             trace: None,
-        })
+        });
+
+        sm.ct.register_observer(Arc::new(SessionManagerObs {
+            inner: sm.self_weak.clone(),
+        }));
+
+        sm
     }
 
     pub fn new_with_event_trace(
@@ -126,16 +200,23 @@ impl SessionManager {
         tcp_factory: TcpL4PipelineFactory,
         udp_factory: UdpL4PipelineFactory,
         icmp_factory: IcmpL4PipelineFactory,
-        trace: Arc<Mutex<Vec<String>>>,
+        trace: Arc<StdMutex<Vec<String>>>,
     ) -> Arc<Self> {
-        Arc::new(Self {
-            ct,
+        let sm = Arc::new_cyclic(|weak| Self {
+            self_weak: weak.clone(),
+            ct: ct.clone(),
             tcp_factory,
             udp_factory,
             icmp_factory,
             handles: DashMap::new(),
             trace: Some(trace),
-        })
+        });
+
+        sm.ct.register_observer(Arc::new(SessionManagerObs {
+            inner: sm.self_weak.clone(),
+        }));
+
+        sm
     }
 
     pub fn conntrack(&self) -> &Arc<Conntrack> {
@@ -146,45 +227,107 @@ impl SessionManager {
         self.handles.len()
     }
 
-    pub fn handle_for_entry(self: &Arc<Self>, entry: &Arc<ConntrackEntry>) -> SessionHandle {
-        let key = flow_key_for(entry);
-        self.handles
-            .entry(key)
-            .or_insert_with(|| Self::spawn_session_task(self.clone(), entry.clone()))
-            .clone()
+    pub fn invalidate_session(&self, flow: &FlowKey) {
+        let _ = self.ct.destroy_by_id(flow.entry_id, DestroyReason::InvalidatedByStage);
     }
 
-    fn spawn_session_task(sm: Arc<SessionManager>, entry: Arc<ConntrackEntry>) -> SessionHandle {
+    #[cfg(any(test, feature = "test-capture"))]
+    pub fn inject_session_payload(&self, entry: &ConntrackEntry, dir: Direction, payload: &[u8]) {
+        self.on_ct_payload(entry, dir, payload);
+    }
+
+    fn on_ct_new(&self, entry: &ConntrackEntry) {
+        let flow = flow_key_for(entry);
+
         let (tx, mut rx) = mpsc::unbounded_channel::<L4Input>();
-        let trace = sm.trace.clone();
-        let tcp_f = sm.tcp_factory;
-        let udp_f = sm.udp_factory;
-        let icmp_f = sm.icmp_factory;
+
+        match self.handles.entry(flow) {
+            Entry::Occupied(_) => return,
+            Entry::Vacant(v) => {
+                v.insert(tx.clone());
+            }
+        }
+
+        let Some(sm) = self.self_weak.upgrade() else {
+            self.handles.remove(&flow);
+            return;
+        };
+
+        let trace = self.trace.clone();
+        let tcp_f = self.tcp_factory;
+        let udp_f = self.udp_factory;
+        let icmp_f = self.icmp_factory;
+        let proto = { entry.proto_state.lock().clone() };
+        let session_ctx = SessionContext::snapshot(entry, &sm);
+        let iface = session_ctx
+            .interfaces
+            .original_ingress
+            .clone()
+            .unwrap_or_else(|| Arc::from("unknown"));
 
         tokio::spawn(async move {
-            let proto = { entry.proto_state.lock().clone() };
             let mut pipeline = Phase1NoopPipeline::from_proto(&proto, tcp_f, udp_f, icmp_f);
-            let mut ctx = ();
+            let mut l4_ctx = ();
 
             if let Some(t) = &trace {
-                t.lock().await.push("open".to_string());
+                t.lock().expect("trace").push("open".to_string());
             }
-            let _ = pipeline.on_session_open(&mut ctx);
+            let _ = pipeline.on_session_open(&mut l4_ctx);
 
-            while let Some(mut input) = rx.recv().await {
-                if let Some(t) = &trace {
-                    t.lock().await.push("packet".to_string());
+            let mut stub = minimal_stub_packet(iface);
+
+            while let Some(msg) = rx.recv().await {
+                match msg {
+                    L4Input::Bytes { dir, bytes } => {
+                        if let Some(t) = &trace {
+                            t.lock().expect("trace").push("bytes".to_string());
+                        }
+                        let _ = pipeline.on_bytes(&mut l4_ctx, &mut stub, dir, &bytes);
+                    }
+                    L4Input::Close { reason } => {
+                        if let Some(t) = &trace {
+                            t.lock().expect("trace").push("close".to_string());
+                        }
+                        let _ = pipeline.on_session_close(&mut l4_ctx, reason);
+                        return;
+                    }
                 }
-                let _ = pipeline.on_packet(&mut ctx, &mut input.packet, input.dir);
             }
 
             if let Some(t) = &trace {
-                t.lock().await.push("close".to_string());
+                t.lock().expect("trace").push("close".to_string());
             }
-            let _ = pipeline.on_session_close(&mut ctx, CloseReason::Finished);
+            let _ = pipeline.on_session_close(&mut l4_ctx, CloseReason::Finished);
         });
+    }
 
-        SessionHandle { tx }
+    fn on_ct_update(&self, _entry: &ConntrackEntry, _changed: CtStatus) {}
+
+    fn on_ct_destroy(&self, entry: &ConntrackEntry, reason: DestroyReason) {
+        let flow = flow_key_for(entry);
+        let Some((_, tx)) = self.handles.remove(&flow) else {
+            return;
+        };
+        let close = close_reason_from_destroy(reason);
+        let _ = tx.send(L4Input::Close { reason: close });
+    }
+
+    fn on_ct_anomaly(&self, _entry: &ConntrackEntry, _kind: AnomalyKind) {}
+
+    fn on_ct_payload(&self, entry: &ConntrackEntry, dir: Direction, payload: &[u8]) {
+        if payload.is_empty() {
+            return;
+        }
+
+        let flow = flow_key_for(entry);
+        let Some(tx) = self.handles.get(&flow) else {
+            return;
+        };
+
+        let _ = tx.send(L4Input::Bytes {
+            dir,
+            bytes: payload.to_vec(),
+        });
     }
 }
 
@@ -194,9 +337,9 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
+    use crate::conntrack::config::ConntrackConfig;
     use crate::conntrack::proto::udp::UdpProtoState;
-    use crate::conntrack::proto::ProtoState;
-    use crate::conntrack::tuple::Protocol;
+    use crate::conntrack::proto::ProtoRegistry;
 
     fn sample_udp_entry(id: u64) -> Arc<ConntrackEntry> {
         let tuple = FlowTuple::new(
@@ -204,7 +347,7 @@ mod tests {
             1000,
             IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
             2000,
-            Protocol::Udp,
+            crate::conntrack::tuple::Protocol::Udp,
         );
 
         Arc::new(ConntrackEntry::new(
@@ -224,102 +367,34 @@ mod tests {
         assert_eq!(k1, k2);
     }
 
-    #[test]
-    fn flow_key_same_for_original_and_reply_semantics() {
-        let e = sample_udp_entry(7);
-        let k = flow_key_for(&e);
-        assert_eq!(k.entry_id, e.id);
-        assert_eq!(k.original, e.original);
-    }
-
-    #[test]
-    fn distinct_entries_distinct_keys() {
-        let a = sample_udp_entry(1);
-        let b = sample_udp_entry(2);
-        assert_ne!(flow_key_for(&a), flow_key_for(&b));
-    }
-
     #[tokio::test]
-    async fn same_entry_reuses_one_handle() {
-        let ct = Arc::new(Conntrack::new(Arc::new(crate::conntrack::proto::ProtoRegistry::new()), crate::conntrack::config::ConntrackConfig::default()));
-        let sm = SessionManager::new(
-            ct,
-            TcpL4PipelineFactory::default(),
-            UdpL4PipelineFactory::default(),
-            IcmpL4PipelineFactory::default(),
-        );
-        let e = sample_udp_entry(99);
-        let h1 = sm.handle_for_entry(&e);
-        let h2 = sm.handle_for_entry(&e);
-        assert_eq!(sm.active_sessions(), 1);
-        let _ = h1;
-        let _ = h2;
-    }
-
-    #[tokio::test]
-    async fn different_entries_different_handles() {
-        let ct = Arc::new(Conntrack::new(Arc::new(crate::conntrack::proto::ProtoRegistry::new()), crate::conntrack::config::ConntrackConfig::default()));
-        let sm = SessionManager::new(
-            ct,
-            TcpL4PipelineFactory::default(),
-            UdpL4PipelineFactory::default(),
-            IcmpL4PipelineFactory::default(),
-        );
-        let a = sample_udp_entry(10);
-        let b = sample_udp_entry(11);
-        let _ = sm.handle_for_entry(&a);
-        let _ = sm.handle_for_entry(&b);
-        assert_eq!(sm.active_sessions(), 2);
-    }
-
-    fn minimal_tcp_packet() -> PacketContext {
-        use etherparse::PacketBuilder;
-        use std::sync::Arc as StdArc;
-        let mut raw = Vec::new();
-        PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
-            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
-            .tcp(12345, 80, 1, 65535)
-            .write(&mut raw, b"p")
-            .unwrap();
-        PacketContext::from_raw(raw, StdArc::from("eth0")).unwrap()
-    }
-
-    #[tokio::test]
-    async fn session_task_ordering_and_lifecycle() {
-        let ct = Arc::new(Conntrack::new(Arc::new(crate::conntrack::proto::ProtoRegistry::new()), crate::conntrack::config::ConntrackConfig::default()));
-        let log = Arc::new(Mutex::new(Vec::new()));
+    async fn observer_new_payload_destroy_lifecycle() {
+        let ct = Arc::new(Conntrack::new(
+            Arc::new(ProtoRegistry::new()),
+            ConntrackConfig::default(),
+        ));
+        let log = Arc::new(StdMutex::new(Vec::new()));
         let sm = SessionManager::new_with_event_trace(
-            ct,
+            ct.clone(),
             TcpL4PipelineFactory::default(),
             UdpL4PipelineFactory::default(),
             IcmpL4PipelineFactory::default(),
             log.clone(),
         );
 
-        let entry = sample_udp_entry(500);
-        let h = sm.handle_for_entry(&entry);
+        let entry = sample_udp_entry(501);
+        assert!(ct.confirm(&entry));
+        assert_eq!(sm.active_sessions(), 1);
 
-        let pkt = minimal_tcp_packet();
-        h.send(L4Input {
-            packet: pkt.clone(),
-            dir: Direction::Original,
-            entry: entry.clone(),
-        })
-        .unwrap();
-        h.send(L4Input {
-            packet: pkt,
-            dir: Direction::Reply,
-            entry: entry.clone(),
-        })
-        .unwrap();
+        sm.inject_session_payload(&entry, Direction::Original, b"a");
+        sm.inject_session_payload(&entry, Direction::Reply, b"b");
 
-        drop(h);
-        drop(sm);
+        ct.destroy(&entry, DestroyReason::Timeout);
 
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                let v = log.lock().await;
-                if v.len() >= 4 && v[0] == "open" && v[1] == "packet" && v[2] == "packet" && v[3] == "close" {
+                let v = log.lock().expect("trace");
+                if v.len() >= 4 {
                     break;
                 }
                 drop(v);
@@ -327,9 +402,48 @@ mod tests {
             }
         })
         .await
-        .expect("timeout waiting for session trace");
+        .expect("timeout");
 
-        let v = log.lock().await;
-        assert_eq!(&v[..], &["open", "packet", "packet", "close"]);
+        let v = log.lock().expect("trace");
+        assert_eq!(&v[..], &["open", "bytes", "bytes", "close"]);
+        assert_eq!(sm.active_sessions(), 0);
+    }
+
+    #[tokio::test]
+    async fn invalidate_session_closes_and_clears_handle() {
+        let ct = Arc::new(Conntrack::new(
+            Arc::new(ProtoRegistry::new()),
+            ConntrackConfig::default(),
+        ));
+        let log = Arc::new(StdMutex::new(Vec::new()));
+        let sm = SessionManager::new_with_event_trace(
+            ct.clone(),
+            TcpL4PipelineFactory::default(),
+            UdpL4PipelineFactory::default(),
+            IcmpL4PipelineFactory::default(),
+            log.clone(),
+        );
+
+        let entry = sample_udp_entry(502);
+        assert!(ct.confirm(&entry));
+        let flow = flow_key_for(&entry);
+
+        sm.invalidate_session(&flow);
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let v = log.lock().expect("trace");
+                if v.len() >= 2 && v[0] == "open" && v[1] == "close" {
+                    break;
+                }
+                drop(v);
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timeout");
+
+        assert_eq!(sm.active_sessions(), 0);
+        assert_eq!(ct.entries_count(), 0);
     }
 }

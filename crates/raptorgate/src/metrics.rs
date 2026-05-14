@@ -440,6 +440,7 @@ fn conntrack_destroy_reason_to_proto(
         Some(DestroyReason::Manual) => ProtoConntrackDestroyReason::Manual,
         Some(DestroyReason::Replaced) => ProtoConntrackDestroyReason::Replaced,
         Some(DestroyReason::Shutdown) => ProtoConntrackDestroyReason::Shutdown,
+        Some(DestroyReason::InvalidatedByStage) => ProtoConntrackDestroyReason::Manual,
         None => ProtoConntrackDestroyReason::Unspecified,
     }
 }

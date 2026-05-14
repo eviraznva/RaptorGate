@@ -156,7 +156,6 @@ async fn packet_outcome_mismatch_reports_index() {
 }
 
 #[tokio::test]
-#[ignore = "FIXME: there's something broken with tcp events"]
 async fn tcp_session_emits_estabilished_event() {
     let _guard = event_capture_concurrency_mutex().lock().await;
     let cap = Arc::new(EventCapture::new());

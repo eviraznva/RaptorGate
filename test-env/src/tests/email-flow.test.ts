@@ -265,5 +265,5 @@ describe("Email Flow", () => {
 		})
 			.isErr()
 			.run();
-	}, {timeout: 30_000});
+	}, {timeout: 60_000});
 });

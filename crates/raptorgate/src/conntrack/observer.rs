@@ -14,6 +14,8 @@ pub enum DestroyReason {
     Replaced,
     /// Tabela conntrack jest zamykana
     Shutdown,
+    /// L4 lub inna warstwa unieważniła flow (np. policy / inspekcja)
+    InvalidatedByStage,
 }
 
 /// Anomalia protokołu wykryta podczas update(). Pakiet NIE jest dropowany

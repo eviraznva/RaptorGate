@@ -1,3 +1,4 @@
+use crate::conntrack::observer::DestroyReason;
 use crate::conntrack::tuple::Direction;
 use crate::data_plane::packet_context::PacketContext;
 
@@ -7,6 +8,16 @@ pub enum CloseReason {
     Timeout,
     Reset,
     Invalidated,
+}
+
+impl From<DestroyReason> for CloseReason {
+    fn from(value: DestroyReason) -> Self {
+        match value {
+            DestroyReason::Timeout => CloseReason::Timeout,
+            DestroyReason::Manual | DestroyReason::Replaced | DestroyReason::Shutdown => CloseReason::Finished,
+            DestroyReason::InvalidatedByStage => CloseReason::Invalidated,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
