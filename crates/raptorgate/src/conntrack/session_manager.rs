@@ -121,8 +121,7 @@ impl SessionManager {
         })
     }
 
-    #[cfg(test)]
-    fn new_with_trace(
+    pub fn new_with_event_trace(
         ct: Arc<Conntrack>,
         tcp_factory: TcpL4PipelineFactory,
         udp_factory: UdpL4PipelineFactory,
@@ -141,6 +140,10 @@ impl SessionManager {
 
     pub fn conntrack(&self) -> &Arc<Conntrack> {
         &self.ct
+    }
+
+    pub fn active_sessions(&self) -> usize {
+        self.handles.len()
     }
 
     pub fn handle_for_entry(self: &Arc<Self>, entry: &Arc<ConntrackEntry>) -> SessionHandle {
@@ -248,7 +251,7 @@ mod tests {
         let e = sample_udp_entry(99);
         let h1 = sm.handle_for_entry(&e);
         let h2 = sm.handle_for_entry(&e);
-        assert_eq!(sm.handles.len(), 1);
+        assert_eq!(sm.active_sessions(), 1);
         let _ = h1;
         let _ = h2;
     }
@@ -266,7 +269,7 @@ mod tests {
         let b = sample_udp_entry(11);
         let _ = sm.handle_for_entry(&a);
         let _ = sm.handle_for_entry(&b);
-        assert_eq!(sm.handles.len(), 2);
+        assert_eq!(sm.active_sessions(), 2);
     }
 
     fn minimal_tcp_packet() -> PacketContext {
@@ -285,7 +288,7 @@ mod tests {
     async fn session_task_ordering_and_lifecycle() {
         let ct = Arc::new(Conntrack::new(Arc::new(crate::conntrack::proto::ProtoRegistry::new()), crate::conntrack::config::ConntrackConfig::default()));
         let log = Arc::new(Mutex::new(Vec::new()));
-        let sm = SessionManager::new_with_trace(
+        let sm = SessionManager::new_with_event_trace(
             ct,
             TcpL4PipelineFactory::default(),
             UdpL4PipelineFactory::default(),

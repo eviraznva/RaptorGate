@@ -2,12 +2,14 @@
 
 use std::collections::HashSet;
 use std::net::IpAddr;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use etherparse::NetSlice;
 use parking_lot::Mutex;
 
 use crate::conntrack::helper::HelperRegistry;
+use crate::conntrack::session_manager::SessionManager;
 use crate::conntrack::table::Conntrack;
 use crate::config::provider::{AppConfigProvider, AppConfigStore};
 use crate::config::AppConfig;
@@ -21,6 +23,7 @@ use crate::dpi::DpiClassifier;
 use crate::identity::IdentitySessionStore;
 use crate::interfaces::{InterfaceMonitor, NetworkInterfaceMonitor};
 use crate::ip_defrag::IpDefragEngine;
+use crate::l4::{IcmpL4PipelineFactory, TcpL4PipelineFactory, UdpL4PipelineFactory};
 use crate::metrics::MetricsCollector;
 use crate::ml::{FlowStatsAggregator, MlPacketInspector};
 use crate::nat::NatEngine;
@@ -382,5 +385,45 @@ impl<D: DaemonDeps> Daemon<D> {
             emitted,
             stage_outcome: Some(stage_outcome),
         }
+    }
+}
+
+pub struct DaemonV2<D: DaemonDeps> {
+    inner: Daemon<D>,
+    sessions: Arc<SessionManager>,
+}
+
+impl<D: DaemonDeps> DaemonV2<D> {
+    pub fn assemble_v2(
+        deps: Arc<D>,
+        defrag: IpDefragEngine,
+        exec_tx: ExecutionSender,
+        test_exec_rx: Option<ExecutionReceiver>,
+    ) -> Arc<Self> {
+        let inner = Daemon::assemble(deps.clone(), defrag, exec_tx, test_exec_rx);
+        let ct = deps.static_dependencies().conntrack.clone();
+        let sessions = SessionManager::new(
+            ct,
+            TcpL4PipelineFactory::default(),
+            UdpL4PipelineFactory::default(),
+            IcmpL4PipelineFactory::default(),
+        );
+        Arc::new(Self { inner, sessions })
+    }
+
+    pub fn daemon(&self) -> &Daemon<D> {
+        &self.inner
+    }
+
+    pub fn sessions(&self) -> &Arc<SessionManager> {
+        &self.sessions
+    }
+}
+
+impl<D: DaemonDeps> Deref for DaemonV2<D> {
+    type Target = Daemon<D>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
 }

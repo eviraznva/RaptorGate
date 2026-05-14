@@ -28,4 +28,4 @@ pub mod nat;
 pub mod conntrack;
 pub mod daemon;
 
-pub use daemon::{Daemon, DaemonDeps, DataPipeline, ProcessOutput, ProdDeps, StaticDeps};
+pub use daemon::{Daemon, DaemonDeps, DaemonV2, DataPipeline, ProcessOutput, ProdDeps, StaticDeps};

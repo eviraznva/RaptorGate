@@ -13,7 +13,8 @@ use ngfw::conntrack::proto::ProtoRegistry;
 use ngfw::conntrack::table::Conntrack;
 use ngfw::config::provider::AppConfigProvider;
 use ngfw::config::AppConfig;
-use ngfw::daemon::{Daemon, DaemonDeps, ProcessOutput, StaticDeps};
+use ngfw::conntrack::session_manager::SessionManager;
+use ngfw::daemon::{Daemon, DaemonDeps, DaemonV2, ProcessOutput, StaticDeps};
 use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use ngfw::data_plane::dns_inspection::config::DnsInspectionConfig;
 use ngfw::data_plane::ips::config::IpsConfig;
@@ -171,7 +172,7 @@ fn parse_bundle(
 }
 
 pub struct TestDaemon {
-    daemon: Arc<Daemon<TestDeps>>,
+    daemon_v2: Arc<DaemonV2<TestDeps>>,
     deps: Arc<TestDeps>,
     _temp: Arc<TempDir>,
 }
@@ -182,11 +183,15 @@ impl TestDaemon {
     }
 
     pub fn daemon(&self) -> &Daemon<TestDeps> {
-        &self.daemon
+        self.daemon_v2.daemon()
     }
 
     pub fn deps(&self) -> &Arc<TestDeps> {
         &self.deps
+    }
+
+    pub fn sessions(&self) -> &Arc<SessionManager> {
+        self.daemon_v2.sessions()
     }
 
     pub fn conntrack_snapshot(&self) -> Vec<ngfw::conntrack::table::ConntrackFlowSnapshot> {
@@ -197,7 +202,7 @@ impl TestDaemon {
     }
 
     pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
-        Box::pin(self.daemon.process_raw(raw, iface)).await
+        Box::pin(self.daemon_v2.process_raw(raw, iface)).await
     }
 }
 
@@ -453,10 +458,10 @@ impl TestDaemonBuilder {
 
         let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();
         let defrag = IpDefragEngine::new(DefragConfig::default());
-        let daemon = Arc::new(Daemon::assemble(deps.clone(), defrag, exec_tx, Some(exec_rx)));
+        let daemon_v2 = DaemonV2::assemble_v2(deps.clone(), defrag, exec_tx, Some(exec_rx));
 
         Ok(TestDaemon {
-            daemon,
+            daemon_v2,
             deps,
             _temp: temp,
         })

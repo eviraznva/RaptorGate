@@ -1,8 +1,4 @@
-use crate::conntrack::tuple::Direction;
-use crate::data_plane::packet_context::PacketContext;
-
 use super::noop::{NoopIcmpStage, NoopTcpStage, NoopUdpStage};
-use super::stage::L4Outcome;
 
 pub type TcpNoopPipeline = NoopTcpStage;
 pub type UdpNoopPipeline = NoopUdpStage;
@@ -38,7 +34,9 @@ impl IcmpL4PipelineFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::stage::L4Stage;
+    use super::super::stage::{L4Outcome, L4Stage};
+    use crate::conntrack::tuple::Direction;
+    use crate::data_plane::packet_context::PacketContext;
     use etherparse::PacketBuilder;
     use std::sync::Arc;
 
