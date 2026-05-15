@@ -17,22 +17,74 @@ use ngfw::conntrack::session_manager::{flow_key_for, SessionManager};
 use ngfw::conntrack::table::Conntrack;
 use ngfw::conntrack::tuple::{Direction, FlowTuple, Protocol};
 use ngfw::daemon::DataPipeline;
-use ngfw::data_plane::packet_context::PacketContext;
+use ngfw::data_plane::dns_inspection::dnssec::DnssecProvider;
+use ngfw::data_plane::packet_context::{PacketContext, PacketId};
 use ngfw::pipeline::StageOutcome;
+use ngfw::policy::engine::PolicyEngine;
+use ngfw::zones::resolver::ZoneResolver;
+use ngfw::zones::{DirectionalZonePairs, ResolvedZonePair, ZonePairId};
 
 use crate::daemon::{TestDaemon, TestDeps};
 
-pub fn phase1_session_manager() -> Arc<SessionManager> {
+#[derive(Clone)]
+struct StubZoneResolver;
+
+impl ZoneResolver for StubZoneResolver {
+    fn resolve(&self, _src_interface_name: &str, _dst_ip: IpAddr) -> Option<ResolvedZonePair> {
+        Some(ResolvedZonePair {
+            id: ZonePairId::from(uuid::Uuid::nil()),
+            default_policy: ngfw::zones::DefaultPolicy::Allow,
+        })
+    }
+
+    fn resolve_bidirectional(&self, _src_ip: IpAddr, _dst_ip: IpAddr) -> DirectionalZonePairs {
+        let pair = ResolvedZonePair {
+            id: ZonePairId::from(uuid::Uuid::nil()),
+            default_policy: ngfw::zones::DefaultPolicy::Allow,
+        };
+        DirectionalZonePairs {
+            forward: Some(pair.clone()),
+            reverse: Some(pair),
+        }
+    }
+}
+
+struct NoDnssec;
+
+impl DnssecProvider for NoDnssec {
+    fn check_domain(
+        &self,
+        _domain: &str,
+        _qtype: Option<ngfw::dpi::parsers::dns::DnsRecordType>,
+    ) -> ngfw::data_plane::dns_inspection::dnssec::DnssecResult {
+        ngfw::data_plane::dns_inspection::dnssec::DnssecResult::not_checked()
+    }
+}
+
+fn phase1_session_manager() -> (
+    Arc<SessionManager<StubZoneResolver, NoDnssec>>,
+    tokio::sync::mpsc::UnboundedReceiver<ngfw::l4::ReleaseAction>,
+) {
     let ct = Arc::new(Conntrack::new(
         Arc::new(ProtoRegistry::new()),
         ConntrackConfig::default(),
     ));
-    SessionManager::new(
+    let (release_tx, release_rx) = tokio::sync::mpsc::unbounded_channel();
+    let policies = std::collections::HashMap::new();
+    let zone_pairs = std::collections::HashMap::new();
+    let policy_engine =
+        Arc::new(PolicyEngine::from_policies(&policies, &zone_pairs).expect("policy engine"));
+    let sm = SessionManager::new(
         ct,
         Default::default(),
         Default::default(),
         Default::default(),
-    )
+        policy_engine,
+        StubZoneResolver,
+        None,
+        release_tx,
+    );
+    (sm, release_rx)
 }
 
 pub fn sample_udp_entry(id: u64) -> Arc<ConntrackEntry> {
@@ -69,7 +121,7 @@ pub fn sample_tcp_packet() -> PacketContext {
 
 #[tokio::test]
 async fn phase1_confirm_idempotent_one_session() {
-    let sm = phase1_session_manager();
+    let (sm, _rx) = phase1_session_manager();
     let ct = sm.conntrack().clone();
     let e = sample_udp_entry(1001);
     assert!(ct.confirm(&e));
@@ -96,17 +148,26 @@ async fn phase1_ordered_two_inputs_one_flow() {
         Arc::new(ProtoRegistry::new()),
         ConntrackConfig::default(),
     ));
-    let sm = SessionManager::new_with_event_trace(
+    let (release_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let policies = std::collections::HashMap::new();
+    let zone_pairs = std::collections::HashMap::new();
+    let policy_engine =
+        Arc::new(PolicyEngine::from_policies(&policies, &zone_pairs).expect("policy engine"));
+    let sm = SessionManager::<StubZoneResolver, NoDnssec>::new_with_event_trace(
         ct.clone(),
         Default::default(),
         Default::default(),
         Default::default(),
         log.clone(),
+        policy_engine,
+        StubZoneResolver,
+        None,
+        release_tx,
     );
     let entry = sample_udp_entry(2002);
     assert!(ct.confirm(&entry));
-    sm.inject_session_payload(&entry, Direction::Original, b"x");
-    sm.inject_session_payload(&entry, Direction::Reply, b"y");
+    sm.inject_session_payload(&entry, Direction::Original, b"x", PacketId(1));
+    sm.inject_session_payload(&entry, Direction::Reply, b"y", PacketId(2));
     ct.destroy(&entry, DestroyReason::Manual);
 
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -128,7 +189,7 @@ async fn phase1_ordered_two_inputs_one_flow() {
 
 #[tokio::test]
 async fn phase1_distinct_flows_distinct_sessions() {
-    let sm = phase1_session_manager();
+    let (sm, _rx) = phase1_session_manager();
     let ct = sm.conntrack().clone();
     let a = sample_udp_entry(3001);
     let b = sample_udp_flow(3002, 1001, 2000);
@@ -147,12 +208,21 @@ async fn phase1_invalidate_via_session_context() {
         Arc::new(ProtoRegistry::new()),
         ConntrackConfig::default(),
     ));
-    let sm = SessionManager::new_with_event_trace(
+    let (release_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let policies = std::collections::HashMap::new();
+    let zone_pairs = std::collections::HashMap::new();
+    let policy_engine =
+        Arc::new(PolicyEngine::from_policies(&policies, &zone_pairs).expect("policy engine"));
+    let sm = SessionManager::<StubZoneResolver, NoDnssec>::new_with_event_trace(
         ct.clone(),
         Default::default(),
         Default::default(),
         Default::default(),
         log.clone(),
+        policy_engine,
+        StubZoneResolver,
+        None,
+        release_tx,
     );
     let entry = sample_udp_entry(4001);
     assert!(ct.confirm(&entry));
@@ -170,8 +240,7 @@ async fn phase1_invalidate_via_session_context() {
     })
     .await
     .expect("timeout waiting for session open");
-    let ctx = ngfw::conntrack::session_manager::SessionContext::snapshot(&entry, &sm);
-    ctx.invalidate();
+    sm.invalidate_session(&flow_key_for(&entry));
 
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
@@ -201,22 +270,22 @@ async fn testkit_daemon_v2_exposes_session_layer() {
 #[tokio::test]
 async fn v2_daemon_processes_packet_through_l3_chain() {
     let td = TestDaemon::builder().build().await.expect("daemon");
-    
+
     let mut raw = Vec::new();
     PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
         .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
         .udp(12345, 53)
         .write(&mut raw, b"test")
         .expect("packet");
-    
+
     let output = td.daemon_v2().process_raw(raw, Arc::from("eth0")).await;
-    
+
     assert!(
         matches!(output.stage_outcome, Some(StageOutcome::Continue) | Some(StageOutcome::Halt)),
         "expected Continue or Halt, got {:?}",
         output.stage_outcome
     );
-    
+
     let events = td.sessions().observer_event_count();
     assert!(events > 0, "expected observer events from conntrack, got {}", events);
 }

@@ -396,7 +396,7 @@ impl Conntrack {
         LookupResult::NotFound
     }
 
-    pub fn process(&self, pkt: &SlicedPacket, zone: u16) -> ProcessOutcome {
+    pub fn process(&self, pkt: &SlicedPacket, zone: u16, packet_id: PacketId) -> ProcessOutcome {
         let Some(mut tuple) = FlowTuple::from_sliced(pkt) else {
             self.metrics.invalid.fetch_add(1, Ordering::Relaxed);
             return ProcessOutcome::Invalid;
@@ -409,11 +409,11 @@ impl Conntrack {
 
         match self.lookup(&tuple) {
             LookupResult::Found { entry, direction } => {
-                self.update_existing(&entry, pkt, direction, now, &config)
+                self.update_existing(&entry, pkt, direction, now, &config, packet_id)
             },
-            
+
             LookupResult::NotFound => {
-                self.create_new(tuple, pkt, zone, now, &config)
+                self.create_new(tuple, pkt, zone, now, &config, packet_id)
             }
         }
     }
@@ -566,7 +566,15 @@ impl Conntrack {
         true
     }
 
-    fn create_new(&self, tuple: FlowTuple, pkt: &SlicedPacket, zone: u16, _now: Instant, config: &ConntrackConfig) -> ProcessOutcome {
+    fn create_new(
+        &self,
+        tuple: FlowTuple,
+        pkt: &SlicedPacket,
+        zone: u16,
+        _now: Instant,
+        config: &ConntrackConfig,
+        packet_id: PacketId,
+    ) -> ProcessOutcome {
         if self.entries_count() >= config.max_entries as usize {
             self.metrics.drops_table_full.fetch_add(1, Ordering::Relaxed);
 
@@ -644,7 +652,7 @@ impl Conntrack {
                             &mut reass.dirs[Direction::Original as usize],
                             &config.reassembly,
                             t.sequence_number(),
-                            PacketId(0),
+                            packet_id,
                             payload,
                         );
                         
@@ -659,7 +667,7 @@ impl Conntrack {
                         &entry,
                         Direction::Original,
                         &reassembler::DeliveredChunk {
-                            packet_id: PacketId(0),
+                            packet_id,
                             payload: payload.to_vec(),
                         },
                     );
@@ -678,7 +686,15 @@ impl Conntrack {
         }
     }
 
-    fn update_existing(&self, entry: &Arc<ConntrackEntry>, pkt: &SlicedPacket, direction: Direction, now: Instant, config: &ConntrackConfig) -> ProcessOutcome {
+    fn update_existing(
+        &self,
+        entry: &Arc<ConntrackEntry>,
+        pkt: &SlicedPacket,
+        direction: Direction,
+        now: Instant,
+        config: &ConntrackConfig,
+        packet_id: PacketId,
+    ) -> ProcessOutcome {
         let proto = entry.original.protocol;
 
         let Some(handler) = self.proto.get(proto) else {
@@ -694,7 +710,7 @@ impl Conntrack {
             None
         };
 
-        let verdict = handler.update(entry, pkt, direction, now, config);
+        let verdict = handler.update(entry, pkt, direction, now, config, packet_id);
 
         match verdict {
             CtVerdict::Accept => {
@@ -833,6 +849,7 @@ mod tests {
             _dir: Direction,
             _now: Instant,
             _config: &ConntrackConfig,
+            _packet_id: crate::data_plane::packet_context::PacketId,
         ) -> CtVerdict {
             *self.verdict.lock()
         }

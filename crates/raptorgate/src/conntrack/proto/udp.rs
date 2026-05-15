@@ -47,7 +47,15 @@ impl ProtocolHandler for UdpHandler {
         })))
     }
 
-    fn update(&self, entry: &ConntrackEntry, pkt: &SlicedPacket, dir: Direction, _now: Instant, _config: &ConntrackConfig) -> CtVerdict {
+    fn update(
+        &self,
+        entry: &ConntrackEntry,
+        pkt: &SlicedPacket,
+        dir: Direction,
+        _now: Instant,
+        _config: &ConntrackConfig,
+        packet_id: crate::data_plane::packet_context::PacketId,
+    ) -> CtVerdict {
         let Some(TransportSlice::Udp(udp)) = pkt.transport.as_ref() else {
             return CtVerdict::Invalid;
         };
@@ -73,7 +81,7 @@ impl ProtocolHandler for UdpHandler {
                 entry,
                 dir,
                 &crate::conntrack::reassembler::DeliveredChunk {
-                    packet_id: crate::data_plane::packet_context::PacketId(0),
+                    packet_id,
                     payload: payload.to_vec(),
                 },
             );
@@ -106,6 +114,7 @@ impl ProtocolHandler for UdpHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data_plane::packet_context::PacketId;
     use etherparse::PacketBuilder;
     use std::net::{IpAddr, Ipv4Addr};
     use crate::conntrack::tuple::FlowTuple;
@@ -171,7 +180,7 @@ mod tests {
 
         let h = UdpHandler::new(Arc::new(ObserverRegistry::default()));
 
-        let verdict = h.update(&entry, &pkt, Direction::Reply, Instant::now(), &ConntrackConfig::default());
+        let verdict = h.update(&entry, &pkt, Direction::Reply, Instant::now(), &ConntrackConfig::default(), PacketId(0));
 
         assert_eq!(verdict, CtVerdict::Accept);
 
@@ -234,7 +243,7 @@ mod tests {
         let h = UdpHandler::new(Arc::new(ObserverRegistry::default()));
 
         assert_eq!(
-            h.update(&entry, &pkt, Direction::Original, Instant::now(), &ConntrackConfig::default()),
+            h.update(&entry, &pkt, Direction::Original, Instant::now(), &ConntrackConfig::default(), PacketId(0)),
             CtVerdict::Invalid
         );
     }

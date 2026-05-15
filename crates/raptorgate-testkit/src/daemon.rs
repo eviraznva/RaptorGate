@@ -13,7 +13,7 @@ use ngfw::conntrack::proto::ProtoRegistry;
 use ngfw::conntrack::table::Conntrack;
 use ngfw::config::provider::AppConfigProvider;
 use ngfw::config::AppConfig;
-use ngfw::conntrack::session_manager::SessionManager;
+use ngfw::daemon::SessionsFor;
 use ngfw::daemon::{Daemon, DaemonDeps, DaemonV2, ProcessOutput, StaticDeps};
 use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use ngfw::data_plane::dns_inspection::config::DnsInspectionConfig;
@@ -195,7 +195,7 @@ impl TestDaemon {
         &self.deps
     }
 
-    pub fn sessions(&self) -> &Arc<SessionManager> {
+    pub fn sessions(&self) -> &Arc<SessionsFor<TestDeps>> {
         self.daemon_v2.sessions()
     }
 

@@ -11,8 +11,6 @@ use crate::conntrack::proto::{CtVerdict, NewStateError, NewStateOutcome, ProtoSt
 use crate::conntrack::reassembler;
 use crate::data_plane::packet_context::PacketId;
 
-const CT_PLACEHOLDER_PACKET_ID: PacketId = PacketId(0);
-
 #[derive(Debug, Clone, Default)]
 pub struct TcpProtoState {
     pub state: TcpConntrack,
@@ -252,7 +250,15 @@ impl ProtocolHandler for TcpHandler {
         Ok(NewStateOutcome::State(ProtoState::Tcp(state)))
     }
 
-    fn update(&self, entry: &ConntrackEntry, pkt: &SlicedPacket, dir: Direction, _now: Instant, config: &ConntrackConfig) -> CtVerdict {
+    fn update(
+        &self,
+        entry: &ConntrackEntry,
+        pkt: &SlicedPacket,
+        dir: Direction,
+        _now: Instant,
+        config: &ConntrackConfig,
+        packet_id: PacketId,
+    ) -> CtVerdict {
         let Ok(tcp) = extract_tcp(pkt) else {
             return CtVerdict::Invalid;
         };
@@ -312,7 +318,7 @@ impl ProtocolHandler for TcpHandler {
                         &mut reass.dirs[dir_idx],
                         &config.reassembly,
                         tcp.sequence_number(),
-                        CT_PLACEHOLDER_PACKET_ID,
+                        packet_id,
                         payload_data,
                     );
                     
@@ -1157,7 +1163,7 @@ mod tests {
         let pkt = parse(&synack);
 
         assert_eq!(
-            h.update(&entry, &pkt, Direction::Reply, Instant::now(), &cfg),
+            h.update(&entry, &pkt, Direction::Reply, Instant::now(), &cfg, PacketId(0)),
             CtVerdict::Accept
         );
         assert_eq!(extract_state(&entry).state, TcpConntrack::SynRecv);
@@ -1167,7 +1173,7 @@ mod tests {
         let pkt = parse(&ack);
 
         assert_eq!(
-            h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg),
+            h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg, PacketId(0)),
             CtVerdict::Accept
         );
         assert_eq!(extract_state(&entry).state, TcpConntrack::Established);
@@ -1189,7 +1195,7 @@ mod tests {
         let fin = build_from_client(1001, 5840, |b| b.fin().ack(2001));
         let pkt = parse(&fin);
 
-        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg);
+        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg, PacketId(0));
 
         assert_eq!(extract_state(&entry).state, TcpConntrack::FinWait);
 
@@ -1197,7 +1203,7 @@ mod tests {
         let ack = build_from_server(2001, 5840, |b| b.ack(1002));
         let pkt = parse(&ack);
 
-        h.update(&entry, &pkt, Direction::Reply, Instant::now(), &cfg);
+        h.update(&entry, &pkt, Direction::Reply, Instant::now(), &cfg, PacketId(0));
 
         assert_eq!(extract_state(&entry).state, TcpConntrack::CloseWait);
 
@@ -1205,7 +1211,7 @@ mod tests {
         let fin2 = build_from_server(2001, 5840, |b| b.fin().ack(1002));
         let pkt = parse(&fin2);
 
-        h.update(&entry, &pkt, Direction::Reply, Instant::now(), &cfg);
+        h.update(&entry, &pkt, Direction::Reply, Instant::now(), &cfg, PacketId(0));
 
         assert_eq!(extract_state(&entry).state, TcpConntrack::LastAck);
 
@@ -1213,7 +1219,7 @@ mod tests {
         let ack2 = build_from_client(1002, 5840, |b| b.ack(2002));
         let pkt = parse(&ack2);
 
-        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg);
+        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg, PacketId(0));
 
         assert_eq!(extract_state(&entry).state, TcpConntrack::TimeWait);
     }
@@ -1237,7 +1243,7 @@ mod tests {
         let rst = build_from_client(1000, 0, |b| b.rst());
         let pkt = parse(&rst);
 
-        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict());
+        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict(), PacketId(0));
 
         assert_eq!(extract_state(&entry).state, TcpConntrack::Close);
     }
@@ -1256,7 +1262,7 @@ mod tests {
         let ack = build_from_client(1001, 5840, |b| b.ack(1));
         let pkt = parse(&ack);
 
-        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict());
+        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict(), PacketId(0));
 
         assert_eq!(v, CtVerdict::Invalid);
         // Stan nie zmienił się
@@ -1277,7 +1283,7 @@ mod tests {
         let ack = build_from_client(1001, 5840, |b| b.ack(1));
         let pkt = parse(&ack);
 
-        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_loose());
+        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_loose(), PacketId(0));
 
         assert_eq!(v, CtVerdict::Accept);
     }
@@ -1294,7 +1300,7 @@ mod tests {
 
         let synack = build_from_server(2000, 5840, |b| b.syn().ack(1001));
         let pkt = parse(&synack);
-        let v = h.update(&entry, &pkt, Direction::Reply, Instant::now(), &cfg_strict());
+        let v = h.update(&entry, &pkt, Direction::Reply, Instant::now(), &cfg_strict(), PacketId(0));
 
         assert_eq!(v, CtVerdict::Accept);
         assert_eq!(extract_state(&entry).state, TcpConntrack::SynRecv);
@@ -1318,15 +1324,15 @@ mod tests {
         let pkt = parse(&syn);
 
         // Pierwszy SYN — baseline, retrans=0.
-        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict());
+        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict(), PacketId(0));
         assert_eq!(extract_state(&entry).retrans, 0);
 
         // Drugi identyczny SYN — retrans=1.
-        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict());
+        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict(), PacketId(0));
         assert_eq!(extract_state(&entry).retrans, 1);
 
         // Trzeci raz — retrans=2.
-        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict());
+        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict(), PacketId(0));
         assert_eq!(extract_state(&entry).retrans, 2);
     }
 
@@ -1346,7 +1352,7 @@ mod tests {
         let ack = build_from_client(1001, 5840, |b| b.ack(2001));
         let pkt = parse(&ack);
 
-        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict());
+        h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict(), PacketId(0));
 
         assert_eq!(extract_state(&entry).retrans, 0);
     }
@@ -1366,7 +1372,7 @@ mod tests {
         b.write(&mut buf, payload).unwrap();
 
         let pkt = parse(&buf);
-        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict());
+        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg_strict(), PacketId(0));
 
         assert_eq!(v, CtVerdict::Invalid);
     }

@@ -1530,6 +1530,44 @@ impl Stage for SmtpStage {
     }
 }
 
+pub struct SessionHandoffStage<ZR, Dns>
+where
+    ZR: crate::zones::resolver::ZoneResolver + Clone + Send + Sync + 'static,
+    Dns: DnssecProvider + Send + Sync + 'static,
+{
+    pub sessions: Arc<crate::conntrack::session_manager::SessionManager<ZR, Dns>>,
+}
+
+impl<ZR, Dns> Clone for SessionHandoffStage<ZR, Dns>
+where
+    ZR: crate::zones::resolver::ZoneResolver + Clone + Send + Sync + 'static,
+    Dns: DnssecProvider + Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            sessions: Arc::clone(&self.sessions),
+        }
+    }
+}
+
+impl<ZR, Dns> Stage for SessionHandoffStage<ZR, Dns>
+where
+    ZR: crate::zones::resolver::ZoneResolver + Clone + Send + Sync + 'static,
+    Dns: DnssecProvider + Send + Sync + 'static,
+{
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+        let Some(entry) = ctx.ct().cloned() else {
+            return StageOutcome::Continue;
+        };
+        if !self.sessions.has_session_handle(&entry) {
+            return StageOutcome::Continue;
+        }
+        let dir = ctx.ct_direction().unwrap_or(Direction::Original);
+        self.sessions.admit_packet(&entry, ctx.clone(), dir);
+        StageOutcome::Halt
+    }
+}
+
 #[derive(Clone)]
 pub struct ConntrackInStage {
     pub ct: Arc<Conntrack>,
@@ -1541,7 +1579,7 @@ impl Stage for ConntrackInStage {
     }
 
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
-        let outcome = self.ct.process(ctx.borrow_sliced_packet(), 0);
+        let outcome = self.ct.process(ctx.borrow_sliced_packet(), 0, ctx.packet_id());
 
         match outcome {
             ProcessOutcome::Accept { entry, info, direction, is_new } => {

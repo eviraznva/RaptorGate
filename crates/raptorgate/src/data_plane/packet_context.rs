@@ -11,7 +11,7 @@ use crate::dpi::DpiContext;
 use crate::identity::IdentityContext;
 use crate::ml::MlFeatureVector;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct PacketId(pub u64);
 
 impl PacketId {
@@ -146,5 +146,9 @@ impl PacketContext {
     }
     pub fn ct_is_new(&self) -> bool {
         *self.borrow_ct_is_new()
+    }
+
+    pub fn packet_id(&self) -> PacketId {
+        *self.borrow_id()
     }
 }

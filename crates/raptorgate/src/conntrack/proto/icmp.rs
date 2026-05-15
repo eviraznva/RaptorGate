@@ -137,7 +137,15 @@ impl ProtocolHandler for IcmpHandler {
         }
     }
 
-    fn update(&self, entry: &ConntrackEntry, pkt: &SlicedPacket, dir: Direction, _now: Instant, _config: &ConntrackConfig) -> CtVerdict {
+    fn update(
+        &self,
+        entry: &ConntrackEntry,
+        pkt: &SlicedPacket,
+        dir: Direction,
+        _now: Instant,
+        _config: &ConntrackConfig,
+        _packet_id: crate::data_plane::packet_context::PacketId,
+    ) -> CtVerdict {
         let Ok(class) = self.classify_packet(pkt) else {
             return CtVerdict::Invalid;
         };
@@ -185,6 +193,7 @@ impl ProtocolHandler for IcmpHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data_plane::packet_context::PacketId;
     use etherparse::{PacketBuilder};
     use std::net::{IpAddr, Ipv4Addr};
     use crate::conntrack::tuple::FlowTuple;
@@ -281,7 +290,7 @@ mod tests {
         
         let h = IcmpHandler::v4();
 
-        let v = h.update(&entry, &pkt, Direction::Reply, Instant::now(), &ConntrackConfig::default());
+        let v = h.update(&entry, &pkt, Direction::Reply, Instant::now(), &ConntrackConfig::default(), PacketId(0));
 
         assert_eq!(v, CtVerdict::Accept);
         
@@ -303,7 +312,7 @@ mod tests {
         
         let h = IcmpHandler::v4();
 
-        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &ConntrackConfig::default());
+        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &ConntrackConfig::default(), PacketId(0));
 
         assert_eq!(v, CtVerdict::Invalid);
     }

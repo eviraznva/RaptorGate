@@ -9,7 +9,9 @@ use parking_lot::Mutex;
 
 use crate::conntrack::helper::HelperRegistry;
 use crate::conntrack::session_manager::SessionManager;
-use crate::conntrack::table::Conntrack;
+use crate::conntrack::table::{Conntrack, LookupResult};
+use crate::conntrack::tuple::FlowTuple;
+use crate::post_session::PostSessionPipeline;
 use crate::config::provider::{AppConfigProvider, AppConfigStore};
 use crate::config::AppConfig;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
@@ -31,7 +33,7 @@ use crate::pipeline::wrappers::{
     ConntrackConfirmStage, ConntrackInStage, DnsBlockListStage, DnsEchMitigationStage,
     DnsTunnelingStage, DpiStage, FtpAlgStage, IdentityLookupStage, IpsStage, L4StateStage,
     LocalOwnershipStage, MetricsStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage,
-    PolicyEvalStage, SmtpStage, TlsPortEnforcementStage, ValidationStage,
+    PolicyEvalStage, SessionHandoffStage, SmtpStage, TlsPortEnforcementStage, ValidationStage,
 };
 use crate::pipeline::{
     Chain, ExecutionItem, ExecutionReceiver, ExecutionSender, ExecutionStage, Stage, StageOutcome,
@@ -194,18 +196,40 @@ pub type DataPipeline<D> = Chain<
     >,
 >;
 
+pub type SessionsFor<D> = SessionManager<
+    RoutingZoneResolver<<D as DaemonDeps>::IfaceMon>,
+    <D as DaemonDeps>::Dnssec,
+>;
+
 pub type V2Pipeline<D> = Chain<
     ValidationStage,
     Chain<
         MetricsStage,
         Chain<
             LocalOwnershipStage<<D as DaemonDeps>::ConfigStore>,
-            Chain<ConntrackInStage, ExecutionStage>,
+            Chain<
+                ConntrackInStage,
+                Chain<
+                    SessionHandoffStage<
+                        RoutingZoneResolver<<D as DaemonDeps>::IfaceMon>,
+                        <D as DaemonDeps>::Dnssec,
+                    >,
+                    ExecutionStage,
+                >,
+            >,
         >,
     >,
 >;
 
-fn build_v2_pipeline<D: DaemonDeps>(deps: &StaticDeps<D>, exec_tx: &ExecutionSender) -> V2Pipeline<D> {
+fn build_v2_pipeline<D: DaemonDeps>(
+    deps: &StaticDeps<D>,
+    exec_tx: &ExecutionSender,
+    sessions: Arc<SessionsFor<D>>,
+) -> V2Pipeline<D>
+where
+    RoutingZoneResolver<D::IfaceMon>: Clone,
+    D::Dnssec: DnssecProvider + Send + Sync + 'static,
+{
     V2Pipeline::<D> {
         head: ValidationStage,
         tail: Chain {
@@ -222,8 +246,13 @@ fn build_v2_pipeline<D: DaemonDeps>(deps: &StaticDeps<D>, exec_tx: &ExecutionSen
                     head: ConntrackInStage {
                         ct: Arc::clone(deps.conntrack),
                     },
-                    tail: ExecutionStage {
-                        tx: exec_tx.clone(),
+                    tail: Chain {
+                        head: SessionHandoffStage {
+                            sessions,
+                        },
+                        tail: ExecutionStage {
+                            tx: exec_tx.clone(),
+                        },
                     },
                 },
             },
@@ -430,10 +459,14 @@ pub struct DaemonV2<D: DaemonDeps> {
     defrag: IpDefragEngine,
     exec_tx: ExecutionSender,
     test_exec_rx: Mutex<Option<ExecutionReceiver>>,
-    sessions: Arc<SessionManager>,
+    sessions: Arc<SessionsFor<D>>,
 }
 
-impl<D: DaemonDeps> DaemonV2<D> {
+impl<D: DaemonDeps> DaemonV2<D>
+where
+    RoutingZoneResolver<D::IfaceMon>: Clone,
+    D::Dnssec: DnssecProvider + Send + Sync + 'static,
+{
     pub fn assemble_v2(
         deps: Arc<D>,
         defrag: IpDefragEngine,
@@ -441,13 +474,26 @@ impl<D: DaemonDeps> DaemonV2<D> {
         test_exec_rx: Option<ExecutionReceiver>,
     ) -> Arc<Self> {
         let s = deps.static_dependencies();
-        let pipeline = build_v2_pipeline(&s, &exec_tx);
+        let (release_tx, release_rx) = tokio::sync::mpsc::unbounded_channel();
         let sessions = SessionManager::new(
             Arc::clone(s.conntrack),
             TcpL4PipelineFactory::default(),
             UdpL4PipelineFactory::default(),
             IcmpL4PipelineFactory::default(),
+            Arc::clone(s.policy_engine),
+            s.zone_resolver.as_ref().clone(),
+            Some(Arc::clone(s.policy_dnssec)),
+            release_tx,
         );
+        let pipeline = build_v2_pipeline(&s, &exec_tx, Arc::clone(&sessions));
+        let post_session = PostSessionPipeline::new(
+            release_rx,
+            Arc::clone(s.nat_engine),
+            Arc::clone(s.routing_table),
+            Arc::clone(s.interface_monitor),
+            None,
+        );
+        tokio::spawn(post_session.run());
         Arc::new(Self {
             deps,
             pipeline,
@@ -462,7 +508,7 @@ impl<D: DaemonDeps> DaemonV2<D> {
         &self.deps
     }
 
-    pub fn sessions(&self) -> &Arc<SessionManager> {
+    pub fn sessions(&self) -> &Arc<SessionsFor<D>> {
         &self.sessions
     }
 
@@ -483,6 +529,14 @@ impl<D: DaemonDeps> DaemonV2<D> {
                 emitted: Vec::new(),
                 stage_outcome: None,
             };
+        }
+
+        if let Some(tuple) = FlowTuple::from_sliced(ctx.borrow_sliced_packet()) {
+            if let LookupResult::Found { entry, direction } = self.sessions.conntrack().lookup(&tuple) {
+                if self.sessions.has_session_handle(&entry) {
+                    self.sessions.admit_packet(&entry, ctx.clone(), direction);
+                }
+            }
         }
 
         let stage_outcome = self.pipeline.process(&mut ctx, &self.exec_tx).await;

@@ -7,6 +7,7 @@ use crate::conntrack::observer::ObserverRegistry;
 use crate::conntrack::proto::tcp::TcpHandler;
 use crate::conntrack::proto::ProtoRegistry;
 use crate::conntrack::table::{Conntrack, ProcessOutcome};
+use crate::data_plane::packet_context::PacketId;
 use crate::events::{set_event_capture, EventCapture, EventKind};
 use crate::proto::events::{ConntrackPacketDirection, TcpSessionState};
 
@@ -67,19 +68,19 @@ fn tcp_substate_events_follow_handshake_and_close() {
     let ct = build_ct();
 
     let syn = eth_tcp(C_IP, S_IP, C_PORT, S_PORT, 1000, 5840, |b| b.syn());
-    let ProcessOutcome::Accept { entry, .. } = ct.process(&parse(&syn), 0) else {
+    let ProcessOutcome::Accept { entry, .. } = ct.process(&parse(&syn), 0, PacketId(0)) else {
         panic!("syn");
     };
     assert!(ct.confirm(&entry));
 
     let synack = eth_tcp(S_IP, C_IP, S_PORT, C_PORT, 2000, 5840, |b| b.syn().ack(1001));
     assert!(matches!(
-        ct.process(&parse(&synack), 0),
+        ct.process(&parse(&synack), 0, PacketId(0)),
         ProcessOutcome::Accept { .. }
     ));
 
     let ack = eth_tcp(C_IP, S_IP, C_PORT, S_PORT, 1001, 5840, |b| b.ack(2001));
-    assert!(matches!(ct.process(&parse(&ack), 0), ProcessOutcome::Accept { .. }));
+    assert!(matches!(ct.process(&parse(&ack), 0, PacketId(0)), ProcessOutcome::Accept { .. }));
 
     let hello = b"hello\n";
     let mut srv_data = Vec::with_capacity(
@@ -97,20 +98,20 @@ fn tcp_substate_events_follow_handshake_and_close() {
         .ack(1001)
         .write(&mut srv_data, hello)
         .unwrap();
-    assert!(matches!(ct.process(&parse(&srv_data), 0), ProcessOutcome::Accept { .. }));
+    assert!(matches!(ct.process(&parse(&srv_data), 0, PacketId(0)), ProcessOutcome::Accept { .. }));
 
     let srv_end = 2001u32.wrapping_add(hello.len() as u32);
     let fin_c = eth_tcp(C_IP, S_IP, C_PORT, S_PORT, 1001, 5840, |b| b.fin().ack(srv_end));
-    assert!(matches!(ct.process(&parse(&fin_c), 0), ProcessOutcome::Accept { .. }));
+    assert!(matches!(ct.process(&parse(&fin_c), 0, PacketId(0)), ProcessOutcome::Accept { .. }));
 
     let ack_s = eth_tcp(S_IP, C_IP, S_PORT, C_PORT, srv_end, 5840, |b| b.ack(1002));
-    assert!(matches!(ct.process(&parse(&ack_s), 0), ProcessOutcome::Accept { .. }));
+    assert!(matches!(ct.process(&parse(&ack_s), 0, PacketId(0)), ProcessOutcome::Accept { .. }));
 
     let fin_s = eth_tcp(S_IP, C_IP, S_PORT, C_PORT, srv_end, 5840, |b| b.fin().ack(1002));
-    assert!(matches!(ct.process(&parse(&fin_s), 0), ProcessOutcome::Accept { .. }));
+    assert!(matches!(ct.process(&parse(&fin_s), 0, PacketId(0)), ProcessOutcome::Accept { .. }));
 
     let ack_end = eth_tcp(C_IP, S_IP, C_PORT, S_PORT, 1002, 5840, |b| b.ack(srv_end.wrapping_add(1)));
-    assert!(matches!(ct.process(&parse(&ack_end), 0), ProcessOutcome::Accept { .. }));
+    assert!(matches!(ct.process(&parse(&ack_end), 0, PacketId(0)), ProcessOutcome::Accept { .. }));
 
     let steps = tcp_substate_steps(&cap);
     assert_eq!(
@@ -161,16 +162,16 @@ fn tcp_substate_no_event_when_state_unchanged_including_payload() {
     let ct = build_ct();
 
     let syn = eth_tcp(C_IP, S_IP, C_PORT, S_PORT, 1000, 5840, |b| b.syn());
-    let ProcessOutcome::Accept { entry, .. } = ct.process(&parse(&syn), 0) else {
+    let ProcessOutcome::Accept { entry, .. } = ct.process(&parse(&syn), 0, PacketId(0)) else {
         panic!("syn");
     };
     assert!(ct.confirm(&entry));
 
     let synack = eth_tcp(S_IP, C_IP, S_PORT, C_PORT, 2000, 5840, |b| b.syn().ack(1001));
-    ct.process(&parse(&synack), 0);
+    ct.process(&parse(&synack), 0, PacketId(0));
 
     let ack = eth_tcp(C_IP, S_IP, C_PORT, S_PORT, 1001, 5840, |b| b.ack(2001));
-    ct.process(&parse(&ack), 0);
+    ct.process(&parse(&ack), 0, PacketId(0));
 
     let before_payload = tcp_substate_steps(&cap).len();
 
@@ -190,7 +191,7 @@ fn tcp_substate_no_event_when_state_unchanged_including_payload() {
         .ack(2001)
         .write(&mut psh, payload)
         .unwrap();
-    ct.process(&parse(&psh), 0);
+    ct.process(&parse(&psh), 0, PacketId(0));
 
     let after = tcp_substate_steps(&cap).len();
     assert_eq!(after, before_payload);

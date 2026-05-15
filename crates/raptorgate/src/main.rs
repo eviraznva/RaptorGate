@@ -28,6 +28,7 @@ mod swapper;
 mod validation;
 mod nat;
 mod daemon;
+mod post_session;
 
 use crate::config::provider::{AppConfigProvider, DiskAppConfigProvider};
 use crate::config::AppConfig;

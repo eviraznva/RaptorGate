@@ -1,112 +1,111 @@
 use std::sync::Arc;
 
-use crate::conntrack::entry::{ConntrackEntry, CtStatus};
-use crate::conntrack::proto::ProtoState;
+use crate::conntrack::entry::ConntrackEntry;
+use crate::conntrack::tuple::Direction;
+use crate::dpi::AppProto;
+use crate::l4::reset::{TcpResetAction, TcpResetBuilder, TcpResetUnavailable};
+use crate::zones::resolver::ZoneResolver;
+use crate::zones::{DirectionalZonePairs, ResolvedZonePair};
 
-use super::reset::{TcpResetAction, TcpResetBuilder, TcpResetUnavailable};
-
-fn apply_invalidation(entry: &ConntrackEntry, local: &mut bool) {
-    if *local {
-        return;
-    }
-    entry.set_status(CtStatus::DYING);
-    *local = true;
-}
-
-pub struct TcpSessionContext {
+pub struct SessionContext {
     entry: Arc<ConntrackEntry>,
-    local_invalidated: bool,
+    application_protocol: Option<AppProto>,
+    zone_pair_in_to_out: ResolvedZonePair,
+    zone_pair_out_to_in: ResolvedZonePair,
 }
 
-impl TcpSessionContext {
-    pub fn new(entry: Arc<ConntrackEntry>) -> Self {
+impl SessionContext {
+    pub fn open(entry: Arc<ConntrackEntry>, zone_resolver: &impl ZoneResolver) -> Self {
+        let pairs = zone_resolver.resolve_bidirectional(entry.original.src_ip, entry.original.dst_ip);
+        let (zone_pair_in_to_out, zone_pair_out_to_in) = zone_pairs_from_directional(pairs);
         Self {
             entry,
-            local_invalidated: false,
+            application_protocol: None,
+            zone_pair_in_to_out,
+            zone_pair_out_to_in,
         }
     }
 
-    pub fn invalidate_session(&mut self) {
-        apply_invalidation(&self.entry, &mut self.local_invalidated);
+    pub fn entry(&self) -> &Arc<ConntrackEntry> {
+        &self.entry
     }
 
-    pub fn is_invalidated(&self) -> bool {
-        self.local_invalidated || self.entry.has_status(CtStatus::DYING)
+    pub fn application_protocol(&self) -> Option<AppProto> {
+        self.application_protocol
     }
 
-    pub fn reset_session(&mut self) -> TcpResetAction {
+    pub fn set_application_protocol(&mut self, app_proto: AppProto) {
+        self.application_protocol = Some(app_proto);
+    }
+
+    pub fn zone_pair_for_packet(&self, dir: Direction) -> &ResolvedZonePair {
+        match dir {
+            Direction::Original => &self.zone_pair_in_to_out,
+            Direction::Reply => &self.zone_pair_out_to_in,
+        }
+    }
+
+    pub fn build_tcp_reset(&self) -> TcpResetAction {
         let tcp = {
             let guard = self.entry.proto_state.lock();
             match &*guard {
-                ProtoState::Tcp(t) => t.clone(),
+                crate::conntrack::proto::ProtoState::Tcp(t) => t.clone(),
                 _ => {
-                    apply_invalidation(&self.entry, &mut self.local_invalidated);
                     return TcpResetAction::Unavailable {
                         reason: TcpResetUnavailable::NotTcpProtocol,
                     };
                 }
             }
         };
-
-        let action = TcpResetBuilder::from_entry(&self.entry, &tcp);
-        apply_invalidation(&self.entry, &mut self.local_invalidated);
-        action
+        TcpResetBuilder::from_entry(&self.entry, &tcp)
     }
 }
 
-pub struct UdpSessionContext {
-    entry: Arc<ConntrackEntry>,
-    local_invalidated: bool,
-}
-
-impl UdpSessionContext {
-    pub fn new(entry: Arc<ConntrackEntry>) -> Self {
-        Self {
-            entry,
-            local_invalidated: false,
-        }
-    }
-
-    pub fn invalidate_session(&mut self) {
-        apply_invalidation(&self.entry, &mut self.local_invalidated);
-    }
-
-    pub fn is_invalidated(&self) -> bool {
-        self.local_invalidated || self.entry.has_status(CtStatus::DYING)
-    }
-}
-
-pub struct IcmpSessionContext {
-    entry: Arc<ConntrackEntry>,
-    local_invalidated: bool,
-}
-
-impl IcmpSessionContext {
-    pub fn new(entry: Arc<ConntrackEntry>) -> Self {
-        Self {
-            entry,
-            local_invalidated: false,
-        }
-    }
-
-    pub fn invalidate_session(&mut self) {
-        apply_invalidation(&self.entry, &mut self.local_invalidated);
-    }
-
-    pub fn is_invalidated(&self) -> bool {
-        self.local_invalidated || self.entry.has_status(CtStatus::DYING)
-    }
+fn zone_pairs_from_directional(pairs: DirectionalZonePairs) -> (ResolvedZonePair, ResolvedZonePair) {
+    let fallback = ResolvedZonePair {
+        id: uuid::Uuid::nil().into(),
+        default_policy: crate::zones::DefaultPolicy::Allow,
+    };
+    (
+        pairs.forward.unwrap_or_else(|| fallback.clone()),
+        pairs.reverse.unwrap_or(fallback),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::Arc;
     use std::time::Duration;
 
     use crate::conntrack::proto::tcp::{TcpConntrack, TcpProtoState};
-    use crate::conntrack::proto::udp::UdpProtoState;
+    use crate::conntrack::proto::ProtoState;
     use crate::conntrack::tuple::{FlowTuple, Protocol};
+    use crate::zones::resolver::ZoneResolver;
+    use crate::zones::{ResolvedZonePair, ZonePairId};
+
+    struct StubZoneResolver;
+
+    impl ZoneResolver for StubZoneResolver {
+        fn resolve(&self, _src_interface_name: &str, _dst_ip: IpAddr) -> Option<ResolvedZonePair> {
+            Some(ResolvedZonePair {
+                id: ZonePairId::from(uuid::Uuid::nil()),
+                default_policy: crate::zones::DefaultPolicy::Allow,
+            })
+        }
+
+        fn resolve_bidirectional(&self, _src_ip: IpAddr, _dst_ip: IpAddr) -> DirectionalZonePairs {
+            let pair = ResolvedZonePair {
+                id: ZonePairId::from(uuid::Uuid::nil()),
+                default_policy: crate::zones::DefaultPolicy::Allow,
+            };
+            DirectionalZonePairs {
+                forward: Some(pair.clone()),
+                reverse: Some(pair),
+            }
+        }
+    }
 
     fn tcp_entry_established() -> Arc<ConntrackEntry> {
         let mut tcp = TcpProtoState::default();
@@ -133,111 +132,18 @@ mod tests {
         ))
     }
 
-    fn udp_entry() -> Arc<ConntrackEntry> {
-        let tuple = FlowTuple::new(
-            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            5000,
-            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
-            53,
-            Protocol::Udp,
-        );
-
-        Arc::new(ConntrackEntry::new(
-            8,
-            tuple,
-            ProtoState::Udp(UdpProtoState::default()),
-            Duration::from_secs(30),
-            0,
-        ))
-    }
-
     #[test]
-    fn invalidate_marks_entry_dying_udp() {
-        let entry = udp_entry();
-        let mut ctx = UdpSessionContext::new(entry.clone());
-
-        assert!(!ctx.is_invalidated());
-        ctx.invalidate_session();
-        assert!(ctx.is_invalidated());
-        assert!(entry.has_status(CtStatus::DYING));
-    }
-
-    #[test]
-    fn tcp_reset_on_handshake_returns_unavailable_and_invalidates() {
-        let mut tcp = TcpProtoState::default();
-        tcp.state = TcpConntrack::SynSent;
-        tcp.seen[0].last_seq = 1;
-        tcp.seen[1].last_seq = 2;
-
-        let tuple = FlowTuple::new(
-            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            1000,
-            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
-            443,
-            Protocol::Tcp,
-        );
-
-        let entry = Arc::new(ConntrackEntry::new(
-            9,
-            tuple,
-            ProtoState::Tcp(tcp),
-            Duration::from_secs(60),
-            0,
-        ));
-
-        let mut ctx = TcpSessionContext::new(entry.clone());
-        let action = ctx.reset_session();
-
-        assert!(matches!(
-            action,
-            TcpResetAction::Unavailable {
-                reason: TcpResetUnavailable::HandshakeIncomplete
-            }
-        ));
-        assert!(entry.has_status(CtStatus::DYING));
-    }
-
-    #[test]
-    fn icmp_invalidate_marks_dying() {
-        use crate::conntrack::proto::icmp::IcmpProtoState;
-
-        let tuple = FlowTuple::new(
-            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            0,
-            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
-            0,
-            Protocol::Icmp,
-        );
-
-        let entry = Arc::new(ConntrackEntry::new(
-            10,
-            tuple,
-            ProtoState::Icmp(IcmpProtoState::default()),
-            Duration::from_secs(30),
-            0,
-        ));
-
-        let mut ctx = IcmpSessionContext::new(entry.clone());
-        ctx.invalidate_session();
-        assert!(entry.has_status(CtStatus::DYING));
-    }
-
-    #[test]
-    fn tcp_reset_session_returns_pair_and_invalidates() {
+    fn tcp_reset_session_returns_pair() {
         let entry = tcp_entry_established();
-        let mut ctx = TcpSessionContext::new(entry.clone());
+        let ctx = SessionContext::open(entry, &StubZoneResolver);
 
-        let action = ctx.reset_session();
-
-        let TcpResetAction::EmitRstPair { original, reply } = action else {
-            panic!("expected EmitRstPair, got {action:?}");
+        let TcpResetAction::EmitRstPair { original, reply } = ctx.build_tcp_reset() else {
+            panic!("expected EmitRstPair");
         };
 
         assert_eq!(original.seq, 111);
         assert_eq!(original.ack, 222);
         assert_eq!(reply.seq, 333);
         assert_eq!(reply.ack, 444);
-        assert!(ctx.is_invalidated());
-        assert!(entry.has_status(CtStatus::DYING));
     }
 }

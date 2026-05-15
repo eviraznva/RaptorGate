@@ -27,5 +27,6 @@ pub mod validation;
 pub mod nat;
 pub mod conntrack;
 pub mod daemon;
+pub mod post_session;
 
-pub use daemon::{Daemon, DaemonDeps, DaemonV2, DataPipeline, ProcessOutput, ProdDeps, StaticDeps};
+pub use daemon::{Daemon, DaemonDeps, DaemonV2, DataPipeline, ProcessOutput, ProdDeps, SessionsFor, StaticDeps};

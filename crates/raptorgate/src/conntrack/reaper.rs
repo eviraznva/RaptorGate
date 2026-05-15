@@ -136,7 +136,7 @@ mod tests {
 
         fn update(
             &self, _e: &ConntrackEntry, _pkt: &SlicedPacket, _dir: Direction,
-            _now: Instant, _config: &ConntrackConfig,
+            _now: Instant, _config: &ConntrackConfig, _packet_id: crate::data_plane::packet_context::PacketId,
         ) -> CtVerdict {
             CtVerdict::Accept
         }
