@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use tokio::{select, sync::mpsc, time::interval};
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
+use crate::conntrack::tcp_identity::EndpointIdentifier;
 use crate::proto::events as proto;
 use crate::proto::services::backend_event_service_client::BackendEventServiceClient;
 use crate::tls::inspection_relay::{Direction, InspectionMode};

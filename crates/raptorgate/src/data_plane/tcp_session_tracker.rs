@@ -8,7 +8,9 @@ use ringbuffer::{AllocRingBuffer, RingBuffer};
 use thiserror::Error;
 use unordered_pair::UnorderedPair;
 
-use crate::{events::{Event, EventKind, emit}, proto::events::TcpEndpoint, rule_tree::types::Port};
+use crate::{events::{Event, EventKind, emit}, rule_tree::types::Port};
+
+pub use crate::conntrack::tcp_identity::{EndpointIdentifier, TcpIdentifier};
 
 pub struct TcpSessionTracker {
     sessions: Arc<DashMap<TcpIdentifier, TcpSession>>, //TODO: Transition away from using `Arc` since we want to avoid indirection, do something like in `PacketBuffer`.
@@ -507,39 +509,6 @@ pub enum TcpSessionError {
 
     #[error("Packet sequence number {seq} out of window ({lo}, {hi})")]
     OutOfWindow {lo: u32, hi: u32, seq: u32},
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct TcpIdentifier {
-    pub(crate) endpoints: UnorderedPair<EndpointIdentifier>
-}
-
-impl TcpIdentifier {
-    pub fn new(client: EndpointIdentifier, server: EndpointIdentifier) -> Self {
-        Self {
-            endpoints: UnorderedPair::from((client, server)),
-        }
-    }
-
-    pub fn endpoints(&self) -> (EndpointIdentifier, EndpointIdentifier) {
-        self.endpoints.clone().into_ordered_tuple()
-    }
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
-pub struct EndpointIdentifier {
-    pub ip: IpAddr,
-    pub port: Port,
-}
-
-// maybe have a dedicated serializer module?
-impl From<EndpointIdentifier> for TcpEndpoint {
-    fn from(value: EndpointIdentifier) -> Self {
-        TcpEndpoint {
-            ip:   value.ip.to_string(),
-            port: u16::from(value.port) as u32,
-        }
-    }
 }
 
 #[derive(Debug)]

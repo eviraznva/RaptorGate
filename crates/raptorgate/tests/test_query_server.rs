@@ -10,7 +10,6 @@ use ngfw::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use ngfw::data_plane::ips::ips::Ips;
 use ngfw::data_plane::ips::provider::IpsConfigProvider;
 use ngfw::nat::{NatConfigProvider, NatEngine};
-use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::identity::IdentitySessionStore;
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::proto::config::{InterfaceStatus, Rule, Zone, ZoneInterface, ZonePair};
@@ -206,7 +205,6 @@ fn shared_server() -> &'static SharedServer {
                 ));
 
                 let handler = QueryHandler {
-                    tcp_tracker: TcpSessionTracker::new(),
                     nat_engine: NatEngine::new(None, HashMap::new()),
                     nat_store,
                     conntrack: conntrack_for_test,

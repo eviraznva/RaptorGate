@@ -40,7 +40,6 @@ use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::nat::{NatConfigProvider, NatEngine};
-use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
 use crate::identity::IdentitySessionStore;
@@ -157,9 +156,6 @@ async fn main() {
         DecryptionMirrorConfig::default(),
         CancellationToken::new(),
     ));
-
-    let tcp_session_tracker = TcpSessionTracker::new();
-
 
     let ct_observers = Arc::new(ObserverRegistry::default());
 
@@ -620,7 +616,6 @@ async fn main() {
     let query_server = QueryServer::<DiskPolicyProvider, NetworkInterfaceMonitor, NetlinkInterfaceController>::new(
         QueryHandler {
             conntrack: Arc::clone(&conntrack),
-            tcp_tracker: Arc::clone(&tcp_session_tracker),
             nat_engine: Arc::clone(&nat_engine),
             nat_store: Arc::clone(&nat_store),
             policy_store: Arc::clone(&policy_provider),

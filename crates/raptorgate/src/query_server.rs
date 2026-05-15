@@ -24,7 +24,6 @@ use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::nat::{NatConfigProvider, NatEngine};
 use crate::factory_reset::{safe_app_config, FactoryResetOptions, FactoryResetReport};
-use crate::data_plane::tcp_session_tracker::TcpSessionTracker;
 use crate::identity::{IdentitySessionHandler, IdentitySessionStore};
 use crate::metrics::{MetricsCollector, MetricsService};
 use crate::nat::config::NatRules;
@@ -148,7 +147,6 @@ where
     Monitor: InterfaceMonitor,
     Controller: InterfaceController,
 {
-    pub tcp_tracker: Arc<TcpSessionTracker>,
     pub nat_engine: Arc<NatEngine>,
     pub nat_store: Arc<NatConfigProvider>,
     pub conntrack: Arc<crate::conntrack::table::Conntrack>,
@@ -185,7 +183,6 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            tcp_tracker: Arc::clone(&self.tcp_tracker),
             nat_engine: Arc::clone(&self.nat_engine),
             nat_store: Arc::clone(&self.nat_store),
             conntrack: Arc::clone(&self.conntrack),

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::conntrack::observer::{CtObserver, DestroyReason};
 use crate::conntrack::entry::ConntrackEntry;
-use crate::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
+use crate::conntrack::tcp_identity::{EndpointIdentifier, TcpIdentifier};
 use crate::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
 use crate::interfaces::NetworkInterfaceMonitor;
@@ -1057,7 +1057,7 @@ mod tests {
     use std::collections::HashMap;
     use etherparse::PacketBuilder;
     use unordered_pair::UnorderedPair;
-    use crate::data_plane::tcp_session_tracker::TcpIdentifier;
+    use crate::conntrack::tcp_identity::TcpIdentifier;
     use crate::zones::{DefaultPolicy, DirectionalZonePairs, ResolvedZonePair, ZonePairId};
     use crate::policy::{Policy, PolicyId};
     use uuid::Uuid;

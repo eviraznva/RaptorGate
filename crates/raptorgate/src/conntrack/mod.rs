@@ -1,4 +1,5 @@
 pub mod proto;
+pub mod tcp_identity;
 pub mod session_manager;
 pub mod table;
 pub mod tuple;

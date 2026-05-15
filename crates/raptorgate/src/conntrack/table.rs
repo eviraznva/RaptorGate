@@ -16,7 +16,7 @@ use crate::conntrack::expectation::{ExpectationConfig, ExpectationTable};
 use crate::conntrack::proto::{CtVerdict, NewStateOutcome, ProtoRegistry, ProtoState};
 use crate::conntrack::proto::tcp::TcpConntrack;
 use crate::conntrack::observer::{CtObserver, DestroyReason, ObserverRegistry};
-use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
+use crate::conntrack::tcp_identity::EndpointIdentifier;
 use crate::events::{emit, Event, EventKind};
 use crate::proto::events as pe;
 use crate::rule_tree::types::Port;

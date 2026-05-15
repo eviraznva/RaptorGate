@@ -13,7 +13,6 @@ use crate::{
         dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection, EchMitigationVerdict},
         ips::ips::{Ips, IpsSignatureMatch, IpsVerdict},
         packet_context::PacketContext,
-        tcp_session_tracker::TcpSessionTracker,
     },
     nat::NatEngine,
     dpi::{DpiClassifier, FlowKey, InspectResult},
@@ -916,37 +915,6 @@ where
     }
 }
 
-#[derive(Clone)]
-pub struct TcpClassificationStage {
-    pub tracker: Arc<TcpSessionTracker>,
-    pub flow_stats: Arc<crate::ml::FlowStatsAggregator>,
-}
-
-impl Stage for TcpClassificationStage {
-    fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        !packet_is_decrypted(ctx)
-    }
-
-    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
-        // ML features z TCP header + rolling flow stats per src_ip.
-        populate_ml_tcp_and_flow_stats(ctx, &self.flow_stats);
-
-        match self.tracker.process_packet(ctx.borrow_sliced_packet()) {
-            Ok(_) => StageOutcome::Continue,
-            Err(e) => {
-                log_packet_decision(
-                    ctx,
-                    "tcp_session.tracking.failed",
-                    "tcp_classification",
-                    "drop",
-                    &e.to_string(),
-                );
-                StageOutcome::Halt
-            }
-        }
-    }
-}
-
 fn populate_ml_tcp_and_flow_stats(
     ctx: &mut PacketContext,
     flow_stats: &crate::ml::FlowStatsAggregator,
@@ -1459,11 +1427,11 @@ impl Stage for SmtpStage {
         let (src, dst) = match &sliced.net {
             Some(NetSlice::Ipv4(ipv4)) => {
                 let header = ipv4.header();
-                let src = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                let src = crate::conntrack::tcp_identity::EndpointIdentifier {
                     ip: IpAddr::V4(header.source_addr()),
                     port: crate::rule_tree::types::Port::from(tcp.source_port()),
                 };
-                let dst = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                let dst = crate::conntrack::tcp_identity::EndpointIdentifier {
                     ip: IpAddr::V4(header.destination_addr()),
                     port: crate::rule_tree::types::Port::from(tcp.destination_port()),
                 };
@@ -1471,11 +1439,11 @@ impl Stage for SmtpStage {
             }
             Some(NetSlice::Ipv6(ipv6)) => {
                 let header = ipv6.header();
-                let src = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                let src = crate::conntrack::tcp_identity::EndpointIdentifier {
                     ip: IpAddr::V6(header.source_addr()),
                     port: crate::rule_tree::types::Port::from(tcp.source_port()),
                 };
-                let dst = crate::data_plane::tcp_session_tracker::EndpointIdentifier {
+                let dst = crate::conntrack::tcp_identity::EndpointIdentifier {
                     ip: IpAddr::V6(header.destination_addr()),
                     port: crate::rule_tree::types::Port::from(tcp.destination_port()),
                 };
@@ -1484,7 +1452,7 @@ impl Stage for SmtpStage {
             _ => return StageOutcome::Continue,
         };
 
-        let session_id = crate::data_plane::tcp_session_tracker::TcpIdentifier {
+        let session_id = crate::conntrack::tcp_identity::TcpIdentifier {
             endpoints: unordered_pair::UnorderedPair::from((src.clone(), dst.clone())),
         };
 

@@ -262,6 +262,50 @@ async fn phase1_invalidate_via_session_context() {
 }
 
 #[tokio::test]
+async fn phase1_release_rx_forward_matches_packet_id() {
+    let (sm, mut release_rx) = phase1_session_manager();
+    let ct = sm.conntrack().clone();
+    let entry = sample_udp_entry(5001);
+    assert!(ct.confirm(&entry));
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if sm.has_session_handle(&entry) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("timeout waiting for session handle");
+
+    let mut raw = Vec::new();
+    PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+        .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+        .udp(1000, 2000)
+        .write(&mut raw, b"p")
+        .expect("packet");
+    let packet = PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet");
+    let pid = packet.packet_id();
+    sm.admit_packet(&entry, packet, Direction::Original);
+    sm.inject_session_payload(&entry, Direction::Original, b"x", pid);
+
+    let action = tokio::time::timeout(Duration::from_secs(2), release_rx.recv())
+        .await
+        .expect("timeout waiting for release")
+        .expect("release channel closed");
+
+    match action {
+        ngfw::l4::ReleaseAction::Forward { packet } => {
+            assert_eq!(packet.packet_id(), pid);
+        }
+        other => panic!("expected Forward, got {other:?}"),
+    }
+
+    ct.destroy(&entry, DestroyReason::Manual);
+}
+
+#[tokio::test]
 async fn testkit_daemon_v2_exposes_session_layer() {
     let td = TestDaemon::builder().build().await.expect("daemon");
     let _ = td.sessions();
