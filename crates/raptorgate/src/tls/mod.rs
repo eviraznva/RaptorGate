@@ -10,6 +10,7 @@ pub mod inspection_relay;
 pub mod mitm_proxy;
 pub mod original_dst;
 pub mod pinning_detector;
+pub mod redirect_manager;
 pub mod rustls_config;
 pub mod server_key_store;
 pub mod transparent_redirect;
@@ -23,6 +24,7 @@ pub use decision_engine::{EchTlsPolicy, PostHandshakeTlsDecision, TlsBlockReason
 pub use dual_session::{AcceptParams, ConnectParams};
 pub use mitm_proxy::{MitmProxy, MitmProxyConfig};
 pub use pinning_detector::PinningConfig;
+pub use redirect_manager::{TlsRedirectConfig, TlsRedirectDesiredState, TlsRedirectManager, TlsRedirectReconcileOutcome};
 pub use server_key_store::ServerKeyStore;
 pub use transparent_redirect::TransparentRedirect;
 pub use upstream_connector::{LinuxUpstreamConnector, UpstreamConnector, UpstreamConnectError};

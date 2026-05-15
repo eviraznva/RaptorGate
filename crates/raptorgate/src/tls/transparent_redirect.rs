@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
-const TABLE_NAME: &str = "raptorgate_tls";
+pub(crate) const TABLE_NAME: &str = "raptorgate_tls";
 
 // Adresy interfejsow firewalla — ruch na nie to zone-to-self, omija decryption.
 pub struct TransparentRedirect {
@@ -139,7 +139,7 @@ impl TransparentRedirect {
         bail!("nft apply failed: {stderr}");
     }
 
-    fn render_script(&self) -> String {
+    pub(crate) fn render_script(&self) -> String {
         let interfaces = self
             .capture_interfaces
             .iter()
