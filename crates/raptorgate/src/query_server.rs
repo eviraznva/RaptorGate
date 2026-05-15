@@ -32,6 +32,7 @@ use crate::policy::engine::PolicyEngine;
 use crate::policy::provider::{default_drop_policy, PolicyManager};
 use crate::policy::{Policy, PolicyId};
 use crate::proto::common::CertificateType;
+use crate::proto::config::UntrustedCertificateAction;
 use crate::proto::services::firewall_query_service_server::{
     FirewallQueryService, FirewallQueryServiceServer,
 };
@@ -53,7 +54,7 @@ use crate::proto::services::{
 };
 use crate::tls::pinning_detector::PinningDetector;
 use crate::tls::cert_storage::clear_ca_files;
-use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
+use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine, UntrustedCertAction};
 use crate::tls::decryption_mirror::{DecryptionMirror, DecryptionMirrorConfig};
 use crate::validation::validate_bundle;
 use crate::zones::Zone;
@@ -261,6 +262,15 @@ fn decryption_mirror_config_from_proto(
         forwarded_only: config.forwarded_only,
         max_session_bytes,
     })
+}
+
+fn untrusted_cert_action_from_proto(action: i32) -> UntrustedCertAction {
+    match UntrustedCertificateAction::try_from(action).unwrap_or(UntrustedCertificateAction::Unspecified) {
+        UntrustedCertificateAction::ForwardWithUntrustCa => UntrustedCertAction::ForwardWithUntrustCa,
+        UntrustedCertificateAction::Unspecified | UntrustedCertificateAction::Block => {
+            UntrustedCertAction::Block
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -766,6 +776,8 @@ where
                 block_all_ech: policy.block_all_ech,
             });
             self.decision_engine
+                .reload_untrusted_cert_action(untrusted_cert_action_from_proto(policy.untrusted_cert_action));
+            self.decision_engine
                 .reload_known_pinned_domains(&policy.known_pinned_domains);
             let mirror_config = match decryption_mirror_config_from_proto(policy.decryption_mirror.as_ref()) {
                 Ok(config) => config,
@@ -790,6 +802,8 @@ where
                 }));
             }
         } else {
+            self.decision_engine
+                .reload_untrusted_cert_action(UntrustedCertAction::default());
             self.decryption_mirror.reload_config(DecryptionMirrorConfig::default());
         }
 
@@ -921,6 +935,8 @@ where
         self.decision_engine
             .reload_known_pinned_domains(&empty_domains);
         self.decision_engine.reload_ech_policy(EchTlsPolicy::default());
+        self.decision_engine
+            .reload_untrusted_cert_action(UntrustedCertAction::default());
 
         self.apply_nat_rules(&[]).await?;
 

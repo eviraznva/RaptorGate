@@ -18,7 +18,7 @@ pub use ca_manager::{CaInfo, CaManager};
 pub use cert_forger::{CertForger, ForgedCert};
 pub use decrypted_chain::DecryptedChainInspector;
 pub use decryption_mirror::{DecryptionMirror, DecryptionMirrorConfig};
-pub use decision_engine::{EchTlsPolicy, TlsDecisionEngine};
+pub use decision_engine::{EchTlsPolicy, PostHandshakeTlsDecision, TlsBlockReason, TlsDecisionEngine, UntrustedCertAction};
 pub use dual_session::{AcceptParams, ConnectParams};
 pub use mitm_proxy::{MitmProxy, MitmProxyConfig};
 pub use pinning_detector::PinningConfig;

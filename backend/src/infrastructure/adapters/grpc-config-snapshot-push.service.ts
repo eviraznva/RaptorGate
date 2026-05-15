@@ -42,6 +42,7 @@ import {
   IpsMatchType,
   IpsPatternEncoding,
   SmtpMatchAction as ProtoSmtpMatchAction,
+  UntrustedCertificateAction,
   type DnsInspectionConfig as ProtoDnsInspectionConfig,
   type IpsConfig as ProtoIpsConfig,
   type NatRule as ProtoNatRule,
@@ -600,7 +601,26 @@ export class GrpcConfigSnapshotPushService
       decryptionMirror: this.toDecryptionMirrorConfig(
         policy?.decryption_mirror,
       ),
+      untrustedCertAction: this.toUntrustedCertificateAction(
+        policy?.untrusted_cert_action,
+      ),
     };
+  }
+
+  private toUntrustedCertificateAction(
+    action:
+      | NonNullable<
+          ConfigSnapshotPayload["bundle"]["tls_inspection_policy"]
+        >["untrusted_cert_action"]
+      | undefined,
+  ): UntrustedCertificateAction {
+    switch (action) {
+      case "forward_with_untrust_ca":
+        return UntrustedCertificateAction.UNTRUSTED_CERTIFICATE_ACTION_FORWARD_WITH_UNTRUST_CA;
+      case "block":
+      case undefined:
+        return UntrustedCertificateAction.UNTRUSTED_CERTIFICATE_ACTION_BLOCK;
+    }
   }
 
   private toDecryptionMirrorConfig(

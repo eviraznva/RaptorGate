@@ -27,12 +27,45 @@ impl Default for EchTlsPolicy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UntrustedCertAction {
+    Block,
+    ForwardWithUntrustCa,
+}
+
+impl Default for UntrustedCertAction {
+    fn default() -> Self {
+        Self::Block
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsBlockReason {
+    UntrustedUpstreamCert,
+}
+
+impl TlsBlockReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UntrustedUpstreamCert => "untrusted_upstream_cert",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostHandshakeTlsDecision {
+    ContinueWithNormalForgery,
+    ContinueWithUntrustForgery,
+    Block { reason: TlsBlockReason },
+}
+
 // Jedno źródło prawdy dla decyzji inspekcji TLS w runtime proxy.
 pub struct TlsDecisionEngine {
     bypass_trie: ArcSwap<DomainTrie>,
     known_pinned_trie: ArcSwap<DomainTrie>,
     server_key_store: Arc<ServerKeyStore>,
     ech_policy: ArcSwap<EchTlsPolicy>,
+    untrusted_cert_action: ArcSwap<UntrustedCertAction>,
     pinning_detector: Arc<PinningDetector>,
 }
 
@@ -49,6 +82,7 @@ impl TlsDecisionEngine {
             known_pinned_trie: ArcSwap::new(Arc::new(DomainTrie::new())),
             server_key_store,
             ech_policy: ArcSwap::new(Arc::new(ech_policy)),
+            untrusted_cert_action: ArcSwap::new(Arc::new(UntrustedCertAction::default())),
             pinning_detector: Arc::new(PinningDetector::new(pinning_config)),
         }
     }
@@ -116,6 +150,21 @@ impl TlsDecisionEngine {
         TlsAction::Intercept
     }
 
+    pub fn decide_upstream_cert(&self, server_trusted: bool) -> PostHandshakeTlsDecision {
+        if server_trusted {
+            return PostHandshakeTlsDecision::ContinueWithNormalForgery;
+        }
+
+        match *self.untrusted_cert_action.load_full() {
+            UntrustedCertAction::Block => PostHandshakeTlsDecision::Block {
+                reason: TlsBlockReason::UntrustedUpstreamCert,
+            },
+            UntrustedCertAction::ForwardWithUntrustCa => {
+                PostHandshakeTlsDecision::ContinueWithUntrustForgery
+            }
+        }
+    }
+
     // Atomowa podmiana listy bypass (hot-reload z backendu).
     pub fn reload_bypass(&self, domains: &[String]) {
         let trie = DomainTrie::from_domains(domains);
@@ -127,6 +176,11 @@ impl TlsDecisionEngine {
     pub fn reload_ech_policy(&self, policy: EchTlsPolicy) {
         self.ech_policy.store(Arc::new(policy));
         tracing::info!("ECH TLS policy reloaded");
+    }
+
+    pub fn reload_untrusted_cert_action(&self, action: UntrustedCertAction) {
+        self.untrusted_cert_action.store(Arc::new(action));
+        tracing::info!(action = ?action, "TLS untrusted certificate action reloaded");
     }
 
     pub fn reload_known_pinned_domains(&self, domains: &[String]) {
@@ -317,6 +371,36 @@ mod tests {
             block_all_ech: false,
         });
         assert_eq!(e.decide(None, true, None, 443, None), TlsAction::Intercept);
+    }
+
+    #[test]
+    fn trusted_upstream_uses_normal_forgery_when_untrusted_policy_blocks() {
+        let e = engine(&[]);
+        assert_eq!(
+            e.decide_upstream_cert(true),
+            PostHandshakeTlsDecision::ContinueWithNormalForgery
+        );
+    }
+
+    #[test]
+    fn untrusted_upstream_blocks_when_policy_blocks() {
+        let e = engine(&[]);
+        assert_eq!(
+            e.decide_upstream_cert(false),
+            PostHandshakeTlsDecision::Block {
+                reason: TlsBlockReason::UntrustedUpstreamCert,
+            }
+        );
+    }
+
+    #[test]
+    fn untrusted_upstream_uses_untrust_forgery_when_policy_allows() {
+        let e = engine(&[]);
+        e.reload_untrusted_cert_action(UntrustedCertAction::ForwardWithUntrustCa);
+        assert_eq!(
+            e.decide_upstream_cert(false),
+            PostHandshakeTlsDecision::ContinueWithUntrustForgery
+        );
     }
 
     #[test]

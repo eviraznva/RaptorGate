@@ -193,6 +193,12 @@ message PinningDetectionConfig {
 
 // ── Polityka inspekcji TLS (ECH + pinning) ──────────────────────────────────
 
+enum UntrustedCertificateAction {
+  UNTRUSTED_CERTIFICATE_ACTION_UNSPECIFIED = 0;
+  UNTRUSTED_CERTIFICATE_ACTION_BLOCK = 1;
+  UNTRUSTED_CERTIFICATE_ACTION_FORWARD_WITH_UNTRUST_CA = 2;
+}
+
 message TlsInspectionPolicy {
   bool            block_ech_no_sni    = 1; // blokuj ECH bez widocznego SNI
   bool            block_all_ech       = 2; // blokuj wszystkie polaczenia z ECH
@@ -200,6 +206,7 @@ message TlsInspectionPolicy {
   bool            log_ech_attempts    = 4; // loguj proba uzycia ECH
   repeated string known_pinned_domains = 5; // domeny z pinningiem certyfikatu
   DecryptionMirrorConfig decryption_mirror = 6; // mirror odszyfrowanego plaintextu
+  UntrustedCertificateAction untrusted_cert_action = 7;
 }
 
 message DecryptionMirrorConfig {

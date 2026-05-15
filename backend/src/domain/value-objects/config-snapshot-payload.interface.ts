@@ -16,6 +16,10 @@ import { Zone } from "../entities/zone.entity.js";
 import { ZoneInterface } from "../entities/zone-interface.entity.js";
 import { ZonePair } from "../entities/zone-pair.entity.js";
 
+export type UntrustedCertificateActionPayload =
+  | "block"
+  | "forward_with_untrust_ca";
+
 export interface TlsInspectionPolicyPayload {
   block_ech_no_sni: boolean;
   block_all_ech: boolean;
@@ -23,6 +27,7 @@ export interface TlsInspectionPolicyPayload {
   log_ech_attempts: boolean;
   known_pinned_domains: string[];
   decryption_mirror: DecryptionMirrorConfigPayload;
+  untrusted_cert_action: UntrustedCertificateActionPayload;
 }
 
 export interface DecryptionMirrorConfigPayload {
@@ -42,6 +47,7 @@ export const DEFAULT_TLS_INSPECTION_POLICY: Readonly<TlsInspectionPolicyPayload>
     strip_ech_dns: true,
     log_ech_attempts: true,
     known_pinned_domains: [],
+    untrusted_cert_action: "block",
     decryption_mirror: {
       enabled: false,
       target_host: "",
@@ -60,6 +66,9 @@ export function normalizeTlsInspectionPolicy(
     ...DEFAULT_TLS_INSPECTION_POLICY,
     ...(policy ?? {}),
     known_pinned_domains: [...(policy?.known_pinned_domains ?? [])],
+    untrusted_cert_action:
+      policy?.untrusted_cert_action ??
+      DEFAULT_TLS_INSPECTION_POLICY.untrusted_cert_action,
     decryption_mirror: {
       ...DEFAULT_TLS_INSPECTION_POLICY.decryption_mirror,
       ...(policy?.decryption_mirror ?? {}),
