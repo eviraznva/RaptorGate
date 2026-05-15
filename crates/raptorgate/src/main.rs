@@ -53,7 +53,7 @@ use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
     CaManager, DecryptedChainInspector, DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, MitmProxy, MitmProxyConfig,
-    PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
+    LinuxUpstreamConnector, PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
 use crate::interfaces::{InterfaceMonitor, NetlinkInterfaceController, NetworkInterfaceMonitor};
 use crate::netlink::listener::NetlinkListener;
@@ -699,6 +699,10 @@ async fn main() {
                     )),
                     decryption_mirror: Arc::clone(&decryption_mirror),
                     session_interface_lookup: Arc::new(crate::tls::inspection_relay::RoutingSessionInterfaceLookup::new(
+                        Arc::clone(&routing_table),
+                        Arc::clone(&pipeline_interface_monitor),
+                    )),
+                    upstream_connector: Arc::new(LinuxUpstreamConnector::new(
                         Arc::clone(&routing_table),
                         Arc::clone(&pipeline_interface_monitor),
                     )),

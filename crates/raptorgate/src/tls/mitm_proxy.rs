@@ -16,12 +16,13 @@ use crate::events::{EchAction, EchOrigin, HandshakeStage};
 use crate::tls::cert_forger::CertForger;
 use crate::tls::decrypted_chain::DecryptedTrafficInspector;
 use crate::tls::decryption_mirror::DecryptionMirror;
-use crate::tls::decision_engine::TlsDecisionEngine;
+use crate::tls::decision_engine::{PostHandshakeTlsDecision, TlsBlockReason, TlsDecisionEngine};
 use crate::tls::dual_session::{self, AcceptParams, ConnectParams};
 use crate::tls::inspection_relay::{InspectionRelay, InspectionMode, SessionInterfaceLookup, SessionMeta};
 use crate::tls::original_dst;
 use crate::tls::pinning_detector;
 use crate::tls::rustls_config;
+use crate::tls::upstream_connector::UpstreamConnector;
 
 const SNI_PEEK_BUF_SIZE: usize = 4096;
 
@@ -34,6 +35,7 @@ pub struct MitmProxyConfig {
     pub decrypted_inspector: Arc<dyn DecryptedTrafficInspector>,
     pub decryption_mirror: Arc<DecryptionMirror>,
     pub session_interface_lookup: Arc<dyn SessionInterfaceLookup>,
+    pub upstream_connector: Arc<dyn UpstreamConnector>,
     pub cancel: CancellationToken,
 }
 
@@ -45,6 +47,7 @@ pub struct MitmProxy {
     decision_engine: Arc<TlsDecisionEngine>,
     inspection_relay: Arc<InspectionRelay>,
     session_interface_lookup: Arc<dyn SessionInterfaceLookup>,
+    upstream_connector: Arc<dyn UpstreamConnector>,
     cancel: CancellationToken,
 }
 
@@ -64,6 +67,7 @@ impl MitmProxy {
             decision_engine: config.decision_engine,
             inspection_relay: Arc::new(InspectionRelay::with_mirror(config.decrypted_inspector, config.decryption_mirror)),
             session_interface_lookup: config.session_interface_lookup,
+            upstream_connector: config.upstream_connector,
             cancel: config.cancel,
         })
     }
@@ -84,6 +88,7 @@ impl MitmProxy {
                             let engine = Arc::clone(&self.decision_engine);
                             let relay = Arc::clone(&self.inspection_relay);
                             let session_interface_lookup = Arc::clone(&self.session_interface_lookup);
+                            let upstream_connector = Arc::clone(&self.upstream_connector);
 
                             tokio::spawn(async move {
                                 if let Err(e) = handle_connection(
@@ -94,6 +99,7 @@ impl MitmProxy {
                                     engine,
                                     relay,
                                     session_interface_lookup,
+                                    upstream_connector,
                                 ).await {
                                     tracing::debug!(peer = %peer_addr, error = %e, "TLS proxy connection error");
                                 }
@@ -118,6 +124,7 @@ async fn handle_connection(
     engine: Arc<TlsDecisionEngine>,
     relay: Arc<InspectionRelay>,
     session_interface_lookup: Arc<dyn SessionInterfaceLookup>,
+    upstream_connector: Arc<dyn UpstreamConnector>,
 ) -> anyhow::Result<()> {
     let original_dst = original_dst::get_original_dst(&client_tcp)
         .context("Failed to read original destination address")?;
@@ -127,7 +134,16 @@ async fn handle_connection(
 
     if !looks_like_tls {
         tracing::debug!(peer = %peer_addr, dst = %original_dst, "Port 443 traffic is not TLS, using passthrough");
-        return relay_tcp_passthrough(client_tcp, original_dst).await;
+        let meta = build_session_meta(
+            peer_addr,
+            original_dst,
+            original_dst,
+            sni.clone(),
+            None,
+            InspectionMode::Outbound,
+            session_interface_lookup.as_ref(),
+        );
+        return relay_tcp_passthrough(client_tcp, original_dst, upstream_connector, meta).await;
     }
 
     let action = engine.decide(
@@ -166,10 +182,19 @@ async fn handle_connection(
             events::emit(events::Event::new(events::EventKind::InboundTlsBypassApplied {
                 peer: peer_addr,
                 server: original_dst,
-                sni,
+                sni: sni.clone(),
                 tls_version: client_hello_version.clone(),
             }));
-            return relay_tcp_passthrough(client_tcp, original_dst).await;
+            let meta = build_session_meta(
+                peer_addr,
+                original_dst,
+                original_dst,
+                sni.clone(),
+                None,
+                InspectionMode::Inbound,
+                session_interface_lookup.as_ref(),
+            );
+            return relay_tcp_passthrough(client_tcp, original_dst, upstream_connector, meta).await;
         }
         tracing::info!(
             event = "tls.inbound.intercept.started",
@@ -190,6 +215,7 @@ async fn handle_connection(
             entry.certified_key,
             relay,
             session_interface_lookup,
+            upstream_connector,
         )
         .await;
     }
@@ -206,7 +232,16 @@ async fn handle_connection(
                 domain: domain.clone(),
                 tls_version: client_hello_version.clone(),
             }));
-            return relay_tcp_passthrough(client_tcp, original_dst).await;
+            let meta = build_session_meta(
+                peer_addr,
+                original_dst,
+                original_dst,
+                sni.clone(),
+                None,
+                InspectionMode::Outbound,
+                session_interface_lookup.as_ref(),
+            );
+            return relay_tcp_passthrough(client_tcp, original_dst, upstream_connector, meta).await;
         }
         TlsAction::Block => {
             tracing::info!(
@@ -223,6 +258,7 @@ async fn handle_connection(
     handle_outbound_connection(
         client_tcp, peer_addr, original_dst, sni, client_hello_version,
         alpn_protocols, cert_forger, untrust_forger, engine, relay, session_interface_lookup,
+        upstream_connector,
     )
     .await
 }
@@ -238,6 +274,7 @@ async fn handle_inbound_connection(
     inbound_certified_key: Arc<CertifiedKey>,
     relay: Arc<InspectionRelay>,
     session_interface_lookup: Arc<dyn SessionInterfaceLookup>,
+    upstream_connector: Arc<dyn UpstreamConnector>,
 ) -> anyhow::Result<()> {
     events::emit(events::Event::new(
         events::EventKind::InboundTlsInterceptStarted {
@@ -249,7 +286,17 @@ async fn handle_inbound_connection(
         },
     ));
 
-    let server_tcp = TcpStream::connect(server_addr)
+    let mut meta = build_session_meta(
+        peer_addr,
+        server_addr,
+        server_addr,
+        sni.clone(),
+        None,
+        InspectionMode::Inbound,
+        session_interface_lookup.as_ref(),
+    );
+
+    let server_tcp = upstream_connector.connect(server_addr, &meta)
         .await
         .context("Failed to connect to internal server")?;
 
@@ -363,19 +410,7 @@ async fn handle_inbound_connection(
     // Inspekcja DPI/IPS na odszyfrowanym ruchu
     let (cr, cw) = tokio::io::split(client_tls);
     let (sr, sw) = tokio::io::split(server_tls);
-    let session_interfaces = session_interface_lookup.resolve_session_interfaces(peer_addr, server_addr);
-
-    let meta = SessionMeta {
-        session_id: uuid::Uuid::now_v7(),
-        peer: peer_addr,
-        server: server_addr,
-        original_dst: server_addr,
-        sni: sni.clone(),
-        alpn: negotiated_alpn.clone(),
-        client_side_interface: session_interfaces.client_side_interface,
-        server_side_interface: session_interfaces.server_side_interface,
-        mode: InspectionMode::Inbound,
-    };
+    meta.alpn = negotiated_alpn.clone();
 
     let (bytes_up, bytes_down) = relay.relay_bidirectional(cr, sw, sr, cw, &meta).await;
 
@@ -404,6 +439,7 @@ async fn handle_outbound_connection(
     engine: Arc<TlsDecisionEngine>,
     relay: Arc<InspectionRelay>,
     session_interface_lookup: Arc<dyn SessionInterfaceLookup>,
+    upstream_connector: Arc<dyn UpstreamConnector>,
 ) -> anyhow::Result<()> {
     let domain = sni.clone().unwrap_or_else(|| original_dst.ip().to_string());
 
@@ -423,7 +459,17 @@ async fn handle_outbound_connection(
         tls_version: client_hello_version.clone(),
     }));
 
-    let server_tcp = TcpStream::connect(original_dst)
+    let mut meta = build_session_meta(
+        peer_addr,
+        original_dst,
+        original_dst,
+        sni.clone(),
+        None,
+        InspectionMode::Outbound,
+        session_interface_lookup.as_ref(),
+    );
+
+    let server_tcp = upstream_connector.connect(original_dst, &meta)
         .await
         .context("Failed to connect to destination server")?;
 
@@ -466,8 +512,6 @@ async fn handle_outbound_connection(
     let server_trusted = trusted_flag.load(std::sync::atomic::Ordering::Acquire);
     let extra_sans = dual_session::extract_peer_sans(&server_tls);
 
-    let active_forger = if server_trusted { &cert_forger } else { &untrust_forger };
-
     let upstream_version = negotiated_version_from_client(&server_tls);
 
     if !server_trusted {
@@ -483,6 +527,42 @@ async fn handle_outbound_connection(
             tls_version: upstream_version.clone().or_else(|| client_hello_version.clone()),
         }));
     }
+
+    let post_handshake_decision = engine.decide_upstream_cert(server_trusted);
+    tracing::info!(
+        event = "tls.decision.post_handshake",
+        peer = %peer_addr,
+        dst = %original_dst,
+        sni = sni.as_deref().unwrap_or(""),
+        server_trusted,
+        decision = ?post_handshake_decision,
+        "TLS post-handshake decision"
+    );
+
+    let active_forger = match select_forgery_action(post_handshake_decision) {
+        Ok(ForgeryAction::Normal) => &cert_forger,
+        Ok(ForgeryAction::Untrust) => {
+            tracing::warn!(
+                event = "tls.upstream.cert.untrusted.forward_untrust_ca",
+                peer = %peer_addr,
+                dst = %original_dst,
+                sni = sni.as_deref().unwrap_or(""),
+                "Untrusted upstream certificate forwarded with Untrust CA"
+            );
+            &untrust_forger
+        }
+        Err(reason) => {
+            tracing::warn!(
+                event = "tls.upstream.cert.untrusted.blocked",
+                peer = %peer_addr,
+                dst = %original_dst,
+                sni = sni.as_deref().unwrap_or(""),
+                reason = reason.as_str(),
+                "Untrusted upstream certificate blocked before client TLS accept"
+            );
+            return Ok(());
+        }
+    };
 
     let forged = active_forger
         .forge(&domain, &extra_sans)
@@ -580,19 +660,7 @@ async fn handle_outbound_connection(
 
     let (client_read, client_write) = tokio::io::split(client_tls);
     let (server_read, server_write) = tokio::io::split(server_tls);
-    let session_interfaces = session_interface_lookup.resolve_session_interfaces(peer_addr, original_dst);
-
-    let meta = SessionMeta {
-        session_id: uuid::Uuid::now_v7(),
-        peer: peer_addr,
-        server: original_dst,
-        original_dst,
-        sni: sni.clone(),
-        alpn: negotiated_alpn.clone(),
-        client_side_interface: session_interfaces.client_side_interface,
-        server_side_interface: session_interfaces.server_side_interface,
-        mode: InspectionMode::Outbound,
-    };
+    meta.alpn = negotiated_alpn.clone();
 
     let (bytes_up, bytes_down) = relay.relay_bidirectional(
         client_read, server_write, server_read, client_write, &meta,
@@ -607,6 +675,45 @@ async fn handle_outbound_connection(
     }));
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForgeryAction {
+    Normal,
+    Untrust,
+}
+
+fn select_forgery_action(
+    decision: PostHandshakeTlsDecision,
+) -> Result<ForgeryAction, TlsBlockReason> {
+    match decision {
+        PostHandshakeTlsDecision::ContinueWithNormalForgery => Ok(ForgeryAction::Normal),
+        PostHandshakeTlsDecision::ContinueWithUntrustForgery => Ok(ForgeryAction::Untrust),
+        PostHandshakeTlsDecision::Block { reason } => Err(reason),
+    }
+}
+
+fn build_session_meta(
+    peer_addr: SocketAddr,
+    server_addr: SocketAddr,
+    original_dst: SocketAddr,
+    sni: Option<String>,
+    alpn: Option<Vec<u8>>,
+    mode: InspectionMode,
+    session_interface_lookup: &dyn SessionInterfaceLookup,
+) -> SessionMeta {
+    let session_interfaces = session_interface_lookup.resolve_session_interfaces(peer_addr, server_addr);
+    SessionMeta {
+        session_id: uuid::Uuid::now_v7(),
+        peer: peer_addr,
+        server: server_addr,
+        original_dst,
+        sni,
+        alpn,
+        client_side_interface: session_interfaces.client_side_interface,
+        server_side_interface: session_interfaces.server_side_interface,
+        mode,
+    }
 }
 
 struct PeekedClientHello {
@@ -713,8 +820,10 @@ fn classify_pinning_failure(err: &anyhow::Error) -> Option<pinning_detector::Pin
 async fn relay_tcp_passthrough(
     mut client: TcpStream,
     original_dst: SocketAddr,
+    upstream_connector: Arc<dyn UpstreamConnector>,
+    meta: SessionMeta,
 ) -> anyhow::Result<()> {
-    let mut server = TcpStream::connect(original_dst)
+    let mut server = upstream_connector.connect(original_dst, &meta)
         .await
         .context("Nie udalo sie polaczyc dla TCP passthrough")?;
 
@@ -742,5 +851,32 @@ mod tests {
     #[test]
     fn tls_prefix_heuristic_rejects_plaintext() {
         assert!(!looks_like_tls_client_hello_prefix(b"GET /"));
+    }
+
+    #[test]
+    fn post_handshake_decision_selects_normal_forgery() {
+        assert_eq!(
+            select_forgery_action(PostHandshakeTlsDecision::ContinueWithNormalForgery).unwrap(),
+            ForgeryAction::Normal
+        );
+    }
+
+    #[test]
+    fn post_handshake_decision_selects_untrust_forgery() {
+        assert_eq!(
+            select_forgery_action(PostHandshakeTlsDecision::ContinueWithUntrustForgery).unwrap(),
+            ForgeryAction::Untrust
+        );
+    }
+
+    #[test]
+    fn post_handshake_decision_blocks_before_forgery() {
+        assert_eq!(
+            select_forgery_action(PostHandshakeTlsDecision::Block {
+                reason: TlsBlockReason::UntrustedUpstreamCert,
+            })
+            .unwrap_err(),
+            TlsBlockReason::UntrustedUpstreamCert
+        );
     }
 }
