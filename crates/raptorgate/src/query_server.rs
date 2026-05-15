@@ -6,6 +6,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use anyhow::Context;
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::UnixListenerStream;
@@ -54,7 +55,11 @@ use crate::proto::services::{
 };
 use crate::tls::pinning_detector::PinningDetector;
 use crate::tls::cert_storage::clear_ca_files;
-use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine, UntrustedCertAction};
+use crate::tls::{
+    EchTlsPolicy, ServerKeyStore, TlsDecisionEngine, TlsRedirectConfig,
+    TlsRedirectDesiredState, TlsRedirectManager, TlsRedirectReconcileOutcome,
+    UntrustedCertAction,
+};
 use crate::tls::decryption_mirror::{DecryptionMirror, DecryptionMirrorConfig};
 use crate::validation::validate_bundle;
 use crate::zones::Zone;
@@ -158,6 +163,7 @@ where
     pub ips: Arc<Ips>,
     pub decision_engine: Arc<TlsDecisionEngine>,
     pub decryption_mirror: Arc<DecryptionMirror>,
+    pub tls_redirect_manager: Arc<TlsRedirectManager>,
     pub server_key_store: Arc<ServerKeyStore>,
     /// Detektor pinningu — wspoldzielony z TlsDecisionEngine do obserwacji stanu.
     pub pinning_detector: Arc<PinningDetector>,
@@ -193,6 +199,7 @@ where
             ips: Arc::clone(&self.ips),
             decision_engine: Arc::clone(&self.decision_engine),
             decryption_mirror: Arc::clone(&self.decryption_mirror),
+            tls_redirect_manager: Arc::clone(&self.tls_redirect_manager),
             server_key_store: Arc::clone(&self.server_key_store),
             pinning_detector: Arc::clone(&self.pinning_detector),
             interface_monitor: Arc::clone(&self.interface_monitor),
@@ -271,6 +278,25 @@ fn untrusted_cert_action_from_proto(action: i32) -> UntrustedCertAction {
             UntrustedCertAction::Block
         }
     }
+}
+
+fn desired_tls_redirect_state(
+    config: &AppConfig,
+    sniffed_names: &[String],
+    local_addresses: Vec<IpAddr>,
+) -> anyhow::Result<TlsRedirectDesiredState> {
+    if !config.ssl_inspection_enabled {
+        return Ok(TlsRedirectDesiredState::Disabled);
+    }
+
+    let listen_addr = SocketAddr::from_str(&config.mitm_listen_addr)
+        .with_context(|| format!("invalid MITM listen address {}", config.mitm_listen_addr))?;
+    Ok(TlsRedirectDesiredState::Enabled(TlsRedirectConfig::new(
+        listen_addr,
+        sniffed_names.to_vec(),
+        config.tls_inspection_ports.clone(),
+        local_addresses,
+    )))
 }
 
 #[tonic::async_trait]
@@ -884,6 +910,16 @@ where
             .collect();
         self.interface_sniffer.reconcile_capture_interfaces(&sniffed_names);
 
+        if let Err(e) = self.reconcile_tls_redirect(&sniffed_names) {
+            tracing::error!(error = %e, "TLS redirect reconcile failed");
+            return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                correlation_id,
+                accepted: false,
+                message: format!("tls redirect reconcile failed: {e}"),
+                applied_snapshot_id: String::new(),
+            }));
+        }
+
         self.zone_pair_store
             .swap_zone_pairs(zone_pairs.into_iter().collect())
             .await
@@ -925,6 +961,25 @@ where
     Monitor: InterfaceMonitor,
     Controller: InterfaceController,
 {
+    fn local_addresses_for_interfaces(&self, interface_names: &[String]) -> Vec<IpAddr> {
+        let snapshot = self.interface_monitor.snapshot();
+        interface_names
+            .iter()
+            .filter_map(|name| snapshot.get(name))
+            .flat_map(|interface| interface.addresses.iter().map(|addr| addr.addr()))
+            .collect()
+    }
+
+    fn reconcile_tls_redirect(
+        &self,
+        sniffed_names: &[String],
+    ) -> anyhow::Result<TlsRedirectReconcileOutcome> {
+        let config = self.config_provider.get_config();
+        let local_addresses = self.local_addresses_for_interfaces(sniffed_names);
+        let desired = desired_tls_redirect_state(config.as_ref(), sniffed_names, local_addresses)?;
+        self.tls_redirect_manager.reconcile(desired)
+    }
+
     async fn apply_factory_safe_state(&self) -> anyhow::Result<()> {
         self.policy_store
             .swap_policies(vec![default_drop_policy()?])
@@ -949,6 +1004,9 @@ where
         let ips_config = IpsConfig::default();
         self.ips_store.swap_config(ips_config.clone()).await?;
         self.ips.update_config(&ips_config)?;
+
+        self.tls_redirect_manager
+            .reconcile(TlsRedirectDesiredState::Disabled)?;
 
         self.zone_store.swap_zones(Vec::new()).await?;
         self.zone_interface_store

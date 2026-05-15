@@ -53,7 +53,8 @@ use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
     CaManager, DecryptedChainInspector, DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, MitmProxy, MitmProxyConfig,
-    LinuxUpstreamConnector, PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
+    LinuxUpstreamConnector, PinningConfig, ServerKeyStore, TlsDecisionEngine, TlsRedirectConfig,
+    TlsRedirectDesiredState, TlsRedirectManager,
 };
 use crate::interfaces::{InterfaceMonitor, NetlinkInterfaceController, NetworkInterfaceMonitor};
 use crate::netlink::listener::NetlinkListener;
@@ -423,6 +424,7 @@ async fn main() {
 
     let interface_ips = resolve_interface_ips(&sniffed_names);
     let local_ips = collect_local_ips(&interface_ips);
+    let tls_redirect_manager = Arc::new(TlsRedirectManager::new());
     let nat_store = Arc::new(NatConfigProvider::from_disk(config.data_dir.clone()).await);
     let nat_rules = match nat_store.get_config().to_runtime_rules() {
         Ok(rules) => rules,
@@ -665,15 +667,27 @@ async fn main() {
                     .parse()
                     .expect("MITM_LISTEN_ADDR must be a valid socket address");
 
-                match TransparentRedirect::new(
+                if let Some(first_iface) = sniffed_names.first() {
+                    if let Err(e) = LinuxUpstreamConnector::preflight_bind_device(first_iface) {
+                        tracing::error!(
+                            event = "startup.tls_egress_preflight.failed",
+                            interface = %first_iface,
+                            error = %e,
+                            "TLS MITM requires privileges for SO_BINDTODEVICE"
+                        );
+                        return;
+                    }
+                }
+
+                let desired_redirect = TlsRedirectDesiredState::Enabled(TlsRedirectConfig::new(
                     listen_addr,
                     sniffed_names.clone(),
                     config.tls_inspection_ports.clone(),
                     local_ips.iter().copied().collect(),
-                )
-                .and_then(|redirect| redirect.install())
-                {
-                    Ok(()) => {
+                ));
+
+                match tls_redirect_manager.reconcile(desired_redirect) {
+                    Ok(_) => {
                         tracing::info!(
                             event = "startup.tls_redirect.installed",
                             listen_addr = %listen_addr,
@@ -684,6 +698,7 @@ async fn main() {
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "Failed to install TLS transparent redirect");
+                        return;
                     }
                 }
 
@@ -776,6 +791,7 @@ async fn main() {
             ips: Arc::clone(&ips),
             decision_engine: Arc::clone(&decision_engine),
             decryption_mirror: Arc::clone(&decryption_mirror),
+            tls_redirect_manager: Arc::clone(&tls_redirect_manager),
             server_key_store: Arc::clone(&server_key_store),
             pinning_detector: decision_engine.pinning_detector_arc(),
             interface_monitor: Arc::clone(&interface_monitor),

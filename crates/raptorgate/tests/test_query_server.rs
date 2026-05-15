@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::env;
+use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use ipnet::IpNet;
 use ngfw::config::provider::AppConfigProvider;
@@ -13,7 +16,7 @@ use ngfw::nat::{NatConfigProvider, NatEngine};
 use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::identity::IdentitySessionStore;
 use ngfw::policy::provider::DiskPolicyProvider;
-use ngfw::proto::config::{InterfaceStatus, Rule, Zone, ZoneInterface, ZonePair};
+use ngfw::proto::config::{AppConfig as ProtoAppConfig, InterfaceStatus, Rule, Zone, ZoneInterface, ZonePair};
 use ngfw::proto::services::firewall_config_snapshot_service_client::FirewallConfigSnapshotServiceClient;
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::proto::services::{
@@ -24,8 +27,9 @@ use ngfw::proto::services::{
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::tls::pinning_detector::PinningConfig;
-use ngfw::tls::{DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
-use ngfw::interfaces::{InterfaceMonitor, NetlinkInterfaceController, OperState, SystemInterface};
+use ngfw::tls::{DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, ServerKeyStore, TlsDecisionEngine, TlsRedirectManager};
+use ngfw::tls::redirect_manager::TlsRedirectCommandRunner;
+use ngfw::interfaces::{InterfaceController, InterfaceControllerError, InterfaceMonitor, OperState, SystemInterface};
 use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
@@ -36,6 +40,73 @@ use uuid::Uuid;
 
 struct SharedServer {
     socket: String,
+    tls_redirect_runner: Arc<RecordingTlsRedirectRunner>,
+}
+
+#[derive(Default)]
+struct RecordingTlsRedirectRunner {
+    scripts: StdMutex<Vec<String>>,
+}
+
+impl RecordingTlsRedirectRunner {
+    fn clear(&self) {
+        self.scripts.lock().unwrap().clear();
+    }
+
+    fn scripts(&self) -> Vec<String> {
+        self.scripts.lock().unwrap().clone()
+    }
+}
+
+impl TlsRedirectCommandRunner for RecordingTlsRedirectRunner {
+    fn table_exists(&self, _table_name: &str) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+
+    fn delete_table(&self, _table_name: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn apply_script(&self, script: &str) -> anyhow::Result<()> {
+        self.scripts.lock().unwrap().push(script.to_string());
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct NoopInterfaceController;
+
+#[tonic::async_trait]
+impl InterfaceController for NoopInterfaceController {
+    async fn set_interface_state(&self, _name: &str, _up: bool) -> Result<(), InterfaceControllerError> {
+        Ok(())
+    }
+
+    async fn set_interface_properties<'a>(
+        &'a self,
+        name: &'a str,
+        new_name: Option<&'a str>,
+        _address: Option<&'a str>,
+    ) -> Result<String, InterfaceControllerError> {
+        Ok(new_name.unwrap_or(name).to_string())
+    }
+
+    async fn create_vlan_subinterface<'a>(
+        &'a self,
+        _parent_name: &'a str,
+        _vlan_id: ngfw::zones::VlanId,
+        _subinterface_name: &'a str,
+        _addresses: &'a [String],
+    ) -> Result<(), InterfaceControllerError> {
+        Ok(())
+    }
+
+    async fn delete_vlan_subinterface<'a>(
+        &'a self,
+        _subinterface_name: &'a str,
+    ) -> Result<(), InterfaceControllerError> {
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -120,6 +191,8 @@ fn shared_server() -> &'static SharedServer {
         // Channel lets us wait until the server is actually listening
         // before returning, without an arbitrary sleep.
         let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let tls_redirect_runner = Arc::new(RecordingTlsRedirectRunner::default());
+        let runner_for_server = Arc::clone(&tls_redirect_runner);
 
         std::thread::spawn(move || {
             // This runtime lives for the lifetime of the process —
@@ -157,9 +230,7 @@ fn shared_server() -> &'static SharedServer {
                     EchTlsPolicy::default(),
                     PinningConfig::default(),
                 ));
-                let interface_controller = Arc::new(
-                    NetlinkInterfaceController::new().expect("failed to init interface controller"),
-                );
+                let interface_controller = Arc::new(NoopInterfaceController);
 
                 let policy_engine = Arc::new(
                     ngfw::policy::engine::PolicyEngine::from_policies(
@@ -209,6 +280,7 @@ fn shared_server() -> &'static SharedServer {
                     ips,
                     decision_engine: Arc::clone(&decision_engine),
                     decryption_mirror: Arc::new(DecryptionMirror::start(DecryptionMirrorConfig::default(), CancellationToken::new())),
+                    tls_redirect_manager: Arc::new(TlsRedirectManager::with_runner(runner_for_server.clone())),
                     server_key_store,
                     pinning_detector: decision_engine.pinning_detector_arc(),
                     interface_monitor,
@@ -233,11 +305,12 @@ fn shared_server() -> &'static SharedServer {
         });
 
         let socket = rx.recv().expect("server thread died before signalling");
-        SharedServer { socket }
+        SharedServer { socket, tls_redirect_runner }
     })
 }
 
 async fn connect(socket: &str) -> FirewallQueryServiceClient<tonic::transport::Channel> {
+    wait_for_socket(socket).await;
     let socket = socket.to_owned();
     let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")
         .unwrap()
@@ -256,6 +329,7 @@ async fn connect(socket: &str) -> FirewallQueryServiceClient<tonic::transport::C
 async fn connect_snapshot(
     socket: &str,
 ) -> FirewallConfigSnapshotServiceClient<tonic::transport::Channel> {
+    wait_for_socket(socket).await;
     let socket = socket.to_owned();
     let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")
         .unwrap()
@@ -269,6 +343,14 @@ async fn connect_snapshot(
         .await
         .unwrap();
     FirewallConfigSnapshotServiceClient::new(channel)
+}
+
+async fn wait_for_socket(socket: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !Path::new(socket).exists() {
+        assert!(Instant::now() < deadline, "query socket did not appear: {socket}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 struct ValidBundle {
@@ -360,6 +442,26 @@ fn create_snapshot_request(
     )
 }
 
+fn app_config_proto(ssl_inspection_enabled: bool) -> ProtoAppConfig {
+    ProtoAppConfig {
+        pcap_timeout_ms: 100,
+        tun_device_name: "tun0".to_string(),
+        tun_address: "10.255.0.1".to_string(),
+        tun_netmask: "255.255.255.0".to_string(),
+        data_dir: "/tmp".to_string(),
+        event_socket_path: "/tmp/test-events.sock".to_string(),
+        query_socket_path: "/tmp/test-query-shared.sock".to_string(),
+        pki_dir: "/tmp".to_string(),
+        ssl_inspection_enabled,
+        mitm_listen_addr: "127.0.0.1:8443".to_string(),
+        control_plane_socket_path: "/tmp/test-control-plane.sock".to_string(),
+        ssl_bypass_domains: vec![],
+        tls_inspection_ports: vec![443],
+        block_tls_on_undeclared_ports: false,
+        server_cert_socket_path: "/tmp/test-server-cert.sock".to_string(),
+    }
+}
+
 #[tokio::test]
 #[serial(snapshot_bundle, nat_config)]
 async fn push_active_config_snapshot_happy_path() {
@@ -379,6 +481,57 @@ async fn push_active_config_snapshot_happy_path() {
     assert!(response.accepted);
     assert_eq!(response.correlation_id, correlation_id);
     assert_eq!(response.applied_snapshot_id, snapshot_id);
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle, nat_config)]
+async fn push_active_config_snapshot_reconciles_tls_redirect_for_sniffed_interfaces() {
+    let server = shared_server();
+    let mut client = connect_snapshot(&server.socket).await;
+    let mut valid = create_valid_bundle(
+        "snapshot_tls_redirect",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    valid.bundle.zone_interfaces = vec![ZoneInterface {
+        id: Uuid::now_v7().to_string(),
+        zone_id: valid.src_zone.id.clone(),
+        status: InterfaceStatus::Unspecified as i32,
+        addresses: vec![],
+        kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+            ngfw::proto::config::PhysicalInterface {
+                interface_name: "eth-live-up".to_string(),
+            },
+        )),
+        sniffed: true,
+    }];
+    valid.bundle.app_config = Some(app_config_proto(true));
+
+    server.tls_redirect_runner.clear();
+    let (request, _, _) = create_snapshot_request(valid.bundle);
+    let response = client
+        .push_active_config_snapshot(request)
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(response.accepted, "snapshot rejected: {}", response.message);
+    let scripts = server.tls_redirect_runner.scripts();
+    assert_eq!(scripts.len(), 1);
+    assert!(scripts[0].contains("table inet raptorgate_tls"));
+    assert!(scripts[0].contains("iifname { \"eth-live-up\" } tcp dport { 443 } redirect to :8443"));
+
+    let mut reset = create_valid_bundle(
+        "snapshot_tls_redirect_reset",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    reset.bundle.app_config = Some(app_config_proto(false));
+    let (reset_request, _, _) = create_snapshot_request(reset.bundle);
+    let reset_response = client
+        .push_active_config_snapshot(reset_request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(reset_response.accepted, "reset snapshot rejected: {}", reset_response.message);
 }
 
 #[tokio::test]
@@ -864,4 +1017,3 @@ async fn push_active_config_snapshot_rejects_missing_default_zone() {
     assert!(!response.accepted);
     assert!(response.message.to_lowercase().contains("default"));
 }
-
