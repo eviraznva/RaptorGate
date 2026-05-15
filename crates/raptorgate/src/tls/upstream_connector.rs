@@ -88,7 +88,21 @@ impl UpstreamConnector for LinuxUpstreamConnector {
         dst: SocketAddr,
         session_meta: &SessionMeta,
     ) -> Result<TcpStream, UpstreamConnectError> {
-        let egress = self.resolve_egress(dst)?;
+        let egress = match self.resolve_egress(dst) {
+            Ok(egress) => egress,
+            Err(err) => {
+                tracing::error!(
+                    event = "tls.upstream.connect.failed",
+                    session_id = %session_meta.session_id,
+                    dst = %dst,
+                    mode = ?session_meta.mode,
+                    sni = session_meta.sni.as_deref().unwrap_or(""),
+                    error = %err,
+                    "TLS upstream egress resolution failed"
+                );
+                return Err(err);
+            }
+        };
 
         tracing::info!(
             event = "tls.upstream.connect.started",
@@ -100,7 +114,22 @@ impl UpstreamConnector for LinuxUpstreamConnector {
             "TLS upstream connect started"
         );
 
-        let stream = connect_bound_socket(dst, &egress.interface_name).await?;
+        let stream = match connect_bound_socket(dst, &egress.interface_name).await {
+            Ok(stream) => stream,
+            Err(err) => {
+                tracing::error!(
+                    event = "tls.upstream.connect.failed",
+                    session_id = %session_meta.session_id,
+                    dst = %dst,
+                    resolved_iface = %egress.interface_name,
+                    mode = ?session_meta.mode,
+                    sni = session_meta.sni.as_deref().unwrap_or(""),
+                    error = %err,
+                    "TLS upstream connect failed"
+                );
+                return Err(err);
+            }
+        };
 
         tracing::info!(
             event = "tls.upstream.connect.bound",

@@ -185,6 +185,13 @@ impl TlsRedirectManager {
                 Ok(outcome)
             }
             Err(err) => {
+                tracing::error!(
+                    event = "tls.redirect.reconcile.failed",
+                    generation,
+                    state_hash,
+                    error = %err,
+                    "TLS redirect reconcile failed"
+                );
                 self.record_last_result(generation, state_hash, None, Some(err.to_string()));
                 Err(err)
             }
