@@ -48,6 +48,7 @@ impl<A, B> L4Chain<A, B> {
         ctx: &mut A::Ctx,
         packet_id: PacketId,
         dir: Direction,
+        tcp_payload_start_seq: u32,
         payload: &[u8],
         session_proto: Option<AppProto>,
     ) -> L4Outcome
@@ -58,7 +59,7 @@ impl<A, B> L4Chain<A, B> {
         match head_out {
             L4Outcome::Continue => {
                 if Self::stage_applies(tail.protocol(), session_proto) {
-                    tail.on_bytes(ctx, packet_id, dir, payload)
+                    tail.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload)
                 } else {
                     L4Outcome::Continue
                 }
@@ -94,6 +95,7 @@ impl<A, B> L4Chain<A, B> {
         ctx: &mut A::Ctx,
         packet_id: PacketId,
         dir: Direction,
+        tcp_payload_start_seq: u32,
         payload: &[u8],
         session_proto: Option<AppProto>,
     ) -> L4Outcome
@@ -104,8 +106,17 @@ impl<A, B> L4Chain<A, B> {
         if !Self::stage_applies(self.head.protocol(), session_proto) {
             return L4Outcome::Continue;
         }
-        let head_out = self.head.on_bytes(ctx, packet_id, dir, payload);
-        Self::combine_bytes_outcome(head_out, &mut self.tail, ctx, packet_id, dir, payload, session_proto)
+        let head_out = self.head.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload);
+        Self::combine_bytes_outcome(
+            head_out,
+            &mut self.tail,
+            ctx,
+            packet_id,
+            dir,
+            tcp_payload_start_seq,
+            payload,
+            session_proto,
+        )
     }
 
     pub fn on_session_close(&mut self, ctx: &mut A::Ctx, reason: CloseReason, session_proto: Option<AppProto>)
@@ -143,6 +154,7 @@ mod tests {
             (): &mut Self::Ctx,
             packet_id: PacketId,
             _dir: Direction,
+            _tcp_payload_start_seq: u32,
             _payload: &[u8],
         ) -> L4Outcome {
             L4Outcome::Forward(vec![packet_id])
@@ -171,6 +183,7 @@ mod tests {
             (): &mut Self::Ctx,
             _packet_id: PacketId,
             _dir: Direction,
+            _tcp_payload_start_seq: u32,
             _payload: &[u8],
         ) -> L4Outcome {
             self.byte_seen = true;
@@ -198,6 +211,7 @@ mod tests {
             (): &mut Self::Ctx,
             _packet_id: PacketId,
             _dir: Direction,
+            _tcp_payload_start_seq: u32,
             _payload: &[u8],
         ) -> L4Outcome {
             L4Outcome::Terminate {
@@ -214,7 +228,7 @@ mod tests {
         let mut chain = L4Chain::new(ForwardHead, ObservingTail { byte_seen: false });
         let mut ctx = ();
         let id = PacketId::next();
-        let out = chain.on_bytes(&mut ctx, id, Direction::Original, b"test", None);
+        let out = chain.on_bytes(&mut ctx, id, Direction::Original, 0, b"test", None);
         assert!(matches!(out, L4Outcome::Forward(ids) if ids == vec![id]));
         assert!(!chain.tail.byte_seen);
     }
@@ -223,7 +237,7 @@ mod tests {
     fn terminate_stops_before_tail() {
         let mut chain = L4Chain::new(TerminateHead, ObservingTail { byte_seen: false });
         let mut ctx = ();
-        let out = chain.on_bytes(&mut ctx, PacketId::next(), Direction::Original, b"x", None);
+        let out = chain.on_bytes(&mut ctx, PacketId::next(), Direction::Original, 0, b"x", None);
         assert!(matches!(out, L4Outcome::Terminate { .. }));
         assert!(!chain.tail.byte_seen);
     }

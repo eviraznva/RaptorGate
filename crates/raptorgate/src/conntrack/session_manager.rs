@@ -44,6 +44,7 @@ pub enum L4Input {
         dir: Direction,
         bytes: Vec<u8>,
         packet_id: PacketId,
+        tcp_payload_start_seq: u32,
     },
     Close {
         reason: CloseReason,
@@ -139,11 +140,18 @@ impl Phase1NoopPipeline {
         }
     }
 
-    fn on_bytes(&mut self, ctx: &mut (), packet_id: PacketId, dir: Direction, payload: &[u8]) -> L4Outcome {
+    fn on_bytes(
+        &mut self,
+        ctx: &mut (),
+        packet_id: PacketId,
+        dir: Direction,
+        tcp_payload_start_seq: u32,
+        payload: &[u8],
+    ) -> L4Outcome {
         match self {
-            Self::Tcp(p) => p.on_bytes(ctx, packet_id, dir, payload),
-            Self::Udp(p) => p.on_bytes(ctx, packet_id, dir, payload),
-            Self::Icmp(p) => p.on_bytes(ctx, packet_id, dir, payload),
+            Self::Tcp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload),
+            Self::Udp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload),
+            Self::Icmp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload),
         }
     }
 
@@ -353,6 +361,7 @@ where
         let chunk = DeliveredChunk {
             packet_id,
             payload: payload.to_vec(),
+            tcp_payload_start_seq: 0,
         };
         self.on_ct_payload(entry, dir, &chunk);
     }
@@ -414,11 +423,18 @@ where
                         dir,
                         bytes,
                         packet_id,
+                        tcp_payload_start_seq,
                     } => {
                         if let Some(t) = &trace {
                             t.lock().expect("trace").push("bytes".to_string());
                         }
-                        let outcome = pipeline.on_bytes(&mut l4_ctx, packet_id, dir, &bytes);
+                        let outcome = pipeline.on_bytes(
+                            &mut l4_ctx,
+                            packet_id,
+                            dir,
+                            tcp_payload_start_seq,
+                            &bytes,
+                        );
                         handle_outcome(
                             outcome,
                             &mut pending,
@@ -488,6 +504,7 @@ where
             dir,
             bytes: chunk.payload.clone(),
             packet_id: chunk.packet_id,
+            tcp_payload_start_seq: chunk.tcp_payload_start_seq,
         });
     }
 }

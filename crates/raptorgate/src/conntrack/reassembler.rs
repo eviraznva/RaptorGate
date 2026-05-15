@@ -8,11 +8,13 @@ use crate::data_plane::packet_context::PacketId;
 pub struct DeliveredChunk {
     pub packet_id: PacketId,
     pub payload: Vec<u8>,
+    pub tcp_payload_start_seq: u32,
 }
 
 #[derive(Debug)]
 struct BufferedSegment {
     packet_id: PacketId,
+    start_seq: u32,
     data: Vec<u8>,
 }
 
@@ -80,6 +82,7 @@ pub fn feed(
             return vec![DeliveredChunk {
                 packet_id,
                 payload: payload.to_vec(),
+                tcp_payload_start_seq: seq,
             }];
         }
     };
@@ -110,6 +113,7 @@ pub fn feed(
         out.push(DeliveredChunk {
             packet_id,
             payload: effective_data.to_vec(),
+            tcp_payload_start_seq: next,
         });
 
         loop {
@@ -132,12 +136,14 @@ pub fn feed(
             let drop_n = cursor.wrapping_sub(first_seq) as usize;
 
             let new_payload = seg.data[drop_n..].to_vec();
+            let chunk_start_seq = first_seq.wrapping_add(drop_n as u32);
 
             cursor = cursor.wrapping_add(new_payload.len() as u32);
 
             out.push(DeliveredChunk {
                 packet_id: seg.packet_id,
                 payload: new_payload,
+                tcp_payload_start_seq: chunk_start_seq,
             });
         }
 
@@ -149,6 +155,7 @@ pub fn feed(
 
         let entry = state.out_of_order.entry(effective_seq).or_insert_with(|| BufferedSegment {
             packet_id,
+            start_seq: effective_seq,
             data: Vec::new(),
         });
         if entry.data.len() < effective_data.len() {
@@ -169,6 +176,7 @@ pub fn flush(state: &mut ReassemblyDirState) -> Vec<DeliveredChunk> {
         .map(|seg| DeliveredChunk {
             packet_id: seg.packet_id,
             payload: seg.data.clone(),
+            tcp_payload_start_seq: seg.start_seq,
         })
         .collect();
 

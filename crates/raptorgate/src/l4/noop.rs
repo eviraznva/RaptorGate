@@ -31,6 +31,7 @@ macro_rules! impl_noop {
                 (): &mut Self::Ctx,
                 packet_id: PacketId,
                 _dir: Direction,
+                _tcp_payload_start_seq: u32,
                 _payload: &[u8],
             ) -> L4Outcome {
                 L4Outcome::Forward(vec![packet_id])

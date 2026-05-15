@@ -83,6 +83,7 @@ impl ProtocolHandler for UdpHandler {
                 &crate::conntrack::reassembler::DeliveredChunk {
                     packet_id,
                     payload: payload.to_vec(),
+                    tcp_payload_start_seq: 0,
                 },
             );
         }

@@ -45,7 +45,7 @@ mod tests {
         let mut pipe = TcpL4PipelineFactory::default().build();
         let mut ctx = ();
         let id = PacketId::next();
-        let o = pipe.on_bytes(&mut ctx, id, Direction::Original, b"x");
+        let o = pipe.on_bytes(&mut ctx, id, Direction::Original, 0, b"x");
         assert_eq!(o, L4Outcome::Forward(vec![id]));
     }
 
@@ -54,7 +54,7 @@ mod tests {
         let mut pipe = UdpL4PipelineFactory::default().build();
         let mut ctx = ();
         let id = PacketId::next();
-        let o = pipe.on_bytes(&mut ctx, id, Direction::Original, b"x");
+        let o = pipe.on_bytes(&mut ctx, id, Direction::Original, 0, b"x");
         assert_eq!(o, L4Outcome::Forward(vec![id]));
     }
 
@@ -63,7 +63,7 @@ mod tests {
         let mut pipe = IcmpL4PipelineFactory::default().build();
         let mut ctx = ();
         let id = PacketId::next();
-        let o = pipe.on_bytes(&mut ctx, id, Direction::Original, b"x");
+        let o = pipe.on_bytes(&mut ctx, id, Direction::Original, 0, b"x");
         assert_eq!(o, L4Outcome::Forward(vec![id]));
     }
 }

@@ -46,6 +46,7 @@ pub trait L4Stage: Send {
         ctx: &mut Self::Ctx,
         packet_id: PacketId,
         dir: Direction,
+        tcp_payload_start_seq: u32,
         payload: &[u8],
     ) -> L4Outcome;
 
@@ -84,6 +85,7 @@ mod tests {
             (): &mut Self::Ctx,
             packet_id: PacketId,
             _dir: Direction,
+            _tcp_payload_start_seq: u32,
             _payload: &[u8],
         ) -> L4Outcome {
             self.byte_hits += 1;
@@ -98,7 +100,7 @@ mod tests {
         let mut st = CountingStage::new();
         let mut ctx = ();
         let id = PacketId::next();
-        let out = st.on_bytes(&mut ctx, id, Direction::Original, b"test");
+        let out = st.on_bytes(&mut ctx, id, Direction::Original, 0, b"test");
         assert_eq!(st.byte_hits, 1);
         assert_eq!(out, L4Outcome::Forward(vec![id]));
     }
