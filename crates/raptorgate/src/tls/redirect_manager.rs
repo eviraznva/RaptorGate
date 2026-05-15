@@ -244,7 +244,10 @@ impl TlsRedirectManager {
                 }
 
                 let redirect = config.to_redirect()?;
-                self.replace_table(&redirect.render_script())?;
+                if let Err(err) = self.replace_table(&redirect.render_script()) {
+                    self.applied_state.lock().unwrap().take();
+                    return Err(err);
+                }
                 *self.applied_state.lock().unwrap() = Some(desired);
                 Ok(TlsRedirectReconcileOutcome::Installed)
             }
@@ -301,6 +304,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingRunner {
         table_exists: AtomicBool,
+        fail_apply: AtomicBool,
         calls: Mutex<Vec<NftCall>>,
     }
 
@@ -308,8 +312,13 @@ mod tests {
         fn with_table_exists(value: bool) -> Self {
             Self {
                 table_exists: AtomicBool::new(value),
+                fail_apply: AtomicBool::new(false),
                 calls: Mutex::new(Vec::new()),
             }
+        }
+
+        fn set_fail_apply(&self, value: bool) {
+            self.fail_apply.store(value, Ordering::SeqCst);
         }
 
         fn take_calls(&self) -> Vec<NftCall> {
@@ -340,6 +349,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(NftCall::Apply(script.to_string()));
+            if self.fail_apply.load(Ordering::SeqCst) {
+                bail!("injected nft apply failure");
+            }
             self.table_exists.store(true, Ordering::SeqCst);
             Ok(())
         }
@@ -396,6 +408,28 @@ mod tests {
         assert!(matches!(calls[0], NftCall::Probe(_)));
         assert!(matches!(calls[1], NftCall::Delete(_)));
         assert!(matches!(&calls[2], NftCall::Apply(script) if script.contains("iifname { \"lan1\" }")));
+    }
+
+    #[test]
+    fn reconcile_apply_failure_clears_applied_state_for_future_retries() {
+        let runner = Arc::new(RecordingRunner::default());
+        let manager = TlsRedirectManager::with_runner(runner.clone());
+
+        manager.reconcile(enabled_state("lan0")).unwrap();
+        runner.take_calls();
+
+        runner.set_fail_apply(true);
+        let err = manager.reconcile(enabled_state("lan1")).unwrap_err();
+        assert!(err.to_string().contains("injected nft apply failure"));
+        runner.take_calls();
+
+        runner.set_fail_apply(false);
+        let outcome = manager.reconcile(enabled_state("lan0")).unwrap();
+
+        assert_eq!(outcome, TlsRedirectReconcileOutcome::Installed);
+        let calls = runner.take_calls();
+        assert!(matches!(calls[0], NftCall::Probe(_)));
+        assert!(matches!(&calls[1], NftCall::Apply(script) if script.contains("iifname { \"lan0\" }")));
     }
 
     #[test]

@@ -193,6 +193,9 @@ fn shared_server() -> &'static SharedServer {
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         let tls_redirect_runner = Arc::new(RecordingTlsRedirectRunner::default());
         let runner_for_server = Arc::clone(&tls_redirect_runner);
+        let socket = "/tmp/test-query-shared.sock".to_string();
+        let _ = std::fs::remove_file(&socket);
+        let socket_for_server = socket.clone();
 
         std::thread::spawn(move || {
             // This runtime lives for the lifetime of the process —
@@ -291,7 +294,7 @@ fn shared_server() -> &'static SharedServer {
                     reset_lock: Arc::new(Mutex::new(())),
                 };
 
-                let socket = "/tmp/test-query-shared.sock".to_string();
+                let socket = socket_for_server;
                 let shutdown = CancellationToken::new();
                 let identity_sessions = IdentitySessionStore::new_shared();
                 let server =
@@ -527,6 +530,99 @@ async fn push_active_config_snapshot_reconciles_tls_redirect_for_sniffed_interfa
     reset.bundle.app_config = Some(app_config_proto(false));
     let (reset_request, _, _) = create_snapshot_request(reset.bundle);
     let reset_response = client
+        .push_active_config_snapshot(reset_request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(reset_response.accepted, "reset snapshot rejected: {}", reset_response.message);
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle, nat_config)]
+async fn push_active_config_snapshot_rejects_tls_redirect_without_swapping_zone_interfaces() {
+    let server = shared_server();
+    let mut snapshot_client = connect_snapshot(&server.socket).await;
+    let mut query_client = connect(&server.socket).await;
+    let mut initial = create_valid_bundle(
+        "snapshot_tls_empty_initial",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    let initial_zone_interface_id = Uuid::now_v7().to_string();
+    initial.bundle.zone_interfaces = vec![ZoneInterface {
+        id: initial_zone_interface_id.clone(),
+        zone_id: initial.src_zone.id.clone(),
+        status: InterfaceStatus::Unspecified as i32,
+        addresses: vec![],
+        kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+            ngfw::proto::config::PhysicalInterface {
+                interface_name: "eth-live-up".to_string(),
+            },
+        )),
+        sniffed: true,
+    }];
+    initial.bundle.app_config = Some(app_config_proto(true));
+
+    server.tls_redirect_runner.clear();
+    let (initial_request, _, _) = create_snapshot_request(initial.bundle);
+    let initial_response = snapshot_client
+        .push_active_config_snapshot(initial_request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(initial_response.accepted, "initial snapshot rejected: {}", initial_response.message);
+
+    let mut invalid = create_valid_bundle(
+        "snapshot_tls_empty_invalid",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    let invalid_zone_interface_id = Uuid::now_v7().to_string();
+    invalid.bundle.zone_interfaces = vec![ZoneInterface {
+        id: invalid_zone_interface_id.clone(),
+        zone_id: invalid.src_zone.id.clone(),
+        status: InterfaceStatus::Unspecified as i32,
+        addresses: vec![],
+        kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+            ngfw::proto::config::PhysicalInterface {
+                interface_name: "eth-live-down".to_string(),
+            },
+        )),
+        sniffed: false,
+    }];
+    invalid.bundle.app_config = Some(app_config_proto(true));
+
+    let (invalid_request, _, _) = create_snapshot_request(invalid.bundle);
+    let invalid_response = snapshot_client
+        .push_active_config_snapshot(invalid_request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!invalid_response.accepted);
+    assert!(invalid_response.message.contains("tls redirect reconcile failed"));
+
+    let zone_interfaces = query_client
+        .get_zone_interfaces(GetZoneInterfacesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .zone_interfaces;
+    let kept = zone_interfaces
+        .iter()
+        .find(|zi| zi.id == initial_zone_interface_id)
+        .expect("previous zone interface should remain active");
+    assert!(kept.sniffed);
+    assert!(matches!(
+        kept.kind.as_ref(),
+        Some(ngfw::proto::config::zone_interface::Kind::Physical(p)) if p.interface_name == "eth-live-up"
+    ));
+    assert!(!zone_interfaces.iter().any(|zi| zi.id == invalid_zone_interface_id));
+
+    let mut reset = create_valid_bundle(
+        "snapshot_tls_empty_reset",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    reset.bundle.app_config = Some(app_config_proto(false));
+    let (reset_request, _, _) = create_snapshot_request(reset.bundle);
+    let reset_response = snapshot_client
         .push_active_config_snapshot(reset_request)
         .await
         .unwrap()

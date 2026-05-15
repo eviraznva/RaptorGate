@@ -30,6 +30,8 @@ pub enum UpstreamConnectError {
     NoRoute { dst: IpAddr },
     #[error("egress interface {interface_id} is not present in interface monitor")]
     InterfaceMissing { interface_id: SystemInterfaceId },
+    #[error("egress interface {interface_id} has empty name")]
+    InterfaceNameEmpty { interface_id: SystemInterfaceId },
     #[error("failed to create upstream socket for {dst}")]
     SocketCreate { dst: SocketAddr, source: std::io::Error },
     #[error("failed to bind upstream socket to interface {interface_name}")]
@@ -158,9 +160,13 @@ where
     let Some(interface) = interface_monitor.get_by_index(interface_id) else {
         return Err(UpstreamConnectError::InterfaceMissing { interface_id });
     };
+    let interface_name = interface.name.trim();
+    if interface_name.is_empty() {
+        return Err(UpstreamConnectError::InterfaceNameEmpty { interface_id });
+    }
     Ok(EgressInterface {
         interface_id,
-        interface_name: interface.name,
+        interface_name: interface_name.to_string(),
     })
 }
 
@@ -276,5 +282,23 @@ mod tests {
         let err = resolve_egress_interface(&route_lookup, &monitor, dst).unwrap_err();
 
         assert!(matches!(err, UpstreamConnectError::InterfaceMissing { interface_id } if interface_id == if_id));
+    }
+
+    #[test]
+    fn resolve_egress_interface_fails_closed_with_empty_interface_name() {
+        let if_id = SystemInterfaceId::from(11);
+        let route_lookup = FakeRouteLookup {
+            result: Some(if_id),
+        };
+        let mut monitor = MockInterfaceMonitor::new();
+        monitor
+            .expect_get_by_index()
+            .with(eq(if_id))
+            .return_once(move |_| Some(iface("   ", if_id)));
+
+        let dst = SocketAddr::from(([203, 0, 113, 10], 443));
+        let err = resolve_egress_interface(&route_lookup, &monitor, dst).unwrap_err();
+
+        assert!(matches!(err, UpstreamConnectError::InterfaceNameEmpty { interface_id } if interface_id == if_id));
     }
 }

@@ -299,6 +299,16 @@ fn desired_tls_redirect_state(
     )))
 }
 
+fn sniffed_interface_names<S: std::hash::BuildHasher>(
+    zone_interfaces: &HashMap<ZoneInterfaceId, ZoneInterface, S>,
+) -> Vec<String> {
+    zone_interfaces
+        .iter()
+        .filter(|(_, zi)| zi.sniffed)
+        .filter_map(|(id, _)| crate::zones::resolve_os_name(zone_interfaces, id))
+        .collect()
+}
+
 #[tonic::async_trait]
 impl<Swapper, Monitor, Controller> FirewallQueryService for QueryHandler<Swapper, Monitor, Controller>
 where
@@ -879,6 +889,19 @@ where
             }
         }
 
+        let preflight_sniffed_names = sniffed_interface_names(&zone_interfaces);
+        if preflight_sniffed_names.is_empty() {
+            if let Err(e) = self.reconcile_tls_redirect(&preflight_sniffed_names) {
+                tracing::error!(error = %e, "TLS redirect reconcile failed");
+                return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                    correlation_id,
+                    accepted: false,
+                    message: format!("tls redirect reconcile failed: {e}"),
+                    applied_snapshot_id: String::new(),
+                }));
+            }
+        }
+
         self.zone_store
             .swap_zones(zones.into_iter().collect())
             .await
@@ -903,11 +926,7 @@ where
         }
 
         // Sniffer reconciliation
-        let sniffed_names: Vec<String> = new_zone_interfaces
-            .iter()
-            .filter(|(_, zi)| zi.sniffed)
-            .filter_map(|(id, _)| crate::zones::resolve_os_name(&new_zone_interfaces, id))
-            .collect();
+        let sniffed_names = sniffed_interface_names(&new_zone_interfaces);
         self.interface_sniffer.reconcile_capture_interfaces(&sniffed_names);
 
         if let Err(e) = self.reconcile_tls_redirect(&sniffed_names) {
