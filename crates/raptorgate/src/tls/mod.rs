@@ -13,6 +13,7 @@ pub mod pinning_detector;
 pub mod rustls_config;
 pub mod server_key_store;
 pub mod transparent_redirect;
+pub mod upstream_connector;
 
 pub use ca_manager::{CaInfo, CaManager};
 pub use cert_forger::{CertForger, ForgedCert};
@@ -24,3 +25,4 @@ pub use mitm_proxy::{MitmProxy, MitmProxyConfig};
 pub use pinning_detector::PinningConfig;
 pub use server_key_store::ServerKeyStore;
 pub use transparent_redirect::TransparentRedirect;
+pub use upstream_connector::{LinuxUpstreamConnector, UpstreamConnector, UpstreamConnectError};
