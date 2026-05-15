@@ -8,6 +8,7 @@ use etherparse::{SlicedPacket, TransportSlice};
 use dashmap::{DashMap, mapref::entry::Entry as DashEntry};
 
 use crate::conntrack::reassembler;
+use crate::data_plane::packet_context::PacketId;
 use crate::conntrack::config::{ConntrackConfig, ConfigError};
 use crate::conntrack::tuple::{Direction, FlowTuple, Protocol};
 use crate::conntrack::entry::{ConntrackEntry, ConntrackInterfacePath, CtInfo, CtStatus};
@@ -643,6 +644,7 @@ impl Conntrack {
                             &mut reass.dirs[Direction::Original as usize],
                             &config.reassembly,
                             t.sequence_number(),
+                            PacketId(0),
                             payload,
                         );
                         
@@ -653,8 +655,14 @@ impl Conntrack {
                         }
                     }
                 } else {
-                    // UDP/ICMP — datagram bezpośrednio.
-                    self.observers.fire_payload(&entry, Direction::Original, payload);
+                    self.observers.fire_payload(
+                        &entry,
+                        Direction::Original,
+                        &reassembler::DeliveredChunk {
+                            packet_id: PacketId(0),
+                            payload: payload.to_vec(),
+                        },
+                    );
                 }
             }
         }

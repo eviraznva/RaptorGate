@@ -1,4 +1,7 @@
 use super::noop::{NoopIcmpStage, NoopTcpStage, NoopUdpStage};
+use super::stage::{L4Outcome, L4Stage};
+use crate::conntrack::tuple::Direction;
+use crate::data_plane::packet_context::PacketId;
 
 pub type TcpNoopPipeline = NoopTcpStage;
 pub type UdpNoopPipeline = NoopUdpStage;
@@ -34,46 +37,33 @@ impl IcmpL4PipelineFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::stage::{L4Outcome, L4Stage};
-    use crate::conntrack::tuple::Direction;
-    use crate::data_plane::packet_context::PacketContext;
     use etherparse::PacketBuilder;
     use std::sync::Arc;
 
-    fn sample_packet() -> PacketContext {
-        let mut raw = Vec::new();
-        PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
-            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
-            .tcp(12345, 80, 1, 65535)
-            .write(&mut raw, b"x")
-            .expect("packet");
-        PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet")
-    }
-
     #[test]
-    fn tcp_factory_pipeline_forwards() {
+    fn tcp_factory_pipeline_forwards_packet_id() {
         let mut pipe = TcpL4PipelineFactory::default().build();
         let mut ctx = ();
-        let mut pkt = sample_packet();
-        let o = pipe.on_packet(&mut ctx, &mut pkt, Direction::Original);
-        assert_eq!(o, L4Outcome::Forward);
+        let id = PacketId::next();
+        let o = pipe.on_bytes(&mut ctx, id, Direction::Original, b"x");
+        assert_eq!(o, L4Outcome::Forward(vec![id]));
     }
 
     #[test]
-    fn udp_factory_pipeline_forwards() {
+    fn udp_factory_pipeline_forwards_packet_id() {
         let mut pipe = UdpL4PipelineFactory::default().build();
         let mut ctx = ();
-        let mut pkt = sample_packet();
-        let o = pipe.on_packet(&mut ctx, &mut pkt, Direction::Original);
-        assert_eq!(o, L4Outcome::Forward);
+        let id = PacketId::next();
+        let o = pipe.on_bytes(&mut ctx, id, Direction::Original, b"x");
+        assert_eq!(o, L4Outcome::Forward(vec![id]));
     }
 
     #[test]
-    fn icmp_factory_pipeline_forwards() {
+    fn icmp_factory_pipeline_forwards_packet_id() {
         let mut pipe = IcmpL4PipelineFactory::default().build();
         let mut ctx = ();
-        let mut pkt = sample_packet();
-        let o = pipe.on_packet(&mut ctx, &mut pkt, Direction::Original);
-        assert_eq!(o, L4Outcome::Forward);
+        let id = PacketId::next();
+        let o = pipe.on_bytes(&mut ctx, id, Direction::Original, b"x");
+        assert_eq!(o, L4Outcome::Forward(vec![id]));
     }
 }

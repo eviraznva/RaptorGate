@@ -109,15 +109,15 @@ impl Phase1NoopPipeline {
         }
     }
 
-    fn on_bytes(&mut self, ctx: &mut (), packet: &mut PacketContext, dir: Direction, payload: &[u8]) -> L4Outcome {
+    fn on_bytes(&mut self, ctx: &mut (), packet_id: crate::data_plane::packet_context::PacketId, dir: Direction, payload: &[u8]) -> L4Outcome {
         match self {
-            Self::Tcp(p) => p.on_bytes(ctx, packet, dir, payload),
-            Self::Udp(p) => p.on_bytes(ctx, packet, dir, payload),
-            Self::Icmp(p) => p.on_bytes(ctx, packet, dir, payload),
+            Self::Tcp(p) => p.on_bytes(ctx, packet_id, dir, payload),
+            Self::Udp(p) => p.on_bytes(ctx, packet_id, dir, payload),
+            Self::Icmp(p) => p.on_bytes(ctx, packet_id, dir, payload),
         }
     }
 
-    fn on_session_close(&mut self, ctx: &mut (), reason: CloseReason) -> L4Outcome {
+    fn on_session_close(&mut self, ctx: &mut (), reason: CloseReason) {
         match self {
             Self::Tcp(p) => p.on_session_close(ctx, reason),
             Self::Udp(p) => p.on_session_close(ctx, reason),
@@ -155,9 +155,9 @@ impl CtObserver for SessionManagerObs {
         }
     }
 
-    fn on_payload(&self, entry: &ConntrackEntry, dir: Direction, payload: &[u8]) {
+    fn on_payload(&self, entry: &ConntrackEntry, dir: Direction, chunk: &crate::conntrack::reassembler::DeliveredChunk) {
         if let Some(s) = self.inner.upgrade() {
-            s.on_ct_payload(entry, dir, payload);
+            s.on_ct_payload(entry, dir, chunk);
         }
     }
 }
@@ -241,7 +241,11 @@ impl SessionManager {
 
     #[cfg(any(test, feature = "test-capture"))]
     pub fn inject_session_payload(&self, entry: &ConntrackEntry, dir: Direction, payload: &[u8]) {
-        self.on_ct_payload(entry, dir, payload);
+        let chunk = crate::conntrack::reassembler::DeliveredChunk {
+            packet_id: crate::data_plane::packet_context::PacketId(0),
+            payload: payload.to_vec(),
+        };
+        self.on_ct_payload(entry, dir, &chunk);
     }
 
     fn on_ct_new(&self, entry: &ConntrackEntry) {
@@ -283,15 +287,13 @@ impl SessionManager {
             }
             let _ = pipeline.on_session_open(&mut l4_ctx);
 
-            let mut stub = minimal_stub_packet(iface);
-
             while let Some(msg) = rx.recv().await {
                 match msg {
                     L4Input::Bytes { dir, bytes } => {
                         if let Some(t) = &trace {
                             t.lock().expect("trace").push("bytes".to_string());
                         }
-                        let _ = pipeline.on_bytes(&mut l4_ctx, &mut stub, dir, &bytes);
+                        let _ = pipeline.on_bytes(&mut l4_ctx, crate::data_plane::packet_context::PacketId(0), dir, &bytes);
                     }
                     L4Input::Close { reason } => {
                         if let Some(t) = &trace {
@@ -324,9 +326,9 @@ impl SessionManager {
 
     fn on_ct_anomaly(&self, _entry: &ConntrackEntry, _kind: AnomalyKind) {}
 
-    fn on_ct_payload(&self, entry: &ConntrackEntry, dir: Direction, payload: &[u8]) {
+    fn on_ct_payload(&self, entry: &ConntrackEntry, dir: Direction, chunk: &crate::conntrack::reassembler::DeliveredChunk) {
         self.observer_events.fetch_add(1, Ordering::Relaxed);
-        if payload.is_empty() {
+        if chunk.payload.is_empty() {
             return;
         }
 
@@ -337,7 +339,7 @@ impl SessionManager {
 
         let _ = tx.send(L4Input::Bytes {
             dir,
-            bytes: payload.to_vec(),
+            bytes: chunk.payload.clone(),
         });
     }
 }

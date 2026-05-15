@@ -11,6 +11,7 @@ pub enum AppProto {
     Smb,
     Quic,
     Unknown,
+    Any,
 }
 
 impl std::fmt::Display for AppProto {
@@ -26,6 +27,7 @@ impl std::fmt::Display for AppProto {
             AppProto::Smb => "smb",
             AppProto::Quic => "quic",
             AppProto::Unknown => "unknown",
+            AppProto::Any => "any",
         };
         write!(f, "{s}")
     }

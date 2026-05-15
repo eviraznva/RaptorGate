@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -10,9 +11,20 @@ use crate::dpi::DpiContext;
 use crate::identity::IdentityContext;
 use crate::ml::MlFeatureVector;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct PacketId(pub u64);
+
+impl PacketId {
+    pub fn next() -> Self {
+        static COUNTER: AtomicU64 = AtomicU64::new(1);
+        PacketId(COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 #[self_referencing]
 #[derive(Debug)]
 pub struct PacketContext {
+    pub id: PacketId,
     pub src_interface: Arc<str>,
     pub warnings: Vec<String>,
     pub arrival_time: SystemTime,
@@ -33,7 +45,7 @@ pub struct PacketContext {
 
 impl Clone for PacketContext {
     fn clone(&self) -> Self {
-        Self::from_raw_full(
+        let mut cloned = Self::from_raw_full(
             self.borrow_raw().clone(),
             self.borrow_src_interface().clone(),
             self.borrow_warnings().clone(),
@@ -45,7 +57,10 @@ impl Clone for PacketContext {
             *self.borrow_ct_direction(),
             *self.borrow_ct_is_new(),
         )
-        .expect("cloning PacketContext should never fail since it's already been parsed once")
+        .expect("cloning PacketContext should never fail since it's already been parsed once");
+        let id = *self.borrow_id();
+        cloned.with_mut(|fields| *fields.id = id);
+        cloned
     }
 }
 
@@ -78,6 +93,7 @@ impl PacketContext {
         ct_is_new: bool,
     ) -> Result<Self, packet::SliceError> {
         let mut ctx = PacketContextTryBuilder {
+            id: PacketId::default(),
             src_interface,
             warnings,
             arrival_time,
@@ -95,6 +111,7 @@ impl PacketContext {
 
         let arrival = *ctx.borrow_arrival_time();
         ctx.with_mut(|fields| {
+            *fields.id = PacketId::next();
             fields
                 .ml_feature_vector
                 .init_from_packet(fields.sliced_packet, arrival);

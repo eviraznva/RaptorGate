@@ -69,7 +69,14 @@ impl ProtocolHandler for UdpHandler {
         let payload = udp.payload();
         
         if !payload.is_empty() {
-            self.observers.fire_payload(entry, dir, payload);
+            self.observers.fire_payload(
+                entry,
+                dir,
+                &crate::conntrack::reassembler::DeliveredChunk {
+                    packet_id: crate::data_plane::packet_context::PacketId(0),
+                    payload: payload.to_vec(),
+                },
+            );
         }
 
         CtVerdict::Accept

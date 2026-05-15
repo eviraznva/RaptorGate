@@ -9,6 +9,9 @@ use crate::conntrack::tuple::{Direction, Protocol};
 use crate::conntrack::observer::{AnomalyKind, ObserverRegistry};
 use crate::conntrack::proto::{CtVerdict, NewStateError, NewStateOutcome, ProtoState, ProtocolHandler};
 use crate::conntrack::reassembler;
+use crate::data_plane::packet_context::PacketId;
+
+const CT_PLACEHOLDER_PACKET_ID: PacketId = PacketId(0);
 
 #[derive(Debug, Clone, Default)]
 pub struct TcpProtoState {
@@ -309,6 +312,7 @@ impl ProtocolHandler for TcpHandler {
                         &mut reass.dirs[dir_idx],
                         &config.reassembly,
                         tcp.sequence_number(),
+                        CT_PLACEHOLDER_PACKET_ID,
                         payload_data,
                     );
                     

@@ -224,14 +224,15 @@ async fn main() {
             );
         }
 
-        fn on_payload(&self, entry: &ConntrackEntry, dir: CtDirection, payload: &[u8]) {
+        fn on_payload(&self, entry: &ConntrackEntry, dir: CtDirection, chunk: &crate::conntrack::reassembler::DeliveredChunk) {
             tracing::trace!(
                 event = "ct.observer.payload",
                 flow_id = entry.id,
                 proto = ?entry.original.protocol,
                 dir = ?dir,
-                len = payload.len(),
-                preview = %String::from_utf8_lossy(&payload[..payload.len().min(32)]),
+                packet_id = chunk.packet_id.0,
+                len = chunk.payload.len(),
+                preview = %String::from_utf8_lossy(&chunk.payload[..chunk.payload.len().min(32)]),
                 "ct payload chunk"
             );
         }

@@ -1,5 +1,6 @@
 use crate::conntrack::tuple::Direction;
-use crate::data_plane::packet_context::PacketContext;
+use crate::data_plane::packet_context::PacketId;
+use crate::dpi::AppProto;
 
 use super::stage::{CloseReason, L4Outcome, L4Stage};
 
@@ -12,80 +13,34 @@ pub struct NoopUdpStage;
 #[derive(Debug, Default)]
 pub struct NoopIcmpStage;
 
-impl L4Stage for NoopTcpStage {
-    type Ctx = ();
+macro_rules! impl_noop {
+    ($ty:ty, $proto:expr) => {
+        impl L4Stage for $ty {
+            type Ctx = ();
 
-    fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
-        L4Outcome::Forward
-    }
+            fn protocol(&self) -> AppProto {
+                $proto
+            }
 
-    fn on_packet(&mut self, (): &mut Self::Ctx, _packet: &mut PacketContext, _dir: Direction) -> L4Outcome {
-        L4Outcome::Forward
-    }
+            fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
+                L4Outcome::Continue
+            }
 
-    fn on_bytes(
-        &mut self,
-        (): &mut Self::Ctx,
-        _packet: &mut PacketContext,
-        _dir: Direction,
-        _payload: &[u8],
-    ) -> L4Outcome {
-        L4Outcome::Forward
-    }
+            fn on_bytes(
+                &mut self,
+                (): &mut Self::Ctx,
+                packet_id: PacketId,
+                _dir: Direction,
+                _payload: &[u8],
+            ) -> L4Outcome {
+                L4Outcome::Forward(vec![packet_id])
+            }
 
-    fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) -> L4Outcome {
-        L4Outcome::Forward
-    }
+            fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) {}
+        }
+    };
 }
 
-impl L4Stage for NoopUdpStage {
-    type Ctx = ();
-
-    fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
-        L4Outcome::Forward
-    }
-
-    fn on_packet(&mut self, (): &mut Self::Ctx, _packet: &mut PacketContext, _dir: Direction) -> L4Outcome {
-        L4Outcome::Forward
-    }
-
-    fn on_bytes(
-        &mut self,
-        (): &mut Self::Ctx,
-        _packet: &mut PacketContext,
-        _dir: Direction,
-        _payload: &[u8],
-    ) -> L4Outcome {
-        L4Outcome::Forward
-    }
-
-    fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) -> L4Outcome {
-        L4Outcome::Forward
-    }
-}
-
-impl L4Stage for NoopIcmpStage {
-    type Ctx = ();
-
-    fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
-        L4Outcome::Forward
-    }
-
-    fn on_packet(&mut self, (): &mut Self::Ctx, _packet: &mut PacketContext, _dir: Direction) -> L4Outcome {
-        L4Outcome::Forward
-    }
-
-    fn on_bytes(
-        &mut self,
-        (): &mut Self::Ctx,
-        _packet: &mut PacketContext,
-        _dir: Direction,
-        _payload: &[u8],
-    ) -> L4Outcome {
-        L4Outcome::Forward
-    }
-
-    fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) -> L4Outcome {
-        L4Outcome::Forward
-    }
-}
+impl_noop!(NoopTcpStage, AppProto::Unknown);
+impl_noop!(NoopUdpStage, AppProto::Unknown);
+impl_noop!(NoopIcmpStage, AppProto::Unknown);
