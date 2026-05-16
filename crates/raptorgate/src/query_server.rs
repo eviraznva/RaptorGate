@@ -853,6 +853,7 @@ where
             }));
         }
 
+        let previous_app_config = self.config_provider.get_config();
         if let Some(proto_app) = bundle.app_config.clone() {
             if let Err(e) = self.apply_app_config(proto_app).await {
                 tracing::error!(error = %e, "AppConfig snapshot apply failed");
@@ -893,6 +894,7 @@ where
         if preflight_sniffed_names.is_empty() {
             if let Err(e) = self.reconcile_tls_redirect(&preflight_sniffed_names) {
                 tracing::error!(error = %e, "TLS redirect reconcile failed");
+                self.restore_app_config_after_snapshot_rejection(previous_app_config.as_ref().clone()).await;
                 return Ok(Response::new(PushActiveConfigSnapshotResponse {
                     correlation_id,
                     accepted: false,
@@ -902,13 +904,13 @@ where
             }
         }
 
+        let old_zones = self.zone_store.get_zones().clone();
+        let old_zone_interfaces = self.zone_interface_store.get_zone_interfaces().clone();
+
         self.zone_store
             .swap_zones(zones.into_iter().collect())
             .await
             .map_err(|e| Status::internal(format!("failed to swap zones: {e}")))?;
-
-        // Capture old zone interfaces before swapping
-        let old_zone_interfaces = self.zone_interface_store.get_zone_interfaces().clone();
 
         self.zone_interface_store
             .swap_zone_interfaces(zone_interfaces.into_iter().collect())
@@ -931,6 +933,24 @@ where
 
         if let Err(e) = self.reconcile_tls_redirect(&sniffed_names) {
             tracing::error!(error = %e, "TLS redirect reconcile failed");
+            let old_sniffed_names = sniffed_interface_names(&old_zone_interfaces);
+            if let Err(rollback_err) = self.zone_interface_store
+                .swap_zone_interfaces(old_zone_interfaces.iter().map(|(id, zi)| (id.clone(), zi.clone())).collect())
+                .await
+            {
+                tracing::error!(error = %rollback_err, "failed to roll back zone interfaces after TLS redirect failure");
+            }
+            if let Err(rollback_err) = self.zone_store
+                .swap_zones(old_zones.iter().map(|(id, zone)| (id.clone(), zone.clone())).collect())
+                .await
+            {
+                tracing::error!(error = %rollback_err, "failed to roll back zones after TLS redirect failure");
+            }
+            self.interface_sniffer.reconcile_capture_interfaces(&old_sniffed_names);
+            if let Err(rollback_err) = self.reconcile_tls_redirect_with_config(previous_app_config.as_ref(), &old_sniffed_names) {
+                tracing::error!(error = %rollback_err, "failed to restore TLS redirect after snapshot rejection");
+            }
+            self.restore_app_config_after_snapshot_rejection(previous_app_config.as_ref().clone()).await;
             return Ok(Response::new(PushActiveConfigSnapshotResponse {
                 correlation_id,
                 accepted: false,
@@ -994,9 +1014,23 @@ where
         sniffed_names: &[String],
     ) -> anyhow::Result<TlsRedirectReconcileOutcome> {
         let config = self.config_provider.get_config();
+        self.reconcile_tls_redirect_with_config(config.as_ref(), sniffed_names)
+    }
+
+    fn reconcile_tls_redirect_with_config(
+        &self,
+        config: &AppConfig,
+        sniffed_names: &[String],
+    ) -> anyhow::Result<TlsRedirectReconcileOutcome> {
         let local_addresses = self.local_addresses_for_interfaces(sniffed_names);
-        let desired = desired_tls_redirect_state(config.as_ref(), sniffed_names, local_addresses)?;
+        let desired = desired_tls_redirect_state(config, sniffed_names, local_addresses)?;
         self.tls_redirect_manager.reconcile(desired)
+    }
+
+    async fn restore_app_config_after_snapshot_rejection(&self, previous_app_config: AppConfig) {
+        if let Err(rollback_err) = self.config_provider.swap_config(previous_app_config).await {
+            tracing::error!(error = %rollback_err, "failed to restore AppConfig after snapshot rejection");
+        }
     }
 
     async fn apply_factory_safe_state(&self) -> anyhow::Result<()> {

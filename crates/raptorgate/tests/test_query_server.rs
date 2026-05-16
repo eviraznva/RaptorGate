@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
@@ -40,17 +41,23 @@ use uuid::Uuid;
 
 struct SharedServer {
     socket: String,
+    config_provider: Arc<AppConfigProvider>,
     tls_redirect_runner: Arc<RecordingTlsRedirectRunner>,
 }
 
 #[derive(Default)]
 struct RecordingTlsRedirectRunner {
+    fail_apply: AtomicBool,
     scripts: StdMutex<Vec<String>>,
 }
 
 impl RecordingTlsRedirectRunner {
     fn clear(&self) {
         self.scripts.lock().unwrap().clear();
+    }
+
+    fn set_fail_apply(&self, value: bool) {
+        self.fail_apply.store(value, Ordering::SeqCst);
     }
 
     fn scripts(&self) -> Vec<String> {
@@ -69,6 +76,9 @@ impl TlsRedirectCommandRunner for RecordingTlsRedirectRunner {
 
     fn apply_script(&self, script: &str) -> anyhow::Result<()> {
         self.scripts.lock().unwrap().push(script.to_string());
+        if self.fail_apply.load(Ordering::SeqCst) {
+            anyhow::bail!("injected tls redirect apply failure");
+        }
         Ok(())
     }
 }
@@ -190,7 +200,7 @@ fn shared_server() -> &'static SharedServer {
 
         // Channel lets us wait until the server is actually listening
         // before returning, without an arbitrary sleep.
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let (tx, rx) = std::sync::mpsc::channel::<(String, Arc<AppConfigProvider>)>();
         let tls_redirect_runner = Arc::new(RecordingTlsRedirectRunner::default());
         let runner_for_server = Arc::clone(&tls_redirect_runner);
         let socket = "/tmp/test-query-shared.sock".to_string();
@@ -300,15 +310,15 @@ fn shared_server() -> &'static SharedServer {
                 let server =
                     QueryServer::new(handler, identity_sessions, &socket, shutdown.clone());
 
-                // Signal the socket path before we start blocking on serve()
-                tx.send(socket).expect("receiver dropped");
+                // Signal readiness before blocking on serve()
+                tx.send((socket, Arc::clone(&config_provider))).expect("receiver dropped");
 
                 server.serve().await;
             });
         });
 
-        let socket = rx.recv().expect("server thread died before signalling");
-        SharedServer { socket, tls_redirect_runner }
+        let (socket, config_provider) = rx.recv().expect("server thread died before signalling");
+        SharedServer { socket, config_provider, tls_redirect_runner }
     })
 }
 
@@ -560,7 +570,7 @@ async fn push_active_config_snapshot_rejects_tls_redirect_without_swapping_zone_
         )),
         sniffed: true,
     }];
-    initial.bundle.app_config = Some(app_config_proto(true));
+    initial.bundle.app_config = Some(app_config_proto(false));
 
     server.tls_redirect_runner.clear();
     let (initial_request, _, _) = create_snapshot_request(initial.bundle);
@@ -598,6 +608,7 @@ async fn push_active_config_snapshot_rejects_tls_redirect_without_swapping_zone_
         .into_inner();
     assert!(!invalid_response.accepted);
     assert!(invalid_response.message.contains("tls redirect reconcile failed"));
+    assert!(!server.config_provider.get_config().ssl_inspection_enabled);
 
     let zone_interfaces = query_client
         .get_zone_interfaces(GetZoneInterfacesRequest {})
@@ -618,6 +629,103 @@ async fn push_active_config_snapshot_rejects_tls_redirect_without_swapping_zone_
 
     let mut reset = create_valid_bundle(
         "snapshot_tls_empty_reset",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    reset.bundle.app_config = Some(app_config_proto(false));
+    let (reset_request, _, _) = create_snapshot_request(reset.bundle);
+    let reset_response = snapshot_client
+        .push_active_config_snapshot(reset_request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(reset_response.accepted, "reset snapshot rejected: {}", reset_response.message);
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle, nat_config)]
+async fn push_active_config_snapshot_rolls_back_zone_interfaces_when_tls_redirect_apply_fails() {
+    let server = shared_server();
+    let mut snapshot_client = connect_snapshot(&server.socket).await;
+    let mut query_client = connect(&server.socket).await;
+    let mut initial = create_valid_bundle(
+        "snapshot_tls_apply_failure_initial",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    let initial_zone_interface_id = Uuid::now_v7().to_string();
+    initial.bundle.zone_interfaces = vec![ZoneInterface {
+        id: initial_zone_interface_id.clone(),
+        zone_id: initial.src_zone.id.clone(),
+        status: InterfaceStatus::Unspecified as i32,
+        addresses: vec![],
+        kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+            ngfw::proto::config::PhysicalInterface {
+                interface_name: "eth-live-up".to_string(),
+            },
+        )),
+        sniffed: true,
+    }];
+    initial.bundle.app_config = Some(app_config_proto(false));
+
+    server.tls_redirect_runner.clear();
+    server.tls_redirect_runner.set_fail_apply(false);
+    let (initial_request, _, _) = create_snapshot_request(initial.bundle);
+    let initial_response = snapshot_client
+        .push_active_config_snapshot(initial_request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(initial_response.accepted, "initial snapshot rejected: {}", initial_response.message);
+
+    let mut invalid = create_valid_bundle(
+        "snapshot_tls_apply_failure_invalid",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    let invalid_zone_interface_id = Uuid::now_v7().to_string();
+    invalid.bundle.zone_interfaces = vec![ZoneInterface {
+        id: invalid_zone_interface_id.clone(),
+        zone_id: invalid.src_zone.id.clone(),
+        status: InterfaceStatus::Unspecified as i32,
+        addresses: vec![],
+        kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+            ngfw::proto::config::PhysicalInterface {
+                interface_name: "eth-live-up.100".to_string(),
+            },
+        )),
+        sniffed: true,
+    }];
+    invalid.bundle.app_config = Some(app_config_proto(true));
+
+    server.tls_redirect_runner.set_fail_apply(true);
+    let (invalid_request, _, _) = create_snapshot_request(invalid.bundle);
+    let invalid_response = snapshot_client
+        .push_active_config_snapshot(invalid_request)
+        .await
+        .unwrap()
+        .into_inner();
+    server.tls_redirect_runner.set_fail_apply(false);
+    assert!(!invalid_response.accepted);
+    assert!(invalid_response.message.contains("tls redirect reconcile failed"));
+    assert!(!server.config_provider.get_config().ssl_inspection_enabled);
+
+    let zone_interfaces = query_client
+        .get_zone_interfaces(GetZoneInterfacesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .zone_interfaces;
+    let kept = zone_interfaces
+        .iter()
+        .find(|zi| zi.id == initial_zone_interface_id)
+        .expect("previous zone interface should remain active");
+    assert!(kept.sniffed);
+    assert!(matches!(
+        kept.kind.as_ref(),
+        Some(ngfw::proto::config::zone_interface::Kind::Physical(p)) if p.interface_name == "eth-live-up"
+    ));
+    assert!(!zone_interfaces.iter().any(|zi| zi.id == invalid_zone_interface_id));
+
+    let mut reset = create_valid_bundle(
+        "snapshot_tls_apply_failure_reset",
         "match ip_ver { =v4: verdict allow =v6: verdict drop }",
     );
     reset.bundle.app_config = Some(app_config_proto(false));

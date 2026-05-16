@@ -174,17 +174,75 @@ async fn connect_bound_socket(
     dst: SocketAddr,
     interface_name: &str,
 ) -> Result<TcpStream, UpstreamConnectError> {
-    let socket = create_socket(dst).map_err(|source| UpstreamConnectError::SocketCreate {
+    let ops = TokioBoundSocketOps;
+    connect_bound_socket_with_ops(&ops, dst, interface_name).await
+}
+
+struct TokioBoundSocketOps;
+
+#[tonic::async_trait]
+trait BoundSocketOps: Send + Sync {
+    type Socket: Send;
+
+    fn create_socket(&self, dst: SocketAddr) -> std::io::Result<Self::Socket>;
+
+    fn bind_socket_to_interface(
+        &self,
+        socket: &Self::Socket,
+        interface_name: &str,
+    ) -> std::io::Result<()>;
+
+    async fn connect_socket(
+        &self,
+        socket: Self::Socket,
+        dst: SocketAddr,
+    ) -> std::io::Result<TcpStream>;
+}
+
+#[tonic::async_trait]
+impl BoundSocketOps for TokioBoundSocketOps {
+    type Socket = TcpSocket;
+
+    fn create_socket(&self, dst: SocketAddr) -> std::io::Result<Self::Socket> {
+        create_socket(dst)
+    }
+
+    fn bind_socket_to_interface(
+        &self,
+        socket: &Self::Socket,
+        interface_name: &str,
+    ) -> std::io::Result<()> {
+        bind_socket_to_interface(socket, interface_name)
+    }
+
+    async fn connect_socket(
+        &self,
+        socket: Self::Socket,
+        dst: SocketAddr,
+    ) -> std::io::Result<TcpStream> {
+        socket.connect(dst).await
+    }
+}
+
+async fn connect_bound_socket_with_ops<O>(
+    ops: &O,
+    dst: SocketAddr,
+    interface_name: &str,
+) -> Result<TcpStream, UpstreamConnectError>
+where
+    O: BoundSocketOps + ?Sized,
+{
+    let socket = ops.create_socket(dst).map_err(|source| UpstreamConnectError::SocketCreate {
         dst,
         source,
     })?;
-    bind_socket_to_interface(&socket, interface_name).map_err(|source| {
+    ops.bind_socket_to_interface(&socket, interface_name).map_err(|source| {
         UpstreamConnectError::BindDevice {
             interface_name: interface_name.to_string(),
             source,
         }
     })?;
-    socket.connect(dst).await.map_err(|source| UpstreamConnectError::Connect {
+    ops.connect_socket(socket, dst).await.map_err(|source| UpstreamConnectError::Connect {
         dst,
         interface_name: interface_name.to_string(),
         source,
@@ -216,6 +274,7 @@ mod tests {
     use super::*;
     use crate::interfaces::{MockInterfaceMonitor, OperState, SystemInterface};
     use mockall::predicate::eq;
+    use std::sync::Mutex;
 
     struct FakeRouteLookup {
         result: Option<SystemInterfaceId>,
@@ -235,6 +294,68 @@ mod tests {
             addresses: Vec::new(),
             vlan_id: None,
         }
+    }
+
+    #[derive(Default)]
+    struct FakeSocketOps {
+        calls: Mutex<Vec<String>>,
+        fail_bind: bool,
+    }
+
+    impl FakeSocketOps {
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[tonic::async_trait]
+    impl BoundSocketOps for FakeSocketOps {
+        type Socket = ();
+
+        fn create_socket(&self, dst: SocketAddr) -> std::io::Result<Self::Socket> {
+            self.calls.lock().unwrap().push(format!("create:{dst}"));
+            Ok(())
+        }
+
+        fn bind_socket_to_interface(&self, _socket: &Self::Socket, interface_name: &str) -> std::io::Result<()> {
+            self.calls.lock().unwrap().push(format!("bind:{interface_name}"));
+            if self.fail_bind {
+                return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "bind failed"));
+            }
+            Ok(())
+        }
+
+        async fn connect_socket(&self, _socket: Self::Socket, dst: SocketAddr) -> std::io::Result<TcpStream> {
+            self.calls.lock().unwrap().push(format!("connect:{dst}"));
+            Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "connect failed"))
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_bound_socket_with_ops_binds_before_connecting() {
+        let ops = FakeSocketOps::default();
+        let dst = SocketAddr::from(([203, 0, 113, 10], 443));
+        let err = connect_bound_socket_with_ops(&ops, dst, "wan0").await.unwrap_err();
+
+        assert!(matches!(err, UpstreamConnectError::Connect { .. }));
+        assert_eq!(ops.calls(), vec![
+            format!("create:{dst}"),
+            "bind:wan0".to_string(),
+            format!("connect:{dst}"),
+        ]);
+    }
+
+    #[tokio::test]
+    async fn connect_bound_socket_with_ops_stops_after_bind_failure() {
+        let ops = FakeSocketOps {
+            calls: Mutex::new(Vec::new()),
+            fail_bind: true,
+        };
+        let dst = SocketAddr::from(([203, 0, 113, 10], 443));
+        let err = connect_bound_socket_with_ops(&ops, dst, "wan0").await.unwrap_err();
+
+        assert!(matches!(err, UpstreamConnectError::BindDevice { .. }));
+        assert_eq!(ops.calls(), vec![format!("create:{dst}"), "bind:wan0".to_string()]);
     }
 
     #[test]
