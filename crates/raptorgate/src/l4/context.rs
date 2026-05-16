@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::conntrack::entry::ConntrackEntry;
+use crate::conntrack::tcp_identity::EndpointIdentifier;
 use crate::conntrack::tuple::Direction;
 use crate::dpi::AppProto;
 use crate::l4::reset::{TcpResetAction, TcpResetBuilder, TcpResetUnavailable};
@@ -43,6 +44,23 @@ impl SessionContext {
             Direction::Original => &self.zone_pair_in_to_out,
             Direction::Reply => &self.zone_pair_out_to_in,
         }
+    }
+
+    pub fn endpoints(&self, dir: Direction) -> (EndpointIdentifier, EndpointIdentifier) {
+        let t = match dir {
+            Direction::Original => self.entry.original,
+            Direction::Reply => self.entry.reply(),
+        };
+        (
+            EndpointIdentifier {
+                ip: t.src_ip,
+                port: t.src_port.into(),
+            },
+            EndpointIdentifier {
+                ip: t.dst_ip,
+                port: t.dst_port.into(),
+            },
+        )
     }
 
     pub fn build_tcp_reset(&self) -> TcpResetAction {

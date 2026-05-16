@@ -20,6 +20,7 @@ use crate::data_plane::interface_sniffer::RawPacket;
 use crate::data_plane::ips::ips::Ips;
 use crate::disk_store::SingleDiskStore;
 use crate::dpi::smtp::SmtpTracker;
+use crate::dpi::smtp_policy_retriever::SmtpPolicyRetriever;
 use crate::dpi::DpiClassifier;
 use crate::identity::IdentitySessionStore;
 use crate::interfaces::{InterfaceMonitor, NetworkInterfaceMonitor};
@@ -64,6 +65,7 @@ pub struct StaticDeps<'a, D: DaemonDeps + ?Sized> {
     pub interface_monitor: &'a Arc<D::IfaceMon>,
     pub helpers: &'a Arc<HelperRegistry>,
     pub smtp_tracker: &'a Arc<SmtpTracker>,
+    pub smtp_policy_retriever: &'a Arc<SmtpPolicyRetriever<RoutingZoneResolver<D::IfaceMon>>>,
 }
 
 pub trait DaemonDeps: Send + Sync + 'static {
@@ -95,6 +97,7 @@ pub struct ProdDeps {
     pub interface_monitor: Arc<NetworkInterfaceMonitor>,
     pub helpers: Arc<HelperRegistry>,
     pub smtp_tracker: Arc<SmtpTracker>,
+    pub smtp_policy_retriever: Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>,
 }
 
 impl DaemonDeps for ProdDeps {
@@ -125,6 +128,7 @@ impl DaemonDeps for ProdDeps {
             interface_monitor: &self.interface_monitor,
             helpers: &self.helpers,
             smtp_tracker: &self.smtp_tracker,
+            smtp_policy_retriever: &self.smtp_policy_retriever,
         }
     }
 }
@@ -221,7 +225,7 @@ pub type V2Pipeline<D> = Chain<
     >,
 >;
 
-fn build_v2_pipeline<D: DaemonDeps>(
+fn build_v2_pipeline<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>>(
     deps: &StaticDeps<D>,
     exec_tx: &ExecutionSender,
     sessions: Arc<SessionsFor<D>>,
@@ -260,7 +264,7 @@ where
     }
 }
 
-fn build_pipeline<D: DaemonDeps>(deps: &Arc<D>, exec_tx: &ExecutionSender) -> DataPipeline<D> {
+fn build_pipeline<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>>(deps: &Arc<D>, exec_tx: &ExecutionSender) -> DataPipeline<D> {
     let s = deps.static_dependencies();
     DataPipeline::<D> {
         head: ValidationStage,
@@ -381,7 +385,7 @@ pub struct ProcessOutput {
     pub stage_outcome: Option<StageOutcome>,
 }
 
-impl<D: DaemonDeps> Daemon<D> {
+impl<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>> Daemon<D> {
     pub fn assemble(
         deps: Arc<D>,
         defrag: IpDefragEngine,
@@ -462,7 +466,7 @@ pub struct DaemonV2<D: DaemonDeps> {
     sessions: Arc<SessionsFor<D>>,
 }
 
-impl<D: DaemonDeps> DaemonV2<D>
+impl<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>> DaemonV2<D>
 where
     RoutingZoneResolver<D::IfaceMon>: Clone,
     D::Dnssec: DnssecProvider + Send + Sync + 'static,
@@ -477,7 +481,7 @@ where
         let (release_tx, release_rx) = tokio::sync::mpsc::unbounded_channel();
         let sessions = SessionManager::new(
             Arc::clone(s.conntrack),
-            TcpL4PipelineFactory::default(),
+            TcpL4PipelineFactory::new_smtp(Arc::clone(s.smtp_policy_retriever)),
             UdpL4PipelineFactory::default(),
             IcmpL4PipelineFactory::default(),
             Arc::clone(s.policy_engine),

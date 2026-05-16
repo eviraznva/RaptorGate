@@ -28,6 +28,20 @@ pub(crate) struct TerminatedSmtpSession {
     server: EndpointIdentifier,
 }
 
+impl TerminatedSmtpSession {
+    pub(crate) fn new(client: EndpointIdentifier, server: EndpointIdentifier) -> Self {
+        Self { client, server }
+    }
+
+    pub(crate) fn client(&self) -> &EndpointIdentifier {
+        &self.client
+    }
+
+    pub(crate) fn server(&self) -> &EndpointIdentifier {
+        &self.server
+    }
+}
+
 pub(crate) struct SmtpPolicyEvaluator;
 
 #[derive(Clone, Copy, Debug)]
@@ -143,7 +157,7 @@ pub(crate) enum SessionTransition<'a> {
 }
 
 impl SessionState {
-    fn transition(&self, event: SessionTransition) -> Result<Option<SessionState>, ()> {
+    pub(crate) fn transition(&self, event: SessionTransition) -> Result<Option<SessionState>, ()> {
         match event {
             SessionTransition::Greeting => match self {
                 SessionState::TcpEstabilished => Ok(Some(SessionState::GreetingReceived)),
@@ -723,6 +737,10 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
             terminated_sessions: DashMap::new(),
             policy_retriever,
         }
+    }
+
+    pub fn policy_retriever(&self) -> Arc<SmtpPolicyRetriever<ZR>> {
+        Arc::clone(&self.policy_retriever)
     }
 
     fn build_rst_packet(src: &TcpSeqSnapshot, dst: &TcpSeqSnapshot) -> Option<Vec<u8>> {

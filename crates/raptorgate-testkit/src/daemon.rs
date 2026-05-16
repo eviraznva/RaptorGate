@@ -75,6 +75,7 @@ pub struct TestDeps {
     pub interface_monitor: Arc<NetworkInterfaceMonitor>,
     pub helpers: Arc<HelperRegistry>,
     pub smtp_tracker: Arc<SmtpTracker>,
+    pub smtp_policy_retriever: Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>,
 }
 
 impl DaemonDeps for TestDeps {
@@ -105,6 +106,7 @@ impl DaemonDeps for TestDeps {
             interface_monitor: &self.interface_monitor,
             helpers: &self.helpers,
             smtp_tracker: &self.smtp_tracker,
+            smtp_policy_retriever: &self.smtp_policy_retriever,
         }
     }
 }
@@ -459,6 +461,7 @@ impl TestDaemonBuilder {
             interface_monitor,
             helpers,
             smtp_tracker,
+            smtp_policy_retriever,
         });
 
         let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();

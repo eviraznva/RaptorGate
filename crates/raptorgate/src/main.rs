@@ -509,6 +509,7 @@ async fn main() {
             interface_monitor: Arc::clone(&interface_monitor),
             helpers: Arc::clone(&helpers),
             smtp_tracker: Arc::clone(&smtp_tracker),
+            smtp_policy_retriever: Arc::clone(&smtp_policy_retriever),
         }),
         defrag,
         exec_tx.clone(),

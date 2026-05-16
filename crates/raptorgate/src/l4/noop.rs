@@ -1,6 +1,7 @@
 use crate::conntrack::tuple::Direction;
 use crate::data_plane::packet_context::PacketId;
 use crate::dpi::AppProto;
+use crate::l4::context::SessionContext;
 
 use super::stage::{CloseReason, L4Outcome, L4Stage};
 
@@ -16,19 +17,19 @@ pub struct NoopIcmpStage;
 macro_rules! impl_noop {
     ($ty:ty, $proto:expr) => {
         impl L4Stage for $ty {
-            type Ctx = ();
+            type Ctx = SessionContext;
 
             fn protocol(&self) -> AppProto {
                 $proto
             }
 
-            fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
+            fn on_session_open(&mut self, _ctx: &mut SessionContext) -> L4Outcome {
                 L4Outcome::Continue
             }
 
             fn on_bytes(
                 &mut self,
-                (): &mut Self::Ctx,
+                _ctx: &mut SessionContext,
                 packet_id: PacketId,
                 _dir: Direction,
                 _tcp_payload_start_seq: u32,
@@ -37,7 +38,7 @@ macro_rules! impl_noop {
                 L4Outcome::Forward(vec![packet_id])
             }
 
-            fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) {}
+            fn on_session_close(&mut self, _ctx: &mut SessionContext, _reason: CloseReason) {}
         }
     };
 }

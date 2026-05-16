@@ -21,6 +21,7 @@ use ngfw::data_plane::dns_inspection::dnssec::DnssecProvider;
 use ngfw::data_plane::packet_context::{PacketContext, PacketId};
 use ngfw::pipeline::StageOutcome;
 use ngfw::policy::engine::PolicyEngine;
+use ngfw::l4::{IcmpL4PipelineFactory, UdpL4PipelineFactory};
 use ngfw::zones::resolver::ZoneResolver;
 use ngfw::zones::{DirectionalZonePairs, ResolvedZonePair, ZonePairId};
 
@@ -77,8 +78,8 @@ fn phase1_session_manager() -> (
     let sm = SessionManager::new(
         ct,
         Default::default(),
-        Default::default(),
-        Default::default(),
+        UdpL4PipelineFactory::default(),
+        IcmpL4PipelineFactory::default(),
         policy_engine,
         StubZoneResolver,
         None,
@@ -156,8 +157,8 @@ async fn phase1_ordered_two_inputs_one_flow() {
     let sm = SessionManager::<StubZoneResolver, NoDnssec>::new_with_event_trace(
         ct.clone(),
         Default::default(),
-        Default::default(),
-        Default::default(),
+        UdpL4PipelineFactory::default(),
+        IcmpL4PipelineFactory::default(),
         log.clone(),
         policy_engine,
         StubZoneResolver,
@@ -216,8 +217,8 @@ async fn phase1_invalidate_via_session_context() {
     let sm = SessionManager::<StubZoneResolver, NoDnssec>::new_with_event_trace(
         ct.clone(),
         Default::default(),
-        Default::default(),
-        Default::default(),
+        UdpL4PipelineFactory::default(),
+        IcmpL4PipelineFactory::default(),
         log.clone(),
         policy_engine,
         StubZoneResolver,

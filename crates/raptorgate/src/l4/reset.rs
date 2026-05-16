@@ -1,6 +1,8 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use etherparse::PacketBuilder;
+
 use crate::conntrack::entry::ConntrackEntry;
 use crate::conntrack::proto::tcp::{TcpConntrack, TcpProtoState};
 use crate::conntrack::tuple::Direction;
@@ -99,4 +101,20 @@ impl TcpResetBuilder {
 
         TcpResetAction::EmitRstPair { original, reply }
     }
+}
+
+pub fn tcp_reset_segment_to_raw(seg: &TcpResetSegment) -> Option<Vec<u8>> {
+    let (src_ip, dst_ip) = match (seg.src_ip, seg.dst_ip) {
+        (IpAddr::V4(s), IpAddr::V4(d)) => (s, d),
+        _ => return None,
+    };
+    let mut packet = Vec::new();
+    PacketBuilder::ethernet2([0; 6], [0; 6])
+        .ipv4(src_ip.octets(), dst_ip.octets(), 64)
+        .tcp(seg.src_port, seg.dst_port, seg.seq, 0)
+        .ack(seg.ack)
+        .rst()
+        .write(&mut packet, &[])
+        .ok()?;
+    Some(packet)
 }

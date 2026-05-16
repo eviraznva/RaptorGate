@@ -16,9 +16,10 @@ use crate::data_plane::packet_context::{PacketContext, PacketId};
 use crate::l4::context::SessionContext;
 use crate::l4::egress::{policy_release_action, zone_pair_for_session_packet};
 use crate::l4::release::{DropReason, ReleaseAction};
-use crate::l4::stage::{CloseReason, L4Outcome, L4Stage, TerminateReason};
+use crate::l4::reset::{tcp_reset_segment_to_raw, TcpResetAction};
+use crate::l4::stage::{CloseReason, L4Outcome, L4Stage};
 use crate::l4::{
-    IcmpL4PipelineFactory, IcmpNoopPipeline, TcpL4PipelineFactory, TcpNoopPipeline, UdpL4PipelineFactory,
+    IcmpL4PipelineFactory, IcmpNoopPipeline, TcpL4PipelineFactory, TcpSessionPipeline, UdpL4PipelineFactory,
     UdpNoopPipeline,
 };
 use crate::policy::engine::PolicyEngine;
@@ -104,16 +105,16 @@ where
     }
 }
 
-enum Phase1NoopPipeline {
-    Tcp(TcpNoopPipeline),
+enum Phase1L4Pipeline<ZR: ZoneResolver + Send + Sync + 'static> {
+    Tcp(TcpSessionPipeline<ZR>),
     Udp(UdpNoopPipeline),
     Icmp(IcmpNoopPipeline),
 }
 
-impl Phase1NoopPipeline {
+impl<ZR: ZoneResolver + Send + Sync + 'static> Phase1L4Pipeline<ZR> {
     fn from_proto(
         proto: &ProtoState,
-        tcp_f: TcpL4PipelineFactory,
+        tcp_f: TcpL4PipelineFactory<ZR>,
         udp_f: UdpL4PipelineFactory,
         icmp_f: IcmpL4PipelineFactory,
     ) -> Self {
@@ -132,7 +133,7 @@ impl Phase1NoopPipeline {
         }
     }
 
-    fn on_session_open(&mut self, ctx: &mut ()) -> L4Outcome {
+    fn on_session_open(&mut self, ctx: &mut SessionContext) -> L4Outcome {
         match self {
             Self::Tcp(p) => p.on_session_open(ctx),
             Self::Udp(p) => p.on_session_open(ctx),
@@ -142,7 +143,7 @@ impl Phase1NoopPipeline {
 
     fn on_bytes(
         &mut self,
-        ctx: &mut (),
+        ctx: &mut SessionContext,
         packet_id: PacketId,
         dir: Direction,
         tcp_payload_start_seq: u32,
@@ -155,7 +156,7 @@ impl Phase1NoopPipeline {
         }
     }
 
-    fn on_session_close(&mut self, ctx: &mut (), reason: CloseReason) {
+    fn on_session_close(&mut self, ctx: &mut SessionContext, reason: CloseReason) {
         match self {
             Self::Tcp(p) => p.on_session_close(ctx, reason),
             Self::Udp(p) => p.on_session_close(ctx, reason),
@@ -190,12 +191,15 @@ fn handle_outcome<ZR, Dns>(
     zone_resolver: &ZR,
     session_ctx: &SessionContext,
     dnssec: Option<&Arc<Dns>>,
-) where
+    ct: &Arc<Conntrack>,
+    entry_id: u64,
+) -> bool
+where
     ZR: ZoneResolver,
     Dns: DnssecProvider + Send + Sync + 'static,
 {
     match outcome {
-        L4Outcome::Continue => {}
+        L4Outcome::Continue => false,
         L4Outcome::Forward(ids) => {
             for packet_id in ids {
                 let Some(entry) = pending.map.remove(&packet_id) else {
@@ -212,9 +216,31 @@ fn handle_outcome<ZR, Dns>(
                 );
                 let _ = release_tx.send(action);
             }
+            false
         }
-        L4Outcome::Terminate { reason: _, reset: _ } => {
+        L4Outcome::Terminate { reason: _, reset } => {
             drop_all_pending(pending, release_tx, DropReason::SessionTerminated);
+            if reset {
+                match session_ctx.build_tcp_reset() {
+                    TcpResetAction::EmitRstPair { original, reply } => {
+                        for seg in [&original, &reply] {
+                            let Some(raw) = tcp_reset_segment_to_raw(seg) else {
+                                continue;
+                            };
+                            let iface = seg
+                                .ingress_iface
+                                .clone()
+                                .unwrap_or_else(|| std::sync::Arc::from("eth0"));
+                            if let Ok(pkt) = PacketContext::from_raw(raw, iface) {
+                                let _ = release_tx.send(ReleaseAction::Forward { packet: pkt });
+                            }
+                        }
+                    }
+                    TcpResetAction::Unavailable { .. } => {}
+                }
+            }
+            let _ = ct.destroy_by_id(entry_id, DestroyReason::InvalidatedByStage);
+            true
         }
     }
 }
@@ -226,7 +252,7 @@ where
 {
     self_weak: Weak<SessionManager<ZR, Dns>>,
     ct: Arc<Conntrack>,
-    tcp_factory: TcpL4PipelineFactory,
+    tcp_factory: TcpL4PipelineFactory<ZR>,
     udp_factory: UdpL4PipelineFactory,
     icmp_factory: IcmpL4PipelineFactory,
     handles: DashMap<FlowKey, mpsc::UnboundedSender<L4Input>>,
@@ -251,7 +277,7 @@ where
 {
     pub fn new(
         ct: Arc<Conntrack>,
-        tcp_factory: TcpL4PipelineFactory,
+        tcp_factory: TcpL4PipelineFactory<ZR>,
         udp_factory: UdpL4PipelineFactory,
         icmp_factory: IcmpL4PipelineFactory,
         policy_engine: Arc<PolicyEngine>,
@@ -284,7 +310,7 @@ where
 
     pub fn new_with_event_trace(
         ct: Arc<Conntrack>,
-        tcp_factory: TcpL4PipelineFactory,
+        tcp_factory: TcpL4PipelineFactory<ZR>,
         udp_factory: UdpL4PipelineFactory,
         icmp_factory: IcmpL4PipelineFactory,
         trace: Arc<StdMutex<Vec<String>>>,
@@ -391,7 +417,7 @@ where
         };
 
         let trace = self.trace.clone();
-        let tcp_f = self.tcp_factory;
+        let tcp_f = self.tcp_factory.clone();
         let udp_f = self.udp_factory;
         let icmp_f = self.icmp_factory;
         let proto = { entry.proto_state.lock().clone() };
@@ -400,7 +426,7 @@ where
             .find_by_id(entry.id)
             .unwrap_or_else(|| panic!("on_new for missing entry {}", entry.id));
         let mut session_ctx = SessionContext::open(entry_arc, &self.zone_resolver);
-        let mut l4_ctx = ();
+        let entry_id = session_ctx.entry().id;
         let policy_engine = Arc::clone(&self.policy_engine);
         let zone_resolver = self.zone_resolver.clone();
         let dnssec = self.dnssec.clone();
@@ -409,12 +435,12 @@ where
         let flow_key = flow;
 
         tokio::spawn(async move {
-            let mut pipeline = Phase1NoopPipeline::from_proto(&proto, tcp_f, udp_f, icmp_f);
+            let mut pipeline = Phase1L4Pipeline::from_proto(&proto, tcp_f, udp_f, icmp_f);
 
             if let Some(t) = &trace {
                 t.lock().expect("trace").push("open".to_string());
             }
-            let _ = pipeline.on_session_open(&mut l4_ctx);
+            let _ = pipeline.on_session_open(&mut session_ctx);
 
             while let Some(msg) = rx.recv().await {
                 let mut pending = pending_arc.lock().expect("session pending");
@@ -429,13 +455,13 @@ where
                             t.lock().expect("trace").push("bytes".to_string());
                         }
                         let outcome = pipeline.on_bytes(
-                            &mut l4_ctx,
+                            &mut session_ctx,
                             packet_id,
                             dir,
                             tcp_payload_start_seq,
                             &bytes,
                         );
-                        handle_outcome(
+                        let terminate = handle_outcome(
                             outcome,
                             &mut pending,
                             &release_tx,
@@ -443,13 +469,18 @@ where
                             &zone_resolver,
                             &session_ctx,
                             dnssec.as_ref(),
+                            &ct,
+                            entry_id,
                         );
+                        if terminate {
+                            return;
+                        }
                     }
                     L4Input::Close { reason } => {
                         if let Some(t) = &trace {
                             t.lock().expect("trace").push("close".to_string());
                         }
-                        pipeline.on_session_close(&mut l4_ctx, reason);
+                        pipeline.on_session_close(&mut session_ctx, reason);
                         drop_all_pending(&mut pending, &release_tx, DropReason::SessionClosed);
                         sm.pending_by_flow.remove(&flow_key);
                         sm.handles.remove(&flow_key);
@@ -462,7 +493,7 @@ where
                 t.lock().expect("trace").push("close".to_string());
             }
             let mut pending = pending_arc.lock().expect("session pending");
-            pipeline.on_session_close(&mut l4_ctx, CloseReason::Finished);
+            pipeline.on_session_close(&mut session_ctx, CloseReason::Finished);
             drop_all_pending(&mut pending, &release_tx, DropReason::SessionClosed);
             sm.pending_by_flow.remove(&flow_key);
             sm.handles.remove(&flow_key);
@@ -571,6 +602,33 @@ mod tests {
         ))
     }
 
+    fn sample_tcp_entry_established(id: u64) -> Arc<crate::conntrack::entry::ConntrackEntry> {
+        use crate::conntrack::proto::tcp::{TcpConntrack, TcpProtoState};
+
+        let mut tcp = TcpProtoState::default();
+        tcp.state = TcpConntrack::Established;
+        tcp.seen[0].last_seq = 500;
+        tcp.seen[0].last_ack = 600;
+        tcp.seen[1].last_seq = 700;
+        tcp.seen[1].last_ack = 800;
+
+        let tuple = FlowTuple::new(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            12345,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            80,
+            crate::conntrack::tuple::Protocol::Tcp,
+        );
+
+        Arc::new(crate::conntrack::entry::ConntrackEntry::new(
+            id,
+            tuple,
+            ProtoState::Tcp(tcp),
+            Duration::from_secs(60),
+            0,
+        ))
+    }
+
     fn test_session_manager(trace: Option<Arc<StdMutex<Vec<String>>>>) -> (Arc<SessionManager<StubZoneResolver, NoDnssec>>, mpsc::UnboundedReceiver<ReleaseAction>) {
         let ct = Arc::new(Conntrack::new(
             Arc::new(ProtoRegistry::new()),
@@ -584,7 +642,7 @@ mod tests {
         let sm = if let Some(log) = trace {
             SessionManager::new_with_event_trace(
                 ct,
-                TcpL4PipelineFactory::default(),
+                TcpL4PipelineFactory::<StubZoneResolver>::new_force_terminate(),
                 UdpL4PipelineFactory::default(),
                 IcmpL4PipelineFactory::default(),
                 log,
@@ -596,7 +654,7 @@ mod tests {
         } else {
             SessionManager::new(
                 ct,
-                TcpL4PipelineFactory::default(),
+                TcpL4PipelineFactory::<StubZoneResolver>::new_force_terminate(),
                 UdpL4PipelineFactory::default(),
                 IcmpL4PipelineFactory::default(),
                 policy_engine,
@@ -669,5 +727,44 @@ mod tests {
             ReleaseAction::Forward { packet } => assert_eq!(packet.packet_id(), packet_id),
             ReleaseAction::Drop { .. } => panic!("expected forward"),
         }
+    }
+
+    #[tokio::test]
+    async fn l4_terminate_reset_emits_rst_and_destroy() {
+        let (sm, mut release_rx) = test_session_manager(None);
+        let ct = sm.conntrack().clone();
+        let entry = sample_tcp_entry_established(901);
+        assert!(ct.confirm(&entry));
+
+        let mut raw = Vec::new();
+        etherparse::PacketBuilder::ethernet2([1; 6], [2; 6])
+            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+            .tcp(12345, 80, 1000, 2000)
+            .write(&mut raw, b"x")
+            .expect("packet");
+        let packet = PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet");
+        let pid = packet.packet_id();
+        sm.admit_packet(entry.as_ref(), packet, Direction::Original);
+        sm.inject_session_payload(entry.as_ref(), Direction::Original, b"x", pid);
+
+        let mut forwards = 0;
+        let mut drops = 0;
+        for _ in 0..8 {
+            let action = tokio::time::timeout(Duration::from_secs(2), release_rx.recv())
+                .await
+                .expect("timeout")
+                .expect("closed");
+            match action {
+                ReleaseAction::Forward { .. } => forwards += 1,
+                ReleaseAction::Drop { .. } => drops += 1,
+            }
+            if forwards >= 2 {
+                break;
+            }
+        }
+
+        assert_eq!(drops, 1, "pending should drop as SessionTerminated");
+        assert!(forwards >= 2, "expected two RST forwards, got {forwards}");
+        assert!(ct.find_by_id(entry.id).is_none(), "flow should be destroyed");
     }
 }
