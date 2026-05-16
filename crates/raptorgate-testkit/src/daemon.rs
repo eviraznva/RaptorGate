@@ -201,6 +201,10 @@ impl TestDaemon {
         self.daemon_v2.sessions()
     }
 
+    pub fn subscribe_packet_dispositions(&self) -> tokio::sync::broadcast::Receiver<ngfw::l4::release::PacketDispositionEvent> {
+        self.daemon_v2.subscribe_packet_dispositions()
+    }
+
     pub fn conntrack_snapshot(&self) -> Vec<ngfw::conntrack::table::ConntrackFlowSnapshot> {
         self.deps
             .conntrack

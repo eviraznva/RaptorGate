@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use etherparse::NetSlice;
 use parking_lot::Mutex;
+use tokio::sync::broadcast;
 
 use crate::conntrack::helper::HelperRegistry;
 use crate::conntrack::session_manager::SessionManager;
 use crate::conntrack::table::{Conntrack, LookupResult};
 use crate::conntrack::tuple::FlowTuple;
-use crate::post_session::PostSessionPipeline;
+use crate::post_session::PostSessionHandler;
 use crate::config::provider::{AppConfigProvider, AppConfigStore};
 use crate::config::AppConfig;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
@@ -464,6 +465,7 @@ pub struct DaemonV2<D: DaemonDeps> {
     exec_tx: ExecutionSender,
     test_exec_rx: Mutex<Option<ExecutionReceiver>>,
     sessions: Arc<SessionsFor<D>>,
+    disposition_tx: broadcast::Sender<crate::l4::release::PacketDispositionEvent>,
 }
 
 impl<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>> DaemonV2<D>
@@ -479,6 +481,7 @@ where
     ) -> Arc<Self> {
         let s = deps.static_dependencies();
         let (release_tx, release_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (disposition_tx, _) = broadcast::channel(1024);
         let sessions = SessionManager::new(
             Arc::clone(s.conntrack),
             TcpL4PipelineFactory::new_smtp(Arc::clone(s.smtp_policy_retriever)),
@@ -490,12 +493,13 @@ where
             release_tx,
         );
         let pipeline = build_v2_pipeline(&s, &exec_tx, Arc::clone(&sessions));
-        let post_session = PostSessionPipeline::new(
+        let post_session = PostSessionHandler::new(
             release_rx,
             Arc::clone(s.nat_engine),
             Arc::clone(s.routing_table),
             Arc::clone(s.interface_monitor),
             None,
+            disposition_tx.clone(),
         );
         tokio::spawn(post_session.run());
         Arc::new(Self {
@@ -505,6 +509,7 @@ where
             exec_tx,
             test_exec_rx: Mutex::new(test_exec_rx),
             sessions,
+            disposition_tx,
         })
     }
 
@@ -514,6 +519,10 @@ where
 
     pub fn sessions(&self) -> &Arc<SessionsFor<D>> {
         &self.sessions
+    }
+
+    pub fn subscribe_packet_dispositions(&self) -> broadcast::Receiver<crate::l4::release::PacketDispositionEvent> {
+        self.disposition_tx.subscribe()
     }
 
     pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {

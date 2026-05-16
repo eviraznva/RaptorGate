@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use etherparse::NetSlice;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::conntrack::entry::CtInfo;
 use crate::conntrack::tuple::Direction;
 use crate::data_plane::packet_context::PacketContext;
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::interfaces::InterfaceMonitor;
-use crate::l4::release::ReleaseAction;
+use crate::l4::release::{PacketDispositionEvent, PacketDispositionOutcome, ReleaseAction};
 use crate::nat::NatEngine;
 use crate::netlink::routing_table::RouteLookup;
 
@@ -53,15 +53,16 @@ pub fn apply_nat_postrouting<M, R>(
     let _ = engine.postrouting(raw_mut, &ct, info, &out_iface_sys.name, None);
 }
 
-pub struct PostSessionPipeline<M, R> {
+pub struct PostSessionHandler<M, R> {
     rx: mpsc::UnboundedReceiver<ReleaseAction>,
     nat_engine: Arc<NatEngine>,
     routes: Arc<R>,
     interface_monitor: Arc<M>,
     tun: Option<Arc<TunForwarder>>,
+    disposition_tx: broadcast::Sender<PacketDispositionEvent>,
 }
 
-impl<M, R> PostSessionPipeline<M, R>
+impl<M, R> PostSessionHandler<M, R>
 where
     M: InterfaceMonitor + Send + Sync + 'static,
     R: RouteLookup + Send + Sync + 'static,
@@ -72,6 +73,7 @@ where
         routes: Arc<R>,
         interface_monitor: Arc<M>,
         tun: Option<Arc<TunForwarder>>,
+        disposition_tx: broadcast::Sender<PacketDispositionEvent>,
     ) -> Self {
         Self {
             rx,
@@ -79,24 +81,41 @@ where
             routes,
             interface_monitor,
             tun,
+            disposition_tx,
         }
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<PacketDispositionEvent> {
+        self.disposition_tx.subscribe()
     }
 
     pub async fn run(mut self) {
         while let Some(action) = self.rx.recv().await {
             match action {
                 ReleaseAction::Forward { mut packet } => {
+                    let packet_id = packet.packet_id();
                     apply_nat_postrouting(
                         &mut packet,
                         &self.nat_engine,
                         self.routes.as_ref(),
                         self.interface_monitor.as_ref(),
                     );
+                    let _ = self.disposition_tx.send(PacketDispositionEvent {
+                        packet_id,
+                        outcome: PacketDispositionOutcome::Forward,
+                        drop_reason: None,
+                    });
                     if let Some(tun) = &self.tun {
                         tun.forward(&packet).await;
                     }
                 }
-                ReleaseAction::Drop { packet_id: _, reason: _ } => {}
+                ReleaseAction::Drop { packet_id, reason } => {
+                    let _ = self.disposition_tx.send(PacketDispositionEvent {
+                        packet_id,
+                        outcome: PacketDispositionOutcome::Drop,
+                        drop_reason: Some(reason),
+                    });
+                }
             }
         }
     }
