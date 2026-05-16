@@ -223,6 +223,10 @@ fn build_tcp_packet(payload: &[u8], dst_port: u16) -> PacketContext {
             ..Default::default()
         }),
         None,
+        None,
+        None,
+        None,
+        false,
     )
     .expect("packet context should parse")
 }
