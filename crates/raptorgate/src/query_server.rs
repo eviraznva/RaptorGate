@@ -890,10 +890,15 @@ where
             }
         }
 
+        let old_zone_interfaces = self.zone_interface_store.get_zone_interfaces().clone();
         let preflight_sniffed_names = sniffed_interface_names(&zone_interfaces);
         if preflight_sniffed_names.is_empty() {
             if let Err(e) = self.reconcile_tls_redirect(&preflight_sniffed_names) {
                 tracing::error!(error = %e, "TLS redirect reconcile failed");
+                let old_sniffed_names = sniffed_interface_names(&old_zone_interfaces);
+                if let Err(rollback_err) = self.reconcile_tls_redirect_with_config(previous_app_config.as_ref(), &old_sniffed_names) {
+                    tracing::error!(error = %rollback_err, "failed to restore TLS redirect after snapshot rejection");
+                }
                 self.restore_app_config_after_snapshot_rejection(previous_app_config.as_ref().clone()).await;
                 return Ok(Response::new(PushActiveConfigSnapshotResponse {
                     correlation_id,
@@ -905,7 +910,6 @@ where
         }
 
         let old_zones = self.zone_store.get_zones().clone();
-        let old_zone_interfaces = self.zone_interface_store.get_zone_interfaces().clone();
 
         self.zone_store
             .swap_zones(zones.into_iter().collect())

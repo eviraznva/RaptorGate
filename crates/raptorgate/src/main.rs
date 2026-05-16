@@ -735,11 +735,13 @@ async fn main() {
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "Failed to start MITM proxy");
+                        return;
                     }
                 }
             }
             _ => {
                 tracing::error!("SSL inspection enabled but CA/TLS config not available");
+                return;
             }
         }
     }

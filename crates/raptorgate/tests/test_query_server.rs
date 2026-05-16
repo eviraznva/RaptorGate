@@ -643,6 +643,84 @@ async fn push_active_config_snapshot_rejects_tls_redirect_without_swapping_zone_
 
 #[tokio::test]
 #[serial(snapshot_bundle, nat_config)]
+async fn push_active_config_snapshot_restores_previous_tls_redirect_when_empty_snapshot_rejected() {
+    let server = shared_server();
+    let mut snapshot_client = connect_snapshot(&server.socket).await;
+    let mut initial = create_valid_bundle(
+        "snapshot_tls_empty_restore_initial",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    initial.bundle.zone_interfaces = vec![ZoneInterface {
+        id: Uuid::now_v7().to_string(),
+        zone_id: initial.src_zone.id.clone(),
+        status: InterfaceStatus::Unspecified as i32,
+        addresses: vec![],
+        kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+            ngfw::proto::config::PhysicalInterface {
+                interface_name: "eth-live-up".to_string(),
+            },
+        )),
+        sniffed: true,
+    }];
+    initial.bundle.app_config = Some(app_config_proto(true));
+
+    server.tls_redirect_runner.clear();
+    let (initial_request, _, _) = create_snapshot_request(initial.bundle);
+    let initial_response = snapshot_client
+        .push_active_config_snapshot(initial_request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(initial_response.accepted, "initial snapshot rejected: {}", initial_response.message);
+    server.tls_redirect_runner.clear();
+
+    let mut invalid = create_valid_bundle(
+        "snapshot_tls_empty_restore_invalid",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    invalid.bundle.zone_interfaces = vec![ZoneInterface {
+        id: Uuid::now_v7().to_string(),
+        zone_id: invalid.src_zone.id.clone(),
+        status: InterfaceStatus::Unspecified as i32,
+        addresses: vec![],
+        kind: Some(ngfw::proto::config::zone_interface::Kind::Physical(
+            ngfw::proto::config::PhysicalInterface {
+                interface_name: "eth-live-down".to_string(),
+            },
+        )),
+        sniffed: false,
+    }];
+    invalid.bundle.app_config = Some(app_config_proto(true));
+
+    let (invalid_request, _, _) = create_snapshot_request(invalid.bundle);
+    let invalid_response = snapshot_client
+        .push_active_config_snapshot(invalid_request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!invalid_response.accepted);
+    assert!(invalid_response.message.contains("tls redirect reconcile failed"));
+
+    let scripts = server.tls_redirect_runner.scripts();
+    assert_eq!(scripts.len(), 1);
+    assert!(scripts[0].contains("iifname { \"eth-live-up\" } tcp dport { 443 } redirect to :8443"));
+
+    let mut reset = create_valid_bundle(
+        "snapshot_tls_empty_restore_reset",
+        "match ip_ver { =v4: verdict allow =v6: verdict drop }",
+    );
+    reset.bundle.app_config = Some(app_config_proto(false));
+    let (reset_request, _, _) = create_snapshot_request(reset.bundle);
+    let reset_response = snapshot_client
+        .push_active_config_snapshot(reset_request)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(reset_response.accepted, "reset snapshot rejected: {}", reset_response.message);
+}
+
+#[tokio::test]
+#[serial(snapshot_bundle, nat_config)]
 async fn push_active_config_snapshot_rolls_back_zone_interfaces_when_tls_redirect_apply_fails() {
     let server = shared_server();
     let mut snapshot_client = connect_snapshot(&server.socket).await;
