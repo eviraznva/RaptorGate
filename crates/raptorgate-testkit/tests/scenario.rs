@@ -1,14 +1,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use ngfw::l4::release::PacketDispositionOutcome;
 use raptorgate_testkit::{
     event, event_capture_concurrency_mutex, physical_zone_interface, set_event_capture,
-    ConfigBundleBuilder, Event, EventCapture, EventKind, PacketsScenario, PipelineOutcome,
-    Scenario, ScenarioRunError, SocketV4, TestDaemon, icmp_echo_ipv4,
-    smoke_tcp_allow_warn_bundle,
+    smoke_icmp_allow_warn_bundle, ConfigBundleBuilder, Event, EventCapture, EventKind,
+    Expectation, IcmpSessionV4, PacketsScenario, PipelineOutcome, Scenario, ScenarioRunError,
+    SocketV4, TcpSessionV4, TestDaemon, icmp_echo_ipv4, smoke_tcp_allow_warn_bundle,
 };
-use uuid::Uuid;
 use tokio::time::timeout;
+use uuid::Uuid;
 
 fn drop_tcp_bundle() -> ngfw::proto::services::ConfigBundle {
     use ngfw::proto::common::DefaultPolicy;
@@ -71,6 +72,10 @@ fn drop_tcp_bundle() -> ngfw::proto::services::ConfigBundle {
         .build()
 }
 
+fn icmp_echo_with_payload(src: [u8; 4], dst: [u8; 4]) -> Vec<u8> {
+    IcmpSessionV4::new(src, dst).echo_request(1, 1, b"p")
+}
+
 #[tokio::test]
 async fn packets_expect_packet_without_send() {
     let _guard = event_capture_concurrency_mutex().lock().await;
@@ -84,7 +89,7 @@ async fn packets_expect_packet_without_send() {
         .expect("test daemon");
 
     let res = PacketsScenario::new()
-        .expect_packet(PipelineOutcome::Forward)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .run(&td, &cap)
         .await;
 
@@ -114,7 +119,7 @@ async fn tcp_expect_packet_without_send() {
     };
 
     let res = Scenario::tcp(client, server)
-        .expect_packet(PipelineOutcome::Forward)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .run(&td, &cap)
         .await;
 
@@ -124,7 +129,94 @@ async fn tcp_expect_packet_without_send() {
 }
 
 #[tokio::test]
-async fn packet_outcome_mismatch_reports_index() {
+async fn packets_run_legacy_pipeline_forwarded_icmp() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_icmp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let raw = icmp_echo_ipv4([192, 168, 10, 10], [192, 168, 20, 20]);
+
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(raw)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .run(&td, &cap)
+        .await
+        .expect("run");
+
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn packets_run_legacy_pipeline_rejected_tcp_syn() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(drop_tcp_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let client = SocketV4 {
+        ip: [192, 168, 10, 10],
+        port: 40_000,
+    };
+    let server = SocketV4 {
+        ip: [192, 168, 20, 20],
+        port: 25,
+    };
+    let syn = TcpSessionV4::new(client, server).syn_from_client();
+
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(syn)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Rejected))
+        .run(&td, &cap)
+        .await
+        .expect("run");
+
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn packets_run_legacy_disposition_expectation_unsupported() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_icmp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let raw = icmp_echo_with_payload([192, 168, 10, 10], [192, 168, 20, 20]);
+
+    let res = Scenario::packets()
+        .on_iface("eth1")
+        .send(raw)
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
+        .run(&td, &cap)
+        .await;
+
+    set_event_capture(None);
+
+    assert!(matches!(
+        res,
+        Err(ScenarioRunError::DispositionExpectationInLegacyRun { send_index: 0 })
+    ));
+}
+
+#[tokio::test]
+async fn pipeline_mismatch_reports_send_index() {
     let _guard = event_capture_concurrency_mutex().lock().await;
     let cap = Arc::new(EventCapture::new());
     set_event_capture(Some(cap.clone()));
@@ -143,16 +235,296 @@ async fn packet_outcome_mismatch_reports_index() {
         .on_iface("eth1")
         .send(raw1)
         .send(raw2)
-        .expect_packet(PipelineOutcome::Forward)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .run(&td, &cap)
         .await;
 
     set_event_capture(None);
 
-    let Err(ScenarioRunError::PacketOutcome { send_index, .. }) = res else {
-        panic!("expected PacketOutcome error");
+    let Err(ScenarioRunError::PipelineMismatch { send_index, .. }) = res else {
+        panic!("expected PipelineMismatch, got {res:?}");
     };
     assert_eq!(send_index, 1);
+}
+
+#[tokio::test]
+async fn packets_expect_packet_v2_without_send() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_tcp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let res = PacketsScenario::new()
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .run_v2(&td, &cap)
+        .await;
+
+    set_event_capture(None);
+
+    assert!(matches!(res, Err(ScenarioRunError::ExpectPacketWithoutSend)));
+}
+
+#[tokio::test]
+async fn tcp_expect_packet_v2_without_send() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_tcp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+    let client = SocketV4 {
+        ip: [192, 168, 10, 10],
+        port: 40_000,
+    };
+    let server = SocketV4 {
+        ip: [192, 168, 20, 20],
+        port: 25,
+    };
+
+    let res = Scenario::tcp(client, server)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .run_v2(&td, &cap)
+        .await;
+
+    set_event_capture(None);
+
+    assert!(matches!(res, Err(ScenarioRunError::ExpectPacketWithoutSend)));
+}
+
+#[tokio::test]
+async fn packets_run_v2_pipeline_forwarded_icmp() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_icmp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let raw = icmp_echo_with_payload([192, 168, 10, 10], [192, 168, 20, 20]);
+
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(raw)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .run_v2(&td, &cap)
+        .await
+        .expect("run_v2");
+
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn packets_run_v2_pipeline_forwarded_disposition_drop_icmp() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(drop_tcp_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let raw = icmp_echo_with_payload([192, 168, 10, 10], [192, 168, 20, 20]);
+
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(raw)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Drop))
+        .run_v2(&td, &cap)
+        .await
+        .expect("run_v2");
+
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn packets_run_v2_disposition_forward_icmp() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_icmp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let raw = icmp_echo_with_payload([192, 168, 10, 10], [192, 168, 20, 20]);
+
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(raw)
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
+        .run_v2(&td, &cap)
+        .await
+        .expect("run_v2");
+
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn packets_run_v2_disposition_drop_icmp() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(drop_tcp_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let raw = icmp_echo_with_payload([192, 168, 10, 10], [192, 168, 20, 20]);
+
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(raw)
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Drop))
+        .run_v2(&td, &cap)
+        .await
+        .expect("run_v2");
+
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn packets_run_v2_disposition_mismatch_send_index() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(drop_tcp_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let raw = icmp_echo_with_payload([192, 168, 10, 10], [192, 168, 20, 20]);
+
+    let res = Scenario::packets()
+        .on_iface("eth1")
+        .send(raw)
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
+        .run_v2(&td, &cap)
+        .await;
+
+    set_event_capture(None);
+
+    let Err(ScenarioRunError::DispositionMismatch { send_index, .. }) = res else {
+        panic!("expected DispositionMismatch, got {res:?}");
+    };
+    assert_eq!(send_index, 0);
+}
+
+#[tokio::test]
+async fn packets_run_v2_pipeline_then_disposition_same_send() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_icmp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let raw = icmp_echo_with_payload([192, 168, 10, 10], [192, 168, 20, 20]);
+
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(raw)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
+        .run_v2(&td, &cap)
+        .await
+        .expect("run_v2");
+
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn tcp_session_run_v2_pipeline_forward_and_tcp_established_event() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_tcp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+    let client = SocketV4 {
+        ip: [192, 168, 10, 20],
+        port: 40_001,
+    };
+    let server = SocketV4 {
+        ip: [192, 168, 20, 21],
+        port: 25,
+    };
+
+    let expect_event = event!(|e: &Event| {
+        matches!(
+            &e.kind,
+            EventKind::TcpSessionSubstateChanged {
+                new_state: ngfw::proto::events::TcpSessionState::Established,
+                ..
+            }
+        )
+    });
+
+    Scenario::tcp(client, server)
+        .open()
+        .expect_event(expect_event)
+        .client_sends(b"ping\r\n")
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .run_v2(&td, &cap)
+        .await
+        .expect("run_v2");
+
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn packets_run_v2_mixed_sends_only_registered_dispositions() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_icmp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let raw_a = icmp_echo_with_payload([192, 168, 10, 30], [192, 168, 20, 30]);
+    let raw_b = icmp_echo_with_payload([192, 168, 10, 31], [192, 168, 20, 31]);
+    let raw_c = icmp_echo_with_payload([192, 168, 10, 32], [192, 168, 20, 32]);
+
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(raw_a)
+        .send(raw_b)
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
+        .send(raw_c)
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
+        .run_v2(&td, &cap)
+        .await
+        .expect("run_v2");
+
+    set_event_capture(None);
 }
 
 #[tokio::test]

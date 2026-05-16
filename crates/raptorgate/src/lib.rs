@@ -29,4 +29,7 @@ pub mod conntrack;
 pub mod daemon;
 pub mod post_session;
 
-pub use daemon::{Daemon, DaemonDeps, DaemonV2, DataPipeline, ProcessOutput, ProdDeps, SessionsFor, StaticDeps};
+pub use daemon::{
+    Daemon, DaemonDeps, DaemonV2, DataPipeline, ProcessOutput, ProcessOutputWithPacketId, ProdDeps, SessionsFor,
+    StaticDeps,
+};

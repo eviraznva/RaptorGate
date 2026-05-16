@@ -376,6 +376,12 @@ impl Conntrack {
         }
     }
 
+    pub fn flush_deferred_payload_observers(&self, entry: &Arc<ConntrackEntry>) {
+        if let Some(chunk) = entry.deferred_first_payload.lock().take() {
+            self.observers.fire_payload(entry, Direction::Original, &chunk);
+        }
+    }
+
     /// Zwraca następny bucket reapera (round-robin po 1/REAP_BUCKETS tabeli).
     pub fn next_reap_bucket(&self) -> u64 {
         self.reap_cursor.fetch_add(1, Ordering::Relaxed) % crate::conntrack::reaper::REAP_BUCKETS
@@ -663,15 +669,11 @@ impl Conntrack {
                         }
                     }
                 } else {
-                    self.observers.fire_payload(
-                        &entry,
-                        Direction::Original,
-                        &reassembler::DeliveredChunk {
-                            packet_id,
-                            payload: payload.to_vec(),
-                            tcp_payload_start_seq: 0,
-                        },
-                    );
+                    *entry.deferred_first_payload.lock() = Some(reassembler::DeliveredChunk {
+                        packet_id,
+                        payload: payload.to_vec(),
+                        tcp_payload_start_seq: 0,
+                    });
                 }
             }
         }

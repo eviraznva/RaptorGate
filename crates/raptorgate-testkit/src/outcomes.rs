@@ -1,93 +1,120 @@
 use ngfw::daemon::ProcessOutput;
+use ngfw::l4::release::PacketDispositionOutcome;
 use ngfw::pipeline::{ExecutionAction, StageOutcome};
 use thiserror::Error;
 
-pub trait ProcessOutputAssertExt {
-    fn assert_outcome(&self, expected: PipelineOutcome) -> Result<(), OutcomeMismatch>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineOutcome {
+    Forwarded,
+    Rejected,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PipelineOutcome {
-    Forward,
-    Drop,
-    BufferedNoEmission,
-    ReleasedBatch { count: Option<usize> },
-    TcpReset { count: Option<usize> },
-    NoEmission,
+pub enum Expectation {
+    Pipeline(PipelineOutcome),
+    Disposition(PacketDispositionOutcome),
 }
 
 #[derive(Debug, Error)]
-pub enum OutcomeMismatch {
-    #[error("expected {expected:?} got emitted={emitted:?} stage_outcome={stage_outcome:?}")]
+pub enum PipelineMismatch {
+    #[error("expected pipeline {expected:?} got {actual:?} (emitted={emitted}, stage={stage:?})")]
     Mismatch {
         expected: PipelineOutcome,
+        actual: PipelineOutcome,
         emitted: usize,
-        stage_outcome: Option<StageOutcome>,
+        stage: Option<StageOutcome>,
     },
 }
 
-fn count_tcp_rst(emitted: &[ngfw::pipeline::ExecutionItem]) -> usize {
-    emitted
+pub fn reduce_legacy_daemon_process_output(output: &ProcessOutput) -> PipelineOutcome {
+    if output
+        .emitted
+        .iter()
+        .any(|e| matches!(e.action, ExecutionAction::Forward))
+    {
+        return PipelineOutcome::Forwarded;
+    }
+    if matches!(&output.stage_outcome, Some(StageOutcome::Continue)) {
+        return PipelineOutcome::Forwarded;
+    }
+    if matches!(&output.stage_outcome, Some(StageOutcome::ReleaseBatch(_))) {
+        return PipelineOutcome::Forwarded;
+    }
+    PipelineOutcome::Rejected
+}
+
+pub fn reduce_daemon_v2_process_output(output: &ProcessOutput) -> PipelineOutcome {
+    if output
+        .emitted
+        .iter()
+        .any(|e| matches!(e.action, ExecutionAction::Forward))
+    {
+        return PipelineOutcome::Forwarded;
+    }
+    if matches!(&output.stage_outcome, Some(StageOutcome::Continue)) {
+        return PipelineOutcome::Forwarded;
+    }
+    if matches!(&output.stage_outcome, Some(StageOutcome::ReleaseBatch(_))) {
+        return PipelineOutcome::Forwarded;
+    }
+    if matches!(&output.stage_outcome, Some(StageOutcome::Halt))
+        && output.emitted.len() == 1
+        && matches!(
+            output.emitted.first(),
+            Some(item) if matches!(item.action, ExecutionAction::Drop)
+        )
+    {
+        return PipelineOutcome::Forwarded;
+    }
+    PipelineOutcome::Rejected
+}
+
+pub fn check_v2_pipeline(
+    output: &ProcessOutput,
+    expected: PipelineOutcome,
+) -> Result<(), PipelineMismatch> {
+    let actual = reduce_daemon_v2_process_output(output);
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(PipelineMismatch::Mismatch {
+            expected,
+            actual,
+            emitted: output.emitted.len(),
+            stage: output.stage_outcome.clone(),
+        })
+    }
+}
+
+pub fn check_legacy_pipeline(
+    output: &ProcessOutput,
+    expected: PipelineOutcome,
+) -> Result<(), PipelineMismatch> {
+    let actual = reduce_legacy_daemon_process_output(output);
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(PipelineMismatch::Mismatch {
+            expected,
+            actual,
+            emitted: output.emitted.len(),
+            stage: output.stage_outcome.clone(),
+        })
+    }
+}
+
+pub fn count_tcp_rst_in_output(output: &ProcessOutput) -> usize {
+    output
+        .emitted
         .iter()
         .filter(|item| {
             let raw = item.packet.borrow_raw();
             if let Ok(slice) = etherparse::SlicedPacket::from_ethernet(raw)
-                && let Some(etherparse::TransportSlice::Tcp(tcp)) = slice.transport {
-                    return !tcp.syn()
-                        && !tcp.fin()
-                        && tcp.rst();
-                }
+                && let Some(etherparse::TransportSlice::Tcp(tcp)) = slice.transport
+            {
+                return !tcp.syn() && !tcp.fin() && tcp.rst();
+            }
             false
         })
         .count()
-}
-
-impl ProcessOutputAssertExt for ProcessOutput {
-    fn assert_outcome(&self, expected: PipelineOutcome) -> Result<(), OutcomeMismatch> {
-        let n = self.emitted.len();
-        let forwards = self
-            .emitted
-            .iter()
-            .filter(|e| matches!(e.action, ExecutionAction::Forward))
-            .count();
-        let drops = self
-            .emitted
-            .iter()
-            .filter(|e| matches!(e.action, ExecutionAction::Drop))
-            .count();
-        let stage = self.stage_outcome.clone();
-
-        let ok = match &expected {
-            PipelineOutcome::Forward => forwards == 1 && drops == 0,
-            PipelineOutcome::Drop => drops >= 1 && forwards == 0,
-            PipelineOutcome::BufferedNoEmission => {
-                n == 0 && matches!(stage, Some(StageOutcome::Halt | StageOutcome::ReleaseBatch(_)))
-            }
-            PipelineOutcome::ReleasedBatch { count } => {
-                let c = forwards;
-                match count {
-                    Some(k) => *k == c && drops == 0,
-                    None => c > 0 && drops == 0,
-                }
-            }
-            PipelineOutcome::TcpReset { count } => {
-                let r = count_tcp_rst(&self.emitted);
-                match count {
-                    Some(k) => *k == r,
-                    None => r > 0,
-                }
-            }
-            PipelineOutcome::NoEmission => n == 0,
-        };
-
-        if ok {
-            Ok(())
-        } else {
-            Err(OutcomeMismatch::Mismatch {
-                expected,
-                emitted: n,
-                stage_outcome: stage,
-            })
-        }
-    }
 }

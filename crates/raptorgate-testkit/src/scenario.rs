@@ -1,17 +1,21 @@
-use std::future::Future;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
+use ngfw::data_plane::packet_context::PacketId;
 use ngfw::events::{EventCapture, EventPredicate, WaitForSubsequenceError};
+use ngfw::l4::release::{PacketDispositionEvent, PacketDispositionOutcome};
 use thiserror::Error;
+use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::{broadcast, Mutex, Notify};
 
 use crate::{
-    OutcomeMismatch, PipelineOutcome, ProcessOutputAssertExt, TestDaemon,
+    check_legacy_pipeline, check_v2_pipeline, Expectation, PipelineOutcome, PipelineMismatch, TestDaemon,
 };
 
 pub(crate) struct SendStep {
     pub(crate) raw: Vec<u8>,
     pub(crate) iface: Arc<str>,
-    pub(crate) expect_packet: Option<PipelineOutcome>,
+    pub(crate) expectations: Vec<Expectation>,
 }
 
 pub(crate) struct ScenarioPlan {
@@ -23,14 +27,59 @@ pub(crate) struct ScenarioPlan {
 pub enum ScenarioRunError {
     #[error("expect_packet called before any send")]
     ExpectPacketWithoutSend,
-    #[error("packet outcome at send index {send_index}: {source}")]
-    PacketOutcome {
+    #[error(
+        "pipeline expectation mismatch at send index {send_index}: expected {expected:?} got {actual:?} (emitted={emitted}, stage={stage:?})"
+    )]
+    PipelineMismatch {
         send_index: usize,
-        #[source]
-        source: OutcomeMismatch,
+        expected: PipelineOutcome,
+        actual: PipelineOutcome,
+        emitted: usize,
+        stage: Option<ngfw::pipeline::StageOutcome>,
     },
+    #[error(
+        "packet disposition mismatch at send index {send_index} for packet {packet_id:?}: expected {expected:?}, got {actual:?}"
+    )]
+    DispositionMismatch {
+        send_index: usize,
+        packet_id: PacketId,
+        expected: PacketDispositionOutcome,
+        actual: PacketDispositionOutcome,
+    },
+    #[error("disposition expectation at send index {send_index} is not supported with legacy .run(...) (use .run_v2(...))")]
+    DispositionExpectationInLegacyRun { send_index: usize },
+    #[error("expect_packet at send index {send_index} requires a runtime packet id from DaemonV2, but none was available")]
+    MissingRuntimePacketId { send_index: usize },
+    #[error("duplicate disposition registration for packet {packet_id:?}")]
+    DuplicateDispositionRegistration { packet_id: PacketId },
+    #[error("packet disposition broadcast lagged; missed {missed} messages")]
+    PacketDispositionBroadcastLagged { missed: u64 },
+    #[error("packet disposition broadcast channel closed before expectations were satisfied")]
+    PacketDispositionBroadcastClosed,
+    #[error("packet disposition waiter task failed to run to completion")]
+    PacketDispositionWaiterJoin,
     #[error(transparent)]
     Events(#[from] WaitForSubsequenceError),
+}
+
+fn map_pipeline_mismatch(
+    send_index: usize,
+    source: PipelineMismatch,
+) -> ScenarioRunError {
+    match source {
+        PipelineMismatch::Mismatch {
+            expected,
+            actual,
+            emitted,
+            stage,
+        } => ScenarioRunError::PipelineMismatch {
+            send_index,
+            expected,
+            actual,
+            emitted,
+            stage,
+        },
+    }
 }
 
 pub(crate) async fn execute_scenario_plan(
@@ -49,11 +98,215 @@ pub(crate) async fn execute_scenario_plan(
 
     for (send_index, step) in sends.into_iter().enumerate() {
         let out = Box::pin(daemon.process_raw(step.raw, step.iface)).await;
-        if let Some(exp) = step.expect_packet {
-            out.assert_outcome(exp).map_err(|source| ScenarioRunError::PacketOutcome {
+        for exp in &step.expectations {
+            match exp {
+                Expectation::Pipeline(p) => {
+                    check_legacy_pipeline(&out, *p).map_err(|e| map_pipeline_mismatch(send_index, e))?;
+                }
+                Expectation::Disposition(_) => {
+                    return Err(ScenarioRunError::DispositionExpectationInLegacyRun { send_index });
+                }
+            }
+        }
+    }
+
+    if !preds.is_empty() {
+        capture.wait_for_subsequence(&preds).await?;
+    }
+
+    Ok(())
+}
+
+fn disposition_matches(expected: PacketDispositionOutcome, actual: PacketDispositionOutcome) -> bool {
+    expected == actual
+}
+
+struct V2WaitState {
+    pending: HashMap<PacketId, (usize, PacketDispositionOutcome)>,
+    orphans: VecDeque<PacketDispositionEvent>,
+    sends_finished: bool,
+}
+
+impl V2WaitState {
+    fn try_consume_orphan(
+        &mut self,
+        packet_id: PacketId,
+        send_index: usize,
+        expected: PacketDispositionOutcome,
+    ) -> Result<bool, ScenarioRunError> {
+        let mut found_idx = None;
+        for (i, evt) in self.orphans.iter().enumerate() {
+            if evt.packet_id == packet_id {
+                found_idx = Some(i);
+                break;
+            }
+        }
+        let Some(i) = found_idx else {
+            return Ok(false);
+        };
+        let evt = self.orphans.remove(i).expect("index valid");
+        if !disposition_matches(expected, evt.outcome) {
+            return Err(ScenarioRunError::DispositionMismatch {
                 send_index,
-                source,
-            })?;
+                packet_id,
+                expected,
+                actual: evt.outcome,
+            });
+        }
+        Ok(true)
+    }
+
+    fn register_packet_expect(
+        &mut self,
+        packet_id: PacketId,
+        send_index: usize,
+        expected: PacketDispositionOutcome,
+    ) -> Result<(), ScenarioRunError> {
+        if self.pending.contains_key(&packet_id) {
+            return Err(ScenarioRunError::DuplicateDispositionRegistration { packet_id });
+        }
+        if self.try_consume_orphan(packet_id, send_index, expected)? {
+            return Ok(());
+        }
+        self.pending.insert(packet_id, (send_index, expected));
+        Ok(())
+    }
+
+    fn apply_event(&mut self, evt: PacketDispositionEvent) -> Result<(), ScenarioRunError> {
+        if let Some((send_index, expected)) = self.pending.remove(&evt.packet_id) {
+            if !disposition_matches(expected, evt.outcome) {
+                return Err(ScenarioRunError::DispositionMismatch {
+                    send_index,
+                    packet_id: evt.packet_id,
+                    expected,
+                    actual: evt.outcome,
+                });
+            }
+            Ok(())
+        } else {
+            self.orphans.push_back(evt);
+            Ok(())
+        }
+    }
+}
+
+async fn disposition_waiter(
+    mut rx: broadcast::Receiver<PacketDispositionEvent>,
+    state: Arc<Mutex<V2WaitState>>,
+    notify: Arc<Notify>,
+) -> Result<(), ScenarioRunError> {
+    loop {
+        {
+            let g = state.lock().await;
+            if g.sends_finished && g.pending.is_empty() {
+                return Ok(());
+            }
+        }
+        tokio::select! {
+            biased;
+            () = notify.notified() => {}
+            r = rx.recv() => {
+                match r {
+                    Ok(evt) => {
+                        let mut g = state.lock().await;
+                        g.apply_event(evt)?;
+                    }
+                    Err(RecvError::Lagged(missed)) => {
+                        return Err(ScenarioRunError::PacketDispositionBroadcastLagged { missed });
+                    }
+                    Err(RecvError::Closed) => {
+                        let g = state.lock().await;
+                        if g.sends_finished && g.pending.is_empty() {
+                            return Ok(());
+                        }
+                        return Err(ScenarioRunError::PacketDispositionBroadcastClosed);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) async fn execute_scenario_plan_v2(
+    plan: ScenarioPlan,
+    daemon: &TestDaemon,
+    capture: &Arc<EventCapture>,
+) -> Result<(), ScenarioRunError> {
+    capture.clear();
+    capture.set_fence(std::time::SystemTime::now());
+    tokio::time::sleep(crate::FENCE_SETTLE).await;
+
+    let ScenarioPlan {
+        sends,
+        event_expectations: preds,
+    } = plan;
+
+    let any_disp = sends
+        .iter()
+        .any(|s| s.expectations.iter().any(|e| matches!(e, Expectation::Disposition(_))));
+
+    let mut disp_wait: Option<(
+        Arc<Mutex<V2WaitState>>,
+        Arc<Notify>,
+        tokio::task::JoinHandle<Result<(), ScenarioRunError>>,
+    )> = None;
+
+    if any_disp {
+        let state = Arc::new(Mutex::new(V2WaitState {
+            pending: HashMap::new(),
+            orphans: VecDeque::new(),
+            sends_finished: false,
+        }));
+        let notify = Arc::new(Notify::new());
+        let rx = daemon.subscribe_packet_dispositions();
+        let wait_state = Arc::clone(&state);
+        let wait_notify = Arc::clone(&notify);
+        let wait_handle = tokio::spawn(async move { disposition_waiter(rx, wait_state, wait_notify).await });
+        disp_wait = Some((state, notify, wait_handle));
+    }
+
+    for (send_index, step) in sends.into_iter().enumerate() {
+        let po = Box::pin(daemon.process_raw_with_packet_id(step.raw, step.iface)).await;
+        for exp in &step.expectations {
+            match exp {
+                Expectation::Pipeline(p) => {
+                    check_v2_pipeline(&po.output, *p).map_err(|e| map_pipeline_mismatch(send_index, e))?;
+                }
+                Expectation::Disposition(d) => {
+                    let Some(packet_id) = po.packet_id else {
+                        if let Some((_, _, h)) = &disp_wait {
+                            h.abort();
+                        }
+                        return Err(ScenarioRunError::MissingRuntimePacketId { send_index });
+                    };
+                    if let Some((state, notify, _)) = &disp_wait {
+                        let mut g = state.lock().await;
+                        if let Err(e) = g.register_packet_expect(packet_id, send_index, *d) {
+                            drop(g);
+                            if let Some((_, _, h)) = &disp_wait {
+                                h.abort();
+                            }
+                            return Err(e);
+                        }
+                        notify.notify_one();
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some((state, notify, wait_handle)) = disp_wait {
+        {
+            let mut g = state.lock().await;
+            g.sends_finished = true;
+        }
+        notify.notify_one();
+
+        let wait_result = wait_handle.await;
+        match wait_result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(ScenarioRunError::PacketDispositionWaiterJoin),
         }
     }
 
@@ -92,14 +345,14 @@ impl PacketsScenario {
         self.plan.sends.push(SendStep {
             raw,
             iface: self.default_iface.clone(),
-            expect_packet: None,
+            expectations: Vec::new(),
         });
         self
     }
 
-    pub fn expect_packet(mut self, expected: PipelineOutcome) -> Self {
+    pub fn expect_packet(mut self, expected: Expectation) -> Self {
         if let Some(last) = self.plan.sends.last_mut() {
-            last.expect_packet = Some(expected);
+            last.expectations.push(expected);
             self.dangling_packet_expect = false;
         } else {
             self.dangling_packet_expect = true;
@@ -123,6 +376,17 @@ impl PacketsScenario {
             return Err(ScenarioRunError::ExpectPacketWithoutSend);
         }
         Box::pin(execute_scenario_plan(self.plan, daemon, capture)).await
+    }
+
+    pub async fn run_v2(
+        self,
+        daemon: &TestDaemon,
+        capture: &Arc<EventCapture>,
+    ) -> Result<(), ScenarioRunError> {
+        if self.dangling_packet_expect {
+            return Err(ScenarioRunError::ExpectPacketWithoutSend);
+        }
+        Box::pin(execute_scenario_plan_v2(self.plan, daemon, capture)).await
     }
 }
 
@@ -393,13 +657,13 @@ impl TcpSessionScenario {
         self.plan.sends.push(SendStep {
             raw,
             iface,
-            expect_packet: None,
+            expectations: Vec::new(),
         });
     }
 
-    pub fn expect_packet(mut self, expected: PipelineOutcome) -> Self {
+    pub fn expect_packet(mut self, expected: Expectation) -> Self {
         if let Some(last) = self.plan.sends.last_mut() {
-            last.expect_packet = Some(expected);
+            last.expectations.push(expected);
             self.dangling_packet_expect = false;
         } else {
             self.dangling_packet_expect = true;
@@ -423,6 +687,17 @@ impl TcpSessionScenario {
             return Err(ScenarioRunError::ExpectPacketWithoutSend);
         }
         Box::pin(execute_scenario_plan(self.plan, daemon, capture)).await
+    }
+
+    pub async fn run_v2(
+        self,
+        daemon: &TestDaemon,
+        capture: &Arc<EventCapture>,
+    ) -> Result<(), ScenarioRunError> {
+        if self.dangling_packet_expect {
+            return Err(ScenarioRunError::ExpectPacketWithoutSend);
+        }
+        Box::pin(execute_scenario_plan_v2(self.plan, daemon, capture)).await
     }
 }
 

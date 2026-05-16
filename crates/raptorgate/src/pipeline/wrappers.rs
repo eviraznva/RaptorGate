@@ -1504,6 +1504,7 @@ where
     Dns: DnssecProvider + Send + Sync + 'static,
 {
     pub sessions: Arc<crate::conntrack::session_manager::SessionManager<ZR, Dns>>,
+    pub ct: Arc<Conntrack>,
 }
 
 impl<ZR, Dns> Clone for SessionHandoffStage<ZR, Dns>
@@ -1514,6 +1515,7 @@ where
     fn clone(&self) -> Self {
         Self {
             sessions: Arc::clone(&self.sessions),
+            ct: Arc::clone(&self.ct),
         }
     }
 }
@@ -1532,6 +1534,7 @@ where
         }
         let dir = ctx.ct_direction().unwrap_or(Direction::Original);
         self.sessions.admit_packet(&entry, ctx.clone(), dir);
+        self.ct.flush_deferred_payload_observers(&entry);
         StageOutcome::Halt
     }
 }

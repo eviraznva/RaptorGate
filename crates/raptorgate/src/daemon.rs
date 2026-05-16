@@ -215,11 +215,23 @@ pub type V2Pipeline<D> = Chain<
             Chain<
                 ConntrackInStage,
                 Chain<
-                    SessionHandoffStage<
-                        RoutingZoneResolver<<D as DaemonDeps>::IfaceMon>,
-                        <D as DaemonDeps>::Dnssec,
+                    NatPreroutingStage,
+                    Chain<
+                        NatPostroutingStage<
+                            <D as DaemonDeps>::IfaceMon,
+                            <D as DaemonDeps>::Routes,
+                        >,
+                        Chain<
+                            ExecutionStage,
+                            Chain<
+                                ConntrackConfirmStage,
+                                SessionHandoffStage<
+                                    RoutingZoneResolver<<D as DaemonDeps>::IfaceMon>,
+                                    <D as DaemonDeps>::Dnssec,
+                                >,
+                            >,
+                        >,
                     >,
-                    ExecutionStage,
                 >,
             >,
         >,
@@ -252,11 +264,29 @@ where
                         ct: Arc::clone(deps.conntrack),
                     },
                     tail: Chain {
-                        head: SessionHandoffStage {
-                            sessions,
+                        head: NatPreroutingStage {
+                            engine: Arc::clone(deps.nat_engine),
                         },
-                        tail: ExecutionStage {
-                            tx: exec_tx.clone(),
+                        tail: Chain {
+                            head: NatPostroutingStage {
+                                engine: Arc::clone(deps.nat_engine),
+                                routes: Arc::clone(deps.routing_table),
+                                interface_monitor: Arc::clone(deps.interface_monitor),
+                            },
+                            tail: Chain {
+                                head: ExecutionStage {
+                                    tx: exec_tx.clone(),
+                                },
+                                tail: Chain {
+                                    head: ConntrackConfirmStage {
+                                        ct: Arc::clone(deps.conntrack),
+                                    },
+                                    tail: SessionHandoffStage {
+                                        sessions,
+                                        ct: Arc::clone(deps.conntrack),
+                                    },
+                                },
+                            },
                         },
                     },
                 },
@@ -384,6 +414,12 @@ pub struct Daemon<D: DaemonDeps> {
 pub struct ProcessOutput {
     pub emitted: Vec<ExecutionItem>,
     pub stage_outcome: Option<StageOutcome>,
+}
+
+#[derive(Debug)]
+pub struct ProcessOutputWithPacketId {
+    pub packet_id: Option<crate::data_plane::packet_context::PacketId>,
+    pub output: ProcessOutput,
 }
 
 impl<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>> Daemon<D> {
@@ -526,21 +562,37 @@ where
     }
 
     pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
+        self.process_raw_with_packet_id(raw, iface).await.output
+    }
+
+    pub async fn process_raw_with_packet_id(
+        &self,
+        raw: Vec<u8>,
+        iface: Arc<str>,
+    ) -> ProcessOutputWithPacketId {
         let packet = RawPacket { raw, iface };
         let Some(mut ctx) = self.defrag.process_raw(packet) else {
-            return ProcessOutput {
-                emitted: Vec::new(),
-                stage_outcome: None,
+            return ProcessOutputWithPacketId {
+                packet_id: None,
+                output: ProcessOutput {
+                    emitted: Vec::new(),
+                    stage_outcome: None,
+                },
             };
         };
+
+        let packet_id = Some(ctx.packet_id());
 
         if !matches!(
             &ctx.borrow_sliced_packet().net,
             Some(NetSlice::Ipv4(_) | NetSlice::Ipv6(_))
         ) {
-            return ProcessOutput {
-                emitted: Vec::new(),
-                stage_outcome: None,
+            return ProcessOutputWithPacketId {
+                packet_id,
+                output: ProcessOutput {
+                    emitted: Vec::new(),
+                    stage_outcome: None,
+                },
             };
         }
 
@@ -561,9 +613,12 @@ where
             }
         }
 
-        ProcessOutput {
-            emitted,
-            stage_outcome: Some(stage_outcome),
+        ProcessOutputWithPacketId {
+            packet_id,
+            output: ProcessOutput {
+                emitted,
+                stage_outcome: Some(stage_outcome),
+            },
         }
     }
 }

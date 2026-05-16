@@ -7,7 +7,7 @@ use ngfw::proto::events::{ConntrackPacketDirection, TcpSessionState};
 use crate::{
     conntrack_queries::ConntrackSnapshotExt,
     event_capture_concurrency_mutex, event,
-    outcomes::{PipelineOutcome, ProcessOutputAssertExt},
+    outcomes::{check_legacy_pipeline, Expectation, PipelineOutcome},
     scenario::{Scenario, SocketV4, TcpSessionV4},
     set_event_capture,
     smoke_icmp_allow_warn_bundle,
@@ -151,9 +151,7 @@ async fn phase05_zone_policy_icmp_allow_warn_tcp_udp_drop_warn() {
     let out_icmp = Box::pin(td
         .process_raw(raw_icmp, Arc::from("eth1")))
         .await;
-    out_icmp
-        .assert_outcome(PipelineOutcome::Forward)
-        .expect("icmp forward");
+    check_legacy_pipeline(&out_icmp, PipelineOutcome::Forwarded).expect("icmp forward");
     cap.wait_for_subsequence(&[event!(|e: &Event| {
         matches!(
             &e.kind,
@@ -178,9 +176,7 @@ async fn phase05_zone_policy_icmp_allow_warn_tcp_udp_drop_warn() {
         td.process_raw(syn_only.syn_from_client(), Arc::from("eth1")),
     )
     .await;
-    out_tcp
-        .assert_outcome(PipelineOutcome::Drop)
-        .expect("tcp syn drop");
+    check_legacy_pipeline(&out_tcp, PipelineOutcome::Rejected).expect("tcp syn drop");
     cap.wait_for_subsequence(&[event!(|e: &Event| {
         matches!(
             &e.kind,
@@ -206,9 +202,7 @@ async fn phase05_zone_policy_icmp_allow_warn_tcp_udp_drop_warn() {
         Arc::from("eth1"),
     ))
     .await;
-    out_udp
-        .assert_outcome(PipelineOutcome::Drop)
-        .expect("udp drop");
+    check_legacy_pipeline(&out_udp, PipelineOutcome::Rejected).expect("udp drop");
     cap.wait_for_subsequence(&[event!(|e: &Event| {
         matches!(
             &e.kind,
@@ -274,7 +268,7 @@ async fn phase05_smtp_sender_allow_list_rst_on_bad_mail_from() {
         .client_sends(b"EHLO c\r\n")
         .server_sends(b"250 hi\r\n")
         .client_sends(b"MAIL FROM:<x@test.remote>\r\n")
-        .expect_packet(PipelineOutcome::TcpReset { count: None })
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .run(&td, &cap)
         .await
         .expect("deny sender");
@@ -311,7 +305,7 @@ async fn phase05_smtp_recipient_allow_list_rst_on_bad_rcpt() {
         .client_sends(b"MAIL FROM:<a@test.local>\r\n")
         .server_sends(b"250 ok\r\n")
         .client_sends(b"RCPT TO:<b@test.remote>\r\n")
-        .expect_packet(PipelineOutcome::TcpReset { count: None })
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .run(&td, &cap)
         .await
         .expect("deny rcpt");
@@ -350,7 +344,7 @@ async fn phase05_smtp_mixed_recipient_second_rcpt_denied() {
         .client_sends(b"RCPT TO:<b@test.local>\r\n")
         .server_sends(b"250 ok\r\n")
         .client_sends(b"RCPT TO:<c@test.remote>\r\n")
-        .expect_packet(PipelineOutcome::TcpReset { count: None })
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .run(&td, &cap)
         .await
         .expect("mixed rcpt");
@@ -401,7 +395,7 @@ async fn phase05_smtp_message_dotall_allow_deny() {
         .client_sends(b"DATA\r\n")
         .server_sends(b"354 ok\r\n")
         .client_sends(b"hello line1\r\nline2 world\r\n.\r\n")
-        .expect_packet(PipelineOutcome::TcpReset { count: None })
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .run(&td, &cap)
         .await
         .expect("hello world deny");
@@ -427,7 +421,7 @@ async fn phase05_smtp_message_dotall_allow_deny() {
         .client_sends(b"DATA\r\n")
         .server_sends(b"354 ok\r\n")
         .client_sends(b"Subject: x\r\n\r\ntesting alone\r\n.\r\n")
-        .expect_packet(PipelineOutcome::TcpReset { count: None })
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .run(&td, &cap)
         .await
         .expect("no hello deny");
@@ -458,14 +452,14 @@ async fn phase05_smtp_mail_buffered_then_released_batch() {
 
     Scenario::tcp(client, server)
         .open()
-        .expect_packet(PipelineOutcome::Forward)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .server_sends(b"220 mx\r\n")
         .client_sends(b"EHLO c\r\n")
         .server_sends(b"250 hello\r\n")
         .client_sends(b"MAIL FROM:<a@test.local>\r\n")
-        .expect_packet(PipelineOutcome::ReleasedBatch { count: None })
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .server_sends(b"250 ok\r\n")
-        .expect_packet(PipelineOutcome::ReleasedBatch { count: None })
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
         .run(&td, &cap)
         .await
         .expect("smtp mail buffer release");
@@ -518,7 +512,7 @@ async fn phase05_dst_port_rule_allow_and_drop() {
 
     blocked
         .open()
-        .expect_packet(PipelineOutcome::Drop)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Rejected))
         .run(&td, &cap)
         .await
         .expect("12345 drop");

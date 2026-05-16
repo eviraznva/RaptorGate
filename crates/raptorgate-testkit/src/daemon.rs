@@ -14,7 +14,7 @@ use ngfw::conntrack::table::Conntrack;
 use ngfw::config::provider::AppConfigProvider;
 use ngfw::config::AppConfig;
 use ngfw::daemon::SessionsFor;
-use ngfw::daemon::{Daemon, DaemonDeps, DaemonV2, ProcessOutput, StaticDeps};
+use ngfw::daemon::{Daemon, DaemonDeps, DaemonV2, ProcessOutput, ProcessOutputWithPacketId, StaticDeps};
 use ngfw::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use ngfw::data_plane::dns_inspection::config::DnsInspectionConfig;
 use ngfw::data_plane::ips::config::IpsConfig;
@@ -214,6 +214,10 @@ impl TestDaemon {
 
     pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
         self.daemon.process_raw(raw, iface).await
+    }
+
+    pub async fn process_raw_with_packet_id(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutputWithPacketId {
+        self.daemon_v2.process_raw_with_packet_id(raw, iface).await
     }
 }
 

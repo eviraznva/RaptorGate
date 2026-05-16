@@ -12,13 +12,19 @@ pub use config_bundle::{
 };
 pub use conntrack_queries::ConntrackSnapshotExt;
 pub use daemon::{TestDaemon, TestDaemonBuilder, TestDaemonBuildError, TestDeps};
-pub use outcomes::{OutcomeMismatch, PipelineOutcome, ProcessOutputAssertExt};
+pub use outcomes::{
+    check_legacy_pipeline, check_v2_pipeline, count_tcp_rst_in_output, Expectation, PipelineMismatch,
+    PipelineOutcome, reduce_daemon_v2_process_output, reduce_legacy_daemon_process_output,
+};
 pub use scenario::{
-    icmp_echo_ipv4, IcmpSessionV4, PacketsScenario, Scenario, ScenarioRunError,
-    SocketV4, TcpSessionScenario, TcpSessionV4, UdpSessionV4,
+    icmp_echo_ipv4, IcmpSessionV4, PacketsScenario, Scenario, ScenarioRunError, SocketV4,
+    TcpSessionScenario, TcpSessionV4, UdpSessionV4,
 };
 
 pub use ngfw::daemon::ProcessOutput;
+pub use ngfw::daemon::ProcessOutputWithPacketId;
+pub use ngfw::data_plane::packet_context::PacketId;
+pub use ngfw::l4::release::PacketDispositionOutcome;
 pub use ngfw::events::{
     set_event_capture, Event, EventCapture, EventKind, EventPredicate, WaitForSubsequenceError,
     WaitForSubsequenceResult,
@@ -172,7 +178,7 @@ mod tests {
         Box::pin(Scenario::packets()
             .on_iface("eth1")
             .send(raw)
-            .expect_packet(PipelineOutcome::Forward)
+            .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
             .expect_event(event!(|e: &Event| {
                 matches!(&e.kind, EventKind::PolicyWarning { verdict, .. } if verdict == &"allow")
             }))
@@ -200,7 +206,7 @@ mod tests {
 
         Box::pin(Scenario::packets()
             .send(raw)
-            .expect_packet(PipelineOutcome::Forward)
+            .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
             .run(&td, &cap))
             .await
             .expect("scenario");
