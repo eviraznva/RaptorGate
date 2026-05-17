@@ -32,7 +32,7 @@ mod post_session;
 
 use crate::config::provider::{AppConfigProvider, DiskAppConfigProvider};
 use crate::config::AppConfig;
-use crate::daemon::{Daemon, ProdDeps};
+use crate::daemon::{Daemon, DaemonDeps, DaemonV2, ProdDeps};
 use crate::control_server::ControlServer;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -70,8 +70,8 @@ use crate::conntrack::proto::ProtoRegistry;
 use crate::conntrack::proto::tcp::TcpHandler;
 use crate::conntrack::proto::udp::UdpHandler;
 use crate::conntrack::reaper::Reaper;
-use crate::conntrack::table::Conntrack;
-use crate::conntrack::tuple::Direction as CtDirection;
+use crate::conntrack::table::{Conntrack, LookupResult};
+use crate::conntrack::tuple::{Direction as CtDirection, FlowTuple};
 
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
@@ -487,34 +487,45 @@ async fn main() {
 
     let (exec_tx, exec_rx) = mpsc::unbounded_channel();
 
-    let defrag = IpDefragEngine::new(DefragConfig::default());
-    let daemon = Daemon::assemble(
-        Arc::new(ProdDeps {
-            metrics_collector: Arc::clone(&metrics_collector),
-            config_provider: Arc::clone(&config_provider),
-            zone_interfaces: Arc::clone(&zone_interfaces),
-            local_ips: Arc::new(local_ips.clone()),
-            identity_sessions: Arc::clone(&identity_sessions),
-            conntrack: Arc::clone(&conntrack),
-            dpi_classifier: Arc::clone(&dpi_classifier),
-            ml_flow_stats: Arc::clone(&ml_flow_stats),
-            decision_engine: Arc::clone(&decision_engine),
-            dns_inspection: Arc::clone(&dns_inspection),
-            ips: Arc::clone(&ips),
-            nat_engine: Arc::clone(&nat_engine),
-            ml_detector: Arc::clone(&ml_detector),
-            policy_engine: Arc::clone(&policy_engine),
-            zone_resolver: Arc::clone(&zone_resolver),
-            routing_table: Arc::clone(&routing_table),
-            interface_monitor: Arc::clone(&interface_monitor),
-            helpers: Arc::clone(&helpers),
-            smtp_tracker: Arc::clone(&smtp_tracker),
-            smtp_policy_retriever: Arc::clone(&smtp_policy_retriever),
-        }),
-        defrag,
-        exec_tx.clone(),
-        None,
+    let deps = Arc::new(ProdDeps {
+        metrics_collector: Arc::clone(&metrics_collector),
+        config_provider: Arc::clone(&config_provider),
+        zone_interfaces: Arc::clone(&zone_interfaces),
+        local_ips: Arc::new(local_ips.clone()),
+        identity_sessions: Arc::clone(&identity_sessions),
+        conntrack: Arc::clone(&conntrack),
+        dpi_classifier: Arc::clone(&dpi_classifier),
+        ml_flow_stats: Arc::clone(&ml_flow_stats),
+        decision_engine: Arc::clone(&decision_engine),
+        dns_inspection: Arc::clone(&dns_inspection),
+        ips: Arc::clone(&ips),
+        nat_engine: Arc::clone(&nat_engine),
+        ml_detector: Arc::clone(&ml_detector),
+        policy_engine: Arc::clone(&policy_engine),
+        zone_resolver: Arc::clone(&zone_resolver),
+        routing_table: Arc::clone(&routing_table),
+        interface_monitor: Arc::clone(&interface_monitor),
+        helpers: Arc::clone(&helpers),
+        smtp_tracker: Arc::clone(&smtp_tracker),
+        smtp_policy_retriever: Arc::clone(&smtp_policy_retriever),
+    });
+
+    let use_v2 = std::env::var("RAPTORGATE_PIPELINE").is_ok_and(|v| v == "v2");
+    tracing::info!(
+        event = "startup.pipeline.selected",
+        version = if use_v2 { "v2" } else { "v1" },
+        "pipeline version selected"
     );
+
+    let new_defrag = IpDefragEngine::new(DefragConfig::default());
+    let daemon = Daemon::assemble(deps.clone(), new_defrag, exec_tx.clone(), None);
+
+    let daemon_v2 = if use_v2 {
+        let defrag_v2 = IpDefragEngine::new(DefragConfig::default());
+        Some(DaemonV2::assemble_v2(deps.clone(), defrag_v2, exec_tx.clone(), None))
+    } else {
+        None
+    };
 
     if config.ssl_inspection_enabled {
         let tls_runtime_cancel = CancellationToken::new();
@@ -672,35 +683,80 @@ async fn main() {
 
     let pkt_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
-    while let Some(raw_packet) = raw_rx.recv().await {
-        if let Some(mut ctx) = daemon.defrag().process_raw(raw_packet) {
-            let pipeline = daemon.pipeline_clone();
-            let tun = Arc::clone(&tun);
-            let metrics_collector = Arc::clone(&metrics_collector);
-            let counter = Arc::clone(&pkt_counter);
-            let exec_tx = daemon.exec_sender();
+    if let Some(daemon_v2) = daemon_v2 {
+        while let Some(raw_packet) = raw_rx.recv().await {
+            if let Some(mut ctx) = daemon_v2.defrag().process_raw(raw_packet) {
+                let pipeline = daemon_v2.pipeline_clone();
+                let sessions = Arc::clone(daemon_v2.sessions());
+                let deps = Arc::clone(daemon_v2.deps());
+                let tun = Arc::clone(&tun);
+                let metrics_collector = Arc::clone(&metrics_collector);
+                let counter = Arc::clone(&pkt_counter);
+                let exec_tx = daemon_v2.exec_sender();
 
-            tokio::spawn(async move {
-                if !matches!(
-                    &ctx.borrow_sliced_packet().net,
-                    Some(NetSlice::Ipv4(_) | NetSlice::Ipv6(_))
-                ) {
-                    return;
-                }
+                tokio::spawn(async move {
+                    if !matches!(
+                        &ctx.borrow_sliced_packet().net,
+                        Some(NetSlice::Ipv4(_) | NetSlice::Ipv6(_))
+                    ) {
+                        return;
+                    }
 
-                let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                if n == 1 || n.is_multiple_of(1000) {
-                    tracing::info!(event = "pipeline.packet.tick", count = n, "pipeline processed packet");
-                }
+                    let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if n == 1 || n.is_multiple_of(1000) {
+                        tracing::info!(event = "pipeline.packet.tick", count = n, "pipeline processed packet");
+                    }
 
-                let result: StageOutcome = pipeline.process(&mut ctx, &exec_tx).await;
+                    if let Some(tuple) = FlowTuple::from_sliced(ctx.borrow_sliced_packet()) {
+                        let static_deps = deps.static_dependencies();
+                        if let LookupResult::Found { entry, direction } = static_deps.conntrack.lookup(&tuple) {
+                            if sessions.has_session_handle(&entry) {
+                                sessions.admit_packet(&entry, ctx.clone(), direction);
+                            }
+                        }
+                    }
 
-                if matches!(result, StageOutcome::Continue) {
-                    tun.forward(&ctx).await;
-                } else {
-                    metrics_collector.observe_drop();
-                }
-            });
+                    let result: StageOutcome = pipeline.process(&mut ctx, &exec_tx).await;
+
+                    if matches!(result, StageOutcome::Continue) {
+                        tun.forward(&ctx).await;
+                    } else {
+                        metrics_collector.observe_drop();
+                    }
+                });
+            }
+        }
+    } else {
+        while let Some(raw_packet) = raw_rx.recv().await {
+            if let Some(mut ctx) = daemon.defrag().process_raw(raw_packet) {
+                let pipeline = daemon.pipeline_clone();
+                let tun = Arc::clone(&tun);
+                let metrics_collector = Arc::clone(&metrics_collector);
+                let counter = Arc::clone(&pkt_counter);
+                let exec_tx = daemon.exec_sender();
+
+                tokio::spawn(async move {
+                    if !matches!(
+                        &ctx.borrow_sliced_packet().net,
+                        Some(NetSlice::Ipv4(_) | NetSlice::Ipv6(_))
+                    ) {
+                        return;
+                    }
+
+                    let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if n == 1 || n.is_multiple_of(1000) {
+                        tracing::info!(event = "pipeline.packet.tick", count = n, "pipeline processed packet");
+                    }
+
+                    let result: StageOutcome = pipeline.process(&mut ctx, &exec_tx).await;
+
+                    if matches!(result, StageOutcome::Continue) {
+                        tun.forward(&ctx).await;
+                    } else {
+                        metrics_collector.observe_drop();
+                    }
+                });
+            }
         }
     }
 }

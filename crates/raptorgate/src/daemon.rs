@@ -561,6 +561,18 @@ where
         self.disposition_tx.subscribe()
     }
 
+    pub fn defrag(&self) -> &IpDefragEngine {
+        &self.defrag
+    }
+
+    pub fn pipeline_clone(&self) -> V2Pipeline<D> {
+        self.pipeline.clone()
+    }
+
+    pub fn exec_sender(&self) -> ExecutionSender {
+        self.exec_tx.clone()
+    }
+
     pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
         self.process_raw_with_packet_id(raw, iface).await.output
     }
