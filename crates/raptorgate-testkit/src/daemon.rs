@@ -478,7 +478,7 @@ impl TestDaemonBuilder {
         let defrag_v2 = IpDefragEngine::new(DefragConfig::default());
         
         let daemon = Arc::new(Daemon::assemble(deps.clone(), defrag, exec_tx, Some(exec_rx)));
-        let daemon_v2 = DaemonV2::assemble_v2(deps.clone(), defrag_v2, exec_tx_v2, Some(exec_rx_v2));
+        let daemon_v2 = DaemonV2::assemble_v2(deps.clone(), defrag_v2, exec_tx_v2, Some(exec_rx_v2), None);
 
         Ok(TestDaemon {
             daemon,

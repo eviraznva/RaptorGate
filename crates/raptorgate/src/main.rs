@@ -520,9 +520,20 @@ async fn main() {
     let new_defrag = IpDefragEngine::new(DefragConfig::default());
     let daemon = Daemon::assemble(deps.clone(), new_defrag, exec_tx.clone(), None);
 
+    let tun = TunForwarder::new(&config);
+    config_provider
+        .register(Arc::clone(&tun), "TunForwarder")
+        .await;
+
+    tokio::spawn(ExecutionSink::new(Arc::clone(&tun), Arc::clone(&metrics_collector), exec_rx).run());
+    tracing::info!(
+        event = "startup.execution_sink.spawned",
+        "execution sink spawned"
+    );
+
     let daemon_v2 = if use_v2 {
         let defrag_v2 = IpDefragEngine::new(DefragConfig::default());
-        Some(DaemonV2::assemble_v2(deps.clone(), defrag_v2, exec_tx.clone(), None))
+        Some(DaemonV2::assemble_v2(deps.clone(), defrag_v2, exec_tx.clone(), None, Some(Arc::clone(&tun))))
     } else {
         None
     };
@@ -597,17 +608,6 @@ async fn main() {
             }
         }
     }
-
-    let tun = TunForwarder::new(&config);
-    config_provider
-        .register(Arc::clone(&tun), "TunForwarder")
-        .await;
-
-    tokio::spawn(ExecutionSink::new(Arc::clone(&tun), Arc::clone(&metrics_collector), exec_rx).run());
-    tracing::info!(
-        event = "startup.execution_sink.spawned",
-        "execution sink spawned"
-    );
 
     let (sniffer, mut raw_rx) = InterfaceSniffer::with_sniffing(config.pcap_timeout_ms);
     let sniffer = Arc::new(sniffer);
@@ -692,7 +692,6 @@ async fn main() {
                 let tun = Arc::clone(&tun);
                 let metrics_collector = Arc::clone(&metrics_collector);
                 let counter = Arc::clone(&pkt_counter);
-                let exec_tx = daemon_v2.exec_sender();
 
                 tokio::spawn(async move {
                     if !matches!(
@@ -716,6 +715,7 @@ async fn main() {
                         }
                     }
 
+                    let (exec_tx, _) = mpsc::unbounded_channel();
                     let result: StageOutcome = pipeline.process(&mut ctx, &exec_tx).await;
 
                     if matches!(result, StageOutcome::Continue) {

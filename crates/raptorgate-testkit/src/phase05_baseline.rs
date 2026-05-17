@@ -724,44 +724,53 @@ async fn phase05_zone_policy_icmp_allow_warn_tcp_udp_drop_warn_v2() {
         .await
         .expect("daemon");
 
-    let raw_icmp = crate::icmp_echo_ipv4([192, 168, 10, 1], [192, 168, 20, 10]);
-    let out_icmp = Box::pin(td.process_raw_with_packet_id(raw_icmp, Arc::from("eth1"))).await;
-    check_v2_pipeline(&out_icmp.output, PipelineOutcome::Forwarded).expect("icmp forward");
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(crate::icmp_echo_ipv4([192, 168, 10, 1], [192, 168, 20, 10]))
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .run_v2(&td, &cap)
+        .await
+        .expect("icmp forward");
 
-    let syn_only = TcpSessionV4::new(
-        SocketV4 {
-            ip: [192, 168, 10, 4],
-            port: 44_444,
-        },
-        SocketV4 {
-            ip: [192, 168, 20, 10],
-            port: 4444,
-        },
-    );
-    let out_tcp = Box::pin(
-        td.process_raw_with_packet_id(syn_only.syn_from_client(), Arc::from("eth1")),
-    )
-    .await;
-    check_v2_pipeline(&out_tcp.output, PipelineOutcome::Forwarded).expect("tcp syn drop");
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(
+            TcpSessionV4::new(
+                SocketV4 {
+                    ip: [192, 168, 10, 4],
+                    port: 44_444,
+                },
+                SocketV4 {
+                    ip: [192, 168, 20, 10],
+                    port: 4444,
+                },
+            )
+            .syn_from_client(),
+        )
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .run_v2(&td, &cap)
+        .await
+        .expect("tcp syn forward");
 
-    let udp = crate::UdpSessionV4::new(
-        SocketV4 {
-            ip: [192, 168, 10, 5],
-            port: 50_000,
-        },
-        SocketV4 {
-            ip: [192, 168, 20, 10],
-            port: 5555,
-        },
-    );
-    let out_udp = Box::pin(
-        td.process_raw_with_packet_id(
-            udp.datagram_client_to_server(b"ping"),
-            Arc::from("eth1"),
-        ),
-    )
-    .await;
-    check_v2_pipeline(&out_udp.output, PipelineOutcome::Forwarded).expect("udp drop");
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(
+            crate::UdpSessionV4::new(
+                SocketV4 {
+                    ip: [192, 168, 10, 5],
+                    port: 50_000,
+                },
+                SocketV4 {
+                    ip: [192, 168, 20, 10],
+                    port: 5555,
+                },
+            )
+            .datagram_client_to_server(b"ping"),
+        )
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .run_v2(&td, &cap)
+        .await
+        .expect("udp forward");
 
     set_event_capture(None);
 }
@@ -1084,7 +1093,7 @@ async fn phase05_conntrack_tcp_established_after_handshake_v2() {
             .expect("daemon"),
     );
 
-    let s = TcpSessionV4::new(
+    Scenario::tcp(
         SocketV4 {
             ip: [192, 168, 10, 41],
             port: 41_010,
@@ -1093,10 +1102,12 @@ async fn phase05_conntrack_tcp_established_after_handshake_v2() {
             ip: [192, 168, 20, 21],
             port: 12_340,
         },
-    );
-    let _ = Box::pin(td.process_raw_with_packet_id(s.syn_from_client(), Arc::from("eth1"))).await;
-    let _ = Box::pin(td.process_raw_with_packet_id(s.syn_ack_from_server(), Arc::from("eth2"))).await;
-    let _ = Box::pin(td.process_raw_with_packet_id(s.ack_from_client(), Arc::from("eth1"))).await;
+    )
+    .open()
+    .run_v2(&td, &cap)
+    .await
+    .expect("handshake");
+
     let snap = td.conntrack_snapshot();
     assert!(
         snap.contains_flow_ipv4([192, 168, 10, 41], [192, 168, 20, 21]),

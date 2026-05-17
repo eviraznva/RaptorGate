@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use etherparse::NetSlice;
 use parking_lot::Mutex;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::conntrack::helper::HelperRegistry;
 use crate::conntrack::session_manager::SessionManager;
@@ -222,13 +222,10 @@ pub type V2Pipeline<D> = Chain<
                             <D as DaemonDeps>::Routes,
                         >,
                         Chain<
-                            ExecutionStage,
-                            Chain<
-                                ConntrackConfirmStage,
-                                SessionHandoffStage<
-                                    RoutingZoneResolver<<D as DaemonDeps>::IfaceMon>,
-                                    <D as DaemonDeps>::Dnssec,
-                                >,
+                            ConntrackConfirmStage,
+                            SessionHandoffStage<
+                                RoutingZoneResolver<<D as DaemonDeps>::IfaceMon>,
+                                <D as DaemonDeps>::Dnssec,
                             >,
                         >,
                     >,
@@ -240,7 +237,6 @@ pub type V2Pipeline<D> = Chain<
 
 fn build_v2_pipeline<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>>(
     deps: &StaticDeps<D>,
-    exec_tx: &ExecutionSender,
     sessions: Arc<SessionsFor<D>>,
 ) -> V2Pipeline<D>
 where
@@ -274,17 +270,12 @@ where
                                 interface_monitor: Arc::clone(deps.interface_monitor),
                             },
                             tail: Chain {
-                                head: ExecutionStage {
-                                    tx: exec_tx.clone(),
+                                head: ConntrackConfirmStage {
+                                    ct: Arc::clone(deps.conntrack),
                                 },
-                                tail: Chain {
-                                    head: ConntrackConfirmStage {
-                                        ct: Arc::clone(deps.conntrack),
-                                    },
-                                    tail: SessionHandoffStage {
-                                        sessions,
-                                        ct: Arc::clone(deps.conntrack),
-                                    },
+                                tail: SessionHandoffStage {
+                                    sessions,
+                                    ct: Arc::clone(deps.conntrack),
                                 },
                             },
                         },
@@ -498,7 +489,6 @@ pub struct DaemonV2<D: DaemonDeps> {
     deps: Arc<D>,
     pipeline: V2Pipeline<D>,
     defrag: IpDefragEngine,
-    exec_tx: ExecutionSender,
     test_exec_rx: Mutex<Option<ExecutionReceiver>>,
     sessions: Arc<SessionsFor<D>>,
     disposition_tx: broadcast::Sender<crate::l4::release::PacketDispositionEvent>,
@@ -514,6 +504,7 @@ where
         defrag: IpDefragEngine,
         exec_tx: ExecutionSender,
         test_exec_rx: Option<ExecutionReceiver>,
+        tun: Option<Arc<crate::data_plane::tun_forwarder::TunForwarder>>,
     ) -> Arc<Self> {
         let s = deps.static_dependencies();
         let (release_tx, release_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -528,13 +519,13 @@ where
             Some(Arc::clone(s.policy_dnssec)),
             release_tx,
         );
-        let pipeline = build_v2_pipeline(&s, &exec_tx, Arc::clone(&sessions));
+        let pipeline = build_v2_pipeline(&s, Arc::clone(&sessions));
         let post_session = PostSessionHandler::new(
             release_rx,
             Arc::clone(s.nat_engine),
             Arc::clone(s.routing_table),
             Arc::clone(s.interface_monitor),
-            None,
+            tun,
             disposition_tx.clone(),
         );
         tokio::spawn(post_session.run());
@@ -542,7 +533,6 @@ where
             deps,
             pipeline,
             defrag,
-            exec_tx,
             test_exec_rx: Mutex::new(test_exec_rx),
             sessions,
             disposition_tx,
@@ -567,10 +557,6 @@ where
 
     pub fn pipeline_clone(&self) -> V2Pipeline<D> {
         self.pipeline.clone()
-    }
-
-    pub fn exec_sender(&self) -> ExecutionSender {
-        self.exec_tx.clone()
     }
 
     pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
@@ -608,15 +594,8 @@ where
             };
         }
 
-        if let Some(tuple) = FlowTuple::from_sliced(ctx.borrow_sliced_packet()) {
-            if let LookupResult::Found { entry, direction } = self.sessions.conntrack().lookup(&tuple) {
-                if self.sessions.has_session_handle(&entry) {
-                    self.sessions.admit_packet(&entry, ctx.clone(), direction);
-                }
-            }
-        }
-
-        let stage_outcome = self.pipeline.process(&mut ctx, &self.exec_tx).await;
+        let (exec_tx, _) = mpsc::unbounded_channel();
+        let stage_outcome = self.pipeline.process(&mut ctx, &exec_tx).await;
 
         let mut emitted = Vec::new();
         if let Some(rx) = self.test_exec_rx.lock().as_mut() {

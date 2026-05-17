@@ -26,6 +26,9 @@ use ngfw::zones::resolver::ZoneResolver;
 use ngfw::zones::{DirectionalZonePairs, ResolvedZonePair, ZonePairId};
 
 use crate::daemon::{TestDaemon, TestDeps};
+use ngfw::events::EventCapture;
+use crate::outcomes::{Expectation, PipelineOutcome};
+use crate::scenario::Scenario;
 
 #[derive(Clone)]
 struct StubZoneResolver;
@@ -315,6 +318,7 @@ async fn testkit_daemon_v2_exposes_session_layer() {
 #[tokio::test]
 async fn v2_daemon_processes_packet_through_l3_chain() {
     let td = TestDaemon::builder().build().await.expect("daemon");
+    let cap = Arc::new(EventCapture::new());
 
     let mut raw = Vec::new();
     PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
@@ -323,13 +327,13 @@ async fn v2_daemon_processes_packet_through_l3_chain() {
         .write(&mut raw, b"test")
         .expect("packet");
 
-    let output = td.daemon_v2().process_raw(raw, Arc::from("eth0")).await;
-
-    assert!(
-        matches!(output.stage_outcome, Some(StageOutcome::Continue) | Some(StageOutcome::Halt)),
-        "expected Continue or Halt, got {:?}",
-        output.stage_outcome
-    );
+    Scenario::packets()
+        .on_iface("eth0")
+        .send(raw)
+        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .run_v2(&td, &cap)
+        .await
+        .expect("packet processed");
 
     let events = td.sessions().observer_event_count();
     assert!(events > 0, "expected observer events from conntrack, got {}", events);

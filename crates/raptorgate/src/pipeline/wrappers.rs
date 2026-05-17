@@ -1529,13 +1529,12 @@ where
         let Some(entry) = ctx.ct().cloned() else {
             return StageOutcome::Continue;
         };
-        if !self.sessions.has_session_handle(&entry) {
-            return StageOutcome::Continue;
+        if self.sessions.has_session_handle(&entry) {
+            let dir = ctx.ct_direction().unwrap_or(Direction::Original);
+            self.sessions.admit_packet(&entry, ctx.clone(), dir);
+            self.ct.flush_deferred_payload_observers(&entry);
         }
-        let dir = ctx.ct_direction().unwrap_or(Direction::Original);
-        self.sessions.admit_packet(&entry, ctx.clone(), dir);
-        self.ct.flush_deferred_payload_observers(&entry);
-        StageOutcome::Halt
+        StageOutcome::Continue
     }
 }
 
