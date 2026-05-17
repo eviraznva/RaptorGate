@@ -76,7 +76,11 @@ impl ObserverRegistry {
     }
 
     pub fn register(&self, observer: Arc<dyn CtObserver>) {
-        self.observers.write().push(observer);
+        let mut observers = self.observers.write();
+        if observers.iter().any(|existing| Arc::ptr_eq(existing, &observer)) {
+            return;
+        }
+        observers.push(observer);
     }
 
     pub fn fire_new(&self, entry: &ConntrackEntry) {
@@ -123,5 +127,25 @@ impl ObserverRegistry {
 
     fn snapshot(&self) -> Vec<Arc<dyn CtObserver>> {
         self.observers.read().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DummyObserver;
+
+    impl CtObserver for DummyObserver {}
+
+    #[test]
+    fn register_is_idempotent_for_same_observer_arc() {
+        let registry = ObserverRegistry::new();
+        let observer = Arc::new(DummyObserver);
+
+        registry.register(observer.clone());
+        registry.register(observer);
+
+        assert_eq!(registry.observer_count(), 1);
     }
 }

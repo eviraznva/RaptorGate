@@ -1210,3 +1210,98 @@ async fn phase05_tcp_established_and_timewait_on_close_v2() {
 
     set_event_capture(None);
 }
+
+
+#[tokio::test]
+async fn phase05_smtp_state_transitions() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(dual_zone_allow_ipv4_bundle())
+        .build()
+        .await
+        .expect("daemon");
+
+    let client = SocketV4 {
+        ip: [192, 168, 10, 50],
+        port: 41_020,
+    };
+    let server = SocketV4 {
+        ip: [192, 168, 20, 50],
+        port: 25,
+    };
+
+    let mut scenario = Scenario::tcp(client, server)
+        .open()
+        .server_sends(b"220 mx ESMTP ready\r\n")
+        .client_sends(b"EHLO client\r\n");
+
+    for pred in smtp_state_chain_preds() {
+        scenario = scenario.expect_event(pred);
+    }
+
+    scenario
+        .server_sends(b"250-client\r\n")
+        .client_sends(b"MAIL FROM:<user1@test.local>\r\n")
+        .server_sends(b"250 2.1.0 OK\r\n")
+        .client_sends(b"RCPT TO:<user2@test.local>\r\n")
+        .server_sends(b"250 2.1.5 OK\r\n")
+        .client_sends(b"DATA\r\n")
+        .server_sends(b"354 go ahead\r\n")
+        .client_sends(b"Test email body\r\n.\r\n")
+        .server_sends(b"250 2.0.0 queued\r\n")
+        .run(&td, &cap)
+        .await
+        .expect("smtp state transitions");
+
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn phase05_smtp_state_transitions_v2() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(dual_zone_allow_ipv4_bundle())
+        .build()
+        .await
+        .expect("daemon");
+
+    let client = SocketV4 {
+        ip: [192, 168, 10, 51],
+        port: 41_021,
+    };
+    let server = SocketV4 {
+        ip: [192, 168, 20, 51],
+        port: 25,
+    };
+
+    let mut scenario = Scenario::tcp(client, server)
+        .open()
+        .server_sends(b"220 mx ESMTP ready\r\n")
+        .client_sends(b"EHLO client\r\n");
+
+    for pred in smtp_state_chain_preds() {
+        scenario = scenario.expect_event(pred);
+    }
+
+    scenario
+        .server_sends(b"250-client\r\n")
+        .client_sends(b"MAIL FROM:<user1@test.local>\r\n")
+        .server_sends(b"250 2.1.0 OK\r\n")
+        .client_sends(b"RCPT TO:<user2@test.local>\r\n")
+        .server_sends(b"250 2.1.5 OK\r\n")
+        .client_sends(b"DATA\r\n")
+        .server_sends(b"354 go ahead\r\n")
+        .client_sends(b"Test email body\r\n.\r\n")
+        .server_sends(b"250 2.0.0 queued\r\n")
+        .run_v2(&td, &cap)
+        .await
+        .expect("smtp state transitions");
+
+    set_event_capture(None);
+}

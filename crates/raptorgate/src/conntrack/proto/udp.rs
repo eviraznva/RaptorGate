@@ -5,7 +5,7 @@ use etherparse::{SlicedPacket, TransportSlice};
 
 use crate::conntrack::config::ConntrackConfig;
 use crate::conntrack::entry::{ConntrackEntry};
-use crate::conntrack::observer::ObserverRegistry;
+use crate::conntrack::observer::{CtObserver, ObserverRegistry};
 use crate::conntrack::tuple::{Direction, Protocol};
 use crate::conntrack::proto::{CtVerdict, ProtocolHandler, NewStateError, NewStateOutcome, ProtoState};
 
@@ -109,6 +109,10 @@ impl ProtocolHandler for UdpHandler {
         };
 
         udp.stream && udp.packets_orig >= 2 && udp.packets_reply >= 2
+    }
+
+    fn register_observer(&self, observer: Arc<dyn CtObserver>) {
+        self.observers.register(observer);
     }
 }
 

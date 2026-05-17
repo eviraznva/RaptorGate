@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::conntrack::config::ConntrackConfig;
 use crate::conntrack::entry::{ConntrackEntry};
+use crate::conntrack::observer::CtObserver;
 use crate::conntrack::proto::udp::UdpProtoState;
 use crate::conntrack::proto::tcp::TcpProtoState;
 use crate::conntrack::proto::icmp::IcmpProtoState;
@@ -70,6 +71,8 @@ pub trait ProtocolHandler: Send + Sync {
     fn timeout(&self, state: &ProtoState, config: &ConntrackConfig) -> Duration;
 
     fn is_assured(&self, _state: &ProtoState) -> bool { false }
+
+    fn register_observer(&self, _observer: Arc<dyn CtObserver>) {}
 }
 
 pub struct ProtoRegistry {

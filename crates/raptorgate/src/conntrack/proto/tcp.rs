@@ -6,7 +6,7 @@ use etherparse::{SlicedPacket, TcpSlice, TransportSlice};
 use crate::conntrack::entry::ConntrackEntry;
 use crate::conntrack::config::ConntrackConfig;
 use crate::conntrack::tuple::{Direction, Protocol};
-use crate::conntrack::observer::{AnomalyKind, ObserverRegistry};
+use crate::conntrack::observer::{AnomalyKind, CtObserver, ObserverRegistry};
 use crate::conntrack::proto::{CtVerdict, NewStateError, NewStateOutcome, ProtoState, ProtocolHandler};
 use crate::conntrack::reassembler;
 use crate::data_plane::packet_context::PacketId;
@@ -411,6 +411,10 @@ impl ProtocolHandler for TcpHandler {
           tcp.state,
           TcpConntrack::Established | TcpConntrack::FinWait | TcpConntrack::CloseWait | TcpConntrack::LastAck | TcpConntrack::TimeWait
       )
+    }
+
+    fn register_observer(&self, observer: Arc<dyn CtObserver>) {
+        self.observers.register(observer);
     }
 }
 

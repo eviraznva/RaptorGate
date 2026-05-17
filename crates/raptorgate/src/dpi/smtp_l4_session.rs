@@ -145,6 +145,7 @@ impl<ZR: ZoneResolver> SmtpSession<ZR> {
             &mut self.terminated,
             src,
             dst,
+            dir,
             payload,
         );
 
@@ -179,6 +180,7 @@ impl<ZR: ZoneResolver> SmtpSession<ZR> {
         outcome
     }
 
+    // FIXME: return l4outcome that deletes the session
     fn reset_session(&mut self) {
         self.inner = L4SmtpState::default();
         self.buffered_ids.clear();
@@ -252,6 +254,7 @@ impl L4SmtpState {
         terminated: &mut Option<TerminatedSmtpSession>,
         src: EndpointIdentifier,
         dst: EndpointIdentifier,
+        dir: Direction,
         payload: &[u8],
     ) -> (BufferingDisposition, bool) {
         let mut should_remove = false;
@@ -262,38 +265,37 @@ impl L4SmtpState {
             unit: UnitStatus::Incomplete,
         };
 
-        let is_from_client = self.client.as_ref().is_some_and(|c| *c == src);
-        let is_from_server = self.server.as_ref().is_some_and(|s| *s == src);
-
-        if is_from_client || is_from_server {
+        if self.client.is_some() || self.server.is_some() {
             let mut evaluation_phase = None;
 
-            if is_from_server {
-                disposition.packet = PacketAction::Pass;
-                let mut bytes = payload.iter();
-                loop {
-                    match self.response_receiver.parse(&mut bytes) {
-                        Ok(response) => {
-                            if self
-                                .apply_transition(&mut packet_queue, &mut id_queue, SessionTransition::Response(response))
-                                .is_err()
-                            {
+            match dir {
+                Direction::Reply => { // reply should always be the server and original should always be the client
+                    disposition.packet = PacketAction::Pass;
+                    let mut bytes = payload.iter();
+                    loop {
+                        match self.response_receiver.parse(&mut bytes) {
+                            Ok(response) => {
+                                if self
+                                    .apply_transition(&mut packet_queue, &mut id_queue, SessionTransition::Response(response))
+                                    .is_err()
+                                {
+                                    should_remove = true;
+                                    break;
+                                }
+                                if matches!(self.state, SessionState::Data(DataState::Collecting)) {
+                                    self.data_receiver = Some(DataReceiver::new());
+                                }
+                                self.response_receiver.reset();
+                            }
+                            Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
+                            Err(_) => {
                                 should_remove = true;
                                 break;
                             }
-                            if matches!(self.state, SessionState::Data(DataState::Collecting)) {
-                                self.data_receiver = Some(DataReceiver::new());
-                            }
-                            self.response_receiver.reset();
-                        }
-                        Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
-                        Err(_) => {
-                            should_remove = true;
-                            break;
                         }
                     }
                 }
-            } else {
+                Direction::Original => {
                 disposition.packet = match self.state {
                     SessionState::Ready | SessionState::EnvelopeOpen | SessionState::ReciepientSet
                         | SessionState::Data(DataState::Await354 | DataState::Collecting)
@@ -416,6 +418,7 @@ impl L4SmtpState {
                         }
                     }
                 }
+            }
             }
 
             if disposition.unit == UnitStatus::Complete && let Some(phase) = evaluation_phase {

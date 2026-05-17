@@ -522,7 +522,15 @@ impl Conntrack {
     }
 
     pub fn register_observer(&self, observer: Arc<dyn CtObserver>) {
-        self.observers.register(observer);
+        self.observers.register(Arc::clone(&observer));
+
+        if let Some(handler) = self.proto.get(Protocol::Tcp) {
+            handler.register_observer(Arc::clone(&observer));
+        }
+
+        if let Some(handler) = self.proto.get(Protocol::Udp) {
+            handler.register_observer(observer);
+        }
     }
 
     pub fn expectations(&self) -> &Arc<ExpectationTable> {
@@ -805,9 +813,10 @@ mod tests {
     use parking_lot::Mutex;
     use std::time::Duration;
     use std::net::{IpAddr, Ipv4Addr};
-    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
     use crate::conntrack::tuple::Protocol;
+    use crate::conntrack::observer::CtObserver;
     use crate::conntrack::proto::udp::UdpProtoState;
     use crate::conntrack::proto::{NewStateError, NewStateOutcome, ProtoState, ProtocolHandler};
 
@@ -816,6 +825,7 @@ mod tests {
         verdict: Mutex<CtVerdict>,
         timeout: Duration,
         new_state_ok: bool,
+        register_count: AtomicUsize,
     }
 
     impl MockHandler {
@@ -825,6 +835,7 @@ mod tests {
                 verdict: Mutex::new(CtVerdict::Accept),
                 timeout: Duration::from_secs(60),
                 new_state_ok: true,
+                register_count: AtomicUsize::new(0),
             }
         }
     }
@@ -860,6 +871,10 @@ mod tests {
         fn timeout(&self, _state: &ProtoState, _config: &ConntrackConfig) -> Duration {
             self.timeout
         }
+
+        fn register_observer(&self, _observer: Arc<dyn CtObserver>) {
+            self.register_count.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn build_ct() -> (Conntrack, Arc<MockHandler>) {
@@ -868,6 +883,21 @@ mod tests {
 
     fn build_ct_with_config(config: ConntrackConfig) -> (Conntrack, Arc<MockHandler>) {
         let handler = Arc::new(MockHandler::new(Protocol::Udp));
+
+        let mut registry = ProtoRegistry::new();
+        registry.register(handler.clone());
+
+        let ct = Conntrack::new(Arc::new(registry), config);
+
+        (ct, handler)
+    }
+
+    fn build_tcp_ct() -> (Conntrack, Arc<MockHandler>) {
+        build_tcp_ct_with_config(ConntrackConfig::default())
+    }
+
+    fn build_tcp_ct_with_config(config: ConntrackConfig) -> (Conntrack, Arc<MockHandler>) {
+        let handler = Arc::new(MockHandler::new(Protocol::Tcp));
 
         let mut registry = ProtoRegistry::new();
         registry.register(handler.clone());
@@ -946,6 +976,19 @@ mod tests {
         assert!(!ct.confirm(&e2));
         assert_eq!(ct.entries_count(), 1);
         assert_eq!(ct.metrics.insert_collisions.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn register_observer_fanouts_to_tcp_handler() {
+        let (ct, handler) = build_tcp_ct();
+
+        struct DummyObserver;
+
+        impl CtObserver for DummyObserver {}
+
+        ct.register_observer(Arc::new(DummyObserver));
+
+        assert_eq!(handler.register_count.load(Ordering::Relaxed), 1);
     }
 
     #[test]
