@@ -108,7 +108,7 @@ Flow semantics:
 - `admin_login` authenticates an administrator and then runs administrator authorization. It consumes `PaloAlto-Admin-Role` and `PaloAlto-Admin-Access-Domain`. It must not create a User-ID mapping.
 - `portal_login` authenticates an end user from a direct Authentication Portal login and creates or refreshes a User-ID mapping if the Authentication Profile authorizes the user.
 - `auth_policy_portal` authenticates an end user for a specific Authentication Policy match, records authentication timestamps, and creates or refreshes a User-ID mapping.
-- `api_login` is local/API management authentication. If external authentication is later enabled for this flow, it must follow `admin_login` authorization rules unless a separate API-specific profile type is designed.
+- `api_login` is local/API management authentication. External RADIUS authentication for `api_login` is out of scope for the first implementation slice. If external authentication is later enabled for this flow, it must follow `admin_login` authorization rules unless a separate API-specific profile type is designed.
 
 Each flow passes its `AuthenticationFlowKind` into provider request construction, profile evaluation, diagnostics, and runtime mapping decisions.
 
@@ -273,6 +273,7 @@ Authentication Profile becomes the central authorization gate for login:
 - `isActive`
 - `type`
 - `serverProfileId`
+- `allowedFlows`
 - `retrieveUserGroupFromRadius`
 - `allowList`
 - `failedAttempts`
@@ -298,6 +299,10 @@ Authentication Profile becomes the central authorization gate for login:
 
 Semantics:
 
+- `allowedFlows: AuthenticationFlowKind[]` is required and must be non-empty.
+- `allowedFlows` controls where the profile can be selected and evaluated. A flow not listed for the profile fails closed before provider authentication.
+- Newly created RADIUS Authentication Profiles default to `['admin_login', 'portal_login', 'auth_policy_portal']` and exclude `api_login`.
+- Migrated profiles include the flows that match their previous use. If previous use is ambiguous, migration must require administrator review instead of silently enabling all flows.
 - `retrieveUserGroupFromRadius` defaults to `false` for new profiles.
 - Empty Allow List means no non-local user can authenticate through that profile.
 - `all` allows any user accepted by the provider.
@@ -357,6 +362,15 @@ External administrator login through RADIUS must use typed Palo Alto VSAs:
 - `PaloAlto-Admin-Role` maps to a default dynamic role or custom local admin role profile.
 - `PaloAlto-Admin-Access-Domain` maps to a local access domain model.
 
+Administrator login order:
+
+1. RADIUS provider accepts credentials.
+2. Authentication Profile evaluates active status, `allowedFlows`, lockout, and Allow List.
+3. `AdminAuthorizationEvaluator` evaluates admin role and access domain from typed Palo Alto VSAs or explicit fallback mappings.
+4. Backend creates the admin session only after both Authentication Profile authorization and administrator authorization succeed.
+
+Authentication Profile Allow List therefore gates whether the identity may use the profile at all. Administrator authorization separately gates management role and scope.
+
 Role names must be matched case-sensitively for custom roles and lower-case for predefined dynamic roles. RaptorGate role names must be normalized to a Palo Alto-compatible vocabulary:
 
 - `superuser`
@@ -396,6 +410,8 @@ Successful end-user authentication creates or updates a User-ID runtime mapping:
 - idle expiration
 - absolute expiration
 - groups from group mapping
+- group source
+- group mapping status
 
 The firewall must not treat RADIUS `PaloAlto-User-Group` as `identity_group`. Security policy group membership comes from User-ID group mapping:
 
@@ -404,6 +420,18 @@ The firewall must not treat RADIUS `PaloAlto-User-Group` as `identity_group`. Se
 - RADIUS group VSA is only for Allow List evaluation in Authentication Profile.
 
 Group source semantics:
+
+Runtime mappings must separate the source category from current lookup status:
+
+```ts
+type UserIdGroupSource = 'ldap' | 'local' | 'radius_compat' | 'none';
+
+type UserIdGroupMappingStatus =
+  | 'resolved'
+  | 'unavailable'
+  | 'disabled'
+  | 'required_but_failed';
+```
 
 | Source | Consumed by | Not consumed by |
 | --- | --- | --- |
@@ -416,9 +444,9 @@ Group source semantics:
 LDAP/group mapping failure behavior:
 
 - RADIUS end-user login can still succeed when LDAP group lookup is unavailable if the Authentication Profile authorizes the user.
-- The resulting User-ID mapping is created with `groups=[]`, `groupSource='unavailable'`, and a diagnostic error.
+- The resulting User-ID mapping is created with `groups=[]`, `groupSource='ldap'`, `groupMappingStatus='unavailable'`, and a diagnostic error.
 - Security Policy can match `identity_user` for that user but cannot match LDAP-backed `identity_group` until group mapping succeeds.
-- Profiles may opt into `requireGroupMappingForUserId`; when enabled, LDAP/group mapping failure turns the provider accept into an authorization denial and no User-ID mapping is created.
+- Profiles may opt into `requireGroupMappingForUserId`; when enabled, LDAP/group mapping failure turns the provider accept into an authorization denial, returns `groupMappingStatus='required_but_failed'` in diagnostics, and creates no User-ID mapping.
 - Group refresher continues retrying LDAP for active mappings and updates firewall runtime state when groups become available.
 
 Existing `IdentitySession` can evolve into `UserIdMapping` with compatibility field names during migration. Policy matchers should keep user-visible names `identity_user` and `identity_group`, but their source semantics change to User-ID mapping.
@@ -526,6 +554,7 @@ New payload fields:
 - `absolute_expires_at`
 - `groups`
 - `group_source`
+- `group_mapping_status`
 - `authentication_policy_rule_id`
 
 Firewall runtime store:
@@ -596,6 +625,7 @@ Compatibility mode:
 - When enabled, every login, policy match, config export, and UI diagnostics view must mark the behavior as deprecated compatibility behavior.
 - Compatibility mode must have test coverage and a planned removal path.
 - Compatibility mode must not affect Palo Alto-mode Authentication Profile Allow List behavior.
+- Compatibility mode uses `groupSource='radius_compat'` and `groupMappingStatus='resolved'` only for migrated runtime mappings that must preserve old policy-group behavior.
 
 Migration diagnostics must include these concrete warnings when applicable:
 
@@ -626,6 +656,7 @@ Required audit events:
 - `auth.admin.vsa.denied`
 - `auth.user_id.mapping.upserted`
 - `auth.user_id.mapping.revoked`
+- `auth.compat.radius_vsa_policy_group.used`
 - `auth.policy.matched`
 - `auth.policy.challenge_required`
 - `auth.policy.timestamp.accepted`
@@ -700,12 +731,12 @@ Unit tests:
 - Admin authorization denies missing/unknown role.
 - Admin flow consumes admin VSAs without creating User-ID mapping.
 - Portal flow creates User-ID mapping without requiring admin VSAs.
-- LDAP group mapping unavailable creates User-ID mapping with empty groups unless `requireGroupMappingForUserId` is enabled.
+- LDAP group mapping unavailable creates User-ID mapping with empty groups, `groupSource='ldap'`, and `groupMappingStatus='unavailable'` unless `requireGroupMappingForUserId` is enabled.
 - Authentication Portal idle timer resets on activity.
 - Authentication Portal max timer does not reset.
 - Authentication Policy timestamp satisfies only compatible factor sets.
 - Security Policy `identity_group` uses LDAP/User-ID groups, not RADIUS VSA groups.
-- Compatibility mode can preserve migrated RADIUS VSA policy-group behavior only with diagnostics enabled.
+- Compatibility mode can preserve migrated RADIUS VSA policy-group behavior only with diagnostics and `auth.compat.radius_vsa_policy_group.used` audit events enabled.
 
 Integration tests:
 
@@ -757,6 +788,7 @@ Each slice must include backend tests, firewall tests where packet-path behavior
 Planning constraints:
 
 - The first implementation plan must not bundle EAP/PEAP work into the PAP-compatible semantic refactor.
+- The first implementation plan must not enable external RADIUS authentication for `api_login`.
 - The EAP/PEAP slice must begin with an explicit library evaluation for Node/NestJS RADIUS/EAP support. If no library is selected, the plan must specify isolated protocol modules, RFC/test-vector coverage, and FreeRADIUS/Microsoft NPS interop tests before implementation.
 - Authentication Policy packet-path work must be planned after typed RADIUS attributes, Authentication Profile evaluation, admin authorization, and User-ID group-source cleanup are stable.
 - Each plan must state whether it changes persisted config schema, runtime sync proto, data-plane policy behavior, or frontend API contracts.
