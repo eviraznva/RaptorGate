@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex as StdMutex, Weak};
 
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use etherparse::TransportSlice;
 use tokio::sync::mpsc;
 
 use crate::conntrack::entry::CtStatus;
@@ -368,8 +369,35 @@ where
         let Some(pending_arc) = self.pending_by_flow.get(&flow) else {
             return;
         };
+        let Some(tx) = self.handles.get(&flow).map(|tx| tx.clone()) else {
+            return;
+        };
+        let packet_id = packet.packet_id();
+        let empty_payload_start_seq = match packet.borrow_sliced_packet().transport.as_ref() {
+            Some(TransportSlice::Tcp(tcp)) if tcp.payload().is_empty() => Some(tcp.sequence_number()),
+            Some(TransportSlice::Udp(udp)) if udp.payload().is_empty() => {
+                Some(0)
+            }
+            Some(TransportSlice::Icmpv4(icmp)) if icmp.payload().is_empty() => {
+                Some(0)
+            }
+            Some(TransportSlice::Icmpv6(icmp)) if icmp.payload().is_empty() => {
+                Some(0)
+            }
+            _ => None,
+        };
         let mut pending = pending_arc.lock().expect("session pending");
-        pending.map.insert(packet.packet_id(), PendingEntry { packet, dir });
+        pending.map.insert(packet_id, PendingEntry { packet, dir });
+        drop(pending);
+
+        if let Some(tcp_payload_start_seq) = empty_payload_start_seq {
+            let _ = tx.send(L4Input::Bytes {
+                dir,
+                bytes: Vec::new(),
+                packet_id,
+                tcp_payload_start_seq,
+            });
+        }
     }
 
     pub fn invalidate_session(&self, flow: &FlowKey) {

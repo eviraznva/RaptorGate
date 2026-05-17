@@ -492,6 +492,7 @@ pub struct DaemonV2<D: DaemonDeps> {
     test_exec_rx: Mutex<Option<ExecutionReceiver>>,
     sessions: Arc<SessionsFor<D>>,
     disposition_tx: broadcast::Sender<crate::l4::release::PacketDispositionEvent>,
+    release_tx: mpsc::UnboundedSender<crate::l4::release::ReleaseAction>,
 }
 
 impl<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>> DaemonV2<D>
@@ -517,7 +518,7 @@ where
             Arc::clone(s.policy_engine),
             s.zone_resolver.as_ref().clone(),
             Some(Arc::clone(s.policy_dnssec)),
-            release_tx,
+            release_tx.clone(),
         );
         let pipeline = build_v2_pipeline(&s, Arc::clone(&sessions));
         let post_session = PostSessionHandler::new(
@@ -536,6 +537,7 @@ where
             test_exec_rx: Mutex::new(test_exec_rx),
             sessions,
             disposition_tx,
+            release_tx,
         })
     }
 

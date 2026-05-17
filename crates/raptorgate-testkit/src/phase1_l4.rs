@@ -19,6 +19,7 @@ use ngfw::conntrack::tuple::{Direction, FlowTuple, Protocol};
 use ngfw::daemon::DataPipeline;
 use ngfw::data_plane::dns_inspection::dnssec::DnssecProvider;
 use ngfw::data_plane::packet_context::{PacketContext, PacketId};
+use ngfw::l4::release::PacketDispositionOutcome;
 use ngfw::pipeline::StageOutcome;
 use ngfw::policy::engine::PolicyEngine;
 use ngfw::l4::{IcmpL4PipelineFactory, UdpL4PipelineFactory};

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use ngfw::events::Event;
+use ngfw::l4::release::PacketDispositionOutcome;
 use ngfw::proto::config::{SmtpMatch, SmtpMatchAction, SmtpMatchers};
 use ngfw::proto::events::{ConntrackPacketDirection, TcpSessionState};
 
@@ -727,7 +728,7 @@ async fn phase05_zone_policy_icmp_allow_warn_tcp_udp_drop_warn_v2() {
     Scenario::packets()
         .on_iface("eth1")
         .send(crate::icmp_echo_ipv4([192, 168, 10, 1], [192, 168, 20, 10]))
-        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
         .run_v2(&td, &cap)
         .await
         .expect("icmp forward");
@@ -747,10 +748,10 @@ async fn phase05_zone_policy_icmp_allow_warn_tcp_udp_drop_warn_v2() {
             )
             .syn_from_client(),
         )
-        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Drop))
         .run_v2(&td, &cap)
         .await
-        .expect("tcp syn forward");
+        .expect("tcp syn reject");
 
     Scenario::packets()
         .on_iface("eth1")
@@ -767,10 +768,10 @@ async fn phase05_zone_policy_icmp_allow_warn_tcp_udp_drop_warn_v2() {
             )
             .datagram_client_to_server(b"ping"),
         )
-        .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Drop))
         .run_v2(&td, &cap)
         .await
-        .expect("udp forward");
+        .expect("udp reject");
 
     set_event_capture(None);
 }

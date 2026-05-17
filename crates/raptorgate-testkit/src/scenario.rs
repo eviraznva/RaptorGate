@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 
 use ngfw::data_plane::packet_context::PacketId;
 use ngfw::events::{EventCapture, EventPredicate, WaitForSubsequenceError};
@@ -56,6 +57,8 @@ pub enum ScenarioRunError {
     PacketDispositionBroadcastLagged { missed: u64 },
     #[error("packet disposition broadcast channel closed before expectations were satisfied")]
     PacketDispositionBroadcastClosed,
+    #[error("timed out waiting for packet disposition expectations")]
+    PacketDispositionTimeout,
     #[error("packet disposition waiter task failed to run to completion")]
     PacketDispositionWaiterJoin,
     #[error(transparent)]
@@ -295,18 +298,22 @@ pub(crate) async fn execute_scenario_plan_v2(
         }
     }
 
-    if let Some((state, notify, wait_handle)) = disp_wait {
+    if let Some((state, notify, mut wait_handle)) = disp_wait {
         {
             let mut g = state.lock().await;
             g.sends_finished = true;
         }
         notify.notify_one();
 
-        let wait_result = wait_handle.await;
+        let wait_result = tokio::time::timeout(Duration::from_secs(2), &mut wait_handle).await;
         match wait_result {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(e),
-            Err(_) => return Err(ScenarioRunError::PacketDispositionWaiterJoin),
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(e))) => return Err(e),
+            Ok(Err(_)) => return Err(ScenarioRunError::PacketDispositionWaiterJoin),
+            Err(_) => {
+                wait_handle.abort();
+                return Err(ScenarioRunError::PacketDispositionTimeout);
+            }
         }
     }
 
