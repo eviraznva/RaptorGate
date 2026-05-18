@@ -137,7 +137,7 @@ impl IpDefragEngine {
     /// a fully parsed `PacketContext` once a complete packet is available.
     /// Returns `None` if the packet is a pending fragment or was dropped.
     pub fn process_raw(&self, packet: RawPacket) -> Option<PacketContext> {
-        let RawPacket { raw, iface } = packet;
+        let RawPacket { raw, iface, capture_direction } = packet;
 
         let sliced = match SlicedPacket::from_ethernet(&raw) {
             Ok(p) => p,
@@ -149,7 +149,7 @@ impl IpDefragEngine {
 
         if !sliced.is_ip_payload_fragmented() {
             drop(sliced);
-            return PacketContext::from_raw(raw, iface).ok();
+            return PacketContext::from_raw_with_capture_direction(raw, iface, capture_direction).ok();
         }
 
         let result = self.process(&sliced);
@@ -161,9 +161,9 @@ impl IpDefragEngine {
                 tracing::debug!("defrag dropped packet: {reason}");
                 None
             }
-            DefragResult::Complete(eth_frame) => PacketContext::from_raw(eth_frame, iface).ok(),
+            DefragResult::Complete(eth_frame) => PacketContext::from_raw_with_capture_direction(eth_frame, iface, capture_direction).ok(),
             DefragResult::CompleteWithAnomaly(eth_frame, anomalies) => {
-                let mut ctx = PacketContext::from_raw(eth_frame, iface).ok()?;
+                let mut ctx = PacketContext::from_raw_with_capture_direction(eth_frame, iface, capture_direction).ok()?;
                 ctx.with_warnings_mut(|warnings| warnings.extend(anomalies));
                 Some(ctx)
             }

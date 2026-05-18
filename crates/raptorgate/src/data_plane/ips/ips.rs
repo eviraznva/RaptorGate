@@ -395,6 +395,7 @@ mod tests {
     use crate::data_plane::ips::config::{
         IpsDetectionConfig, IpsGeneralConfig, IpsMatchType, IpsPatternEncoding,
     };
+    use crate::data_plane::packet_context::CaptureDirection;
 
     use crate::dpi::{AppProto, DpiContext};
 
@@ -469,6 +470,7 @@ mod tests {
         PacketContext::from_raw_full(
             raw,
             Arc::<str>::from("eth1"),
+            CaptureDirection::Ingress,
             Vec::new(),
             SystemTime::now(),
             Some(dpi_ctx),
@@ -520,6 +522,7 @@ mod tests {
         let ctx = PacketContext::from_raw_full(
             raw,
             Arc::<str>::from("eth1"),
+            CaptureDirection::Ingress,
             Vec::new(),
             SystemTime::now(),
             None,

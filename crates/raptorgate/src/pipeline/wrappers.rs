@@ -346,6 +346,7 @@ impl Stage for FtpAlgStage {
                         let warnings = ctx.with_warnings_mut(std::mem::take);
                         let dpi_ctx_taken = ctx.with_dpi_ctx_mut(|dpi| dpi.take());
                         let identity_ctx_taken = ctx.with_identity_ctx_mut(|identity| identity.take());
+                        let capture_direction = ctx.capture_direction();
                         let ct_info = ctx.ct_info();
                         let ct_direction = ctx.ct_direction();
                         let ct_is_new = ctx.ct_is_new();
@@ -353,6 +354,7 @@ impl Stage for FtpAlgStage {
                         match PacketContext::from_raw_full(
                             raw_copy,
                             src_interface,
+                            capture_direction,
                             warnings,
                             arrival_time,
                             dpi_ctx_taken,

@@ -37,6 +37,7 @@ use crate::control_server::ControlServer;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
+use crate::data_plane::packet_context::CaptureDirection;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
 use crate::nat::{NatConfigProvider, NatEngine};
@@ -719,9 +720,9 @@ async fn main() {
                     let (exec_tx, _) = mpsc::unbounded_channel();
                     let result: StageOutcome = pipeline.process(&mut ctx, &exec_tx).await;
 
-                    if matches!(result, StageOutcome::Continue) {
+                    if matches!(result, StageOutcome::Continue) && ctx.capture_direction() == CaptureDirection::Ingress {
                         tun.forward(&ctx).await;
-                    } else {
+                    } else if !matches!(result, StageOutcome::Continue) {
                         metrics_collector.observe_drop();
                     }
                 });
@@ -751,9 +752,9 @@ async fn main() {
 
                     let result: StageOutcome = pipeline.process(&mut ctx, &exec_tx).await;
 
-                    if matches!(result, StageOutcome::Continue) {
+                    if matches!(result, StageOutcome::Continue) && ctx.capture_direction() == CaptureDirection::Ingress {
                         tun.forward(&ctx).await;
-                    } else {
+                    } else if !matches!(result, StageOutcome::Continue) {
                         metrics_collector.observe_drop();
                     }
                 });

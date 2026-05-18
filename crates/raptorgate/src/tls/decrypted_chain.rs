@@ -7,6 +7,7 @@ use etherparse::{PacketBuilder, TransportSlice};
 use tonic::async_trait;
 
 use crate::data_plane::packet_context::PacketContext;
+use crate::data_plane::packet_context::CaptureDirection;
 use crate::dpi::{DpiClassifier, DpiContext};
 use crate::identity::{
     resolve_identity, IdentityContext, IdentitySessionStore,
@@ -204,6 +205,7 @@ fn build_packet_context(
     PacketContext::from_raw_full(
         raw,
         Arc::from(src_interface.as_str()),
+        CaptureDirection::Ingress,
         Vec::new(),
         arrival_time,
         Some(seed_ctx.clone()),

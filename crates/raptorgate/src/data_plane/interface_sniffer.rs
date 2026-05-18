@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{AppConfig, ConfigObserver};
+use crate::data_plane::packet_context::CaptureDirection;
 use crate::events::{emit, Event, EventKind};
 
 fn calculate_retry_delay(attempt: u32) -> Duration {
@@ -24,6 +25,7 @@ fn calculate_retry_delay(attempt: u32) -> Duration {
 pub struct RawPacket {
     pub raw: Vec<u8>,
     pub iface: Arc<str>,
+    pub capture_direction: CaptureDirection,
 }
 
 pub struct InterfaceSniffer {
@@ -103,6 +105,7 @@ impl InterfaceSniffer {
         let child = token.child_token();
         let name = iface.clone();
         let timeout = self.pcap_timeout_ms.load(Ordering::Relaxed);
+        let local_mac = read_interface_mac(&name);
 
         let mut cap = match Self::open_capture(&name, timeout) {
             Ok(c) => c,
@@ -143,9 +146,11 @@ impl InterfaceSniffer {
                     match cap.next_packet() {
                         Ok(pkt) => {
                             let packet_len = pkt.data.len();
+                            let capture_direction = classify_capture_direction(pkt.data, local_mac);
                             let packet = RawPacket {
                                 raw: pkt.data.to_vec(),
                                 iface: Arc::clone(&iface_arc),
+                                capture_direction,
                             };
 
                             tracing::trace!(
@@ -293,7 +298,7 @@ impl InterfaceSniffer {
             .promisc(true)
             .timeout(timeout_ms)
             .open()?;
-        if let Err(e) = cap.direction(Direction::In) {
+        if let Err(e) = cap.direction(Direction::InOut) {
             tracing::warn!(
                 event = "sniffer.capture.direction_failed",
                 iface = %iface,
@@ -327,6 +332,43 @@ impl InterfaceSniffer {
     pub fn has_handle(&self, iface: &str) -> bool {
         self.handles.contains_key(iface)
     }
+}
+
+fn classify_capture_direction(packet: &[u8], local_mac: Option<[u8; 6]>) -> CaptureDirection {
+    let Some(local_mac) = local_mac else {
+        return CaptureDirection::Ingress;
+    };
+    let Some(src_mac) = packet.get(6..12) else {
+        return CaptureDirection::Ingress;
+    };
+
+    if src_mac == local_mac {
+        CaptureDirection::Egress
+    } else {
+        CaptureDirection::Ingress
+    }
+}
+
+fn read_interface_mac(iface: &str) -> Option<[u8; 6]> {
+    let path = format!("/sys/class/net/{iface}/address");
+    let raw = std::fs::read_to_string(path).ok()?;
+    parse_mac(raw.trim())
+}
+
+fn parse_mac(raw: &str) -> Option<[u8; 6]> {
+    let parts: Vec<&str> = raw.split(':').collect();
+    let [a, b, c, d, e, f] = parts.as_slice() else {
+        return None;
+    };
+
+    Some([
+        u8::from_str_radix(a, 16).ok()?,
+        u8::from_str_radix(b, 16).ok()?,
+        u8::from_str_radix(c, 16).ok()?,
+        u8::from_str_radix(d, 16).ok()?,
+        u8::from_str_radix(e, 16).ok()?,
+        u8::from_str_radix(f, 16).ok()?,
+    ])
 }
 
 #[derive(Debug, Error)]

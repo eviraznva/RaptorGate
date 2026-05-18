@@ -451,7 +451,7 @@ impl<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>> Daemon<D> {
     }
 
     pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
-        let packet = RawPacket { raw, iface };
+        let packet = RawPacket { raw, iface, capture_direction: Default::default() };
         let Some(mut ctx) = self.defrag.process_raw(packet) else {
             return ProcessOutput {
                 emitted: Vec::new(),
@@ -570,7 +570,7 @@ where
         raw: Vec<u8>,
         iface: Arc<str>,
     ) -> ProcessOutputWithPacketId {
-        let packet = RawPacket { raw, iface };
+        let packet = RawPacket { raw, iface, capture_direction: Default::default() };
         let Some(mut ctx) = self.defrag.process_raw(packet) else {
             return ProcessOutputWithPacketId {
                 packet_id: None,
