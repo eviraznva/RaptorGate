@@ -525,12 +525,10 @@ impl Conntrack {
     pub fn register_observer(&self, observer: Arc<dyn CtObserver>) {
         self.observers.register(Arc::clone(&observer));
 
-        if let Some(handler) = self.proto.get(Protocol::Tcp) {
-            handler.register_observer(Arc::clone(&observer));
-        }
-
-        if let Some(handler) = self.proto.get(Protocol::Udp) {
-            handler.register_observer(observer);
+        for proto in [Protocol::Tcp, Protocol::Udp, Protocol::Icmp, Protocol::IcmpV6] {
+            if let Some(handler) = self.proto.get(proto) {
+                handler.register_observer(Arc::clone(&observer));
+            }
         }
     }
 

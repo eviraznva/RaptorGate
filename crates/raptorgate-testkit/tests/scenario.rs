@@ -325,6 +325,33 @@ async fn packets_run_v2_pipeline_forwarded_icmp() {
 }
 
 #[tokio::test]
+async fn packets_run_v2_disposition_forward_icmp_exchange() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_icmp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+
+    let session = IcmpSessionV4::new([192, 168, 10, 10], [192, 168, 20, 20]);
+
+    Scenario::packets()
+        .on_iface("eth1")
+        .send(session.echo_request(7, 9, b"ping"))
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
+        .send(session.echo_reply(7, 9, b"ping"))
+        .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
+        .run_v2(&td, &cap)
+        .await
+        .expect("icmp exchange forward");
+
+    set_event_capture(None);
+}
+
+#[tokio::test]
 async fn packets_run_v2_pipeline_forwarded_disposition_drop_icmp() {
     let _guard = event_capture_concurrency_mutex().lock().await;
     let cap = Arc::new(EventCapture::new());

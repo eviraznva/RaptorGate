@@ -406,8 +406,8 @@ impl TestDaemonBuilder {
         let mut proto_reg = ProtoRegistry::new();
         proto_reg.register(Arc::new(TcpHandler::new(Arc::clone(&ct_observers))));
         proto_reg.register(Arc::new(UdpHandler::new(Arc::clone(&ct_observers))));
-        proto_reg.register(Arc::new(IcmpHandler::v4()));
-        proto_reg.register(Arc::new(IcmpHandler::v6()));
+        proto_reg.register(Arc::new(IcmpHandler::v4(Arc::clone(&ct_observers))));
+        proto_reg.register(Arc::new(IcmpHandler::v6(Arc::clone(&ct_observers))));
 
         let conntrack = Arc::new(Conntrack::new(
             Arc::new(proto_reg),

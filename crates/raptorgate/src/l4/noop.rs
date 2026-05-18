@@ -35,6 +35,7 @@ macro_rules! impl_noop {
                 _tcp_payload_start_seq: u32,
                 _payload: &[u8],
             ) -> L4Outcome {
+                tracing::trace!(stage=stringify!($ty), "NoopStage received bytes for packet {packet_id:?}");
                 L4Outcome::Forward(vec![packet_id])
             }
 

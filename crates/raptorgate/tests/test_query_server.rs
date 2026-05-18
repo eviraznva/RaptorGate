@@ -194,8 +194,8 @@ fn shared_server() -> &'static SharedServer {
 
                     reg.register(Arc::new(TcpHandler::new(Arc::clone(&observers))));
                     reg.register(Arc::new(UdpHandler::new(Arc::clone(&observers))));
-                    reg.register(Arc::new(IcmpHandler::v4()));
-                    reg.register(Arc::new(IcmpHandler::v6()));
+                    reg.register(Arc::new(IcmpHandler::v4(Arc::clone(&observers))));
+                    reg.register(Arc::new(IcmpHandler::v6(Arc::clone(&observers))));
 
                     reg
                 };
