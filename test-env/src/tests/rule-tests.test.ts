@@ -8,6 +8,7 @@ import {
 	performCommand,
 } from "../harness";
 import { createDefaultSnapshotBundle } from "../harness/fixtures";
+import { sleep } from "bun";
 
 describe("Rule Tests", () => {
 	beforeAll(async () => {
@@ -44,14 +45,18 @@ describe("Rule Tests", () => {
 				createdBy: "rule-tests",
 				bundle,
 			},
-		}).run();
+		})
+			.expectResponse((response: any) => response?.accepted === true)
+			.run();
 
 		await new Promise((resolve) => setTimeout(resolve, 500));
 
 		const server12346 = await performCommand({
 			host: "h1",
-			command: "nc -l -p 12346",
+			command: "ncat -l 12346",
 		}).runDetached();
+
+		await sleep(500)
 
 		try {
 			await performCommand({
@@ -66,8 +71,10 @@ describe("Rule Tests", () => {
 
 		const server12345 = await performCommand({
 			host: "h1",
-			command: "nc -l -p 12345",
+			command: "ncat -l 12345",
 		}).runDetached();
+
+		await sleep(200)
 
 		try {
 			await performCommand({
