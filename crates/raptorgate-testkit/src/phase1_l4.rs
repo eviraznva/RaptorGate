@@ -18,7 +18,7 @@ use ngfw::conntrack::table::Conntrack;
 use ngfw::conntrack::tuple::{Direction, FlowTuple, Protocol};
 use ngfw::daemon::DataPipeline;
 use ngfw::data_plane::dns_inspection::dnssec::DnssecProvider;
-use ngfw::data_plane::packet_context::{PacketContext, PacketId};
+use ngfw::data_plane::packet_context::PacketContext;
 use ngfw::l4::release::PacketDispositionOutcome;
 use ngfw::pipeline::StageOutcome;
 use ngfw::policy::engine::PolicyEngine;
@@ -171,8 +171,28 @@ async fn phase1_ordered_two_inputs_one_flow() {
     );
     let entry = sample_udp_entry(2002);
     assert!(ct.confirm(&entry));
-    sm.inject_session_payload(&entry, Direction::Original, b"x", PacketId(1));
-    sm.inject_session_payload(&entry, Direction::Reply, b"y", PacketId(2));
+
+    let mut original_raw = Vec::new();
+    PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+        .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+        .udp(1000, 2000)
+        .write(&mut original_raw, b"x")
+        .expect("packet");
+    let original_packet = PacketContext::from_raw(original_raw, Arc::from("eth0")).expect("packet");
+    let original_pid = original_packet.packet_id();
+    sm.admit_packet(&entry, original_packet, Direction::Original);
+    sm.inject_session_payload(&entry, Direction::Original, b"x", original_pid);
+
+    let mut reply_raw = Vec::new();
+    PacketBuilder::ethernet2([7, 8, 9, 10, 11, 12], [1, 2, 3, 4, 5, 6])
+        .ipv4([10, 0, 0, 2], [10, 0, 0, 1], 64)
+        .udp(2000, 1000)
+        .write(&mut reply_raw, b"y")
+        .expect("packet");
+    let reply_packet = PacketContext::from_raw(reply_raw, Arc::from("eth1")).expect("packet");
+    let reply_pid = reply_packet.packet_id();
+    sm.admit_packet(&entry, reply_packet, Direction::Reply);
+    sm.inject_session_payload(&entry, Direction::Reply, b"y", reply_pid);
     ct.destroy(&entry, DestroyReason::Manual);
 
     tokio::time::timeout(Duration::from_secs(2), async {

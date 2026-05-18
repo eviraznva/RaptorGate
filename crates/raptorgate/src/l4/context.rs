@@ -8,6 +8,7 @@ use crate::l4::reset::{TcpResetAction, TcpResetBuilder, TcpResetUnavailable};
 use crate::zones::resolver::ZoneResolver;
 use crate::zones::{DirectionalZonePairs, ResolvedZonePair};
 
+#[derive(Debug)]
 pub struct SessionContext {
     entry: Arc<ConntrackEntry>,
     application_protocol: Option<AppProto>,

@@ -210,6 +210,7 @@ async fn main() {
                 packets_reply = entry.packets_reply.load(std::sync::atomic::Ordering::Relaxed),
                 "ct entry destroyed"
             );
+
         }
 
         fn on_anomaly(&self, entry: &ConntrackEntry, kind: AnomalyKind) {

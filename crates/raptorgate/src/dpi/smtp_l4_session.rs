@@ -131,6 +131,8 @@ impl<ZR: ZoneResolver> SmtpSession<ZR> {
     ) -> L4Outcome {
         let (src, dst) = ctx.endpoints(dir);
 
+        tracing::trace!(session=?ctx, "Processing SMTP bytes from session");
+
         if self.maybe_clear_terminated(&src, &dst, payload) {
             return L4Outcome::Terminate {
                 reason: TerminateReason::SmtpPolicyDenied,

@@ -58,8 +58,15 @@ struct PendingEntry {
     dir: Direction,
 }
 
+struct PendingPayload {
+    dir: Direction,
+    bytes: Vec<u8>,
+    tcp_payload_start_seq: u32,
+}
+
 struct SessionPending {
     map: BTreeMap<PacketId, PendingEntry>,
+    payloads: BTreeMap<PacketId, Vec<PendingPayload>>,
 }
 
 struct SessionManagerObs<ZR, Dns>
@@ -386,9 +393,20 @@ where
             }
             _ => None,
         };
-        let mut pending = pending_arc.lock().expect("session pending");
-        pending.map.insert(packet_id, PendingEntry { packet, dir });
-        drop(pending);
+        let queued_payloads = {
+            let mut pending = pending_arc.lock().expect("session pending");
+            pending.map.insert(packet_id, PendingEntry { packet, dir });
+            pending.payloads.remove(&packet_id).unwrap_or_default()
+        };
+
+        for payload in queued_payloads {
+            let _ = tx.send(L4Input::Bytes {
+                dir: payload.dir,
+                bytes: payload.bytes,
+                packet_id,
+                tcp_payload_start_seq: payload.tcp_payload_start_seq,
+            });
+        }
 
         if let Some(tcp_payload_start_seq) = empty_payload_start_seq {
             let _ = tx.send(L4Input::Bytes {
@@ -435,6 +453,7 @@ where
 
         let pending_arc = Arc::new(StdMutex::new(SessionPending {
             map: BTreeMap::new(),
+            payloads: BTreeMap::new(),
         }));
         self.pending_by_flow.insert(flow, Arc::clone(&pending_arc));
 
@@ -558,6 +577,18 @@ where
         let Some(tx) = self.handles.get(&flow) else {
             return;
         };
+
+        if let Some(pending_arc) = self.pending_by_flow.get(&flow) {
+            let mut pending = pending_arc.lock().expect("session pending");
+            if !pending.map.contains_key(&chunk.packet_id) {
+                pending.payloads.entry(chunk.packet_id).or_default().push(PendingPayload {
+                    dir,
+                    bytes: chunk.payload.clone(),
+                    tcp_payload_start_seq: chunk.tcp_payload_start_seq,
+                });
+                return;
+            }
+        }
 
         let _ = tx.send(L4Input::Bytes {
             dir,
@@ -704,7 +735,15 @@ mod tests {
         assert!(ct.confirm(&entry));
         assert_eq!(sm.active_sessions(), 1);
 
-        let pid = PacketId::next();
+        let mut raw = Vec::new();
+        etherparse::PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+            .udp(1000, 2000)
+            .write(&mut raw, b"a")
+            .expect("packet");
+        let packet = PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet");
+        let pid = packet.packet_id();
+        sm.admit_packet(&entry, packet, Direction::Original);
         sm.inject_session_payload(&entry, Direction::Original, b"a", pid);
 
         ct.destroy(&entry, DestroyReason::Timeout);
@@ -745,6 +784,36 @@ mod tests {
 
         sm.admit_packet(&entry, packet, Direction::Original);
         sm.inject_session_payload(&entry, Direction::Original, b"payload", packet_id);
+
+        let action = tokio::time::timeout(Duration::from_secs(2), release_rx.recv())
+            .await
+            .expect("timeout")
+            .expect("release");
+
+        match action {
+            ReleaseAction::Forward { packet } => assert_eq!(packet.packet_id(), packet_id),
+            ReleaseAction::Drop { .. } => panic!("expected forward"),
+        }
+    }
+
+    #[tokio::test]
+    async fn payload_before_admit_is_replayed_when_packet_is_admitted() {
+        let (sm, mut release_rx) = test_session_manager(None);
+        let ct = sm.conntrack().clone();
+        let entry = sample_udp_entry(602);
+        assert!(ct.confirm(&entry));
+
+        let mut raw = Vec::new();
+        etherparse::PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+            .udp(1000, 2000)
+            .write(&mut raw, b"payload")
+            .expect("packet");
+        let packet = PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet");
+        let packet_id = packet.packet_id();
+
+        sm.inject_session_payload(&entry, Direction::Original, b"payload", packet_id);
+        sm.admit_packet(&entry, packet, Direction::Original);
 
         let action = tokio::time::timeout(Duration::from_secs(2), release_rx.recv())
             .await
