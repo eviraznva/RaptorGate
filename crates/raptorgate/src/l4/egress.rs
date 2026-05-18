@@ -5,6 +5,7 @@ use etherparse::NetSlice;
 
 use crate::conntrack::tuple::Direction;
 use crate::data_plane::packet_context::PacketContext;
+use crate::events::{self, Event, EventKind};
 use crate::l4::context::SessionContext;
 use crate::l4::release::{DropReason, ReleaseAction};
 use crate::policy::engine::PolicyEngine;
@@ -78,18 +79,32 @@ where
     );
 
     let packet_id = packet.packet_id();
+    let temp_dst_port = packet
+        .ct()
+        .map(|ct| match packet.ct_direction().unwrap_or(Direction::Original) {
+            Direction::Original => ct.original.dst_port,
+            Direction::Reply => ct.reply().dst_port,
+        });
+
     match verdict {
-        Some(Verdict::Allow) | Some(Verdict::AllowWarn(_)) | None => ReleaseAction::Forward { packet },
-        Some(Verdict::Drop) | Some(Verdict::DropWarn(_)) => ReleaseAction::Drop {
+        Some(Verdict::Allow) | None => ReleaseAction::Forward { packet },
+        Some(Verdict::AllowWarn(msg)) => {
+            events::emit(Event::new(EventKind::PolicyWarning { message: msg, verdict: "allow" }));
+            ReleaseAction::Forward { packet }
+        }
+        Some(Verdict::Drop) => ReleaseAction::Drop {
             packet_id,
             reason: DropReason::PolicyDenied,
-            temp_dst_port: packet
-                .ct()
-                .map(|ct| match packet.ct_direction().unwrap_or(Direction::Original) {
-                    Direction::Original => ct.original.dst_port,
-                    Direction::Reply => ct.reply().dst_port,
-                }),
+            temp_dst_port,
         },
+        Some(Verdict::DropWarn(msg)) => {
+            events::emit(Event::new(EventKind::PolicyWarning { message: msg, verdict: "drop" }));
+            ReleaseAction::Drop {
+                packet_id,
+                reason: DropReason::PolicyDenied,
+                temp_dst_port,
+            }
+        }
     }
 }
 

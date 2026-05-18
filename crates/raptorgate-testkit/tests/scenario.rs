@@ -344,6 +344,13 @@ async fn packets_run_v2_disposition_forward_icmp_exchange() {
         .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
         .send(session.echo_reply(7, 9, b"ping"))
         .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
+        .expect_event(event!(|e: &Event| {
+            matches!(
+                &e.kind,
+                EventKind::PolicyWarning { message, verdict }
+                    if message == "icmp allowed" && verdict == &"allow"
+            )
+        }))
         .run_v2(&td, &cap)
         .await
         .expect("icmp exchange forward");
