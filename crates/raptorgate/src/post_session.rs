@@ -93,6 +93,17 @@ where
         while let Some(action) = self.rx.recv().await {
             match action {
                 ReleaseAction::Forward { mut packet } => {
+                    let direction = packet.ct_direction().unwrap_or(Direction::Original);
+                    let dst_port = packet.ct().map(|ct| {
+                        let flow = match direction {
+                            Direction::Original => ct.original,
+                            Direction::Reply => ct.reply(),
+                        };
+
+                        flow.dst_port
+                    });
+
+                    tracing::trace!(packet_id=?packet.borrow_id(), dst_port=?dst_port, "forwarding packet");
                     let packet_id = packet.packet_id();
                     apply_nat_postrouting(
                         &mut packet,
@@ -109,7 +120,8 @@ where
                         tun.forward(&packet).await;
                     }
                 }
-                ReleaseAction::Drop { packet_id, reason } => {
+                ReleaseAction::Drop { packet_id, reason, temp_dst_port } => {
+                    tracing::trace!(packet=?packet_id, temp_dst_port=?temp_dst_port, "dropping packet");
                     let _ = self.disposition_tx.send(PacketDispositionEvent {
                         packet_id,
                         outcome: PacketDispositionOutcome::Drop,

@@ -489,7 +489,7 @@ impl Conntrack {
         self.expectations.remove_for_parent(entry.id);
         
         self.observers.fire_destroy(entry, reason);
-        tracing::trace!(entries=?self.by_tuple, "conntrack entries on destroy");
+        // tracing::trace!(entries=?self.by_tuple, "conntrack entries on destroy");
 
         self.metrics.destroyed.fetch_add(1, Ordering::Relaxed);
     }

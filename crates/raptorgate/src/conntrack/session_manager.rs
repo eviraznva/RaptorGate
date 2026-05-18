@@ -187,7 +187,7 @@ fn drop_all_pending(
     reason: DropReason,
 ) {
     while let Some((packet_id, _)) = pending.map.pop_first() {
-        let _ = release_tx.send(ReleaseAction::Drop { packet_id, reason });
+        let _ = release_tx.send(ReleaseAction::Drop { packet_id, reason, temp_dst_port: None });
     }
 }
 

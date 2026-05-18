@@ -11,7 +11,7 @@ pub enum DropReason {
 #[derive(Debug)]
 pub enum ReleaseAction {
     Forward { packet: PacketContext },
-    Drop { packet_id: PacketId, reason: DropReason },
+    Drop { packet_id: PacketId, reason: DropReason, temp_dst_port: Option<u16> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

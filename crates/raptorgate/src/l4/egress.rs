@@ -83,6 +83,12 @@ where
         Some(Verdict::Drop) | Some(Verdict::DropWarn(_)) => ReleaseAction::Drop {
             packet_id,
             reason: DropReason::PolicyDenied,
+            temp_dst_port: packet
+                .ct()
+                .map(|ct| match packet.ct_direction().unwrap_or(Direction::Original) {
+                    Direction::Original => ct.original.dst_port,
+                    Direction::Reply => ct.reply().dst_port,
+                }),
         },
     }
 }

@@ -70,8 +70,8 @@ use crate::conntrack::proto::ProtoRegistry;
 use crate::conntrack::proto::tcp::TcpHandler;
 use crate::conntrack::proto::udp::UdpHandler;
 use crate::conntrack::reaper::Reaper;
-use crate::conntrack::table::{Conntrack, LookupResult};
-use crate::conntrack::tuple::{Direction as CtDirection, FlowTuple};
+use crate::conntrack::table::Conntrack;
+use crate::conntrack::tuple::Direction as CtDirection;
 
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
@@ -688,8 +688,6 @@ async fn main() {
         while let Some(raw_packet) = raw_rx.recv().await {
             if let Some(mut ctx) = daemon_v2.defrag().process_raw(raw_packet) {
                 let pipeline = daemon_v2.pipeline_clone();
-                let sessions = Arc::clone(daemon_v2.sessions());
-                let deps = Arc::clone(daemon_v2.deps());
                 let tun = Arc::clone(&tun);
                 let metrics_collector = Arc::clone(&metrics_collector);
                 let counter = Arc::clone(&pkt_counter);
@@ -707,22 +705,13 @@ async fn main() {
                         tracing::info!(event = "pipeline.packet.tick", count = n, "pipeline processed packet");
                     }
 
-                    if let Some(tuple) = FlowTuple::from_sliced(ctx.borrow_sliced_packet()) {
-                        let static_deps = deps.static_dependencies();
-                        if let LookupResult::Found { entry, direction } = static_deps.conntrack.lookup(&tuple) {
-                            if sessions.has_session_handle(&entry) {
-                                sessions.admit_packet(&entry, ctx.clone(), direction);
-                            }
-                        }
-                    }
-
                     let (exec_tx, _) = mpsc::unbounded_channel();
                     let result: StageOutcome = pipeline.process(&mut ctx, &exec_tx).await;
 
-                    if matches!(result, StageOutcome::Continue) {
-                        tun.forward(&ctx).await;
-                    } else {
-                        metrics_collector.observe_drop();
+                    match result {
+                        StageOutcome::Continue => {}
+                        StageOutcome::Halt => metrics_collector.observe_drop(),
+                        StageOutcome::ReleaseBatch(_) => {}
                     }
                 });
             }
@@ -751,10 +740,10 @@ async fn main() {
 
                     let result: StageOutcome = pipeline.process(&mut ctx, &exec_tx).await;
 
-                    if matches!(result, StageOutcome::Continue) {
-                        tun.forward(&ctx).await;
-                    } else {
-                        metrics_collector.observe_drop();
+                    match result {
+                        StageOutcome::Continue => {}
+                        StageOutcome::Halt => metrics_collector.observe_drop(),
+                        StageOutcome::ReleaseBatch(_) => {}
                     }
                 });
             }
