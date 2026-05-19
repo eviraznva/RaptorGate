@@ -1,8 +1,8 @@
-# Full L4 TLS-to-HTTP Inspection Design
+# Full L4 TLS Application Inspection Design
 
 ## Goal
 
-Implement TLS inspection as a first-class L4 session pipeline, not as a transparent redirect proxy and not as a synthetic packet path.
+Implement TLS inspection as a first-class L4 session pipeline, not as a transparent redirect proxy and not as a synthetic packet path. The TLS boundary must be reusable by application L4 stages, starting with HTTPS and SMTP-over-TLS.
 
 The final production flow is:
 
@@ -12,14 +12,15 @@ real packet
   -> Conntrack
   -> SessionManager per-flow task
   -> TCP L4 pipeline
-    -> TLS L4 inspection for HTTPS flows
+    -> TLS L4 inspection for TLS application flows
     -> decrypted plaintext chunks
     -> DecryptedFlowPipeline for DPI, IPS, and policy
-    -> HttpL4Stage for HTTP parser state
+    -> application L4 stage for parser state
     -> generated encrypted TCP packets back to the real network path
 ```
 
 Plain HTTP and decrypted HTTPS must use the same HTTP L4 stage after the TLS boundary.
+Plain SMTP and decrypted SMTP-over-TLS must use the same SMTP L4 stage after the TLS boundary.
 
 ## Current State
 
@@ -31,8 +32,9 @@ This branch already has the earlier packet-free plaintext inspection work:
 - `crates/raptorgate/src/l4/http.rs` starts an HTTP L4 stage that consumes plaintext bytes and stores HTTP DPI state.
 - `crates/raptorgate/src/l4/tls.rs` starts a TLS-to-HTTP handoff contract.
 - `crates/raptorgate/src/l4/factory.rs` starts selecting HTTP for port 80, SMTP for SMTP ports, and passthrough for other TCP.
+- SMTP ports currently go to `SmtpL4Stage`, which parses plaintext SMTP. Implicit SMTPS on port 465 and STARTTLS on ports 25/587 are not decrypted by the L4 TLS path yet.
 
-That is the current branch gap, not a planned intermediate milestone. Port 443 still does not run through a real TLS L4 decrypt pipeline. The old production TLS path still relies on `TransparentRedirect` and `MitmProxy`.
+That is the current branch gap, not a planned intermediate milestone. Port 443, implicit SMTPS on port 465, and SMTP STARTTLS on ports 25/587 still do not run through a real TLS L4 decrypt pipeline. The old production TLS path still relies on `TransparentRedirect` and `MitmProxy`.
 
 ## Problem
 
@@ -48,7 +50,7 @@ nft redirect
 
 That path can inspect TLS, but it is not the architecture needed by the per-flow L4 pipeline. It depends on kernel redirect ownership and a local listener. It does not let an L4 HTTP session stage call TLS inspection and receive plaintext HTTP bytes in the same per-flow L4 task.
 
-The target architecture needs the TLS stage to be part of the same TCP session ownership model as HTTP and SMTP. The TLS stage must consume encrypted TCP stream bytes from `SessionManager`, emit plaintext chunks internally, and emit only legitimate encrypted TCP packets back to the network.
+The target architecture needs the TLS stage to be part of the same TCP session ownership model as HTTP and SMTP. The TLS stage must consume encrypted TCP stream bytes from `SessionManager`, emit plaintext chunks internally, pass those chunks to the correct application L4 stage, and emit only legitimate encrypted TCP packets back to the network.
 
 ## Non-Goals
 
@@ -119,9 +121,9 @@ pub struct L4TcpEndpoint {
 
 `L4TcpWriteHalf` receives encrypted bytes produced by rustls and asks `SessionManager` to emit generated TCP packets in the correct direction.
 
-### TLS L4 Stage
+### TLS Application L4 Stage
 
-`TlsL4DecryptStage` is the HTTPS stage in the TCP L4 pipeline.
+`TlsL4DecryptStage` is the TLS boundary used by application-specific TCP L4 pipelines.
 
 It receives encrypted TCP payload bytes from `SessionManager::on_ct_payload()`. It owns session-local state:
 
@@ -135,7 +137,7 @@ It receives encrypted TCP payload bytes from `SessionManager::on_ct_payload()`. 
 - TLS client session toward the upstream server,
 - `InspectionRelay` or equivalent plaintext relay,
 - `DecryptedFlowPipeline`,
-- `HttpL4Stage`.
+- application L4 state, such as `HttpL4Stage` or `SmtpL4Stage`.
 
 The stage must support:
 
@@ -159,12 +161,20 @@ pub struct L4PlaintextChunk {
 }
 ```
 
-Each chunk is inspected by `DecryptedFlowPipeline`. If allowed and HTTP-compatible, the same bytes are passed to `HttpL4Stage`.
+Each chunk is inspected by `DecryptedFlowPipeline`. If allowed, the same bytes are passed to the application L4 stage selected for the flow.
 
 The HTTP stage must be reached for both:
 
 - plain HTTP on port 80,
 - decrypted HTTPS on port 443.
+
+The SMTP stage must be reached for:
+
+- plain SMTP on port 25 and submission on port 587 before STARTTLS,
+- decrypted implicit SMTPS on port 465,
+- decrypted post-STARTTLS SMTP on ports 25 and 587.
+
+For STARTTLS, `SmtpL4Stage` must detect the accepted STARTTLS transition and hand the encrypted part of the same TCP session to the TLS boundary. After TLS starts, decrypted SMTP bytes return to `SmtpL4Stage`. SMTP parser state must follow SMTP STARTTLS semantics, so any pre-STARTTLS mail transaction state is cleared before post-TLS SMTP commands are processed.
 
 ### No Synthetic Plaintext Packets
 
@@ -187,6 +197,8 @@ DaemonV2::assemble_v2
   -> SessionManager::new(...)
   -> TcpL4PipelineFactory::new_application_router(...)
   -> port 443 selects TlsHttpL4Stage
+  -> port 465 selects TlsSmtpL4Stage
+  -> ports 25/587 select SmtpL4Stage with STARTTLS upgrade support
 ```
 
 `main.rs` must not install `TransparentRedirect` and must not spawn `MitmProxy` for the same managed outbound HTTPS path.
@@ -197,9 +209,10 @@ If inbound TLS server-key inspection remains required, it must be represented in
 
 - `crates/raptorgate/src/l4/stage.rs`: async L4 trait and outcomes that can consume/drop/emit packets.
 - `crates/raptorgate/src/l4/http.rs`: HTTP L4 parser state for plaintext HTTP.
-- `crates/raptorgate/src/l4/tls.rs`: L4 TLS stage interface and TLS-to-HTTP stage composition.
+- `crates/raptorgate/src/l4/tls.rs`: L4 TLS stage interface and TLS-to-application stage composition.
 - `crates/raptorgate/src/l4/tcp_endpoint.rs`: managed TCP byte endpoint and generated packet emission.
 - `crates/raptorgate/src/l4/factory.rs`: TCP pipeline selection by application port and protocol.
+- `crates/raptorgate/src/dpi/smtp_l4_stage.rs`: SMTP parser state and STARTTLS upgrade handoff.
 - `crates/raptorgate/src/conntrack/session_manager.rs`: async per-flow L4 runtime, pending packet consumption, generated packet release.
 - `crates/raptorgate/src/tls/dual_session.rs`: generic async IO TLS accept/connect helpers, not hardcoded to `tokio::net::TcpStream`.
 - `crates/raptorgate/src/tls/inspection_relay.rs`: reusable plaintext relay for any async IO halves.
@@ -213,8 +226,11 @@ Unit and integration criteria:
 
 - `HttpL4Stage` parses direct HTTP plaintext on port 80.
 - Port 443 selects a TLS L4 pipeline, not passthrough.
+- Port 465 selects a TLS SMTP L4 pipeline, not plaintext SMTP.
+- Ports 25 and 587 can upgrade from SMTP to TLS after accepted STARTTLS.
 - TLS L4 intercept emits plaintext chunks without building `PacketContext` for plaintext.
 - TLS L4 allowed HTTP plaintext reaches `HttpL4Stage`.
+- TLS L4 allowed SMTP plaintext reaches `SmtpL4Stage`.
 - TLS L4 blocked plaintext drops the flow and does not emit encrypted bytes.
 - TLS L4 bypass forwards original encrypted packets unchanged.
 - `DecryptedFlowPipeline` is reused by TLS L4 before HTTP state handling.
@@ -230,8 +246,9 @@ Test-env criteria:
 - Client output contains no mixed `RGDM` or decrypted mirror bytes.
 - r1 logs show the L4 TLS pipeline path, not nft redirect ownership.
 - Turning on an IPS signature that matches decrypted HTTP blocks the HTTPS flow.
+- Turning on an IPS or SMTP policy rule that matches decrypted SMTP blocks the SMTPS or STARTTLS flow.
 - Turning on bypass policy for a domain forwards the original TLS connection without forged RaptorGate certificate.
 
 ## Completion Definition
 
-This work is complete only when port 443 HTTPS traffic in the vagrant topology is handled by the L4 session pipeline and not by transparent redirect. A design that only keeps `DecryptedFlowContext` behind `MitmProxy` is not complete.
+This work is complete only when managed HTTPS and SMTP-over-TLS traffic in the vagrant topology are handled by the L4 session pipeline and not by transparent redirect. A design that only keeps `DecryptedFlowContext` behind `MitmProxy` is not complete.

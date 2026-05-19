@@ -1,10 +1,10 @@
-# Full L4 TLS-to-HTTP Inspection Implementation Plan
+# Full L4 TLS Application Inspection Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move HTTPS inspection into the per-flow TCP L4 pipeline so port 443 encrypted TLS bytes are decrypted, inspected, handed to HTTP L4 state, and re-emitted as legitimate encrypted TCP traffic without transparent redirect or synthetic plaintext packets.
+**Goal:** Move TLS application inspection into the per-flow TCP L4 pipeline so HTTPS and SMTP-over-TLS bytes are decrypted, inspected, handed to the correct application L4 state, and re-emitted as legitimate encrypted TCP traffic without transparent redirect or synthetic plaintext packets.
 
-**Architecture:** `SessionManager` owns TCP flows. HTTP on port 80 goes directly to `HttpL4Stage`; HTTPS on port 443 goes to `TlsHttpL4Stage`, which owns a session-local TLS MITM worker and feeds approved plaintext to `DecryptedFlowPipeline` and then `HttpL4Stage`. The normal `DataPipeline` remains for real packets only. Decrypted plaintext never becomes `PacketContext`.
+**Architecture:** `SessionManager` owns TCP flows. HTTP on port 80 goes directly to `HttpL4Stage`; HTTPS on port 443 goes to `TlsHttpL4Stage`, which owns a session-local TLS MITM worker and feeds approved plaintext to `DecryptedFlowPipeline` and then `HttpL4Stage`. SMTP on ports 25/587 goes to `SmtpL4Stage`; accepted STARTTLS upgrades the same flow into TLS and then returns decrypted SMTP plaintext to `SmtpL4Stage`. Implicit SMTPS on port 465 goes directly to `TlsSmtpL4Stage`. The normal `DataPipeline` remains for real packets only. Decrypted plaintext never becomes `PacketContext`.
 
 **Tech Stack:** Rust 2024, Tokio, tokio-rustls, rustls, existing conntrack/session manager, existing TLS decision/cert/decrypted-flow modules, existing vagrant test environment.
 
@@ -21,8 +21,9 @@ The earlier packet-free plaintext work is already present and must not be reimpl
 - `crates/raptorgate/src/l4/http.rs` exists and starts `HttpL4Stage`.
 - `crates/raptorgate/src/l4/tls.rs` exists and starts `TlsInspectionService` plus `TlsHttpL4Stage`.
 - `crates/raptorgate/src/l4/factory.rs` already starts routing port 80 to HTTP and SMTP ports to SMTP.
+- SMTP routing currently treats port 465 as plaintext SMTP and does not support STARTTLS handoff on ports 25/587.
 
-This plan starts from that baseline and finishes the actual target: port 443 must be owned by the L4 TLS pipeline.
+This plan starts from that baseline and finishes the actual target: port 443 HTTPS, port 465 SMTPS, and STARTTLS SMTP on ports 25/587 must be owned by the L4 TLS pipeline when TLS is active.
 
 ---
 
@@ -32,13 +33,15 @@ This plan starts from that baseline and finishes the actual target: port 443 mus
 - `crates/raptorgate/src/l4/tcp_endpoint.rs`: session-local async TCP byte endpoint for L4 TLS. It receives encrypted bytes from conntrack payload delivery and returns generated encrypted TCP bytes to `SessionManager`.
 - `crates/raptorgate/src/tls/l4_inspection.rs`: production TLS L4 inspection service. It reuses cert forging, decision engine, generic dual-session helpers, `InspectionRelay`, `DecryptedFlowPipeline`, and `HttpL4Stage`.
 - `crates/raptorgate/tests/l4_tls_inspection.rs`: integration tests for L4-owned HTTPS handoff without synthetic plaintext packets.
+- `crates/raptorgate/tests/l4_smtp_tls_inspection.rs`: integration tests for implicit SMTPS and SMTP STARTTLS handoff without synthetic plaintext packets.
 
 **Modify**
 - `crates/raptorgate/src/l4.rs`: export `tcp_endpoint`.
 - `crates/raptorgate/src/l4/stage.rs`: make L4 stage execution async and add generated-output outcomes.
-- `crates/raptorgate/src/l4/factory.rs`: route port 443 to production TLS L4 pipeline.
+- `crates/raptorgate/src/l4/factory.rs`: route port 443 to TLS HTTP, port 465 to TLS SMTP, and ports 25/587 to STARTTLS-capable SMTP.
 - `crates/raptorgate/src/l4/http.rs`: keep HTTP parser state as the shared target for plain HTTP and decrypted HTTPS.
-- `crates/raptorgate/src/l4/tls.rs`: replace the current trait-only TLS handoff with the production `TlsHttpL4Stage` wrapper around `tls::l4_inspection`.
+- `crates/raptorgate/src/l4/tls.rs`: replace the current trait-only TLS handoff with production TLS-to-application wrappers around `tls::l4_inspection`.
+- `crates/raptorgate/src/dpi/smtp_l4_stage.rs`: detect accepted STARTTLS and hand the encrypted part of the session to TLS inspection.
 - `crates/raptorgate/src/l4/release.rs`: represent generated encrypted packets in post-session release.
 - `crates/raptorgate/src/conntrack/session_manager.rs`: await async L4 stages, consume L4-owned original packets, and release generated encrypted packets.
 - `crates/raptorgate/src/tls/dual_session.rs`: make accept/connect helpers generic over async IO, not hardcoded to `tokio::net::TcpStream`.
@@ -49,11 +52,11 @@ This plan starts from that baseline and finishes the actual target: port 443 mus
 
 **Do not modify**
 - backend UI/protobuf.
-- unrelated NAT, DNSSEC, identity, ML, or SMTP behavior except for compile fixes caused by async L4 trait changes.
+- unrelated NAT, DNSSEC, identity, ML, or SMTP policy behavior except for changes required by STARTTLS upgrade handling.
 
 ---
 
-## Task 1: Prove Current Port 443 Routing Is Not Complete
+## Task 1: Prove Current TLS Application Routing Is Not Complete
 
 **Files:**
 - Modify: `crates/raptorgate/src/l4/factory.rs`
@@ -81,6 +84,28 @@ cargo test -p ngfw l4::factory::tests::application_router_selects_tls_http_for_h
 ```
 
 Expected: FAIL because `TcpSessionPipeline::TlsHttp` does not exist or port 443 still returns passthrough.
+
+Add a second failing test for implicit SMTPS:
+
+```rust
+#[test]
+fn application_router_selects_tls_smtp_for_smtps() {
+    let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever());
+
+    assert!(matches!(
+        factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 465)),
+        TcpSessionPipeline::TlsSmtp(_)
+    ));
+}
+```
+
+Run:
+
+```bash
+cargo test -p ngfw l4::factory::tests::application_router_selects_tls_smtp_for_smtps
+```
+
+Expected: FAIL because port 465 currently returns plaintext `Smtp`.
 
 - [ ] **Step 2: Do not fix this test yet**
 
@@ -170,7 +195,7 @@ Run:
 cargo test -p ngfw l4::
 ```
 
-Expected: PASS except the intentional failing HTTPS routing test from Task 1.
+Expected: PASS except the intentional failing HTTPS and SMTPS routing tests from Task 1.
 
 - [ ] **Step 5: Commit**
 
@@ -486,6 +511,7 @@ git commit -m "refactor(tls): accept generic async io for dual sessions"
 - Modify: `crates/raptorgate/src/tls/mod.rs`
 - Modify: `crates/raptorgate/src/l4/tls.rs`
 - Modify: `crates/raptorgate/src/l4/http.rs`
+- Modify: `crates/raptorgate/src/dpi/smtp_l4_stage.rs`
 
 - [ ] **Step 1: Add L4 TLS service tests**
 
@@ -595,14 +621,19 @@ Required behavior:
 - Approved HTTP plaintext must call `http.inspect_plaintext(ctx, plaintext)`.
 - Generated TLS ciphertext must return through `L4Outcome::Emit` or `ForwardAndEmit`.
 
-- [ ] **Step 4: Wire `TlsHttpL4Stage` to the production service**
+- [ ] **Step 4: Wire TLS application stages to the production service**
 
-In `crates/raptorgate/src/l4/tls.rs`, replace the current generic test service shape with a production stage:
+In `crates/raptorgate/src/l4/tls.rs`, replace the current generic test service shape with production application wrappers:
 
 ```rust
 pub struct TlsHttpL4Stage {
     tls: TlsL4InspectionService,
     http: HttpL4Stage,
+}
+
+pub struct TlsSmtpL4Stage<ZR> {
+    tls: TlsL4InspectionService,
+    smtp: SmtpL4Stage<ZR>,
 }
 ```
 
@@ -613,6 +644,8 @@ self.tls
     .on_encrypted_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload, &mut self.http)
     .await
 ```
+
+`TlsSmtpL4Stage` uses the same TLS service, but passes approved plaintext to `SmtpL4Stage`.
 
 Keep a test-only static inspection service only if needed under `#[cfg(test)]`; production should use `TlsL4InspectionService`.
 
@@ -635,13 +668,13 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/raptorgate/src/tls/l4_inspection.rs crates/raptorgate/src/tls/mod.rs crates/raptorgate/src/l4/tls.rs crates/raptorgate/src/l4/http.rs
+git add crates/raptorgate/src/tls/l4_inspection.rs crates/raptorgate/src/tls/mod.rs crates/raptorgate/src/l4/tls.rs crates/raptorgate/src/l4/http.rs crates/raptorgate/src/dpi/smtp_l4_stage.rs
 git commit -m "feat(tls): add l4 inspection service"
 ```
 
 ---
 
-## Task 7: Route Port 443 to TLS L4 Pipeline
+## Task 7: Route HTTPS and SMTPS to TLS L4 Pipelines
 
 **Files:**
 - Modify: `crates/raptorgate/src/l4/factory.rs`
@@ -661,22 +694,28 @@ pub fn new_application_router(
 
 Store both in `TcpFactoryKind::ApplicationRouter`.
 
-- [ ] **Step 2: Add `TcpSessionPipeline::TlsHttp`**
+- [ ] **Step 2: Add TLS pipeline variants**
 
 Add:
 
 ```rust
 TlsHttp(TlsHttpL4Stage),
+TlsSmtp(TlsSmtpL4Stage<ZR>),
 ```
 
 Update `protocol`, `on_session_open`, `on_bytes`, and `on_session_close` dispatch.
 
-- [ ] **Step 3: Route HTTPS**
+- [ ] **Step 3: Route HTTPS and SMTPS**
 
 Change `build_for_entry()`:
 
 ```rust
-if matches!(src, 25 | 465 | 587) || matches!(dst, 25 | 465 | 587) {
+if src == 465 || dst == 465 {
+    TcpSessionPipeline::TlsSmtp(TlsSmtpL4Stage::new(
+        TlsL4InspectionService::new(Arc::clone(tls)),
+        SmtpL4Stage::new(Arc::clone(smtp)),
+    ))
+} else if matches!(src, 25 | 587) || matches!(dst, 25 | 587) {
     TcpSessionPipeline::Smtp(SmtpL4Stage::new(Arc::clone(smtp)))
 } else if src == 80 || dst == 80 {
     TcpSessionPipeline::Http(HttpL4Stage::new())
@@ -693,6 +732,7 @@ Run:
 
 ```bash
 cargo test -p ngfw l4::factory::tests::application_router_selects_tls_http_for_https
+cargo test -p ngfw l4::factory::tests::application_router_selects_tls_smtp_for_smtps
 ```
 
 Expected: PASS.
@@ -723,12 +763,105 @@ Expected: PASS.
 
 ```bash
 git add crates/raptorgate/src/l4/factory.rs crates/raptorgate/src/daemon.rs crates/raptorgate/src/main.rs
-git commit -m "feat(l4): route https to tls inspection pipeline"
+git commit -m "feat(l4): route tls applications to inspection pipeline"
 ```
 
 ---
 
-## Task 8: Remove Production Transparent Redirect Wiring
+## Task 8: Add SMTP STARTTLS Handoff
+
+**Files:**
+- Modify: `crates/raptorgate/src/dpi/smtp_l4_stage.rs`
+- Modify: `crates/raptorgate/src/dpi/smtp_l4_session.rs`
+- Modify: `crates/raptorgate/src/l4/factory.rs`
+- Modify: `crates/raptorgate/src/l4/tls.rs`
+- Create: `crates/raptorgate/tests/l4_smtp_tls_inspection.rs`
+
+- [ ] **Step 1: Add STARTTLS upgrade tests**
+
+Add a test that feeds a normal SMTP greeting and accepted STARTTLS negotiation through the SMTP L4 path:
+
+```rust
+#[tokio::test]
+async fn smtp_starttls_upgrade_feeds_post_tls_plaintext_to_smtp_stage() {
+    let harness = SmtpStartTlsHarness::new().await;
+
+    let result = harness
+        .session_with_starttls_then_mail_from("sender@example.test")
+        .await;
+
+    assert!(result.starttls_upgraded);
+    assert_eq!(result.mail_from.as_deref(), Some("sender@example.test"));
+    assert_eq!(result.synthetic_plaintext_packets, 0);
+}
+```
+
+Run:
+
+```bash
+cargo test -p ngfw --test l4_smtp_tls_inspection smtp_starttls_upgrade_feeds_post_tls_plaintext_to_smtp_stage
+```
+
+Expected: FAIL until SMTP STARTTLS handoff exists.
+
+- [ ] **Step 2: Detect accepted STARTTLS**
+
+Teach `SmtpL4Stage` or `SmtpSession` to detect:
+
+- client command `STARTTLS`,
+- server success response `220`,
+- the next client bytes beginning the TLS handshake.
+
+When that transition is accepted, clear SMTP transaction state according to STARTTLS semantics and switch the session to TLS mode. Do not treat post-STARTTLS encrypted bytes as plaintext SMTP.
+
+- [ ] **Step 3: Feed decrypted SMTP back into SMTP parser state**
+
+Use the same TLS inspection service used by HTTPS. For post-STARTTLS chunks, approved plaintext must call the SMTP parser, not HTTP.
+
+Required behavior:
+
+- pre-STARTTLS plaintext SMTP is inspected by `SmtpL4Stage`,
+- post-STARTTLS encrypted bytes are consumed by TLS inspection,
+- decrypted SMTP bytes return to `SmtpL4Stage`,
+- generated ciphertext is emitted through L4 outcomes,
+- decrypted SMTP plaintext never becomes `PacketContext`.
+
+- [ ] **Step 4: Add implicit SMTPS integration test**
+
+Add:
+
+```rust
+#[tokio::test]
+async fn smtps_port_465_decrypts_to_smtp_stage() {
+    let harness = SmtpTlsHarness::new().await;
+
+    let result = harness
+        .implicit_tls_mail_from("sender@example.test")
+        .await;
+
+    assert_eq!(result.mail_from.as_deref(), Some("sender@example.test"));
+    assert_eq!(result.synthetic_plaintext_packets, 0);
+}
+```
+
+Run:
+
+```bash
+cargo test -p ngfw --test l4_smtp_tls_inspection
+```
+
+Expected: PASS after implementation.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/raptorgate/src/dpi/smtp_l4_stage.rs crates/raptorgate/src/dpi/smtp_l4_session.rs crates/raptorgate/src/l4/factory.rs crates/raptorgate/src/l4/tls.rs crates/raptorgate/tests/l4_smtp_tls_inspection.rs
+git commit -m "feat(smtp): inspect tls smtp in l4 pipeline"
+```
+
+---
+
+## Task 9: Remove Production Transparent Redirect Wiring
 
 **Files:**
 - Modify: `crates/raptorgate/src/main.rs`
@@ -798,7 +931,7 @@ git commit -m "refactor(tls): use l4 inspection as production path"
 
 ---
 
-## Task 9: Integration Tests for Packet-Free HTTPS L4 Handoff
+## Task 10: Integration Tests for Packet-Free HTTPS L4 Handoff
 
 **Files:**
 - Create: `crates/raptorgate/tests/l4_tls_inspection.rs`
@@ -877,7 +1010,7 @@ git commit -m "test(tls): cover l4 https plaintext handoff"
 
 ---
 
-## Task 10: Full Test Suite
+## Task 11: Full Test Suite
 
 **Files:**
 - No code changes unless tests reveal regressions.
@@ -886,6 +1019,7 @@ git commit -m "test(tls): cover l4 https plaintext handoff"
 
 ```bash
 cargo test -p ngfw l4:: tls::l4_inspection tls::dual_session conntrack::session_manager
+cargo test -p ngfw --test l4_tls_inspection --test l4_smtp_tls_inspection
 ```
 
 Expected: PASS.
@@ -926,7 +1060,7 @@ Skip commit if no files changed.
 
 ---
 
-## Task 11: Vagrant Test-Env Smoke
+## Task 12: Vagrant Test-Env Smoke
 
 **Files:**
 - No code changes unless smoke reveals deploy/runtime regressions.
@@ -1007,9 +1141,13 @@ Do not commit generated vagrant files.
 
 - [ ] Port 80 uses `HttpL4Stage`.
 - [ ] Port 443 uses `TlsHttpL4Stage`.
+- [ ] Port 465 uses `TlsSmtpL4Stage`.
+- [ ] Ports 25/587 use `SmtpL4Stage` with STARTTLS upgrade support.
 - [ ] `TlsHttpL4Stage` calls production `TlsL4InspectionService`.
+- [ ] `TlsSmtpL4Stage` calls production `TlsL4InspectionService`.
 - [ ] TLS plaintext runs through `DecryptedFlowPipeline`.
 - [ ] Allowed HTTP plaintext reaches `HttpL4Stage`.
+- [ ] Allowed SMTP plaintext reaches `SmtpL4Stage`.
 - [ ] Blocked plaintext does not emit encrypted output.
 - [ ] Bypass forwards original encrypted packets.
 - [ ] No decrypted plaintext is converted into `PacketContext`.
