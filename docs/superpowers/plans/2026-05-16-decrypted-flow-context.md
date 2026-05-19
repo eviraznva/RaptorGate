@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace TLS plaintext inspection through synthetic `PacketContext` objects with a first-class `DecryptedFlowContext` and dedicated decrypted flow pipeline.
+**Goal:** Replace TLS plaintext inspection through synthetic `PacketContext` objects with a first-class `DecryptedFlowContext`, then preserve a clear path for TLS L4 decryption to feed plaintext HTTP into an HTTP L4 stage.
 
-**Architecture:** Keep the normal `DataPipeline` for real packets only. Add a decrypted flow model and pipeline consumed by `InspectionRelay` through the existing `DecryptedTrafficInspector` boundary. Refactor policy evaluation to read explicit flow fields so both real packet policy and decrypted plaintext policy use the same rule evaluator without constructing fake packets.
+**Architecture:** Keep the normal `DataPipeline` for real packets only. Add a decrypted flow model and pipeline consumed by `InspectionRelay` through the existing `DecryptedTrafficInspector` boundary. Refactor policy evaluation to read explicit flow fields so both real packet policy and decrypted plaintext policy use the same rule evaluator without constructing fake packets. Treat this as phase one: the later target is a TCP L4 TLS decrypt stage that returns plaintext chunks to an HTTP L4 stage, without reinjecting decrypted bytes onto a virtual interface.
 
 **Tech Stack:** Rust 2024, Tokio, tonic async traits, existing RaptorGate DPI/IPS/policy modules, existing TLS MITM runtime.
 
@@ -14,6 +14,12 @@
 
 **Create**
 - `crates/raptorgate/src/tls/decrypted_flow.rs`: `DecryptedFlowContext`, `DecryptedFlowStage`, `DecryptedFlowPipeline`, production decrypted DPI/IPS/policy stages, and `DecryptedFlowInspector`.
+
+**Future L4 handoff files**
+- `crates/raptorgate/src/tls/l4_decrypt.rs`: future `TlsL4DecryptStage`, session-local TLS state, and plaintext chunk output contract.
+- `crates/raptorgate/src/l4/http.rs`: future HTTP L4 stage that consumes plaintext HTTP from plain TCP or TLS decryption.
+- `crates/raptorgate/src/l4/factory.rs`: future TCP pipeline wiring for `TlsL4DecryptStage -> HttpL4Stage`.
+- `crates/raptorgate/src/conntrack/session_manager.rs`: future async handoff if TLS decryption cannot run inside the current synchronous `L4Stage::on_bytes()` API.
 
 **Modify**
 - `crates/raptorgate/src/dpi/classifier.rs`: add payload-based flow inspection and keep packet inspection as a wrapper.
@@ -1399,7 +1405,85 @@ git commit -m "refactor(tls): wire decrypted flow pipeline"
 
 ---
 
-## Task 8: Verification and Cleanup
+## Task 8: Document and Guard the L4 TLS-to-HTTP Handoff Target
+
+**Files:**
+- Modify: `docs/superpowers/specs/2026-05-16-decrypted-flow-context-design.md`
+- Modify: `docs/superpowers/plans/2026-05-16-decrypted-flow-context.md`
+
+- [ ] **Step 1: Confirm the target flow is explicit in the spec**
+
+Ensure the spec contains this target architecture:
+
+```text
+PacketContext
+  -> Conntrack
+  -> SessionManager
+    -> TCP L4 session task
+      -> TlsL4DecryptStage for HTTPS flows
+        -> plaintext application chunks
+        -> HttpL4Stage
+          -> HTTP parser state
+          -> HTTP policy and IPS decisions
+      -> ReleaseAction
+```
+
+Expected: the spec states that decrypted HTTPS bytes become plaintext chunks for `HttpL4Stage`, not packets for TUN or `DataPipeline`.
+
+- [ ] **Step 2: Record the future L4 plaintext chunk contract**
+
+Ensure the spec defines this future contract:
+
+```rust
+pub struct L4PlaintextChunk {
+    pub payload: Vec<u8>,
+    pub direction: Direction,
+    pub app_proto: AppProto,
+    pub dpi: DpiContext,
+}
+```
+
+Expected: the spec states that `TlsL4DecryptStage` returns `L4PlaintextChunk` values and that `HttpL4Stage` consumes those chunks.
+
+- [ ] **Step 3: Record the synchronous L4 API constraint**
+
+The current `L4Stage::on_bytes()` API is synchronous:
+
+```rust
+fn on_bytes(
+    &mut self,
+    ctx: &mut Self::Ctx,
+    packet_id: PacketId,
+    dir: Direction,
+    tcp_payload_start_seq: u32,
+    payload: &[u8],
+) -> L4Outcome;
+```
+
+Expected: the spec or follow-up implementation notes state that full TLS MITM cannot perform network handshakes directly inside this synchronous method. The later implementation must either add an async L4 boundary or use a session-local TLS worker/channel owned by the L4 session task.
+
+- [ ] **Step 4: Add future test names to the plan**
+
+Add these test requirements before implementing the L4 handoff:
+
+```text
+tls::l4_decrypt::tests::tls_l4_stage_emits_plaintext_chunks_without_packet_context
+l4::http::tests::http_l4_stage_receives_decrypted_request_from_tls_stage
+l4::http::tests::plain_http_and_decrypted_https_use_same_http_stage
+```
+
+Expected: each test name describes a packet-free handoff from TLS plaintext to HTTP L4 state.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add docs/superpowers/specs/2026-05-16-decrypted-flow-context-design.md docs/superpowers/plans/2026-05-16-decrypted-flow-context.md
+git commit -m "docs(tls): record l4 tls http handoff target"
+```
+
+---
+
+## Task 9: Verification and Cleanup
 
 **Files:**
 - Modify only files required by compiler/test failures.
@@ -1489,4 +1573,6 @@ If there are no changes after verification, skip this commit.
 - The plan gives policy evaluation a shared packet-free input model.
 - The plan keeps `InspectionRelay` as the TLS stream relay.
 - The plan blocks the path from TLS plaintext into `ExecutionStage`.
+- The plan records the later L4 target where TLS decryption emits plaintext chunks to an HTTP L4 stage.
+- The plan documents that the current synchronous L4 API needs an async boundary or session-local TLS worker for full TLS MITM.
 - The plan includes tests before implementation for each risky boundary.

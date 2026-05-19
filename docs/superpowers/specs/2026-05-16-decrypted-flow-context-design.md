@@ -2,9 +2,11 @@
 
 ## Goal
 
-Replace TLS plaintext inspection through synthetic Ethernet/IP/TCP packets with a first-class decrypted flow model.
+Replace TLS plaintext inspection through synthetic Ethernet/IP/TCP packets with a first-class decrypted flow model, and make that model compatible with a later L4 TLS-to-HTTP handoff.
 
 After this change, decrypted TLS payloads are inspected as plaintext flow chunks with explicit session metadata. They must not be converted into fake raw packets and must not pass through the normal packet forwarding pipeline.
+
+The long-term target is that a TCP L4 TLS stage accepts encrypted TLS bytes, maintains TLS session state, emits plaintext application bytes, and passes HTTP plaintext to an HTTP L4 stage. This spec first removes the synthetic packet bridge, then defines the L4 handoff contract that future work must preserve.
 
 ## Problem
 
@@ -45,8 +47,10 @@ The current TLS runtime already has useful pieces that remain:
 - `DpiContext` already has `decrypted`, source port, destination port, HTTP, DNS, TLS, and IPS metadata fields.
 - `Ips::inspect_decrypted()` already supports IPS inspection without `PacketContext`.
 - `IdentitySessionStore` can resolve user identity from source IP and time.
+- `Conntrack` and `SessionManager` already create per-flow L4 session tasks for real packet flows.
+- The current TCP L4 pipeline is not a general HTTP pipeline yet. It does not own TLS decryption or HTTP state for HTTPS sessions.
 
-The new work keeps this baseline and replaces only the synthetic packet bridge.
+The new work keeps this baseline and replaces the synthetic packet bridge. It must not add a new path that reinjects decrypted bytes into a virtual interface. Decrypted bytes either stay in the current TLS relay path or, in the L4 target model, move directly from a TLS L4 stage into an HTTP L4 stage.
 
 ## Target Architecture
 
@@ -81,6 +85,23 @@ PacketContext
 ```
 
 There must be no call from TLS decrypted inspection into `Stage::process()` on the main packet pipeline.
+
+The target L4 architecture is:
+
+```text
+PacketContext
+  -> Conntrack
+  -> SessionManager
+    -> TCP L4 session task
+      -> TlsL4DecryptStage for HTTPS flows
+        -> plaintext application chunks
+        -> HttpL4Stage
+          -> HTTP parser state
+          -> HTTP policy and IPS decisions
+      -> ReleaseAction
+```
+
+For plain HTTP, `HttpL4Stage` receives TCP payload bytes directly. For HTTPS, `HttpL4Stage` receives decrypted bytes from `TlsL4DecryptStage`. Both paths must use the same HTTP parser and HTTP policy logic after the decrypt boundary.
 
 ## Domain Model
 
@@ -135,6 +156,8 @@ pub trait DecryptedFlowStage: Send + Sync {
 
 It does not receive an `ExecutionSender`, cannot emit `ExecutionItem`, and cannot forward packets.
 
+`DecryptedFlowStage` is the phase-one plaintext inspection boundary. It is not the final L4 API. Any later `TlsL4DecryptStage` must keep the same rule: it may return plaintext chunks and decisions, but it must not construct `PacketContext` and must not write to TUN.
+
 ### `DecryptedFlowPipeline`
 
 `DecryptedFlowPipeline` owns an ordered list of flow stages and runs them until all continue or one drops.
@@ -146,6 +169,46 @@ The initial production stages are:
 3. `DecryptedPolicyStage`
 
 Logging and mirror remain in `InspectionRelay` unless a test shows that moving them into a flow stage is cleaner. `InspectionRelay` already has the session metadata needed to emit decrypted classification and IPS events.
+
+## L4 TLS-to-HTTP Handoff
+
+The L4 target model needs a stateful TLS component, not a stateless `decrypt(payload) -> plaintext` helper. TLS decryption needs handshake state, negotiated keys, record sequence state, peer direction, SNI, ALPN, and session metadata.
+
+The current `L4Stage::on_bytes()` API is synchronous. Full TLS MITM cannot perform upstream/client network handshakes directly inside that method. The later L4 implementation must either add an async L4 boundary or use a session-local TLS worker/channel owned by the L4 session task.
+
+The L4 handoff contract is:
+
+```rust
+pub struct L4PlaintextChunk {
+    pub payload: Vec<u8>,
+    pub direction: Direction,
+    pub app_proto: AppProto,
+    pub dpi: DpiContext,
+}
+```
+
+`TlsL4DecryptStage` receives encrypted TCP payload bytes from `SessionManager::on_bytes()`. When enough TLS state exists, it returns one or more `L4PlaintextChunk` values. If the negotiated application protocol is HTTP-compatible, those chunks are handed to `HttpL4Stage` in the same per-flow L4 task.
+
+The L4 TLS stage must preserve:
+
+- session identity from conntrack,
+- client and server endpoints,
+- original destination,
+- ingress and egress interface metadata,
+- SNI,
+- ALPN,
+- client identity,
+- direction.
+
+The L4 TLS stage must not:
+
+- synthesize Ethernet/IP/TCP headers,
+- call `PacketContext::from_raw()` for decrypted payloads,
+- send decrypted payloads to `TunForwarder`,
+- call packet `Stage::process()` for decrypted payloads,
+- run NAT or conntrack again for decrypted payloads.
+
+`DecryptedFlowPipeline` remains useful as the phase-one implementation and as a reusable plaintext inspection engine. When the L4 TLS stage exists, it can call the same plaintext DPI, IPS, and policy logic through a small adapter, then pass allowed HTTP payloads to `HttpL4Stage`.
 
 ## DPI Without Synthetic Packets
 
@@ -350,6 +413,8 @@ Required unit tests:
 - `DecryptedFlowInspector` returns `Forward` for clean HTTP plaintext.
 - `DecryptedFlowInspector` returns `Drop` for blocked IPS plaintext.
 - A regression test proves TLS plaintext inspection does not call `ExecutionStage` or send an `ExecutionItem`.
+- A future L4 handoff test proves a TLS L4 decrypt stage can pass HTTP plaintext to an HTTP L4 stage without creating `PacketContext`.
+- A future L4 handoff test proves decrypted HTTP chunks are never sent to `TunForwarder`.
 
 Required integration or focused runtime tests:
 
@@ -367,6 +432,6 @@ The change is complete when:
 - `DecryptedFlowContext` is the model used by plaintext DPI, IPS, and policy.
 - Policy evaluation works for both real packet contexts and decrypted flow contexts.
 - `ExecutionStage` is impossible to reach from TLS plaintext inspection.
+- The design explicitly preserves the later path from TLS L4 decryption to HTTP L4 parsing without virtual-interface reinjection.
 - Existing packet path tests still pass.
 - Existing TLS MITM behavior still works for a basic HTTPS request.
-
