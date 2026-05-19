@@ -1,1516 +1,896 @@
-# Decrypted Flow Context Implementation Plan
+# Full L4 TLS-to-HTTP Inspection Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace TLS plaintext inspection through synthetic `PacketContext` objects with a first-class `DecryptedFlowContext`, then preserve a clear path for TLS L4 decryption to feed plaintext HTTP into an HTTP L4 stage.
+**Goal:** Move HTTPS inspection into the per-flow TCP L4 pipeline so port 443 encrypted TLS bytes are decrypted, inspected, handed to HTTP L4 state, and re-emitted as legitimate encrypted TCP traffic without transparent redirect or synthetic plaintext packets.
 
-**Architecture:** Keep the normal `DataPipeline` for real packets only. Add a decrypted flow model and pipeline consumed by `InspectionRelay` through the existing `DecryptedTrafficInspector` boundary. Refactor policy evaluation to read explicit flow fields so both real packet policy and decrypted plaintext policy use the same rule evaluator without constructing fake packets. Treat this as phase one: the later target is a TCP L4 TLS decrypt stage that returns plaintext chunks to an HTTP L4 stage, without reinjecting decrypted bytes onto a virtual interface.
+**Architecture:** `SessionManager` owns TCP flows. HTTP on port 80 goes directly to `HttpL4Stage`; HTTPS on port 443 goes to `TlsHttpL4Stage`, which owns a session-local TLS MITM worker and feeds approved plaintext to `DecryptedFlowPipeline` and then `HttpL4Stage`. The normal `DataPipeline` remains for real packets only. Decrypted plaintext never becomes `PacketContext`.
 
-**Tech Stack:** Rust 2024, Tokio, tonic async traits, existing RaptorGate DPI/IPS/policy modules, existing TLS MITM runtime.
+**Tech Stack:** Rust 2024, Tokio, tokio-rustls, rustls, existing conntrack/session manager, existing TLS decision/cert/decrypted-flow modules, existing vagrant test environment.
+
+**Design Spec:** `docs/superpowers/specs/2026-05-16-decrypted-flow-context-design.md`
+
+---
+
+## Current Branch Baseline
+
+The earlier packet-free plaintext work is already present and must not be reimplemented:
+
+- `crates/raptorgate/src/tls/decrypted_flow.rs` exists and provides `DecryptedFlowContext`, `DecryptedFlowPipeline`, `DecryptedDpiStage`, `DecryptedIpsStage`, `DecryptedPolicyStage`, and `DecryptedFlowInspector`.
+- `crates/raptorgate/src/main.rs` already constructs `DecryptedFlowInspector` for the old MITM runtime.
+- `crates/raptorgate/src/l4/http.rs` exists and starts `HttpL4Stage`.
+- `crates/raptorgate/src/l4/tls.rs` exists and starts `TlsInspectionService` plus `TlsHttpL4Stage`.
+- `crates/raptorgate/src/l4/factory.rs` already starts routing port 80 to HTTP and SMTP ports to SMTP.
+
+This plan starts from that baseline and finishes the actual target: port 443 must be owned by the L4 TLS pipeline.
 
 ---
 
 ## File Structure
 
 **Create**
-- `crates/raptorgate/src/tls/decrypted_flow.rs`: `DecryptedFlowContext`, `DecryptedFlowStage`, `DecryptedFlowPipeline`, production decrypted DPI/IPS/policy stages, and `DecryptedFlowInspector`.
-
-**Future L4 handoff files**
-- `crates/raptorgate/src/tls/l4_decrypt.rs`: future `TlsL4DecryptStage`, session-local TLS state, and plaintext chunk output contract.
-- `crates/raptorgate/src/l4/http.rs`: future HTTP L4 stage that consumes plaintext HTTP from plain TCP or TLS decryption.
-- `crates/raptorgate/src/l4/factory.rs`: future TCP pipeline wiring for `TlsL4DecryptStage -> HttpL4Stage`.
-- `crates/raptorgate/src/conntrack/session_manager.rs`: future async handoff if TLS decryption cannot run inside the current synchronous `L4Stage::on_bytes()` API.
+- `crates/raptorgate/src/l4/tcp_endpoint.rs`: session-local async TCP byte endpoint for L4 TLS. It receives encrypted bytes from conntrack payload delivery and returns generated encrypted TCP bytes to `SessionManager`.
+- `crates/raptorgate/src/tls/l4_inspection.rs`: production TLS L4 inspection service. It reuses cert forging, decision engine, generic dual-session helpers, `InspectionRelay`, `DecryptedFlowPipeline`, and `HttpL4Stage`.
+- `crates/raptorgate/tests/l4_tls_inspection.rs`: integration tests for L4-owned HTTPS handoff without synthetic plaintext packets.
 
 **Modify**
-- `crates/raptorgate/src/dpi/classifier.rs`: add payload-based flow inspection and keep packet inspection as a wrapper.
-- `crates/raptorgate/src/policy/policy_evaluator.rs`: replace `SlicedPacket` dependency in `PolicyEvalContext` with explicit `PolicyFlowFields`.
-- `crates/raptorgate/src/pipeline/wrappers.rs`: build `PolicyFlowFields` from real `PacketContext` before policy evaluation.
-- `crates/raptorgate/src/tls/decrypted_chain.rs`: remove synthetic packet inspector or reduce this file to a compatibility re-export while tests move to `decrypted_flow.rs`.
-- `crates/raptorgate/src/tls/inspection_relay.rs`: import `DecryptedTrafficInspector`, `InspectionDecision`, and `InspectionDisposition` from the new flow module.
-- `crates/raptorgate/src/tls/mod.rs`: export `decrypted_flow` and stop exporting the synthetic inspector.
-- `crates/raptorgate/src/main.rs`: construct `DecryptedFlowInspector` instead of `DecryptedChainInspector::with_identity(pipeline.clone(), ...)`.
+- `crates/raptorgate/src/l4.rs`: export `tcp_endpoint`.
+- `crates/raptorgate/src/l4/stage.rs`: make L4 stage execution async and add generated-output outcomes.
+- `crates/raptorgate/src/l4/factory.rs`: route port 443 to production TLS L4 pipeline.
+- `crates/raptorgate/src/l4/http.rs`: keep HTTP parser state as the shared target for plain HTTP and decrypted HTTPS.
+- `crates/raptorgate/src/l4/tls.rs`: replace the current trait-only TLS handoff with the production `TlsHttpL4Stage` wrapper around `tls::l4_inspection`.
+- `crates/raptorgate/src/l4/release.rs`: represent generated encrypted packets in post-session release.
+- `crates/raptorgate/src/conntrack/session_manager.rs`: await async L4 stages, consume L4-owned original packets, and release generated encrypted packets.
+- `crates/raptorgate/src/tls/dual_session.rs`: make accept/connect helpers generic over async IO, not hardcoded to `tokio::net::TcpStream`.
+- `crates/raptorgate/src/tls/inspection_relay.rs`: keep relay generic over async IO and expose a constructor usable from L4.
+- `crates/raptorgate/src/main.rs`: stop installing transparent redirect and stop spawning `MitmProxy` for managed outbound HTTPS.
+- `crates/raptorgate/src/daemon.rs`: pass TLS L4 dependencies into `TcpL4PipelineFactory::new_application_router(...)`.
+- `vagrant/deploy.sh`: no functional change required unless smoke test discovers deployment still installs redirect rules.
 
 **Do not modify**
-- `crates/raptorgate/src/tls/transparent_redirect.rs`
-- `crates/raptorgate/src/tls/upstream_connector.rs`
-- `crates/raptorgate/src/tls/redirect_manager.rs`
-- `crates/raptorgate/src/tls/cert_forger.rs`
-- backend and protobuf files
+- backend UI/protobuf.
+- unrelated NAT, DNSSEC, identity, ML, or SMTP behavior except for compile fixes caused by async L4 trait changes.
 
 ---
 
-## Task 1: Add Payload-Based DPI Flow Inspection
+## Task 1: Prove Current Port 443 Routing Is Not Complete
 
 **Files:**
-- Modify: `crates/raptorgate/src/dpi/classifier.rs`
+- Modify: `crates/raptorgate/src/l4/factory.rs`
 
-- [ ] **Step 1: Add failing tests for packet-free DPI**
+- [ ] **Step 1: Add a failing test for HTTPS routing**
 
-Add these tests to the existing `#[cfg(test)]` module in `crates/raptorgate/src/dpi/classifier.rs`:
+Add this test to the existing `#[cfg(test)]` module in `crates/raptorgate/src/l4/factory.rs`:
 
 ```rust
 #[test]
-fn inspect_flow_payload_classifies_http_without_packet() {
-    let classifier = DpiClassifier::new();
-    let result = classifier.inspect_flow_payload(
-        "192.168.20.10".parse().unwrap(),
-        53120,
-        "142.250.186.4".parse().unwrap(),
-        443,
-        b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
-    );
+fn application_router_selects_tls_http_for_https() {
+    let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever());
 
-    match result {
-        InspectResult::Done(ctx) => {
-            assert_eq!(ctx.app_proto, Some(AppProto::Http));
-            assert_eq!(ctx.http_host.as_deref(), Some("example.com"));
-        }
-        other => panic!("expected HTTP classification, got {other:?}"),
-    }
-}
-
-#[test]
-fn inspect_packet_still_uses_same_flow_buffering() {
-    let classifier = DpiClassifier::new();
-    let packet = build_tcp_packet(
-        [192, 168, 20, 10],
-        [142, 250, 186, 4],
-        53120,
-        443,
-        b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
-    );
-    let sliced = etherparse::SlicedPacket::from_ethernet(&packet).unwrap();
-
-    match classifier.inspect_packet(&sliced) {
-        InspectResult::Done(ctx) => assert_eq!(ctx.app_proto, Some(AppProto::Http)),
-        other => panic!("expected HTTP classification, got {other:?}"),
-    }
+    assert!(matches!(
+        factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 443)),
+        TcpSessionPipeline::TlsHttp(_)
+    ));
 }
 ```
 
-If the test module does not already have a packet helper, add this helper inside the test module:
-
-```rust
-fn build_tcp_packet(
-    src: [u8; 4],
-    dst: [u8; 4],
-    src_port: u16,
-    dst_port: u16,
-    payload: &[u8],
-) -> Vec<u8> {
-    let builder = etherparse::PacketBuilder::ethernet2([0; 6], [0; 6])
-        .ipv4(src, dst, 64)
-        .tcp(src_port, dst_port, 0, 65_535);
-    let mut raw = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut raw, payload).unwrap();
-    raw
-}
-```
-
-Run: `cargo test -p ngfw dpi::classifier::tests::inspect_flow_payload_classifies_http_without_packet`
-
-Expected: FAIL because `inspect_flow_payload` is not defined.
-
-- [ ] **Step 2: Implement payload-based DPI method**
-
-In `impl DpiClassifier`, replace the body of `inspect_packet()` with a wrapper around a new method:
-
-```rust
-pub fn inspect_packet(&self, packet: &SlicedPacket) -> InspectResult {
-    let Some((key, payload)) = Self::extract_flow(packet) else {
-        return InspectResult::Skipped;
-    };
-
-    self.inspect_payload_for_key(key, payload)
-}
-```
-
-Then add the public payload method and a private shared implementation to `DpiClassifier`:
-
-```rust
-pub fn inspect_flow_payload(
-    &self,
-    src_ip: IpAddr,
-    src_port: u16,
-    dst_ip: IpAddr,
-    dst_port: u16,
-    payload: &[u8],
-) -> InspectResult {
-    let key = FlowKey::new(src_ip, src_port, dst_ip, dst_port);
-    self.inspect_payload_for_key(key, payload)
-}
-
-fn inspect_payload_for_key(&self, key: FlowKey, payload: &[u8]) -> InspectResult {
-    if payload.is_empty() {
-        return InspectResult::Skipped;
-    }
-
-    let mut entry = self.sessions.entry(key).or_insert_with(DpiSessionEntry::new);
-    let session = entry.value_mut();
-
-    session.append_payload(payload);
-
-    if let Some(ref mut ctx) = session.result {
-        if ctx.app_proto == Some(AppProto::Dns) {
-            if let Some(parsed) = dns::parse_dns(payload) {
-                if parsed.is_response {
-                    ctx.dns_answer_count = parsed.answer_count;
-                    ctx.dns_answer_types = parsed.answer_types;
-                    ctx.dns_authority_count = parsed.authority_count;
-                    ctx.dns_authority_types = parsed.authority_types;
-                    ctx.dns_additional_count = parsed.additional_count;
-                    ctx.dns_additional_types = parsed.additional_types;
-                    ctx.dns_has_opt = parsed.has_opt;
-                    ctx.dns_dnssec_ok = parsed.dnssec_ok;
-                    ctx.dns_authentic_data = parsed.authentic_data;
-                    ctx.dns_checking_disabled = parsed.checking_disabled;
-                    ctx.dns_rcode = parsed.rcode;
-                    ctx.dns_has_dnssec_records = parsed.has_dnssec_records;
-                    ctx.dns_response_size = parsed.response_size;
-                } else {
-                    *ctx = dns::dns_to_dpi_context(&parsed);
-                }
-            }
-        } else if ctx.app_proto == Some(AppProto::Http) {
-            if let Some(parsed) = http::parse_http(&session.buffer) {
-                http::merge_http_dpi_context(ctx, &parsed);
-            }
-        }
-        return InspectResult::Done(ctx.clone());
-    }
-
-    if let Some(ctx) = Self::try_classify(&session.buffer) {
-        session.result = Some(ctx.clone());
-        return InspectResult::Done(ctx);
-    }
-
-    if session.limits_exceeded() {
-        let ctx = DpiContext {
-            app_proto: Some(AppProto::Unknown),
-            ..Default::default()
-        };
-        session.result = Some(ctx.clone());
-        return InspectResult::Done(ctx);
-    }
-
-    InspectResult::NeedMore
-}
-```
-
-Run: `cargo test -p ngfw dpi::classifier`
-
-Expected: PASS.
-
-- [ ] **Step 3: Commit**
+Run:
 
 ```bash
-git add crates/raptorgate/src/dpi/classifier.rs
-git commit -m "refactor(dpi): inspect flow payloads without packets"
+cargo test -p ngfw l4::factory::tests::application_router_selects_tls_http_for_https
 ```
+
+Expected: FAIL because `TcpSessionPipeline::TlsHttp` does not exist or port 443 still returns passthrough.
+
+- [ ] **Step 2: Do not fix this test yet**
+
+Leave this test failing until Tasks 2 through 6 provide the real dependencies for `TlsHttp`.
 
 ---
 
-## Task 2: Refactor Policy Evaluation to Explicit Flow Fields
+## Task 2: Make the L4 Stage Boundary Async and Capable of Emitting Generated Packets
 
 **Files:**
-- Modify: `crates/raptorgate/src/policy/policy_evaluator.rs`
-- Modify: `crates/raptorgate/src/pipeline/wrappers.rs`
+- Modify: `crates/raptorgate/src/l4/stage.rs`
+- Modify: `crates/raptorgate/src/l4/factory.rs`
+- Modify: `crates/raptorgate/src/l4/http.rs`
+- Modify: `crates/raptorgate/src/l4/tls.rs`
+- Modify: `crates/raptorgate/src/l4/chain.rs`
+- Modify: `crates/raptorgate/src/dpi/smtp_l4_stage.rs`
+- Modify: `crates/raptorgate/src/l4/noop.rs`
 
-- [ ] **Step 1: Add policy evaluator tests for explicit fields**
+- [ ] **Step 1: Add output types to `l4/stage.rs`**
 
-In `crates/raptorgate/src/policy/policy_evaluator.rs`, add a test that does not build a packet:
+Replace `L4Outcome` in `crates/raptorgate/src/l4/stage.rs` with:
 
 ```rust
-#[test]
-fn evaluates_src_dst_ports_from_policy_flow_fields() {
-    let tree = RuleTree::new(
-        MatchBuilder::with_arm(
-            MatchKind::DstPort,
-            Pattern::Equal(FieldValue::Port(Port::from(443))),
-            ArmEnd::Verdict(Verdict::Drop),
-        )
-        .build()
-        .unwrap(),
-    );
-    let evaluator = PolicyEvaluator::new(tree, Verdict::Allow);
-    let arrival = default_arrival();
-    let flow = PolicyFlowFields {
-        src_ip: "192.168.20.10".parse().unwrap(),
-        dst_ip: "142.250.186.4".parse().unwrap(),
-        ip_ver: IpVer::V4,
-        protocol: Protocol::Tcp,
-        src_port: Some(Port::from(53120)),
-        dst_port: Some(Port::from(443)),
-    };
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L4Emit {
+    pub dir: Direction,
+    pub payload: Vec<u8>,
+}
 
-    let verdict = evaluator.evaluate(PolicyEvalContext {
-        flow,
-        arrival: &arrival,
-        dns: None,
-        dpi: None,
-        identity: None,
-    });
-
-    assert_eq!(verdict, Verdict::Drop);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum L4Outcome {
+    Continue,
+    Forward(Vec<PacketId>),
+    Drop(Vec<PacketId>),
+    Emit(Vec<L4Emit>),
+    ForwardAndEmit { forward: Vec<PacketId>, emit: Vec<L4Emit> },
+    Terminate { reason: TerminateReason, reset: bool },
 }
 ```
 
-Run: `cargo test -p ngfw policy::policy_evaluator::tests::evaluates_src_dst_ports_from_policy_flow_fields`
+`Drop(Vec<PacketId>)` means the L4 stage consumed those original packets and they must not be released to the normal packet path.
 
-Expected: FAIL because `PolicyFlowFields` and the new context shape do not exist.
+- [ ] **Step 2: Make the trait async**
 
-- [ ] **Step 2: Add `PolicyFlowFields` and update context**
-
-In `crates/raptorgate/src/policy/policy_evaluator.rs`, replace the packet field in `PolicyEvalContext`:
+Change `L4Stage` to:
 
 ```rust
-#[derive(Clone, Copy)]
-pub struct PolicyFlowFields {
-    pub src_ip: IpAddr,
-    pub dst_ip: IpAddr,
-    pub ip_ver: IpVer,
-    pub protocol: Protocol,
-    pub src_port: Option<Port>,
-    pub dst_port: Option<Port>,
-}
+#[tonic::async_trait]
+pub trait L4Stage: Send {
+    type Ctx: Send;
 
-#[derive(Clone, Copy)]
-pub struct PolicyEvalContext<'a> {
-    pub flow: PolicyFlowFields,
-    pub arrival: &'a ArrivalInfo,
-    pub dns: Option<&'a DnsEvalContext>,
-    pub dpi: Option<&'a DpiContext>,
-    pub identity: Option<&'a IdentityContext>,
-}
-```
+    fn protocol(&self) -> AppProto;
 
-Update `PolicyEngine::evaluate()` in `crates/raptorgate/src/policy/engine.rs` to accept `PolicyEvalContext<'_>` instead of `PolicyEvalContext<'_, '_>`.
+    async fn on_session_open(&mut self, ctx: &mut Self::Ctx) -> L4Outcome;
 
-Update `PolicyEvaluator::evaluate()`, `evaluate_if_matches()`, `matches_kind()`, and `extract()` signatures to use `PolicyEvalContext<'_>`.
+    async fn on_bytes(
+        &mut self,
+        ctx: &mut Self::Ctx,
+        packet_id: PacketId,
+        dir: Direction,
+        tcp_payload_start_seq: u32,
+        payload: &[u8],
+    ) -> L4Outcome;
 
-Replace packet-dependent extraction branches with explicit field access:
-
-```rust
-MatchKind::SrcIp => Some(FieldValue::Ip(ctx.flow.src_ip.into())),
-MatchKind::DstIp => Some(FieldValue::Ip(ctx.flow.dst_ip.into())),
-MatchKind::IpVer => Some(FieldValue::IpVer(ctx.flow.ip_ver)),
-MatchKind::Protocol => Some(FieldValue::Protocol(ctx.flow.protocol)),
-MatchKind::SrcPort => ctx.flow.src_port.map(FieldValue::Port),
-MatchKind::DstPort => ctx.flow.dst_port.map(FieldValue::Port),
-```
-
-Run: `cargo test -p ngfw policy::policy_evaluator`
-
-Expected: packet-path callers still fail to compile because they still pass `packet: ...`.
-
-- [ ] **Step 3: Build policy flow fields from real packets**
-
-In `crates/raptorgate/src/pipeline/wrappers.rs`, add this helper near `packet_log_fields()`:
-
-```rust
-fn policy_flow_fields_from_packet(ctx: &PacketContext) -> Option<PolicyFlowFields> {
-    let sliced = ctx.borrow_sliced_packet();
-    let (src_ip, dst_ip, ip_ver) = match &sliced.net {
-        Some(NetSlice::Ipv4(ipv4)) => {
-            let h = ipv4.header();
-            (
-                IpAddr::V4(h.source_addr()),
-                IpAddr::V4(h.destination_addr()),
-                crate::rule_tree::IpVer::V4,
-            )
-        }
-        Some(NetSlice::Ipv6(ipv6)) => {
-            let h = ipv6.header();
-            (
-                IpAddr::V6(h.source_addr()),
-                IpAddr::V6(h.destination_addr()),
-                crate::rule_tree::IpVer::V6,
-            )
-        }
-        _ => return None,
-    };
-
-    let (protocol, src_port, dst_port) = match &sliced.transport {
-        Some(TransportSlice::Tcp(tcp)) => (
-            crate::rule_tree::Protocol::Tcp,
-            Some(crate::rule_tree::Port::from(tcp.source_port())),
-            Some(crate::rule_tree::Port::from(tcp.destination_port())),
-        ),
-        Some(TransportSlice::Udp(udp)) => (
-            crate::rule_tree::Protocol::Udp,
-            Some(crate::rule_tree::Port::from(udp.source_port())),
-            Some(crate::rule_tree::Port::from(udp.destination_port())),
-        ),
-        Some(TransportSlice::Icmpv4(_)) | Some(TransportSlice::Icmpv6(_)) => (
-            crate::rule_tree::Protocol::Icmp,
-            None,
-            None,
-        ),
-        _ => return None,
-    };
-
-    Some(PolicyFlowFields {
-        src_ip,
-        dst_ip,
-        ip_ver,
-        protocol,
-        src_port,
-        dst_port,
-    })
+    async fn on_session_close(&mut self, ctx: &mut Self::Ctx, reason: CloseReason);
 }
 ```
 
-Import `PolicyFlowFields` at the top of `wrappers.rs` with the existing policy evaluator imports.
+- [ ] **Step 3: Update stage implementations**
 
-In `PolicyEvalStage::process()`, before calling `policy_engine.evaluate()`, build:
+For each existing L4 implementation, add `#[tonic::async_trait]` to the impl and change methods to `async fn`.
 
-```rust
-let Some(flow) = policy_flow_fields_from_packet(ctx) else {
-    return StageOutcome::Continue;
-};
-```
+The behavior must remain unchanged:
 
-Then call:
+- `HttpL4Stage::on_bytes()` returns `L4Outcome::Forward(vec![packet_id])`.
+- SMTP stage returns the same outcome it returned before.
+- noop stages still forward.
+- force terminate still terminates.
 
-```rust
-let verdict = self.policy_engine.evaluate(pair_id, PolicyEvalContext {
-    flow,
-    arrival: &arrival,
-    dns: dns_ctx.as_ref(),
-    dpi: ctx.borrow_dpi_ctx().as_ref(),
-    identity: ctx.borrow_identity_ctx().as_ref(),
-});
-```
+- [ ] **Step 4: Update L4 chain and factory dispatch**
 
-Run: `cargo test -p ngfw policy pipeline::wrappers`
+Every call through `TcpSessionPipeline`, `L4Chain`, and tests must `.await` async stage methods.
 
-Expected: PASS.
-
-- [ ] **Step 4: Commit**
+Run:
 
 ```bash
-git add crates/raptorgate/src/policy/policy_evaluator.rs crates/raptorgate/src/policy/engine.rs crates/raptorgate/src/pipeline/wrappers.rs
-git commit -m "refactor(policy): evaluate explicit flow fields"
+cargo test -p ngfw l4::
+```
+
+Expected: PASS except the intentional failing HTTPS routing test from Task 1.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/raptorgate/src/l4 crates/raptorgate/src/dpi/smtp_l4_stage.rs
+git commit -m "refactor(l4): make session stages async"
 ```
 
 ---
 
-## Task 3: Add Decrypted Flow Context and Pipeline Types
+## Task 3: Add Managed TCP Endpoint for L4 TLS
 
 **Files:**
-- Create: `crates/raptorgate/src/tls/decrypted_flow.rs`
-- Modify: `crates/raptorgate/src/tls/mod.rs`
+- Create: `crates/raptorgate/src/l4/tcp_endpoint.rs`
+- Modify: `crates/raptorgate/src/l4.rs`
+- Modify: `crates/raptorgate/src/conntrack/session_manager.rs`
 
-- [ ] **Step 1: Add failing context tests**
+- [ ] **Step 1: Add unit tests for endpoint byte flow**
 
-Create `crates/raptorgate/src/tls/decrypted_flow.rs` with only imports and these tests:
+Create `crates/raptorgate/src/l4/tcp_endpoint.rs` with tests first:
 
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddr;
-    use uuid::Uuid;
+    use crate::conntrack::tuple::Direction;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    fn meta() -> SessionMeta {
-        SessionMeta {
-            session_id: Uuid::now_v7(),
-            peer: "192.168.20.10:53120".parse().unwrap(),
-            server: "142.250.186.4:443".parse().unwrap(),
-            original_dst: "142.250.186.4:443".parse().unwrap(),
-            sni: Some("www.google.com".to_string()),
-            alpn: Some(b"h2".to_vec()),
-            client_side_interface: Some("eth1".to_string()),
-            server_side_interface: Some("eth0".to_string()),
-            mode: InspectionMode::Outbound,
-        }
+    #[tokio::test]
+    async fn endpoint_reads_admitted_encrypted_bytes() {
+        let (endpoint, handle) = L4TcpEndpoint::new();
+
+        handle.admit(Direction::Original, b"client tls".to_vec()).await.unwrap();
+        drop(handle);
+
+        let mut reader = endpoint.reader;
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).await.unwrap();
+
+        assert_eq!(out, b"client tls");
     }
 
-    #[test]
-    fn context_uses_client_to_server_endpoints_and_interface() {
-        let ctx = DecryptedFlowContext::new(
-            b"GET / HTTP/1.1\r\n\r\n",
-            DpiContext::default(),
-            Direction::ClientToServer,
-            &meta(),
-            SystemTime::UNIX_EPOCH,
-            None,
-        );
+    #[tokio::test]
+    async fn endpoint_write_returns_generated_ciphertext() {
+        let (endpoint, mut handle) = L4TcpEndpoint::new();
 
-        assert_eq!(ctx.src, "192.168.20.10:53120".parse::<SocketAddr>().unwrap());
-        assert_eq!(ctx.dst, "142.250.186.4:443".parse::<SocketAddr>().unwrap());
-        assert_eq!(ctx.source_interface.as_deref(), Some("eth1"));
-        assert!(ctx.dpi.decrypted);
-        assert_eq!(ctx.dpi.src_port, Some(53120));
-        assert_eq!(ctx.dpi.dst_port, Some(443));
-    }
+        let mut writer = endpoint.writer;
+        writer.write_all(b"server tls").await.unwrap();
+        writer.flush().await.unwrap();
 
-    #[test]
-    fn context_uses_server_to_client_endpoints_and_interface() {
-        let ctx = DecryptedFlowContext::new(
-            b"HTTP/1.1 200 OK\r\n\r\n",
-            DpiContext::default(),
-            Direction::ServerToClient,
-            &meta(),
-            SystemTime::UNIX_EPOCH,
-            None,
-        );
-
-        assert_eq!(ctx.src, "142.250.186.4:443".parse::<SocketAddr>().unwrap());
-        assert_eq!(ctx.dst, "192.168.20.10:53120".parse::<SocketAddr>().unwrap());
-        assert_eq!(ctx.source_interface.as_deref(), Some("eth0"));
-        assert!(ctx.dpi.decrypted);
-        assert_eq!(ctx.dpi.src_port, Some(443));
-        assert_eq!(ctx.dpi.dst_port, Some(53120));
+        let emitted = handle.next_emitted().await.unwrap();
+        assert_eq!(emitted.dir, Direction::Reply);
+        assert_eq!(emitted.payload, b"server tls");
     }
 }
 ```
 
-Run: `cargo test -p ngfw tls::decrypted_flow::tests::context_uses_client_to_server_endpoints_and_interface`
+Run:
 
-Expected: FAIL because the module and types are incomplete.
-
-- [ ] **Step 2: Implement core flow types**
-
-In `crates/raptorgate/src/tls/decrypted_flow.rs`, add:
-
-```rust
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
-use std::time::SystemTime;
-
-use tonic::async_trait;
-
-use crate::data_plane::ips::ips::{Ips, IpsSignatureMatch, IpsVerdict};
-use crate::dpi::{AppProto, DpiClassifier, DpiContext, InspectResult};
-use crate::identity::{resolve_identity, IdentityContext, IdentitySessionStore};
-use crate::policy::engine::PolicyEngine;
-use crate::policy::policy_evaluator::{PolicyEvalContext, PolicyFlowFields};
-use crate::rule_tree::{ArrivalInfo, IpVer, Port, Protocol, Verdict};
-use crate::tls::inspection_relay::{Direction, InspectionMode, SessionMeta};
-use crate::zones::resolver::ZoneResolver;
+```bash
+cargo test -p ngfw l4::tcp_endpoint
 ```
 
-Move or recreate the existing inspection boundary types:
+Expected: FAIL because the endpoint does not exist.
+
+- [ ] **Step 2: Implement endpoint types**
+
+Implement these public types:
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InspectionDisposition {
-    Forward,
-    Drop,
-}
-
-pub struct InspectionDecision {
-    pub disposition: InspectionDisposition,
-    pub ctx: DpiContext,
-    pub payload: Vec<u8>,
-}
-
-#[async_trait]
-pub trait DecryptedTrafficInspector: Send + Sync {
-    async fn inspect(
-        &self,
-        payload: &[u8],
-        seed_ctx: &DpiContext,
-        direction: Direction,
-        meta: &SessionMeta,
-    ) -> InspectionDecision;
-
-    fn close_session(&self, _meta: &SessionMeta) {}
-}
-
-pub struct NoopDecryptedInspector;
-
-#[async_trait]
-impl DecryptedTrafficInspector for NoopDecryptedInspector {
-    async fn inspect(
-        &self,
-        payload: &[u8],
-        seed_ctx: &DpiContext,
-        _direction: Direction,
-        _meta: &SessionMeta,
-    ) -> InspectionDecision {
-        InspectionDecision {
-            disposition: InspectionDisposition::Forward,
-            ctx: seed_ctx.clone(),
-            payload: payload.to_vec(),
-        }
-    }
-}
-```
-
-Add context and stage types:
-
-```rust
-pub struct DecryptedFlowContext {
-    pub payload: Vec<u8>,
-    pub direction: Direction,
-    pub session: SessionMeta,
-    pub arrival_time: SystemTime,
-    pub src: SocketAddr,
-    pub dst: SocketAddr,
-    pub source_interface: Option<String>,
-    pub identity: Option<IdentityContext>,
-    pub dpi: DpiContext,
-    pub warnings: Vec<String>,
-}
-
-impl DecryptedFlowContext {
-    pub fn new(
-        payload: &[u8],
-        mut seed_ctx: DpiContext,
-        direction: Direction,
-        meta: &SessionMeta,
-        arrival_time: SystemTime,
-        identity: Option<IdentityContext>,
-    ) -> Self {
-        let (src, dst) = endpoints_for_direction(meta, direction);
-        seed_ctx.decrypted = true;
-        seed_ctx.src_port = Some(src.port());
-        seed_ctx.dst_port = Some(dst.port());
-
-        Self {
-            payload: payload.to_vec(),
-            direction,
-            session: meta.clone(),
-            arrival_time,
-            src,
-            dst,
-            source_interface: meta.source_interface_for_direction(direction).map(ToOwned::to_owned),
-            identity,
-            dpi: seed_ctx,
-            warnings: Vec::new(),
-        }
-    }
-
-    pub fn policy_flow_fields(&self) -> PolicyFlowFields {
-        let ip_ver = match (self.src.ip(), self.dst.ip()) {
-            (IpAddr::V4(_), IpAddr::V4(_)) => IpVer::V4,
-            (IpAddr::V6(_), IpAddr::V6(_)) => IpVer::V6,
-            _ => IpVer::V4,
-        };
-
-        PolicyFlowFields {
-            src_ip: self.src.ip(),
-            dst_ip: self.dst.ip(),
-            ip_ver,
-            protocol: Protocol::Tcp,
-            src_port: Some(Port::from(self.src.port())),
-            dst_port: Some(Port::from(self.dst.port())),
-        }
-    }
-}
-
-fn endpoints_for_direction(meta: &SessionMeta, direction: Direction) -> (SocketAddr, SocketAddr) {
-    match direction {
-        Direction::ClientToServer => (meta.peer, meta.server),
-        Direction::ServerToClient => (meta.server, meta.peer),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DecryptedFlowOutcome {
-    Continue,
-    Drop { reason: String },
-}
-
-#[async_trait]
-pub trait DecryptedFlowStage: Send + Sync {
-    async fn process(&self, ctx: &mut DecryptedFlowContext) -> DecryptedFlowOutcome;
+pub struct L4TcpEndpoint {
+    pub reader: L4TcpReadHalf,
+    pub writer: L4TcpWriteHalf,
 }
 
 #[derive(Clone)]
-pub struct DecryptedFlowPipeline {
-    stages: Arc<Vec<Arc<dyn DecryptedFlowStage>>>,
-}
-
-impl DecryptedFlowPipeline {
-    pub fn new(stages: Vec<Arc<dyn DecryptedFlowStage>>) -> Self {
-        Self {
-            stages: Arc::new(stages),
-        }
-    }
-
-    pub async fn process(&self, ctx: &mut DecryptedFlowContext) -> DecryptedFlowOutcome {
-        for stage in self.stages.iter() {
-            match stage.process(ctx).await {
-                DecryptedFlowOutcome::Continue => {}
-                drop @ DecryptedFlowOutcome::Drop { .. } => return drop,
-            }
-        }
-        DecryptedFlowOutcome::Continue
-    }
+pub struct L4TcpEndpointHandle {
+    inbound_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    emitted_rx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<L4Emit>>>,
 }
 ```
 
-Export the module in `crates/raptorgate/src/tls/mod.rs`:
+`L4TcpReadHalf` implements `tokio::io::AsyncRead` by draining chunks received through an mpsc channel.
+
+`L4TcpWriteHalf` implements `tokio::io::AsyncWrite` by sending `L4Emit { dir: Direction::Reply, payload }` through an mpsc channel.
+
+For server-to-client TLS, construct a second endpoint with writer direction `Direction::Original` when needed. Do not encode direction globally in `L4TcpEndpoint::new()` unless the tests require it.
+
+- [ ] **Step 3: Export the module**
+
+In `crates/raptorgate/src/l4.rs`, add:
 
 ```rust
-pub mod decrypted_flow;
-pub use decrypted_flow::{
-    DecryptedFlowContext, DecryptedFlowOutcome, DecryptedFlowPipeline,
-    DecryptedFlowStage, DecryptedTrafficInspector, InspectionDecision,
-    InspectionDisposition, NoopDecryptedInspector,
-};
+pub mod tcp_endpoint;
+pub use tcp_endpoint::{L4TcpEndpoint, L4TcpEndpointHandle, L4TcpReadHalf, L4TcpWriteHalf};
 ```
 
-Run: `cargo test -p ngfw tls::decrypted_flow::tests`
-
-Expected: PASS for the context tests.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Run tests**
 
 ```bash
-git add crates/raptorgate/src/tls/decrypted_flow.rs crates/raptorgate/src/tls/mod.rs
-git commit -m "feat(tls): add decrypted flow context"
+cargo test -p ngfw l4::tcp_endpoint
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/raptorgate/src/l4.rs crates/raptorgate/src/l4/tcp_endpoint.rs
+git commit -m "feat(l4): add managed tcp byte endpoint"
 ```
 
 ---
 
-## Task 4: Implement Decrypted DPI and IPS Stages
+## Task 4: Teach SessionManager to Consume Original Packets and Emit Generated Ciphertext
 
 **Files:**
-- Modify: `crates/raptorgate/src/tls/decrypted_flow.rs`
+- Modify: `crates/raptorgate/src/conntrack/session_manager.rs`
+- Modify: `crates/raptorgate/src/l4/release.rs`
+- Modify: `crates/raptorgate/src/l4/reset.rs` if generated TCP packet helpers need shared code.
 
-- [ ] **Step 1: Add failing stage tests**
+- [ ] **Step 1: Add a session manager test for consumed packets**
 
-Add tests in `crates/raptorgate/src/tls/decrypted_flow.rs`:
+In `crates/raptorgate/src/conntrack/session_manager.rs`, add a test that installs a TCP factory whose first payload returns:
 
 ```rust
-#[tokio::test]
-async fn decrypted_dpi_stage_classifies_http_plaintext() {
-    let stage = DecryptedDpiStage {
-        classifier: Arc::new(DpiClassifier::new()),
-    };
-    let mut ctx = DecryptedFlowContext::new(
-        b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
-        DpiContext::default(),
-        Direction::ClientToServer,
-        &meta(),
-        SystemTime::UNIX_EPOCH,
-        None,
-    );
+L4Outcome::Drop(vec![packet_id])
+```
 
-    assert_eq!(stage.process(&mut ctx).await, DecryptedFlowOutcome::Continue);
-    assert_eq!(ctx.dpi.app_proto, Some(AppProto::Http));
-    assert_eq!(ctx.dpi.http_host.as_deref(), Some("example.com"));
-    assert!(ctx.dpi.decrypted);
-}
+The test should admit one TCP packet and assert that `release_rx` receives:
 
-#[tokio::test]
-async fn decrypted_ips_stage_blocks_matching_plaintext() {
-    let ips = Ips::new(test_ips_config_blocking_literal("UNION SELECT")).unwrap();
-    let stage = DecryptedIpsStage { inspection: ips };
-    let mut ctx = DecryptedFlowContext::new(
-        b"GET /?q=UNION SELECT HTTP/1.1\r\nHost: x\r\n\r\n",
-        DpiContext {
-            app_proto: Some(AppProto::Http),
-            ..Default::default()
-        },
-        Direction::ClientToServer,
-        &meta(),
-        SystemTime::UNIX_EPOCH,
-        None,
-    );
-
-    match stage.process(&mut ctx).await {
-        DecryptedFlowOutcome::Drop { reason } => assert!(reason.contains("UNION SELECT")),
-        other => panic!("expected IPS drop, got {other:?}"),
-    }
-    assert!(ctx.dpi.ips_match.as_ref().is_some_and(|m| m.blocked));
+```rust
+ReleaseAction::Drop {
+    packet_id,
+    reason: DropReason::StageDropped,
+    ..
 }
 ```
 
-Add this local helper in the test module:
+Run:
+
+```bash
+cargo test -p ngfw conntrack::session_manager::tests::l4_drop_consumes_original_packet
+```
+
+Expected: FAIL because `L4Outcome::Drop` is not handled.
+
+- [ ] **Step 2: Add generated packet release representation**
+
+Extend `ReleaseAction` if needed:
 
 ```rust
-fn test_ips_config_blocking_literal(pattern: &str) -> crate::data_plane::ips::config::IpsConfig {
-    use crate::data_plane::ips::config::{
-        IpsAction, IpsAppProtocol, IpsConfig, IpsDetectionConfig, IpsGeneralConfig,
-        IpsMatchType, IpsPatternEncoding, IpsSeverity, IpsSignatureConfig,
-    };
-
-    IpsConfig {
-        general: IpsGeneralConfig { enabled: true },
-        detection: IpsDetectionConfig {
-            enabled: true,
-            max_payload_bytes: 512,
-            max_matches_per_packet: 4,
-        },
-        signatures: vec![IpsSignatureConfig {
-            id: "tls-http-sqli".into(),
-            name: pattern.into(),
-            enabled: true,
-            category: "sqli".into(),
-            pattern: pattern.into(),
-            match_type: IpsMatchType::Literal,
-            pattern_encoding: IpsPatternEncoding::Text,
-            case_insensitive: true,
-            severity: IpsSeverity::High,
-            action: IpsAction::Block,
-            app_protocols: vec![IpsAppProtocol::Http],
-            src_ports: vec![],
-            dst_ports: vec![443],
-        }],
-    }
+pub enum ReleaseAction {
+    Forward { packet: PacketContext },
+    Drop { packet_id: PacketId, reason: DropReason, temp_dst_port: Option<u16> },
 }
 ```
 
-Run: `cargo test -p ngfw tls::decrypted_flow::tests::decrypted_dpi_stage_classifies_http_plaintext`
+If generated encrypted bytes are converted to `PacketContext` inside `SessionManager`, keep `ReleaseAction::Forward`. Do not add a plaintext release action.
 
-Expected: FAIL because stage types are missing.
+- [ ] **Step 3: Handle `Drop` and `Emit` outcomes**
 
-- [ ] **Step 2: Implement `DecryptedDpiStage`**
+In the session task outcome match:
 
-Add this stage:
+- `Drop(ids)` sends `ReleaseAction::Drop` for each id with `DropReason::StageDropped`.
+- `Emit(items)` builds generated encrypted TCP packets and sends `ReleaseAction::Forward`.
+- `ForwardAndEmit` performs both.
+- `Terminate` drops all pending packets and invalidates conntrack as today.
+
+The generated packet builder must use real flow metadata from `SessionContext::entry()`. It must not use decrypted plaintext as payload. Payload in `L4Emit` is encrypted TLS ciphertext.
+
+- [ ] **Step 4: Add a generated ciphertext test**
+
+Add a test where an L4 stage returns:
 
 ```rust
-#[derive(Clone)]
-pub struct DecryptedDpiStage {
-    pub classifier: Arc<DpiClassifier>,
-}
-
-#[async_trait]
-impl DecryptedFlowStage for DecryptedDpiStage {
-    async fn process(&self, ctx: &mut DecryptedFlowContext) -> DecryptedFlowOutcome {
-        match self.classifier.inspect_flow_payload(
-            ctx.src.ip(),
-            ctx.src.port(),
-            ctx.dst.ip(),
-            ctx.dst.port(),
-            &ctx.payload,
-        ) {
-            InspectResult::Done(mut dpi) => {
-                merge_decrypted_dpi(&ctx.dpi, &mut dpi);
-                ctx.dpi = dpi;
-            }
-            InspectResult::NeedMore | InspectResult::Skipped => {
-                ctx.dpi.decrypted = true;
-                ctx.dpi.src_port = ctx.dpi.src_port.or(Some(ctx.src.port()));
-                ctx.dpi.dst_port = ctx.dpi.dst_port.or(Some(ctx.dst.port()));
-            }
-        }
-        DecryptedFlowOutcome::Continue
-    }
-}
-
-fn merge_decrypted_dpi(existing: &DpiContext, next: &mut DpiContext) {
-    next.decrypted = true;
-    next.src_port = next.src_port.or(existing.src_port);
-    next.dst_port = next.dst_port.or(existing.dst_port);
-    next.ips_match = existing.ips_match.clone();
-
-    if next.app_proto.is_none() {
-        next.app_proto = existing.app_proto;
-    }
+L4Outcome::ForwardAndEmit {
+    forward: vec![],
+    emit: vec![L4Emit {
+        dir: Direction::Reply,
+        payload: b"encrypted response".to_vec(),
+    }],
 }
 ```
 
-Run: `cargo test -p ngfw tls::decrypted_flow::tests::decrypted_dpi_stage_classifies_http_plaintext`
+Assert that the release receiver gets a `ReleaseAction::Forward { packet }` and that the generated packet payload contains `encrypted response`.
+
+Run:
+
+```bash
+cargo test -p ngfw conntrack::session_manager::tests::l4_emit_releases_generated_ciphertext_packet
+```
+
+Expected: PASS after implementation.
+
+- [ ] **Step 5: Run session manager tests**
+
+```bash
+cargo test -p ngfw conntrack::session_manager
+```
 
 Expected: PASS.
 
-- [ ] **Step 3: Implement `DecryptedIpsStage`**
+- [ ] **Step 6: Commit**
 
-Add this stage:
+```bash
+git add crates/raptorgate/src/conntrack/session_manager.rs crates/raptorgate/src/l4/release.rs crates/raptorgate/src/l4/reset.rs
+git commit -m "feat(l4): let sessions emit generated tcp traffic"
+```
+
+---
+
+## Task 5: Make TLS Dual Session Helpers Work With Generic Async IO
+
+**Files:**
+- Modify: `crates/raptorgate/src/tls/dual_session.rs`
+- Modify: `crates/raptorgate/src/tls/mitm_proxy.rs` for compile compatibility only.
+
+- [ ] **Step 1: Add generic IO tests**
+
+In `crates/raptorgate/src/tls/dual_session.rs`, add a test using `tokio::io::duplex`:
 
 ```rust
-#[derive(Clone)]
-pub struct DecryptedIpsStage {
-    pub inspection: Arc<Ips>,
-}
+#[tokio::test]
+async fn accept_client_tls_works_with_generic_async_io() {
+    let (cert_pem, key_pem) = make_localhost_cert();
+    let server_config = crate::tls::rustls_config::build_server_config_from_pem(&cert_pem, &key_pem).unwrap();
+    let client_config = make_client_config_trusting(&cert_pem);
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
 
-#[async_trait]
-impl DecryptedFlowStage for DecryptedIpsStage {
-    async fn process(&self, ctx: &mut DecryptedFlowContext) -> DecryptedFlowOutcome {
-        ctx.dpi.ips_match = None;
+    let server = tokio::spawn(async move {
+        accept_client_tls(AcceptParams {
+            stream: server_io,
+            server_config,
+        })
+        .await
+    });
 
-        match self.inspection.inspect_decrypted(
-            &ctx.payload,
-            ctx.dpi.app_proto,
-            ctx.src.port(),
-            ctx.dst.port(),
-        ) {
-            IpsVerdict::Allow => DecryptedFlowOutcome::Continue,
-            IpsVerdict::Alert(matches) => {
-                if let Some(first) = matches.first() {
-                    ctx.dpi.ips_match = Some(crate::dpi::IpsMatch {
-                        signature_name: first.name.clone(),
-                        severity: first.severity.as_str().to_string(),
-                        blocked: false,
-                    });
-                }
-                for matched in matches {
-                    ctx.warnings.push(matched.message());
-                }
-                DecryptedFlowOutcome::Continue
-            }
-            IpsVerdict::Block(matched) => {
-                let reason = matched.message();
-                ctx.dpi.ips_match = Some(crate::dpi::IpsMatch {
-                    signature_name: matched.name.clone(),
-                    severity: matched.severity.as_str().to_string(),
-                    blocked: true,
-                });
-                ctx.warnings.push(reason.clone());
-                DecryptedFlowOutcome::Drop { reason }
-            }
-        }
-    }
+    let server_name: rustls::pki_types::ServerName<'_> = "localhost".try_into().unwrap();
+    let connector = tokio_rustls::TlsConnector::from(client_config);
+    let client = connector.connect(server_name, client_io).await;
+
+    assert!(client.is_ok());
+    assert!(server.await.unwrap().is_ok());
 }
 ```
 
-Update the `pub use decrypted_flow::{ ... }` list in `crates/raptorgate/src/tls/mod.rs` to include:
+Run:
 
-```rust
-DecryptedDpiStage, DecryptedIpsStage,
+```bash
+cargo test -p ngfw tls::dual_session::tests::accept_client_tls_works_with_generic_async_io
 ```
 
-Update the `pub use decrypted_flow::{ ... }` list in `crates/raptorgate/src/tls/mod.rs` to include:
+Expected: FAIL because `AcceptParams` is hardcoded to `TcpStream`.
+
+- [ ] **Step 2: Make params generic**
+
+Change the params and helpers to:
 
 ```rust
-DecryptedPolicyStage,
+pub struct AcceptParams<S> {
+    pub stream: S,
+    pub server_config: Arc<ServerConfig>,
+}
+
+pub struct ConnectParams<S> {
+    pub stream: S,
+    pub client_config: Arc<ClientConfig>,
+    pub server_name: String,
+}
+
+pub async fn accept_client_tls<S>(params: AcceptParams<S>) -> anyhow::Result<ServerTlsStream<S>>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let acceptor = TlsAcceptor::from(params.server_config);
+    acceptor.accept(params.stream).await.context("TLS accept from client failed")
+}
+
+pub async fn connect_to_server<S>(params: ConnectParams<S>) -> anyhow::Result<ClientTlsStream<S>>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let server_name = params.server_name.clone().try_into().context("Invalid server name for TLS connection")?;
+    let connector = TlsConnector::from(params.client_config);
+    connector.connect(server_name, params.stream).await.context("TLS connect to server failed")
+}
 ```
 
-Run: `cargo test -p ngfw tls::decrypted_flow`
+Update existing `mitm_proxy.rs` call sites from `tcp_stream` to `stream`.
+
+- [ ] **Step 3: Run TLS helper tests**
+
+```bash
+cargo test -p ngfw tls::dual_session
+```
 
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/raptorgate/src/tls/decrypted_flow.rs crates/raptorgate/src/tls/mod.rs
-git commit -m "feat(tls): inspect decrypted flow dpi and ips"
+git add crates/raptorgate/src/tls/dual_session.rs crates/raptorgate/src/tls/mitm_proxy.rs
+git commit -m "refactor(tls): accept generic async io for dual sessions"
 ```
 
 ---
 
-## Task 5: Implement Decrypted Policy Stage
+## Task 6: Implement Production TLS L4 Inspection Service
 
 **Files:**
-- Modify: `crates/raptorgate/src/tls/decrypted_flow.rs`
-
-- [ ] **Step 1: Add failing policy stage tests**
-
-Add tests to `crates/raptorgate/src/tls/decrypted_flow.rs`:
-
-```rust
-#[tokio::test]
-async fn decrypted_policy_stage_drops_policy_drop_verdict() {
-    let policy_engine = Arc::new(policy_engine_for_dst_port(Verdict::Drop, 443));
-    let zone_resolver = Arc::new(FixedZoneResolver::new("00000000-0000-0000-0000-000000000123"));
-    let stage = DecryptedPolicyStage {
-        policy_engine,
-        zone_resolver,
-    };
-    let mut ctx = DecryptedFlowContext::new(
-        b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
-        DpiContext { app_proto: Some(AppProto::Http), ..Default::default() },
-        Direction::ClientToServer,
-        &meta(),
-        SystemTime::UNIX_EPOCH,
-        None,
-    );
-
-    assert!(matches!(
-        stage.process(&mut ctx).await,
-        DecryptedFlowOutcome::Drop { .. }
-    ));
-}
-
-#[tokio::test]
-async fn decrypted_policy_stage_allows_policy_allow_verdict() {
-    let policy_engine = Arc::new(policy_engine_for_dst_port(Verdict::Allow, 443));
-    let zone_resolver = Arc::new(FixedZoneResolver::new("00000000-0000-0000-0000-000000000123"));
-    let stage = DecryptedPolicyStage {
-        policy_engine,
-        zone_resolver,
-    };
-    let mut ctx = DecryptedFlowContext::new(
-        b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
-        DpiContext { app_proto: Some(AppProto::Http), ..Default::default() },
-        Direction::ClientToServer,
-        &meta(),
-        SystemTime::UNIX_EPOCH,
-        None,
-    );
-
-    assert_eq!(stage.process(&mut ctx).await, DecryptedFlowOutcome::Continue);
-}
-```
-
-Add these test helpers:
-
-```rust
-#[derive(Clone)]
-struct FixedZoneResolver {
-    pair_id: crate::zones::ZonePairId,
-}
-
-impl FixedZoneResolver {
-    fn new(id: &str) -> Self {
-        Self {
-            pair_id: crate::zones::ZonePairId::from(uuid::Uuid::parse_str(id).unwrap()),
-        }
-    }
-}
-
-impl crate::zones::resolver::ZoneResolver for FixedZoneResolver {
-    fn resolve(&self, _iface: &str, _dst_ip: IpAddr) -> Option<crate::zones::ResolvedZonePair> {
-        Some(crate::zones::ResolvedZonePair {
-            id: self.pair_id.clone(),
-            default_policy: crate::zones::DefaultPolicy::Allow,
-        })
-    }
-
-    fn resolve_bidirectional(
-        &self,
-        _src_ip: IpAddr,
-        _dst_ip: IpAddr,
-    ) -> crate::zones::DirectionalZonePairs {
-        crate::zones::DirectionalZonePairs {
-            forward: Some(crate::zones::ResolvedZonePair {
-                id: self.pair_id.clone(),
-                default_policy: crate::zones::DefaultPolicy::Allow,
-            }),
-            reverse: Some(crate::zones::ResolvedZonePair {
-                id: self.pair_id.clone(),
-                default_policy: crate::zones::DefaultPolicy::Allow,
-            }),
-        }
-    }
-}
-
-fn policy_engine_for_dst_port(verdict: Verdict, dst_port: u16) -> PolicyEngine {
-    use std::collections::HashMap;
-
-    let zone_pair_id = crate::zones::ZonePairId::from(
-        uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap(),
-    );
-    let policy = crate::policy::Policy {
-        name: "decrypted-flow-policy".into(),
-        zone_pair_id: zone_pair_id.clone(),
-        priority: 1,
-        rule_tree: crate::rule_tree::RuleTree::new(
-            crate::rule_tree::MatchBuilder::with_arm(
-                crate::rule_tree::MatchKind::DstPort,
-                crate::rule_tree::Pattern::Equal(crate::rule_tree::FieldValue::Port(
-                    crate::rule_tree::Port::from(dst_port),
-                )),
-                crate::rule_tree::ArmEnd::Verdict(verdict),
-            )
-            .build()
-            .unwrap(),
-        ),
-        smtp_policy: crate::policy::SmtpPolicy::default(),
-    };
-    let zone_pair = crate::zones::ZonePair {
-        src_zone_id: uuid::Uuid::from_u128(1).into(),
-        dst_zone_id: uuid::Uuid::from_u128(2).into(),
-        default_policy: crate::zones::DefaultPolicy::Allow,
-    };
-
-    let mut policies = HashMap::new();
-    policies.insert(crate::policy::PolicyId::from(uuid::Uuid::from_u128(3)), policy);
-
-    let mut zone_pairs = HashMap::new();
-    zone_pairs.insert(zone_pair_id, zone_pair);
-
-    PolicyEngine::from_policies(&policies, &zone_pairs).unwrap()
-}
-```
-
-Run: `cargo test -p ngfw tls::decrypted_flow::tests::decrypted_policy_stage_drops_policy_drop_verdict`
-
-Expected: FAIL because `DecryptedPolicyStage` is missing.
-
-- [ ] **Step 2: Implement policy stage**
-
-Add:
-
-```rust
-#[derive(Clone)]
-pub struct DecryptedPolicyStage<ZR>
-where
-    ZR: ZoneResolver,
-{
-    pub policy_engine: Arc<PolicyEngine>,
-    pub zone_resolver: Arc<ZR>,
-}
-
-#[async_trait]
-impl<ZR> DecryptedFlowStage for DecryptedPolicyStage<ZR>
-where
-    ZR: ZoneResolver + Send + Sync + 'static,
-{
-    async fn process(&self, ctx: &mut DecryptedFlowContext) -> DecryptedFlowOutcome {
-        let Some(source_interface) = ctx.source_interface.as_deref() else {
-            tracing::warn!(
-                event = "tls.decrypted.policy.source_interface.missing",
-                session_id = %ctx.session.session_id,
-                peer = %ctx.session.peer,
-                server = %ctx.session.server,
-                direction = ?ctx.direction,
-                "decrypted policy source interface missing, allowing"
-            );
-            return DecryptedFlowOutcome::Continue;
-        };
-
-        let pair = self.zone_resolver.resolve(source_interface, ctx.dst.ip());
-        let Some(pair) = pair else {
-            tracing::warn!(
-                event = "policy.zone_pair.missing",
-                iface = %source_interface,
-                dst_ip = %ctx.dst.ip(),
-                "no matching zone pair for decrypted flow, allowing"
-            );
-            return DecryptedFlowOutcome::Continue;
-        };
-
-        let arrival = ArrivalInfo::from_time(&ctx.arrival_time);
-        let verdict = self.policy_engine.evaluate(&pair.id, PolicyEvalContext {
-            flow: ctx.policy_flow_fields(),
-            arrival: &arrival,
-            dns: None,
-            dpi: Some(&ctx.dpi),
-            identity: ctx.identity.as_ref(),
-        });
-
-        match verdict {
-            Some(Verdict::Allow) | None => DecryptedFlowOutcome::Continue,
-            Some(Verdict::Drop) => {
-                let reason = "decrypted policy returned drop verdict".to_string();
-                tracing::warn!(
-                    event = "tls.decrypted.policy.dropped",
-                    session_id = %ctx.session.session_id,
-                    peer = %ctx.session.peer,
-                    server = %ctx.session.server,
-                    direction = ?ctx.direction,
-                    "decrypted flow dropped by policy"
-                );
-                DecryptedFlowOutcome::Drop { reason }
-            }
-            Some(Verdict::AllowWarn(message)) => {
-                ctx.warnings.push(message);
-                DecryptedFlowOutcome::Continue
-            }
-        }
-    }
-}
-```
-
-If `ArrivalInfo::from_time()` expects `SystemTime` by value rather than reference, pass `ctx.arrival_time`.
-
-Run: `cargo test -p ngfw tls::decrypted_flow`
-
-Expected: PASS.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add crates/raptorgate/src/tls/decrypted_flow.rs crates/raptorgate/src/tls/mod.rs
-git commit -m "feat(tls): apply policy to decrypted flows"
-```
-
----
-
-## Task 6: Replace Synthetic Inspector with `DecryptedFlowInspector`
-
-**Files:**
-- Modify: `crates/raptorgate/src/tls/decrypted_flow.rs`
-- Modify: `crates/raptorgate/src/tls/decrypted_chain.rs`
-- Modify: `crates/raptorgate/src/tls/inspection_relay.rs`
+- Create: `crates/raptorgate/src/tls/l4_inspection.rs`
 - Modify: `crates/raptorgate/src/tls/mod.rs`
+- Modify: `crates/raptorgate/src/l4/tls.rs`
+- Modify: `crates/raptorgate/src/l4/http.rs`
 
-- [ ] **Step 1: Add failing inspector regression test**
+- [ ] **Step 1: Add L4 TLS service tests**
 
-Add to `crates/raptorgate/src/tls/decrypted_flow.rs`:
+Create `crates/raptorgate/src/tls/l4_inspection.rs` with these tests first:
 
 ```rust
-#[tokio::test]
-async fn flow_inspector_forwards_clean_plaintext_without_execution_sender() {
-    let pipeline = DecryptedFlowPipeline::new(vec![
-        Arc::new(DecryptedDpiStage { classifier: Arc::new(DpiClassifier::new()) }),
-    ]);
-    let inspector = DecryptedFlowInspector::new(
-        pipeline,
-        Arc::new(DpiClassifier::new()),
-        IdentitySessionStore::new_shared(),
-    );
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conntrack::tuple::Direction;
+    use crate::l4::http::HttpL4Stage;
+    use crate::l4::stage::L4Outcome;
 
-    let decision = inspector.inspect(
-        b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
-        &DpiContext::default(),
-        Direction::ClientToServer,
-        &meta(),
-    ).await;
+    #[tokio::test]
+    async fn service_bypasses_non_tls_payload() {
+        let mut service = test_service();
+        let mut ctx = test_session_context(443);
 
-    assert_eq!(decision.disposition, InspectionDisposition::Forward);
-    assert_eq!(decision.payload, b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
-    assert!(decision.ctx.decrypted);
+        let out = service.on_encrypted_bytes(
+            &mut ctx,
+            PacketId::next(),
+            Direction::Original,
+            0,
+            b"GET / HTTP/1.1\r\n\r\n",
+            &mut HttpL4Stage::new(),
+        ).await;
+
+        assert!(matches!(out, L4Outcome::Forward(_)));
+    }
+
+    #[tokio::test]
+    async fn service_drops_when_decision_engine_blocks() {
+        let mut service = test_service_with_block_decision();
+        let mut ctx = test_session_context(443);
+
+        let out = service.on_encrypted_bytes(
+            &mut ctx,
+            PacketId::next(),
+            Direction::Original,
+            0,
+            tls_client_hello_for("blocked.example"),
+            &mut HttpL4Stage::new(),
+        ).await;
+
+        assert!(matches!(out, L4Outcome::Terminate { .. } | L4Outcome::Drop(_)));
+    }
 }
 ```
 
-Run: `cargo test -p ngfw tls::decrypted_flow::tests::flow_inspector_forwards_clean_plaintext_without_execution_sender`
+Use existing TLS test helpers where available. If no reusable ClientHello helper exists, move the existing helper from `tls::mitm_proxy` tests into a private test helper in this module.
 
-Expected: FAIL because `DecryptedFlowInspector` is missing.
+Run:
 
-- [ ] **Step 2: Implement `DecryptedFlowInspector`**
+```bash
+cargo test -p ngfw tls::l4_inspection
+```
+
+Expected: FAIL because the module does not exist.
+
+- [ ] **Step 2: Define service config**
 
 Add:
 
 ```rust
-pub struct DecryptedFlowInspector {
-    pipeline: DecryptedFlowPipeline,
-    dpi_classifier: Arc<DpiClassifier>,
-    identity_sessions: Arc<IdentitySessionStore>,
+pub struct TlsL4InspectionConfig {
+    pub cert_forger: Arc<CertForger>,
+    pub untrust_forger: Arc<CertForger>,
+    pub decision_engine: Arc<TlsDecisionEngine>,
+    pub decrypted_pipeline: DecryptedFlowPipeline,
+    pub dpi_classifier: Arc<DpiClassifier>,
+    pub identity_sessions: Arc<IdentitySessionStore>,
+    pub decryption_mirror: Arc<DecryptionMirror>,
 }
 
-impl DecryptedFlowInspector {
-    pub fn new(
-        pipeline: DecryptedFlowPipeline,
-        dpi_classifier: Arc<DpiClassifier>,
-        identity_sessions: Arc<IdentitySessionStore>,
-    ) -> Self {
-        Self {
-            pipeline,
-            dpi_classifier,
-            identity_sessions,
-        }
-    }
+pub struct TlsL4InspectionService {
+    config: Arc<TlsL4InspectionConfig>,
 }
+```
 
-#[async_trait]
-impl DecryptedTrafficInspector for DecryptedFlowInspector {
-    async fn inspect(
-        &self,
+- [ ] **Step 3: Implement encrypted byte entrypoint**
+
+Add:
+
+```rust
+impl TlsL4InspectionService {
+    pub async fn on_encrypted_bytes(
+        &mut self,
+        ctx: &mut SessionContext,
+        packet_id: PacketId,
+        dir: Direction,
+        tcp_payload_start_seq: u32,
         payload: &[u8],
-        seed_ctx: &DpiContext,
-        direction: Direction,
-        meta: &SessionMeta,
-    ) -> InspectionDecision {
-        let arrival_time = SystemTime::now();
-        let identity = resolve_identity(&self.identity_sessions, meta.peer.ip(), arrival_time);
-        let mut ctx = DecryptedFlowContext::new(
-            payload,
-            seed_ctx.clone(),
-            direction,
-            meta,
-            arrival_time,
-            Some(identity),
-        );
-
-        tracing::trace!(
-            event = "tls.decrypted.flow.inspect.started",
-            session_id = %meta.session_id,
-            peer = %meta.peer,
-            server = %meta.server,
-            direction = ?direction,
-            "decrypted flow inspection started"
-        );
-
-        let outcome = self.pipeline.process(&mut ctx).await;
-        let disposition = match outcome {
-            DecryptedFlowOutcome::Continue => InspectionDisposition::Forward,
-            DecryptedFlowOutcome::Drop { reason } => {
-                tracing::warn!(
-                    event = "tls.decrypted.flow.inspect.completed",
-                    session_id = %meta.session_id,
-                    peer = %meta.peer,
-                    server = %meta.server,
-                    direction = ?direction,
-                    reason = %reason,
-                    "decrypted flow inspection dropped payload"
-                );
-                InspectionDisposition::Drop
-            }
-        };
-
-        InspectionDecision {
-            disposition,
-            ctx: ctx.dpi,
-            payload: ctx.payload,
-        }
-    }
-
-    fn close_session(&self, meta: &SessionMeta) {
-        self.dpi_classifier.remove_session(
-            meta.peer.ip(),
-            meta.peer.port(),
-            meta.server.ip(),
-            meta.server.port(),
-        );
-        self.dpi_classifier.remove_session(
-            meta.server.ip(),
-            meta.server.port(),
-            meta.peer.ip(),
-            meta.peer.port(),
-        );
+        http: &mut HttpL4Stage,
+    ) -> L4Outcome {
+        // Implementation fills this in during the step.
     }
 }
 ```
 
-Run: `cargo test -p ngfw tls::decrypted_flow::tests::flow_inspector_forwards_clean_plaintext_without_execution_sender`
+Required behavior:
 
-Expected: PASS.
+- If payload is not TLS ClientHello and no TLS session is active, return `L4Outcome::Forward(vec![packet_id])`.
+- If decision is bypass, return `L4Outcome::Forward(vec![packet_id])`.
+- If decision is block, return `L4Outcome::Drop(vec![packet_id])` or terminate with reset.
+- If decision is intercept, consume original packet id and feed bytes into the managed TLS worker.
+- Approved plaintext from the worker must run through `DecryptedFlowPipeline`.
+- Approved HTTP plaintext must call `http.inspect_plaintext(ctx, plaintext)`.
+- Generated TLS ciphertext must return through `L4Outcome::Emit` or `ForwardAndEmit`.
 
-- [ ] **Step 3: Move imports away from `decrypted_chain`**
+- [ ] **Step 4: Wire `TlsHttpL4Stage` to the production service**
 
-In `crates/raptorgate/src/tls/inspection_relay.rs`, change:
-
-```rust
-use crate::tls::decrypted_chain::{
-    DecryptedTrafficInspector, InspectionDisposition,
-};
-```
-
-to:
+In `crates/raptorgate/src/l4/tls.rs`, replace the current generic test service shape with a production stage:
 
 ```rust
-use crate::tls::decrypted_flow::{
-    DecryptedTrafficInspector, InspectionDisposition,
-};
+pub struct TlsHttpL4Stage {
+    tls: TlsL4InspectionService,
+    http: HttpL4Stage,
+}
 ```
 
-Update test references from `crate::tls::decrypted_chain::NoopDecryptedInspector` to `crate::tls::decrypted_flow::NoopDecryptedInspector`.
-
-In `crates/raptorgate/src/tls/mod.rs`, export the new module:
+`on_bytes()` calls:
 
 ```rust
-pub mod decrypted_flow;
-pub use decrypted_flow::{
-    DecryptedDpiStage, DecryptedFlowContext, DecryptedFlowInspector,
-    DecryptedFlowOutcome, DecryptedFlowPipeline, DecryptedFlowStage,
-    DecryptedIpsStage, DecryptedPolicyStage, DecryptedTrafficInspector,
-    InspectionDecision, InspectionDisposition, NoopDecryptedInspector,
-};
+self.tls
+    .on_encrypted_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload, &mut self.http)
+    .await
 ```
 
-Remove `pub use decrypted_chain::DecryptedChainInspector;`.
+Keep a test-only static inspection service only if needed under `#[cfg(test)]`; production should use `TlsL4InspectionService`.
 
-Run: `cargo test -p ngfw tls::inspection_relay`
+- [ ] **Step 5: Export module**
 
-Expected: PASS.
-
-- [ ] **Step 4: Remove synthetic packet implementation**
-
-Delete or empty `crates/raptorgate/src/tls/decrypted_chain.rs`. The preferred end state is to remove the module from `tls/mod.rs`.
-
-If keeping the file temporarily avoids a large module churn, replace its contents with:
+In `crates/raptorgate/src/tls/mod.rs`, add:
 
 ```rust
-pub use crate::tls::decrypted_flow::*;
+pub mod l4_inspection;
 ```
 
-Do not keep `build_packet_context()`, `build_tcp_packet()`, or any `PacketBuilder::ethernet2()` code in TLS decrypted inspection.
-
-Run: `rg -n "build_packet_context|failed to synthesize decrypted packet|Przepuszcza odszyfrowany payload|PacketBuilder::ethernet2" crates/raptorgate/src/tls`
-
-Expected: no matches for the old synthetic TLS decrypted path.
-
-- [ ] **Step 5: Commit**
+Run:
 
 ```bash
-git add crates/raptorgate/src/tls/decrypted_flow.rs crates/raptorgate/src/tls/decrypted_chain.rs crates/raptorgate/src/tls/inspection_relay.rs crates/raptorgate/src/tls/mod.rs
-git commit -m "refactor(tls): replace synthetic decrypted packets"
+cargo test -p ngfw tls::l4_inspection l4::http
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/raptorgate/src/tls/l4_inspection.rs crates/raptorgate/src/tls/mod.rs crates/raptorgate/src/l4/tls.rs crates/raptorgate/src/l4/http.rs
+git commit -m "feat(tls): add l4 inspection service"
 ```
 
 ---
 
-## Task 7: Wire Decrypted Flow Pipeline in `main.rs`
+## Task 7: Route Port 443 to TLS L4 Pipeline
+
+**Files:**
+- Modify: `crates/raptorgate/src/l4/factory.rs`
+- Modify: `crates/raptorgate/src/daemon.rs`
+- Modify: `crates/raptorgate/src/main.rs`
+
+- [ ] **Step 1: Extend factory dependencies**
+
+Change `TcpL4PipelineFactory::new_application_router(...)` to accept TLS dependencies:
+
+```rust
+pub fn new_application_router(
+    smtp_policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
+    tls_inspection: Arc<TlsL4InspectionConfig>,
+) -> Self
+```
+
+Store both in `TcpFactoryKind::ApplicationRouter`.
+
+- [ ] **Step 2: Add `TcpSessionPipeline::TlsHttp`**
+
+Add:
+
+```rust
+TlsHttp(TlsHttpL4Stage),
+```
+
+Update `protocol`, `on_session_open`, `on_bytes`, and `on_session_close` dispatch.
+
+- [ ] **Step 3: Route HTTPS**
+
+Change `build_for_entry()`:
+
+```rust
+if matches!(src, 25 | 465 | 587) || matches!(dst, 25 | 465 | 587) {
+    TcpSessionPipeline::Smtp(SmtpL4Stage::new(Arc::clone(smtp)))
+} else if src == 80 || dst == 80 {
+    TcpSessionPipeline::Http(HttpL4Stage::new())
+} else if src == 443 || dst == 443 {
+    TcpSessionPipeline::TlsHttp(TlsHttpL4Stage::new(TlsL4InspectionService::new(Arc::clone(tls))))
+} else {
+    TcpSessionPipeline::PassThrough(TcpPassThroughStage::default())
+}
+```
+
+- [ ] **Step 4: Make Task 1 test pass**
+
+Run:
+
+```bash
+cargo test -p ngfw l4::factory::tests::application_router_selects_tls_http_for_https
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Wire daemon dependencies**
+
+In `DaemonV2::assemble_v2`, construct `TlsL4InspectionConfig` from existing static dependencies. Use the same dependencies currently used by `main.rs` for the old MITM runtime:
+
+- `cert_forger`,
+- `untrust_forger`,
+- `decision_engine`,
+- `DecryptedFlowPipeline`,
+- `dpi_classifier`,
+- `identity_sessions`,
+- `decryption_mirror`.
+
+If one of these dependencies is currently not present in `DaemonStaticDeps`, add it there rather than reaching around with globals.
+
+- [ ] **Step 6: Run focused tests**
+
+```bash
+cargo test -p ngfw l4::factory tls::l4_inspection
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add crates/raptorgate/src/l4/factory.rs crates/raptorgate/src/daemon.rs crates/raptorgate/src/main.rs
+git commit -m "feat(l4): route https to tls inspection pipeline"
+```
+
+---
+
+## Task 8: Remove Production Transparent Redirect Wiring
 
 **Files:**
 - Modify: `crates/raptorgate/src/main.rs`
+- Modify: `crates/raptorgate/src/tls/redirect_manager.rs` only if startup references require cleanup.
+- Modify: `crates/raptorgate/src/tls/transparent_redirect.rs` only if production exports require cleanup.
 
-- [ ] **Step 1: Replace TLS inspector construction**
+- [ ] **Step 1: Add a startup wiring regression test**
 
-In `crates/raptorgate/src/main.rs`, replace the `DecryptedChainInspector::with_identity(...)` construction with explicit decrypted flow pipeline construction:
+Add or extend a startup/daemon test to assert that SSL inspection enabled does not call `TransparentRedirect::install()` for managed outbound HTTPS.
 
-```rust
-let decrypted_flow_pipeline = DecryptedFlowPipeline::new(vec![
-    Arc::new(DecryptedDpiStage {
-        classifier: Arc::clone(&dpi_classifier),
-    }),
-    Arc::new(DecryptedIpsStage {
-        inspection: Arc::clone(&ips),
-    }),
-    Arc::new(DecryptedPolicyStage {
-        policy_engine: Arc::clone(&policy_engine),
-        zone_resolver: Arc::clone(&zone_resolver),
-    }),
-]);
-
-let decrypted_inspector = Arc::new(DecryptedFlowInspector::new(
-    decrypted_flow_pipeline,
-    Arc::clone(&dpi_classifier),
-    Arc::clone(&identity_sessions),
-));
-```
-
-Then pass:
+If no startup test harness exists, add a narrow unit test around the startup builder function that creates TLS runtime components and expose a value:
 
 ```rust
-decrypted_inspector,
+assert_eq!(startup.tls_path, TlsStartupPath::L4Pipeline);
 ```
 
-into `MitmProxyConfig`.
-
-Update imports at the top of `main.rs` from `DecryptedChainInspector` to:
-
-```rust
-DecryptedDpiStage, DecryptedFlowInspector, DecryptedFlowPipeline, DecryptedIpsStage,
-DecryptedPolicyStage,
-```
-
-Run: `cargo check -p ngfw`
-
-Expected: compile errors identify missing exports or generic bounds. Fix imports or bounds in the smallest place where the compiler points.
-
-- [ ] **Step 2: Prove no `ExecutionStage` is reachable from TLS plaintext wiring**
-
-Add a unit test in `crates/raptorgate/src/tls/decrypted_flow.rs`:
-
-```rust
-#[tokio::test]
-async fn decrypted_flow_pipeline_has_no_execution_sender_boundary() {
-    let pipeline = DecryptedFlowPipeline::new(vec![]);
-    let inspector = DecryptedFlowInspector::new(
-        pipeline,
-        Arc::new(DpiClassifier::new()),
-        IdentitySessionStore::new_shared(),
-    );
-    let decision = inspector.inspect(
-        b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
-        &DpiContext::default(),
-        Direction::ClientToServer,
-        &meta(),
-    ).await;
-
-    assert_eq!(decision.disposition, InspectionDisposition::Forward);
-}
-```
-
-This test must compile without importing `crate::pipeline::ExecutionSender`, `ExecutionItem`, or `Stage`.
-
-Run: `cargo test -p ngfw tls::decrypted_flow::tests::decrypted_flow_pipeline_has_no_execution_sender_boundary`
-
-Expected: PASS.
-
-- [ ] **Step 3: Commit**
+Run:
 
 ```bash
-git add crates/raptorgate/src/main.rs crates/raptorgate/src/tls/decrypted_flow.rs
-git commit -m "refactor(tls): wire decrypted flow pipeline"
+cargo test -p ngfw startup_tls_uses_l4_pipeline
 ```
 
----
+Expected: FAIL until startup wiring is changed.
 
-## Task 8: Document and Guard the L4 TLS-to-HTTP Handoff Target
+- [ ] **Step 2: Remove redirect install from production startup**
 
-**Files:**
-- Modify: `docs/superpowers/specs/2026-05-16-decrypted-flow-context-design.md`
-- Modify: `docs/superpowers/plans/2026-05-16-decrypted-flow-context.md`
+In `crates/raptorgate/src/main.rs`, remove the production call chain that:
 
-- [ ] **Step 1: Confirm the target flow is explicit in the spec**
+- creates `TransparentRedirect`,
+- calls `install()`,
+- binds `MitmProxy`,
+- spawns `proxy.serve()` for outbound HTTPS.
 
-Ensure the spec contains this target architecture:
+Do not delete the files yet if tests still cover them. The production path must not use them for managed HTTPS.
+
+- [ ] **Step 3: Keep one TLS inspection path**
+
+Make startup logs explicit:
 
 ```text
-PacketContext
-  -> Conntrack
-  -> SessionManager
-    -> TCP L4 session task
-      -> TlsL4DecryptStage for HTTPS flows
-        -> plaintext application chunks
-        -> HttpL4Stage
-          -> HTTP parser state
-          -> HTTP policy and IPS decisions
-      -> ReleaseAction
+startup.tls_l4.enabled
 ```
 
-Expected: the spec states that decrypted HTTPS bytes become plaintext chunks for `HttpL4Stage`, not packets for TUN or `DataPipeline`.
-
-- [ ] **Step 2: Record the future L4 plaintext chunk contract**
-
-Ensure the spec defines this future contract:
-
-```rust
-pub struct L4PlaintextChunk {
-    pub payload: Vec<u8>,
-    pub direction: Direction,
-    pub app_proto: AppProto,
-    pub dpi: DpiContext,
-}
-```
-
-Expected: the spec states that `TlsL4DecryptStage` returns `L4PlaintextChunk` values and that `HttpL4Stage` consumes those chunks.
-
-- [ ] **Step 3: Record the synchronous L4 API constraint**
-
-The current `L4Stage::on_bytes()` API is synchronous:
-
-```rust
-fn on_bytes(
-    &mut self,
-    ctx: &mut Self::Ctx,
-    packet_id: PacketId,
-    dir: Direction,
-    tcp_payload_start_seq: u32,
-    payload: &[u8],
-) -> L4Outcome;
-```
-
-Expected: the spec or follow-up implementation notes state that full TLS MITM cannot perform network handshakes directly inside this synchronous method. The later implementation must either add an async L4 boundary or use a session-local TLS worker/channel owned by the L4 session task.
-
-- [ ] **Step 4: Add future test names to the plan**
-
-Add these test requirements before implementing the L4 handoff:
+There should be no normal startup log:
 
 ```text
-tls::l4_decrypt::tests::tls_l4_stage_emits_plaintext_chunks_without_packet_context
-l4::http::tests::http_l4_stage_receives_decrypted_request_from_tls_stage
-l4::http::tests::plain_http_and_decrypted_https_use_same_http_stage
+startup.tls_redirect.installed
+startup.mitm_proxy.spawned
 ```
 
-Expected: each test name describes a packet-free handoff from TLS plaintext to HTTP L4 state.
+for managed outbound HTTPS.
+
+- [ ] **Step 4: Run TLS startup tests**
+
+```bash
+cargo test -p ngfw tls startup_tls_uses_l4_pipeline
+```
+
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-05-16-decrypted-flow-context-design.md docs/superpowers/plans/2026-05-16-decrypted-flow-context.md
-git commit -m "docs(tls): record l4 tls http handoff target"
+git add crates/raptorgate/src/main.rs crates/raptorgate/src/tls/redirect_manager.rs crates/raptorgate/src/tls/transparent_redirect.rs
+git commit -m "refactor(tls): use l4 inspection as production path"
 ```
 
 ---
 
-## Task 9: Verification and Cleanup
+## Task 9: Integration Tests for Packet-Free HTTPS L4 Handoff
 
 **Files:**
-- Modify only files required by compiler/test failures.
+- Create: `crates/raptorgate/tests/l4_tls_inspection.rs`
 
-- [ ] **Step 1: Run focused TLS tests**
+- [ ] **Step 1: Add integration test for plaintext not becoming PacketContext**
+
+Create:
+
+```rust
+#[tokio::test]
+async fn tls_l4_plaintext_reaches_http_without_packet_context() {
+    let harness = L4TlsHarness::new().await;
+
+    let result = harness
+        .https_request("www.example.test", b"GET / HTTP/1.1\r\nHost: www.example.test\r\n\r\n")
+        .await;
+
+    assert_eq!(result.http_host.as_deref(), Some("www.example.test"));
+    assert_eq!(result.synthetic_plaintext_packets, 0);
+}
+```
+
+`L4TlsHarness` should use in-process TLS endpoints and the real `TlsHttpL4Stage`; it must not use nft redirect or `MitmProxy::bind()`.
 
 Run:
 
 ```bash
-cargo test -p ngfw tls::decrypted_flow tls::inspection_relay tls::mitm_proxy
+cargo test -p ngfw --test l4_tls_inspection tls_l4_plaintext_reaches_http_without_packet_context
 ```
 
-Expected: PASS.
+Expected: FAIL until the harness is implemented.
 
-- [ ] **Step 2: Run policy and DPI tests**
+- [ ] **Step 2: Implement harness**
+
+The harness must:
+
+- create a test CA/forger,
+- create `TlsL4InspectionConfig`,
+- create a `SessionContext` with TCP port 443,
+- feed encrypted client bytes through `TlsHttpL4Stage::on_bytes()`,
+- collect emitted encrypted bytes from `L4Outcome::Emit`,
+- assert that only encrypted/generated bytes are released.
+
+- [ ] **Step 3: Add block test**
+
+Add:
+
+```rust
+#[tokio::test]
+async fn tls_l4_ips_block_stops_generated_ciphertext() {
+    let harness = L4TlsHarness::with_blocking_ips("UNION SELECT").await;
+
+    let result = harness
+        .https_request("www.example.test", b"GET /?q=UNION SELECT HTTP/1.1\r\nHost: www.example.test\r\n\r\n")
+        .await;
+
+    assert!(result.blocked);
+    assert_eq!(result.generated_server_bytes, 0);
+}
+```
 
 Run:
 
 ```bash
-cargo test -p ngfw dpi::classifier policy::policy_evaluator policy::engine pipeline::wrappers
+cargo test -p ngfw --test l4_tls_inspection
 ```
 
 Expected: PASS.
 
-- [ ] **Step 3: Run full raptorgate tests**
+- [ ] **Step 4: Commit**
 
-Run:
+```bash
+git add crates/raptorgate/tests/l4_tls_inspection.rs
+git commit -m "test(tls): cover l4 https plaintext handoff"
+```
+
+---
+
+## Task 10: Full Test Suite
+
+**Files:**
+- No code changes unless tests reveal regressions.
+
+- [ ] **Step 1: Run focused tests**
+
+```bash
+cargo test -p ngfw l4:: tls::l4_inspection tls::dual_session conntrack::session_manager
+```
+
+Expected: PASS.
+
+- [ ] **Step 2: Run full Rust tests outside sandbox if socket tests need it**
 
 ```bash
 cargo test -p ngfw
@@ -1518,29 +898,69 @@ cargo test -p ngfw
 
 Expected: PASS.
 
-- [ ] **Step 4: Check that synthetic TLS plaintext packet code is gone**
+- [ ] **Step 3: Check for forbidden plaintext packet path**
 
 Run:
 
 ```bash
-rg -n "failed to synthesize decrypted packet|build_packet_context|fn build_tcp_packet|PacketBuilder::ethernet2" crates/raptorgate/src/tls
+rg -n "DecryptedChainInspector|PacketContext::from_raw|PacketContext::from_raw_full|TunForwarder|StageOutcome|ExecutionSender" crates/raptorgate/src/tls crates/raptorgate/src/l4
 ```
 
-Expected: no output from TLS source files.
+Expected:
 
-- [ ] **Step 5: Check that TLS plaintext path does not depend on packet pipeline**
+- no match showing decrypted plaintext converted into `PacketContext`,
+- no match showing decrypted plaintext sent to `TunForwarder`,
+- no match showing TLS L4 plaintext calling packet `StageOutcome` or `ExecutionSender`.
+
+Matches in tests for normal packet construction or generated encrypted TCP packets are acceptable only if the code path is not plaintext.
+
+- [ ] **Step 4: Commit if any test fixes were needed**
+
+```bash
+git status --short
+git add <changed-files>
+git commit -m "test(tls): stabilize l4 inspection path"
+```
+
+Skip commit if no files changed.
+
+---
+
+## Task 11: Vagrant Test-Env Smoke
+
+**Files:**
+- No code changes unless smoke reveals deploy/runtime regressions.
+
+- [ ] **Step 1: Deploy**
+
+Run from repo root:
+
+```bash
+cd vagrant
+./deploy.sh
+```
+
+Expected: deploy completes and CA is installed on h2.
+
+- [ ] **Step 2: Verify forged certificate from h2**
 
 Run:
 
 ```bash
-rg -n "DecryptedChainInspector|pipeline\\.process\\(|ExecutionSender|ExecutionItem|StageOutcome|PacketContext" crates/raptorgate/src/tls/decrypted_flow.rs crates/raptorgate/src/tls/inspection_relay.rs
+cd vagrant
+vagrant ssh h2 -c "openssl s_client -connect www.google.com:443 -servername www.google.com -showcerts </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -fingerprint -sha256"
 ```
 
-Expected: no output for `DecryptedChainInspector`, `pipeline.process(`, `ExecutionSender`, `ExecutionItem`, `StageOutcome`, or `PacketContext`.
+Expected output includes:
 
-- [ ] **Step 6: Optional vagrant smoke test**
+```text
+subject=CN = www.google.com
+issuer=CN = RaptorGate CA, O = RaptorGate
+```
 
-Run after deploying to the lab:
+- [ ] **Step 3: Verify HTTPS content and no mixed debug/mirror bytes**
+
+Run:
 
 ```bash
 cd vagrant
@@ -1549,30 +969,54 @@ vagrant ssh h2 -c "printf 'GET / HTTP/1.1\r\nHost: www.google.com\r\nConnection:
 
 Expected:
 
-- certificate chain is issued by `RaptorGate CA`,
-- HTTP response is returned,
-- no raw `RGDM` frame bytes appear in client output,
-- r1 logs include decrypted classification and do not show synthetic packet parse warnings.
+- certificate verification succeeds against RaptorGate CA,
+- response starts with HTTP headers,
+- body contains Google HTML,
+- output does not contain `RGDM`,
+- output does not contain hex dump chunks from decryption mirror.
 
-- [ ] **Step 7: Commit verification cleanup**
+- [ ] **Step 4: Verify runtime path is L4, not redirect**
+
+Run:
 
 ```bash
-git status --short
-git add crates/raptorgate/src
-git commit -m "test(tls): verify decrypted flow inspection"
+cd vagrant
+vagrant ssh r1 -c "journalctl -u raptorgate --no-pager -n 300 | grep -E 'tls_l4|tls_redirect|mitm_proxy'"
 ```
 
-If there are no changes after verification, skip this commit.
+Expected:
+
+- includes L4 TLS startup/session logs,
+- does not include `startup.tls_redirect.installed` for the active HTTPS path,
+- does not include `startup.mitm_proxy.spawned` for the active HTTPS path.
+
+- [ ] **Step 5: Commit smoke documentation if needed**
+
+If the smoke commands need to be recorded for repeatability, update a test-env doc and commit:
+
+```bash
+git add docs
+git commit -m "docs(tls): record l4 inspection smoke test"
+```
+
+Do not commit generated vagrant files.
 
 ---
 
-## Self-Review Checklist
+## Final Acceptance Checklist
 
-- The plan removes synthetic packet construction from TLS decrypted inspection.
-- The plan keeps the normal packet path on `PacketContext`.
-- The plan gives policy evaluation a shared packet-free input model.
-- The plan keeps `InspectionRelay` as the TLS stream relay.
-- The plan blocks the path from TLS plaintext into `ExecutionStage`.
-- The plan records the later L4 target where TLS decryption emits plaintext chunks to an HTTP L4 stage.
-- The plan documents that the current synchronous L4 API needs an async boundary or session-local TLS worker for full TLS MITM.
-- The plan includes tests before implementation for each risky boundary.
+- [ ] Port 80 uses `HttpL4Stage`.
+- [ ] Port 443 uses `TlsHttpL4Stage`.
+- [ ] `TlsHttpL4Stage` calls production `TlsL4InspectionService`.
+- [ ] TLS plaintext runs through `DecryptedFlowPipeline`.
+- [ ] Allowed HTTP plaintext reaches `HttpL4Stage`.
+- [ ] Blocked plaintext does not emit encrypted output.
+- [ ] Bypass forwards original encrypted packets.
+- [ ] No decrypted plaintext is converted into `PacketContext`.
+- [ ] No decrypted plaintext is sent to `TunForwarder`.
+- [ ] Production startup does not install transparent redirect for managed HTTPS.
+- [ ] `cargo test -p ngfw` passes.
+- [ ] Vagrant h2 HTTPS smoke passes.
+- [ ] r1 logs show L4 TLS path.
+
+This plan is complete only when every item above is true. Keeping the old `MitmProxy` redirect path as the active production HTTPS inspection path does not satisfy this plan.

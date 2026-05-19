@@ -122,12 +122,13 @@ enum Phase1L4Pipeline<ZR: ZoneResolver + Send + Sync + 'static> {
 impl<ZR: ZoneResolver + Send + Sync + 'static> Phase1L4Pipeline<ZR> {
     fn from_proto(
         proto: &ProtoState,
+        entry: &crate::conntrack::entry::ConntrackEntry,
         tcp_f: TcpL4PipelineFactory<ZR>,
         udp_f: UdpL4PipelineFactory,
         icmp_f: IcmpL4PipelineFactory,
     ) -> Self {
         match proto {
-            ProtoState::Tcp(_) => Self::Tcp(tcp_f.build()),
+            ProtoState::Tcp(_) => Self::Tcp(tcp_f.build_for_entry(entry)),
             ProtoState::Udp(_) => Self::Udp(udp_f.build()),
             ProtoState::Icmp(_) => Self::Icmp(icmp_f.build()),
         }
@@ -482,7 +483,7 @@ where
         let flow_key = flow;
 
         tokio::spawn(async move {
-            let mut pipeline = Phase1L4Pipeline::from_proto(&proto, tcp_f, udp_f, icmp_f);
+            let mut pipeline = Phase1L4Pipeline::from_proto(&proto, session_ctx.entry(), tcp_f, udp_f, icmp_f);
 
             if let Some(t) = &trace {
                 t.lock().expect("trace").push("open".to_string());

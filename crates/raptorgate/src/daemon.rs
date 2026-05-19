@@ -512,7 +512,7 @@ where
         let (disposition_tx, _) = broadcast::channel(1024);
         let sessions = SessionManager::new(
             Arc::clone(s.conntrack),
-            TcpL4PipelineFactory::new_smtp(Arc::clone(s.smtp_policy_retriever)),
+            TcpL4PipelineFactory::new_application_router(Arc::clone(s.smtp_policy_retriever)),
             UdpL4PipelineFactory::default(),
             IcmpL4PipelineFactory::default(),
             Arc::clone(s.policy_engine),
