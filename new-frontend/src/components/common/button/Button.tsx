@@ -4,12 +4,21 @@ interface ButtonProps {
 	name: string;
 	className?: string;
 	buttonType: "primary" | "secondary";
+	type?: "button" | "submit" | "reset";
+	disabled?: boolean;
 }
 
-export function Button({ name, className, buttonType }: ButtonProps) {
+export function Button({
+	name,
+	className,
+	buttonType,
+	type = "button",
+	disabled,
+}: ButtonProps) {
 	return (
 		<button
-			type="button"
+			type={type}
+			disabled={disabled}
 			className={`${className} ${Style.button} ${Style[buttonType]}`}
 		>
 			{name}

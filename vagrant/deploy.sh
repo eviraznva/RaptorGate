@@ -130,6 +130,16 @@ test -f bin/frontend/dist/index.html || {
   exit 1
 }
 
+test -f bin/new-frontend/dist/server/server.js || {
+  echo "new frontend artifact is missing dist/server/server.js; rebuild new_frontend_build failed or produced stale bin/new-frontend" >&2
+  exit 1
+}
+
+test -f bin/new-frontend/server.mjs || {
+  echo "new frontend artifact is missing server.mjs; rebuild new_frontend_build failed or produced stale bin/new-frontend" >&2
+  exit 1
+}
+
 cd "$SCRIPT_DIR"
 mkdir -p .router_sync/"$PROJECT_NAME"
 test -f ../"$MODEL_SRC"/"$MODEL_NAME".onnx || {
@@ -146,6 +156,7 @@ test -f ../"$MODEL_SRC"/"$MODEL_NAME".onnx.json || {
 }
 rm -rf .router_sync/backend && mkdir -p .router_sync/backend
 rm -rf .router_sync/frontend && mkdir -p .router_sync/frontend
+rm -rf .router_sync/new-frontend && mkdir -p .router_sync/new-frontend
 rm -rf .router_sync/proto && mkdir -p .router_sync/proto
 rm -rf .router_sync/logrotate && mkdir -p .router_sync/logrotate
 rm -rf .router_sync/nginx && mkdir -p .router_sync/nginx
@@ -162,6 +173,7 @@ rm -rf .router_sync/backend/data/json-db
 mkdir -p .router_sync/backend/data
 cp -rf ../backend/data/json-db .router_sync/backend/data/
 cp -rf ../bin/frontend/dist .router_sync/frontend/
+cp -rf ../bin/new-frontend/* .router_sync/new-frontend/
 cd "$SCRIPT_DIR"
 rm -rf .router_sync/backend/devCerts && mkdir -p .router_sync/backend/devCerts
 cp -rf ../backend/devCerts/* .router_sync/backend/devCerts/

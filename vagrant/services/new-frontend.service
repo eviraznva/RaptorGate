@@ -1,0 +1,19 @@
+[Unit]
+Description=RaptorGate New Frontend Dashboard
+After=network-online.target backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/resources/new-frontend
+ExecStart=/resources/backend/bun /resources/new-frontend/server.mjs
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3100
+
+[Install]
+WantedBy=multi-user.target

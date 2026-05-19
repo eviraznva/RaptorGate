@@ -5,6 +5,9 @@ interface InputProps {
 	inputId: string;
 	htmlFor: string;
 	type: string;
+	name?: string;
+	autoComplete?: string;
+	required?: boolean;
 	fieldClassName?: string;
 	labelClassName?: string;
 	inputClassName?: string;
@@ -15,6 +18,9 @@ export function Input({
 	inputId,
 	htmlFor,
 	type,
+	name,
+	autoComplete,
+	required,
 	fieldClassName,
 	labelClassName,
 	inputClassName,
@@ -27,7 +33,10 @@ export function Input({
 
 			<input
 				id={inputId}
+				name={name}
 				type={type}
+				autoComplete={autoComplete}
+				required={required}
 				className={`${Styles.input} ${inputClassName}`}
 			/>
 		</div>

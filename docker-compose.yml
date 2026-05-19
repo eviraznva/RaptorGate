@@ -21,3 +21,10 @@ services:
       dockerfile: ./docker/frontend/dockerfile
     volumes:
       - ./bin/frontend:/host/bin
+
+  new_frontend_build:
+    build:
+      context: .
+      dockerfile: ./docker/new-frontend/dockerfile
+    volumes:
+      - ./bin/new-frontend:/host/bin

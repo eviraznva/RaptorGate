@@ -162,6 +162,7 @@ def setup_nftables
       nft add rule ip nat postrouting oifname "$UPLINK_IF" ip saddr 192.168.20.0/24 masquerade
     fi
     nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 443 ct state new accept
+    nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 444 ct state new accept
     nft add rule inet filter input iifname "eth3" ip daddr 192.168.56.254 tcp dport 9428 ct state new accept
 
     # Issue 7: portal captive na interfejsie h1, nginx vhost 192.168.10.254:443.
@@ -194,11 +195,15 @@ def setup_frontend_service
     apt-get update
     apt-get install -y nginx
     install -d -m 0755 /resources/frontend/dist
+    install -d -m 0755 /resources/new-frontend
     install -d -m 0755 /var/log/raptorgate/frontend
     cp -f /resources/nginx/raptorgate-frontend.conf /etc/nginx/raptorgate-frontend.conf
     cp -f /resources/services/frontend.service /etc/systemd/system/frontend.service
+    cp -f /resources/services/new-frontend.service /etc/systemd/system/new-frontend.service
     systemctl disable --now nginx 2>/dev/null || true
     systemctl daemon-reload
+    systemctl enable new-frontend
+    systemctl restart new-frontend
     systemctl enable frontend
     systemctl restart frontend
   SHELL
@@ -460,6 +465,7 @@ Vagrant.configure("2") do |config|
         <<-SHELL
             systemctl stop backend || true
             systemctl stop frontend || true
+            systemctl stop new-frontend || true
         SHELL
     end
 

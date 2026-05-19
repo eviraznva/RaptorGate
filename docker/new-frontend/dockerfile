@@ -1,0 +1,21 @@
+FROM oven/bun:1 AS build
+
+WORKDIR /usr/src/new-frontend
+
+COPY new-frontend/package.json new-frontend/bun.lock ./
+RUN bun install --frozen-lockfile
+
+COPY new-frontend ./
+
+ENV VITE_APP_TITLE=RaptorGate
+ENV VITE_API_URL=/api
+RUN bun run build
+
+FROM alpine:3.19 AS runtime
+
+COPY --from=build /usr/src/new-frontend/dist /app/new-frontend/dist
+COPY --from=build /usr/src/new-frontend/node_modules /app/new-frontend/node_modules
+COPY --from=build /usr/src/new-frontend/package.json /usr/src/new-frontend/bun.lock /app/new-frontend/
+COPY new-frontend/server.mjs /app/new-frontend/server.mjs
+
+CMD ["sh", "-lc", "mkdir -p /host/bin && rm -rf /host/bin/* && cp -R /app/new-frontend/. /host/bin/"]
