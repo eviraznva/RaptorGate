@@ -1,0 +1,23 @@
+@use '@/styles/theme' as theme 
+
+.field
+  display: flex
+  flex-direction: column
+  
+.label
+  color: color-mix(in oklab, theme.$color-base-text 55%, theme.$color-black)
+  font-size: 0.75rem
+  line-height: 1rem
+  margin-bottom: 0.5rem
+
+.input
+  width: 100%
+  background: color-mix(in oklab, theme.$color-base-neutral 76%, theme.$color-black)
+  border: 1px solid var(--neutral-725)
+  color: theme.$color-text-default
+  padding: 0.75rem 1rem
+  font-family: theme.$font-family-default
+
+  &:focus
+    outline: none
+    border-color: theme.$color-theme-main

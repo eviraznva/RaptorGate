@@ -1,0 +1,50 @@
+@use "@/styles/theme" as theme
+
+.panel
+  background: var(--neutral-775)
+  border: 1px solid var(--neutral-725)
+  width: 100%
+  max-width: 50rem
+  padding: 1.5rem
+
+.form
+  display: flex
+  flex-direction: column
+  gap: 1.25rem
+
+.error
+  color: theme.$color-red-main
+  font-size: 0.75rem
+  line-height: 1rem
+  margin-top: 0.1rem
+  margin-bottom: 0.55rem
+
+.loginButton
+  width: 100%
+  background: theme.$button-primary-bg
+  border: none
+  color: theme.$button-primary-text
+  padding: 0.75rem 0
+  letter-spacing: 0.1em
+  font-weight: 500
+  font-family: theme.$font-family-default
+  transition: background-color 0.2s ease
+
+  &:hover
+    background: theme.$button-primary-hover-bg
+
+.resetButton
+  width: 100%
+  background: theme.$color-transparent
+  border: 1px solid var(--neutral-725)
+  color: color-mix(in oklab, theme.$color-base-text 55%, theme.$color-black)
+  padding: 0.75rem 0
+  font-size: 0.875rem
+  line-height: 1.25rem
+  letter-spacing: 0.22em
+  font-family: theme.$font-family-default
+  transition: border-color 0.2s ease, color 0.2s ease
+
+  &:hover
+    border-color: theme.$color-theme-main
+    color: theme.$color-text-default

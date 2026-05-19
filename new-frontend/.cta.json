@@ -1,0 +1,23 @@
+{
+  "projectName": "new-frontend",
+  "mode": "file-router",
+  "typescript": true,
+  "packageManager": "bun",
+  "includeExamples": true,
+  "tailwind": true,
+  "addOnOptions": {},
+  "envVarValues": {},
+  "git": false,
+  "install": true,
+  "routerOnly": false,
+  "version": 1,
+  "framework": "react",
+  "chosenAddOns": [
+    "biome",
+    "form",
+    "mcp",
+    "t3env",
+    "store",
+    "tanstack-query"
+  ]
+}

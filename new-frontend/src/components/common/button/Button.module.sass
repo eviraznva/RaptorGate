@@ -1,0 +1,28 @@
+@use "../../../styles/theme.sass"
+
+.button
+  width: 100%
+  border: none
+  padding: 0.75rem 0
+  letter-spacing: 0.1em
+  font-weight: 500
+  transition: background-color 150ms ease
+  &:hover
+    background-color: theme.$button-primary-hover-bg
+
+.primary
+  background-color: theme.$button-primary-bg
+  color: theme.$button-primary-text
+  &:hover
+    background-color: theme.$button-primary-hover-bg
+
+.secondary
+  background-color: theme.$color-transparent
+  border: 1px solid var(--neutral-725)
+  color: color-mix(in oklab, theme.$color-base-text 55%, theme.$color-black)
+  font-size: 0.875rem
+  line-height: 1.25rem
+  letter-spacing: 0.22em
+  &:hover
+    border-color: theme.$color-theme-main
+    color: theme.$color-text-default

@@ -1,0 +1,41 @@
+@use '../../styles/theme.sass'
+
+.header
+  width: 100%
+  max-width: 50rem
+
+.flowLineWithArrow
+  display: flex
+  align-items: center
+  justify-content: center
+  margin-bottom: 2.5rem
+
+.flowLine
+  display: flex
+  align-items: center
+  justify-content: center
+  margin-bottom: 2rem
+
+.gradientLine
+  flex: 1 1 0%
+  height: 1px
+  background: linear-gradient(to right, transparent, theme.$color-base-theme, transparent)
+
+.arrow
+  width: 100%
+
+.logo
+  text-align: center
+  margin-bottom: 2.5rem
+
+.title
+  font-size: 2.25rem
+  line-height: 2.5rem
+  letter-spacing: 0.3em
+  font-weight: 300
+
+.subtitle
+  color: var(--neutral-500)
+  font-size: 0.875rem
+  line-height: 1.25rem
+  margin-top: 0.75rem

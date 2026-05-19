@@ -1,0 +1,50 @@
+@use './theme.sass'
+
+*
+  box-sizing: border-box
+  margin: 0
+  padding: 0
+
+li 
+  list-style: none
+
+h1, h2
+  font-weight: 700
+
+h1 
+  font-size: 2rem
+
+h2 
+  font-size: 1.5rem
+
+h3
+  font-size: 1.25rem
+
+a
+  text-decoration: none
+  color: theme.$color-text-default
+  cursor: pointer
+
+button
+  cursor: pointer
+
+body, html 
+  font-size: theme.$font-size-default
+  font-family: theme.$font-family-default
+  color: theme.$color-text-default
+  background-color: var(--neutral-850)
+  height: 100%
+  display: flex
+  flex-direction: column
+  align-items: center
+  min-height: 100vh
+  min-width: 100%
+
+hr 
+  border: 0
+  height: 1px
+  background: theme.$color-text-default
+  opacity: .3
+
+:root
+  @include theme.generate-color-scale('neutral', theme.$color-base-neutral)

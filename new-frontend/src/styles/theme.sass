@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap');
+
+$font-size-default: 16px
+$font-family-default: 'Roboto', sans-serif
+
+// Base colors
+$color-base-text: #f5f5f5
+$color-base-theme: #06b6d4
+$color-base-cyan: #06b6d4
+$color-base-green: #10b981
+$color-base-amber: #f59e0b
+$color-base-orange: #f97316
+$color-base-red: #ef4444
+$color-base-rose: #f43f5e
+$color-base-purple: #a855f7
+$color-base-neutral: #111111
+
+// Static colors
+$color-black: black
+$color-white: white
+$color-transparent: transparent
+$color-current: currentColor
+
+// Cyan
+$color-cyan-deep-bg: color-mix(in oklab, $color-base-cyan 14%, black)
+$color-cyan-main: $color-base-cyan
+$color-cyan-hover: color-mix(in oklab, $color-base-cyan 82%, black)
+$color-cyan-pale: color-mix(in oklab, $color-base-cyan 35%, white)
+
+// Green
+$color-green-main: $color-base-green
+$color-green-bright: color-mix(in oklab, $color-base-green 82%, white)
+$color-green-pale: color-mix(in oklab, $color-base-green 28%, white)
+$color-green-mint: color-mix(in oklab, $color-base-green 45%, white)
+
+// Amber / orange
+$color-amber-main: $color-base-amber
+$color-amber-pale: color-mix(in oklab, $color-base-amber 35%, white)
+$color-orange-main: $color-base-orange
+
+// Red / rose
+$color-red-main: $color-base-red
+$color-red-pale: color-mix(in oklab, $color-base-red 28%, white)
+$color-rose-main: $color-base-rose
+$color-rose-hover: color-mix(in oklab, $color-base-rose 82%, white)
+$color-rose-soft: color-mix(in oklab, $color-base-rose 50%, white)
+$color-rose-light: color-mix(in oklab, $color-base-rose 45%, white)
+$color-rose-bright: color-mix(in oklab, $color-base-rose 78%, white)
+$color-rose-pink: color-mix(in oklab, $color-base-rose 38%, white)
+$color-rose-deep-bg: color-mix(in oklab, $color-base-rose 13%, black)
+
+// Purple
+$color-purple-main: $color-base-purple
+
+@mixin generate-color-scale($prefix, $base-color)
+  --#{$prefix}-900: color-mix(in oklab, #{$base-color} 75%, black)
+  --#{$prefix}-875: color-mix(in oklab, #{$base-color} 82%, black)
+  --#{$prefix}-850: color-mix(in oklab, #{$base-color} 88%, black)
+  --#{$prefix}-825: color-mix(in oklab, #{$base-color} 94%, black)
+  --#{$prefix}-800: #{$base-color}
+  --#{$prefix}-775: color-mix(in oklab, #{$base-color} 96%, white)
+  --#{$prefix}-750: color-mix(in oklab, #{$base-color} 92%, white)
+  --#{$prefix}-725: color-mix(in oklab, #{$base-color} 86%, white)
+  --#{$prefix}-700: color-mix(in oklab, #{$base-color} 82%, white)
+  --#{$prefix}-675: color-mix(in oklab, #{$base-color} 74%, white)
+  --#{$prefix}-650: color-mix(in oklab, #{$base-color} 70%, white)
+  --#{$prefix}-625: color-mix(in oklab, #{$base-color} 64%, white)
+  --#{$prefix}-600: color-mix(in oklab, #{$base-color} 60%, white)
+  --#{$prefix}-575: color-mix(in oklab, #{$base-color} 54%, white)
+  --#{$prefix}-550: color-mix(in oklab, #{$base-color} 50%, white)
+  --#{$prefix}-525: color-mix(in oklab, #{$base-color} 44%, white)
+  --#{$prefix}-500: color-mix(in oklab, #{$base-color} 34%, white)
+  --#{$prefix}-475: color-mix(in oklab, #{$base-color} 28%, white)
+  --#{$prefix}-450: color-mix(in oklab, #{$base-color} 24%, white)
+  --#{$prefix}-400: color-mix(in oklab, #{$base-color} 18%, white)
+  --#{$prefix}-350: color-mix(in oklab, #{$base-color} 10%, white)
+  --#{$prefix}-300: color-mix(in oklab, #{$base-color} 6%, white)
+  --#{$prefix}-250: color-mix(in oklab, #{$base-color} 4%, #9ca3af)
+  --#{$prefix}-225: color-mix(in oklab, #{$base-color} 2%, #b2c0c5)
+  --#{$prefix}-200: color-mix(in oklab, #{$base-color} 2%, #b9c7cc)
+  --#{$prefix}-150: color-mix(in oklab, #{$base-color} 2%, white)
+
+// Theme colors
+$color-text-default: $color-base-text
+$color-theme-main: $color-base-theme
+$button-primary-bg: $color-theme-main
+$button-primary-hover-bg: $color-cyan-hover
+$button-primary-text: $color-black
