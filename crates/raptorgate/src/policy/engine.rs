@@ -86,7 +86,7 @@ impl PolicyEngine {
     pub fn evaluate(
         &self,
         zone_pair_id: &ZonePairId,
-        ctx: PolicyEvalContext<'_, '_>,
+        ctx: PolicyEvalContext<'_>,
     ) -> Option<Verdict> {
         let map = self.evaluators.load();
         map.get(zone_pair_id)
@@ -97,6 +97,7 @@ impl PolicyEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::policy_evaluator::PolicyFlowFields;
     use crate::rule_tree::{ArmEnd, ArrivalInfo, Hour, MatchBuilder, MatchKind, Pattern, RuleTree, Weekday};
     use etherparse::{PacketBuilder, SlicedPacket};
     use uuid::Uuid;
@@ -160,7 +161,7 @@ mod tests {
         let sliced = SlicedPacket::from_ethernet(&raw).unwrap();
         let arrival = default_arrival();
         let ctx = PolicyEvalContext {
-            packet: &sliced,
+            flow: PolicyFlowFields::from_packet(&sliced).unwrap(),
             arrival: &arrival,
             dns: None,
             dpi: None,
@@ -203,7 +204,7 @@ mod tests {
         let sliced = SlicedPacket::from_ethernet(&raw).unwrap();
         let arrival = default_arrival();
         let ctx = PolicyEvalContext {
-            packet: &sliced,
+            flow: PolicyFlowFields::from_packet(&sliced).unwrap(),
             arrival: &arrival,
             dns: None,
             dpi: None,
@@ -244,7 +245,7 @@ mod tests {
         let sliced = SlicedPacket::from_ethernet(&raw).unwrap();
         let arrival = default_arrival();
         let ctx = PolicyEvalContext {
-            packet: &sliced,
+            flow: PolicyFlowFields::from_packet(&sliced).unwrap(),
             arrival: &arrival,
             dns: None,
             dpi: None,

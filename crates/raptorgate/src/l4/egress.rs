@@ -1,7 +1,4 @@
-use std::net::IpAddr;
 use std::sync::Arc;
-
-use etherparse::NetSlice;
 
 use crate::conntrack::tuple::Direction;
 use crate::data_plane::packet_context::PacketContext;
@@ -9,7 +6,7 @@ use crate::events::{self, Event, EventKind};
 use crate::l4::context::SessionContext;
 use crate::l4::release::{DropReason, ReleaseAction};
 use crate::policy::engine::PolicyEngine;
-use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext};
+use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext, PolicyFlowFields};
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::rule_tree::types::ArrivalInfo;
 use crate::rule_tree::Verdict;
@@ -29,11 +26,10 @@ where
 {
     let arrival = ArrivalInfo::from_time(packet.borrow_arrival_time());
 
-    let dst_ip = match &packet.borrow_sliced_packet().net {
-        Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
-        Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
-        _ => return ReleaseAction::Forward { packet },
+    let Some(flow) = PolicyFlowFields::from_packet(packet.borrow_sliced_packet()) else {
+        return ReleaseAction::Forward { packet };
     };
+    let dst_ip = flow.dst_ip;
 
     let pair = zone_resolver.resolve(packet.borrow_src_interface(), dst_ip);
     let pair_id = pair.as_ref().map(|p| &p.id).unwrap_or(zone_pair_id);
@@ -70,7 +66,7 @@ where
     let verdict = engine.evaluate(
         pair_id,
         PolicyEvalContext {
-            packet: packet.borrow_sliced_packet(),
+            flow,
             arrival: &arrival,
             dns: dns_ctx.as_ref(),
             dpi: packet.borrow_dpi_ctx().as_ref(),

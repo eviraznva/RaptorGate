@@ -36,7 +36,7 @@ use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 use crate::dpi::AppProto;
 use crate::interfaces::InterfaceMonitor;
 use crate::netlink::routing_table::RouteLookup;
-use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext};
+use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext, PolicyFlowFields};
 
 #[derive(Clone)]
 pub struct ValidationStage;
@@ -266,11 +266,10 @@ impl<M: InterfaceMonitor, Routes: RouteLookup> Stage for NatPostroutingStage<M, 
         let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
         let info = ctx.ct_info().unwrap_or(crate::conntrack::entry::CtInfo::Established);
 
-        let dst_ip = match &ctx.borrow_sliced_packet().net {
-            Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
-            Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
-            _ => return StageOutcome::Continue,
+        let Some(flow) = PolicyFlowFields::from_packet(ctx.borrow_sliced_packet()) else {
+            return StageOutcome::Continue;
         };
+        let dst_ip = flow.dst_ip;
 
         let Some(out_iface_idx) = self.routes.route_lookup(dst_ip) else {
             return StageOutcome::Continue;
@@ -785,11 +784,10 @@ where
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let arrival = ArrivalInfo::from_time(ctx.borrow_arrival_time());
 
-        let dst_ip = match &ctx.borrow_sliced_packet().net {
-            Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
-            Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
-            _ => return StageOutcome::Continue,
+        let Some(flow) = PolicyFlowFields::from_packet(ctx.borrow_sliced_packet()) else {
+            return StageOutcome::Continue;
         };
+        let dst_ip = flow.dst_ip;
 
         let pair = self.zone_resolver.resolve(ctx.borrow_src_interface(), dst_ip);
         
@@ -846,7 +844,7 @@ where
         });
 
         let verdict = self.policy_engine.evaluate(pair_id, PolicyEvalContext {
-            packet: ctx.borrow_sliced_packet(),
+            flow,
             arrival: &arrival,
             dns: dns_ctx.as_ref(),
             dpi: ctx.borrow_dpi_ctx().as_ref(),

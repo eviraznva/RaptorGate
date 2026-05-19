@@ -8,6 +8,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::server::TlsStream as ServerTlsStream;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::dpi::TlsAction;
 use crate::dpi::parsers::tls::parse_tls_client_hello;
@@ -18,7 +19,7 @@ use crate::tls::decrypted_chain::DecryptedTrafficInspector;
 use crate::tls::decryption_mirror::DecryptionMirror;
 use crate::tls::decision_engine::TlsDecisionEngine;
 use crate::tls::dual_session::{self, AcceptParams, ConnectParams};
-use crate::tls::inspection_relay::{InspectionRelay, InspectionMode, SessionMeta};
+use crate::tls::inspection_relay::{InspectionRelay, InspectionMode, SessionInterfaceLookup, SessionMeta};
 use crate::tls::original_dst;
 use crate::tls::pinning_detector;
 use crate::tls::rustls_config;
@@ -33,6 +34,7 @@ pub struct MitmProxyConfig {
     pub decision_engine: Arc<TlsDecisionEngine>,
     pub decrypted_inspector: Arc<dyn DecryptedTrafficInspector>,
     pub decryption_mirror: Arc<DecryptionMirror>,
+    pub session_interface_lookup: Arc<dyn SessionInterfaceLookup>,
     pub cancel: CancellationToken,
 }
 
@@ -43,6 +45,7 @@ pub struct MitmProxy {
     untrust_forger: Arc<CertForger>,
     decision_engine: Arc<TlsDecisionEngine>,
     inspection_relay: Arc<InspectionRelay>,
+    session_interface_lookup: Arc<dyn SessionInterfaceLookup>,
     cancel: CancellationToken,
 }
 
@@ -61,6 +64,7 @@ impl MitmProxy {
             untrust_forger: config.untrust_forger,
             decision_engine: config.decision_engine,
             inspection_relay: Arc::new(InspectionRelay::with_mirror(config.decrypted_inspector, config.decryption_mirror)),
+            session_interface_lookup: config.session_interface_lookup,
             cancel: config.cancel,
         })
     }
@@ -80,6 +84,7 @@ impl MitmProxy {
                             let untrust_forger = Arc::clone(&self.untrust_forger);
                             let engine = Arc::clone(&self.decision_engine);
                             let relay = Arc::clone(&self.inspection_relay);
+                            let session_interface_lookup = Arc::clone(&self.session_interface_lookup);
 
                             tokio::spawn(async move {
                                 if let Err(e) = handle_connection(
@@ -89,6 +94,7 @@ impl MitmProxy {
                                     untrust_forger,
                                     engine,
                                     relay,
+                                    session_interface_lookup,
                                 ).await {
                                     tracing::debug!(peer = %peer_addr, error = %e, "TLS proxy connection error");
                                 }
@@ -112,6 +118,7 @@ async fn handle_connection(
     untrust_forger: Arc<CertForger>,
     engine: Arc<TlsDecisionEngine>,
     relay: Arc<InspectionRelay>,
+    session_interface_lookup: Arc<dyn SessionInterfaceLookup>,
 ) -> anyhow::Result<()> {
     let original_dst = original_dst::get_original_dst(&client_tcp)
         .context("Failed to read original destination address")?;
@@ -183,6 +190,7 @@ async fn handle_connection(
             entry.common_name,
             entry.certified_key,
             relay,
+            session_interface_lookup,
         )
         .await;
     }
@@ -215,7 +223,7 @@ async fn handle_connection(
 
     handle_outbound_connection(
         client_tcp, peer_addr, original_dst, sni, client_hello_version,
-        alpn_protocols, cert_forger, untrust_forger, engine, relay,
+        alpn_protocols, cert_forger, untrust_forger, engine, relay, session_interface_lookup,
     )
     .await
 }
@@ -230,6 +238,7 @@ async fn handle_inbound_connection(
     common_name: String,
     inbound_certified_key: Arc<CertifiedKey>,
     relay: Arc<InspectionRelay>,
+    session_interface_lookup: Arc<dyn SessionInterfaceLookup>,
 ) -> anyhow::Result<()> {
     events::emit(events::Event::new(
         events::EventKind::InboundTlsInterceptStarted {
@@ -356,12 +365,15 @@ async fn handle_inbound_connection(
     let (cr, cw) = tokio::io::split(client_tls);
     let (sr, sw) = tokio::io::split(server_tls);
 
-    let meta = SessionMeta {
-        peer: peer_addr,
-        server: server_addr,
-        sni: sni.clone(),
-        mode: InspectionMode::Inbound,
-    };
+    let meta = build_session_meta(
+        peer_addr,
+        server_addr,
+        server_addr,
+        sni.clone(),
+        negotiated_alpn,
+        InspectionMode::Inbound,
+        session_interface_lookup.as_ref(),
+    );
 
     let (bytes_up, bytes_down) = relay.relay_bidirectional(cr, sw, sr, cw, &meta).await;
 
@@ -389,6 +401,7 @@ async fn handle_outbound_connection(
     untrust_forger: Arc<CertForger>,
     engine: Arc<TlsDecisionEngine>,
     relay: Arc<InspectionRelay>,
+    session_interface_lookup: Arc<dyn SessionInterfaceLookup>,
 ) -> anyhow::Result<()> {
     let domain = sni.clone().unwrap_or_else(|| original_dst.ip().to_string());
 
@@ -566,12 +579,15 @@ async fn handle_outbound_connection(
     let (client_read, client_write) = tokio::io::split(client_tls);
     let (server_read, server_write) = tokio::io::split(server_tls);
 
-    let meta = SessionMeta {
-        peer: peer_addr,
-        server: original_dst,
-        sni: sni.clone(),
-        mode: InspectionMode::Outbound,
-    };
+    let meta = build_session_meta(
+        peer_addr,
+        original_dst,
+        original_dst,
+        sni.clone(),
+        negotiated_alpn,
+        InspectionMode::Outbound,
+        session_interface_lookup.as_ref(),
+    );
 
     let (bytes_up, bytes_down) = relay.relay_bidirectional(
         client_read, server_write, server_read, client_write, &meta,
@@ -586,6 +602,29 @@ async fn handle_outbound_connection(
     }));
 
     Ok(())
+}
+
+fn build_session_meta(
+    peer: SocketAddr,
+    server: SocketAddr,
+    original_dst: SocketAddr,
+    sni: Option<String>,
+    alpn: Option<Vec<u8>>,
+    mode: InspectionMode,
+    session_interface_lookup: &dyn SessionInterfaceLookup,
+) -> SessionMeta {
+    let interfaces = session_interface_lookup.resolve_session_interfaces(peer, server);
+    SessionMeta {
+        session_id: Uuid::now_v7(),
+        peer,
+        server,
+        original_dst,
+        sni,
+        alpn,
+        client_side_interface: interfaces.client_side_interface,
+        server_side_interface: interfaces.server_side_interface,
+        mode,
+    }
 }
 
 struct PeekedClientHello {

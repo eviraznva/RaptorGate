@@ -49,7 +49,7 @@ use tokio::sync::mpsc;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
-    CaManager, DecryptedChainInspector, DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, MitmProxy, MitmProxyConfig,
+    CaManager, DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, MitmProxy, MitmProxyConfig,
     PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
 };
 use crate::interfaces::{InterfaceMonitor, NetlinkInterfaceController, NetworkInterfaceMonitor};
@@ -572,21 +572,36 @@ async fn main() {
                     }
                 }
 
+                let session_interface_lookup = Arc::new(
+                    crate::tls::inspection_relay::RoutingSessionInterfaceLookup::new(
+                        Arc::clone(&routing_table),
+                        Arc::clone(&pipeline_interface_monitor),
+                    ),
+                );
+                let decrypted_zone_resolver: Arc<dyn crate::zones::resolver::ZoneResolver> = zone_resolver.clone();
+                let decrypted_dnssec: Arc<dyn crate::data_plane::dns_inspection::dnssec::DnssecProvider> = dns_inspection.clone();
+                let decrypted_pipeline = crate::tls::decrypted_flow::DecryptedFlowPipeline::new(vec![
+                    Arc::new(crate::tls::decrypted_flow::DecryptedDpiStage::new(Arc::clone(&dpi_classifier))),
+                    Arc::new(crate::tls::decrypted_flow::DecryptedIpsStage::new(Arc::clone(&ips))),
+                    Arc::new(crate::tls::decrypted_flow::DecryptedPolicyStage::new(
+                        Arc::clone(&policy_engine),
+                        decrypted_zone_resolver,
+                        Some(decrypted_dnssec),
+                    )),
+                ]);
+
                 let proxy_config = MitmProxyConfig {
                     listen_addr,
                     cert_forger: Arc::clone(forger),
                     untrust_forger: Arc::clone(untrust),
                     decision_engine: Arc::clone(&decision_engine),
-                    decrypted_inspector: Arc::new(DecryptedChainInspector::with_identity_and_routing(
-                        daemon.pipeline_clone(),
+                    decrypted_inspector: Arc::new(crate::tls::decrypted_flow::DecryptedFlowInspector::new(
+                        decrypted_pipeline,
                         Arc::clone(&dpi_classifier),
                         Arc::clone(&identity_sessions),
-                        crate::tls::decrypted_chain::DecryptedRoutingContext {
-                            interface_monitor: Arc::clone(&pipeline_interface_monitor),
-                            zone_interface_store: Arc::clone(&zone_interfaces),
-                        },
                     )),
                     decryption_mirror: Arc::clone(&decryption_mirror),
+                    session_interface_lookup,
                     cancel: tls_runtime_cancel,
                 };
 

@@ -2,6 +2,7 @@ pub mod ca_manager;
 pub mod cert_forger;
 pub mod cert_storage;
 pub mod decrypted_chain;
+pub mod decrypted_flow;
 pub mod decryption_mirror;
 pub mod decision_engine;
 pub mod domain_trie;
@@ -16,7 +17,6 @@ pub mod transparent_redirect;
 
 pub use ca_manager::{CaInfo, CaManager};
 pub use cert_forger::{CertForger, ForgedCert};
-pub use decrypted_chain::DecryptedChainInspector;
 pub use decryption_mirror::{DecryptionMirror, DecryptionMirrorConfig};
 pub use decision_engine::{EchTlsPolicy, TlsDecisionEngine};
 pub use dual_session::{AcceptParams, ConnectParams};

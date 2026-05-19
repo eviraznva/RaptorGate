@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use crate::dpi::{AppProto, DpiClassifier, DpiContext};
 use crate::events;
+use crate::interfaces::InterfaceMonitor;
+use crate::netlink::routing_table::RoutingTable;
 use crate::tls::decrypted_chain::{
     DecryptedTrafficInspector, InspectionDisposition,
 };
@@ -22,13 +24,64 @@ pub enum Direction {
     ServerToClient,
 }
 
+#[derive(Clone, Default)]
+pub struct SessionInterfaces {
+    pub client_side_interface: Option<String>,
+    pub server_side_interface: Option<String>,
+}
+
+pub trait SessionInterfaceLookup: Send + Sync {
+    fn resolve_session_interfaces(&self, peer: SocketAddr, server: SocketAddr) -> SessionInterfaces;
+}
+
+pub struct RoutingSessionInterfaceLookup {
+    routing_table: Arc<RoutingTable>,
+    interface_monitor: Arc<dyn InterfaceMonitor>,
+}
+
+impl RoutingSessionInterfaceLookup {
+    pub fn new(routing_table: Arc<RoutingTable>, interface_monitor: Arc<dyn InterfaceMonitor>) -> Self {
+        Self { routing_table, interface_monitor }
+    }
+
+    fn interface_for_ip(&self, ip: IpAddr) -> Option<String> {
+        self.routing_table
+            .route_lookup(ip)
+            .and_then(|idx| self.interface_monitor.get_by_index(idx))
+            .map(|iface| iface.name)
+    }
+}
+
+impl SessionInterfaceLookup for RoutingSessionInterfaceLookup {
+    fn resolve_session_interfaces(&self, peer: SocketAddr, server: SocketAddr) -> SessionInterfaces {
+        SessionInterfaces {
+            client_side_interface: self.interface_for_ip(peer.ip()),
+            server_side_interface: self.interface_for_ip(server.ip()),
+        }
+    }
+}
+
 /// Metadane sesji TLS potrzebne do logowania i eventow.
 #[derive(Clone)]
 pub struct SessionMeta {
+    pub session_id: Uuid,
     pub peer: SocketAddr,
     pub server: SocketAddr,
+    pub original_dst: SocketAddr,
     pub sni: Option<String>,
+    pub alpn: Option<Vec<u8>>,
+    pub client_side_interface: Option<String>,
+    pub server_side_interface: Option<String>,
     pub mode: InspectionMode,
+}
+
+impl SessionMeta {
+    pub fn source_interface_for_direction(&self, direction: Direction) -> Option<&str> {
+        match direction {
+            Direction::ClientToServer => self.client_side_interface.as_deref(),
+            Direction::ServerToClient => self.server_side_interface.as_deref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,13 +123,24 @@ impl InspectionRelay {
         SR: AsyncRead + Unpin + Send + 'static,
         CW: AsyncWrite + Unpin + Send + 'static,
     {
+        let alpn = meta.alpn.as_ref().map(|alpn| String::from_utf8_lossy(alpn));
+        tracing::debug!(
+            session_id = %meta.session_id,
+            peer = %meta.peer,
+            server = %meta.server,
+            original_dst = %meta.original_dst,
+            sni = ?meta.sni,
+            alpn = alpn.as_ref().map(|value| value.as_ref()).unwrap_or(""),
+            mode = ?meta.mode,
+            "starting tls inspection relay"
+        );
+
         let c2s_meta = meta.clone();
         let s2c_meta = meta.clone();
         let inspector_c2s = Arc::clone(&self.inspector);
         let inspector_s2c = Arc::clone(&self.inspector);
         let mirror_c2s = Arc::clone(&self.mirror);
         let mirror_s2c = Arc::clone(&self.mirror);
-        let session_id = Uuid::now_v7();
 
         let c2s = tokio::spawn(async move {
             relay_one_direction(
@@ -86,7 +150,7 @@ impl InspectionRelay {
                 &c2s_meta,
                 inspector_c2s,
                 mirror_c2s,
-                session_id,
+                c2s_meta.session_id,
             )
             .await
         });
@@ -98,7 +162,7 @@ impl InspectionRelay {
                 &s2c_meta,
                 inspector_s2c,
                 mirror_s2c,
-                session_id,
+                s2c_meta.session_id,
             )
             .await
         });
@@ -106,7 +170,7 @@ impl InspectionRelay {
         let bytes_up = c2s.await.unwrap_or(0);
         let bytes_down = s2c.await.unwrap_or(0);
         self.inspector.close_session(meta);
-        self.mirror.finish_session(session_id);
+        self.mirror.finish_session(meta.session_id);
 
         (bytes_up, bytes_down)
     }
@@ -462,9 +526,14 @@ mod tests {
 
     fn test_meta() -> SessionMeta {
         SessionMeta {
+            session_id: Uuid::now_v7(),
             peer: "10.0.0.1:12345".parse().unwrap(),
             server: "10.0.0.2:443".parse().unwrap(),
+            original_dst: "10.0.0.2:443".parse().unwrap(),
             sni: Some("example.com".into()),
+            alpn: Some(b"http/1.1".to_vec()),
+            client_side_interface: Some("eth1".into()),
+            server_side_interface: Some("eth0".into()),
             mode: InspectionMode::Outbound,
         }
     }

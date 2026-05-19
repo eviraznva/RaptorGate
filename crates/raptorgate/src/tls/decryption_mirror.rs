@@ -334,9 +334,14 @@ mod tests {
 
     fn test_meta() -> SessionMeta {
         SessionMeta {
+            session_id: Uuid::now_v7(),
             peer: "192.168.20.10:51111".parse::<SocketAddr>().unwrap(),
             server: "142.250.203.132:443".parse::<SocketAddr>().unwrap(),
+            original_dst: "142.250.203.132:443".parse::<SocketAddr>().unwrap(),
             sni: Some("www.google.com".into()),
+            alpn: Some(b"http/1.1".to_vec()),
+            client_side_interface: Some("eth1".into()),
+            server_side_interface: Some("eth0".into()),
             mode: InspectionMode::Outbound,
         }
     }
