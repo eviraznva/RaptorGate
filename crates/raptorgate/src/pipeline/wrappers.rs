@@ -342,6 +342,7 @@ impl Stage for FtpAlgStage {
                     );
                     if raw_copy.len() != original_len {
                         let src_interface = ctx.borrow_src_interface().clone();
+                        let capture_direction = ctx.capture_direction();
                         let arrival_time = *ctx.borrow_arrival_time();
                         let warnings = ctx.with_warnings_mut(std::mem::take);
                         let dpi_ctx_taken = ctx.with_dpi_ctx_mut(|dpi| dpi.take());
@@ -353,6 +354,7 @@ impl Stage for FtpAlgStage {
                         match PacketContext::from_raw_full(
                             raw_copy,
                             src_interface,
+                            capture_direction,
                             warnings,
                             arrival_time,
                             dpi_ctx_taken,
