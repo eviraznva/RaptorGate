@@ -11,6 +11,7 @@ import { ConfigService } from "@nestjs/config";
 import { ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import type { CookieOptions, Response } from "express";
+import { ValidateAccessTokenUseCase } from "src/application/use-cases/validate-accesstoken.use-case";
 import { LoginUserUseCase } from "../../application/use-cases/login-user.use-case";
 import { LogoutUserUseCase } from "../../application/use-cases/logout-user.use-case";
 import { RecoverPasswordUseCase } from "../../application/use-cases/recover-password.use-case";
@@ -21,6 +22,7 @@ import type { Env } from "../../shared/config/env.validation";
 import {
   ApiCreatedEnvelope,
   ApiNoContentEnvelope,
+  ApiOkEnvelope,
 } from "../decorators/api-envelope-response.decorator";
 import {
   ApiError400,
@@ -35,6 +37,7 @@ import { LoginDto } from "../dtos/login.dto";
 import { LoginResponseDto } from "../dtos/login-response.dto";
 import { RecoveryPasswordDto } from "../dtos/recover-password.dto";
 import { RefreshTokenResponseDto } from "../dtos/refresh-token-response.dto";
+import { ValidateAccessTokenResponseDto } from "../dtos/validate-accesstoken-response.dto";
 
 @ApiTags("Authentication")
 @Controller("auth")
@@ -50,6 +53,8 @@ export class AuthController {
     private readonly loginUserUseCase: LoginUserUseCase,
     @Inject(RecoverPasswordUseCase)
     private readonly recoverPasswordUseCase: RecoverPasswordUseCase,
+    @Inject(ValidateAccessTokenUseCase)
+    private readonly validateAccessTokenUseCase: ValidateAccessTokenUseCase,
   ) {}
 
   private getRefreshCookieOptions(): CookieOptions {
@@ -131,6 +136,22 @@ export class AuthController {
     return {
       accessToken: useCase.accessToken,
     };
+  }
+
+  @IsPublic()
+  @Post("validate")
+  @ApiOperation({
+    summary: "Validate JWT access token",
+    description:
+      "Validates the provided JWT access token. The access token should be sent in the Authorization header as a Bearer token. The endpoint will return a boolean indicating whether the token is valid or not.",
+  })
+  @ApiOkEnvelope(ValidateAccessTokenResponseDto, "Token is valid")
+  async validate(
+    @ExtractToken() accessToken: string,
+  ): Promise<{ valid: boolean }> {
+    const isValid = await this.validateAccessTokenUseCase.execute(accessToken);
+
+    return { valid: isValid };
   }
 
   @Post("logout")

@@ -115,6 +115,7 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle("RaptorGateApi")
+    .addServer("/api")
     .addBearerAuth(
       { type: "http", scheme: "bearer", bearerFormat: "JWT" },
       "bearer",
