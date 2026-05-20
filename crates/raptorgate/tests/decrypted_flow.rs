@@ -2,16 +2,14 @@ use std::time::SystemTime;
 
 use ngfw::dpi::{AppProto, DpiClassifier, DpiContext};
 use ngfw::tls::decrypted_flow::{DecryptedDpiStage, DecryptedFlowContext, DecryptedFlowStage};
-use ngfw::tls::inspection_relay::{Direction, InspectionMode, SessionMeta};
+use ngfw::tls::session_meta::{Direction, InspectionMode, SessionMeta};
 
 fn sample_meta() -> SessionMeta {
     SessionMeta {
         session_id: uuid::Uuid::now_v7(),
         peer: "192.168.20.10:53120".parse().unwrap(),
         server: "142.250.186.4:443".parse().unwrap(),
-        original_dst: "142.250.186.4:443".parse().unwrap(),
         sni: Some("example.com".into()),
-        alpn: Some(b"http/1.1".to_vec()),
         client_side_interface: Some("eth1".into()),
         server_side_interface: Some("eth0".into()),
         mode: InspectionMode::Outbound,

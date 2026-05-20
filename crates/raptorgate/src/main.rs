@@ -117,21 +117,20 @@ async fn main() {
         "firewall config loaded"
     );
 
-    let (_ca_info, tls_cert_forger, tls_untrust_forger) = match CaManager::init(&config.pki_dir) {
+    let (tls_cert_forger, tls_untrust_forger) = match CaManager::init(&config.pki_dir) {
         Ok(ca) => {
             tracing::info!(
                 event = "startup.ca.initialized",
-                fingerprint = %ca.ca_info().fingerprint,
+                fingerprint = %ca.fingerprint(),
                 "CA initialized"
             );
-            let info = ca.ca_info();
             let forger = Arc::new(ca.cert_forger(1024).expect("Failed to create cert forger"));
             let untrust = Arc::new(
                 ca.untrust_cert_forger(256)
                     .expect("Failed to create untrust cert forger"),
             );
             tracing::info!("Cert forgers ready (trust: 1024, untrust: 256)");
-            (Some(info), Some(forger), Some(untrust))
+            (Some(forger), Some(untrust))
         }
         Err(err) => {
             tracing::warn!(
@@ -139,7 +138,7 @@ async fn main() {
                 error = %err,
                 "CA initialization failed"
             );
-            (None, None, None)
+            (None, None)
         }
     };
 

@@ -8,14 +8,11 @@ use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::ips::ips::{Ips, IpsSignatureMatch, IpsVerdict};
 use crate::dpi::{AppProto, DpiClassifier, DpiContext, InspectResult, IpsMatch};
 use crate::events;
-use crate::identity::{resolve_identity, IdentityContext, IdentitySessionStore};
+use crate::identity::IdentityContext;
 use crate::policy::engine::PolicyEngine;
 use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext, PolicyFlowFields};
 use crate::rule_tree::{ArrivalInfo, IpVer, Port, Protocol, Verdict};
-use crate::tls::decrypted_chain::{
-    DecryptedTrafficInspector, InspectionDecision, InspectionDisposition,
-};
-use crate::tls::inspection_relay::{Direction, SessionMeta};
+use crate::tls::session_meta::{Direction, SessionMeta};
 use crate::zones::resolver::ZoneResolver;
 
 pub struct DecryptedFlowContext {
@@ -240,70 +237,6 @@ impl DecryptedFlowStage for DecryptedPolicyStage {
                 _ => DecryptedFlowOutcome::Drop,
             },
         }
-    }
-}
-
-pub struct DecryptedFlowInspector {
-    pipeline: DecryptedFlowPipeline,
-    dpi_classifier: Arc<DpiClassifier>,
-    identity_sessions: Arc<IdentitySessionStore>,
-}
-
-impl DecryptedFlowInspector {
-    pub fn new(
-        pipeline: DecryptedFlowPipeline,
-        dpi_classifier: Arc<DpiClassifier>,
-        identity_sessions: Arc<IdentitySessionStore>,
-    ) -> Self {
-        Self { pipeline, dpi_classifier, identity_sessions }
-    }
-}
-
-#[async_trait]
-impl DecryptedTrafficInspector for DecryptedFlowInspector {
-    async fn inspect(
-        &self,
-        payload: &[u8],
-        seed_ctx: &DpiContext,
-        direction: Direction,
-        meta: &SessionMeta,
-    ) -> InspectionDecision {
-        let arrival_time = SystemTime::now();
-        let identity = resolve_identity(&self.identity_sessions, meta.peer.ip(), arrival_time);
-        let mut ctx = DecryptedFlowContext::new(
-            payload.to_vec(),
-            seed_ctx.clone(),
-            direction,
-            meta.clone(),
-            arrival_time,
-            Some(identity),
-        );
-
-        let outcome = self.pipeline.process(&mut ctx).await;
-        InspectionDecision {
-            disposition: if matches!(outcome, DecryptedFlowOutcome::Drop) {
-                InspectionDisposition::Drop
-            } else {
-                InspectionDisposition::Forward
-            },
-            ctx: ctx.dpi,
-            payload: ctx.payload,
-        }
-    }
-
-    fn close_session(&self, meta: &SessionMeta) {
-        self.dpi_classifier.remove_session(
-            meta.peer.ip(),
-            meta.peer.port(),
-            meta.server.ip(),
-            meta.server.port(),
-        );
-        self.dpi_classifier.remove_session(
-            meta.server.ip(),
-            meta.server.port(),
-            meta.peer.ip(),
-            meta.peer.port(),
-        );
     }
 }
 

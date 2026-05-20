@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -22,8 +22,9 @@ use crate::tls::decrypted_flow::{DecryptedFlowContext, DecryptedFlowOutcome, Dec
 use crate::tls::decryption_mirror::DecryptionMirror;
 use crate::tls::decision_engine::TlsDecisionEngine;
 use crate::tls::dual_session::{self, AcceptParams, ConnectParams};
-use crate::tls::inspection_relay::{Direction as TlsRelayDirection, InspectionMode, SessionMeta};
+use crate::tls::pinning_detector::PinningReason;
 use crate::tls::rustls_config;
+use crate::tls::session_meta::{Direction as TlsRelayDirection, InspectionMode, SessionMeta};
 #[cfg(test)]
 use crate::tls::ca_manager::CaManager;
 #[cfg(test)]
@@ -107,6 +108,7 @@ struct TlsWorkerParams {
     config: Arc<TlsL4InspectionConfig>,
     endpoint: L4TcpEndpoint,
     server_addr: SocketAddr,
+    source_ip: IpAddr,
     sni: Option<String>,
     client_alpn_protocols: Vec<Vec<u8>>,
 }
@@ -278,7 +280,7 @@ impl TlsL4InspectionService {
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let entry = ctx.entry();
         let server_addr = SocketAddr::new(entry.original.dst_ip, entry.original.dst_port);
-        let meta = build_session_meta(ctx, parsed.sni.clone(), None, InspectionMode::Outbound);
+        let meta = build_session_meta(ctx, parsed.sni.clone(), InspectionMode::Outbound);
 
         handle.admit(Direction::Original, encrypted).await?;
 
@@ -286,6 +288,7 @@ impl TlsL4InspectionService {
             config: Arc::clone(&self.config),
             endpoint,
             server_addr,
+            source_ip: entry.original.src_ip,
             sni: parsed.sni,
             client_alpn_protocols: parsed.alpn_protocols,
         };
@@ -443,11 +446,23 @@ async fn run_tls_worker(
             certified_key,
             &selected_alpn_protocols(negotiated_alpn.as_deref()),
         )?;
-        let client_tls = dual_session::accept_client_tls(AcceptParams {
+        let client_tls = match dual_session::accept_client_tls(AcceptParams {
             stream: params.endpoint,
             server_config,
         })
-        .await?;
+        .await {
+            Ok(client_tls) => client_tls,
+            Err(error) => {
+                params.config.decision_engine.report_pinning_failure(
+                    params.source_ip,
+                    &domain,
+                    PinningReason::TlsAlert {
+                        alert_description: error.to_string(),
+                    },
+                );
+                return Err(error);
+            }
+        };
         (client_tls, server_tls, negotiated_alpn)
     };
 
@@ -551,7 +566,6 @@ fn decide_with_config(
 fn build_session_meta(
     ctx: &SessionContext,
     sni: Option<String>,
-    alpn: Option<Vec<u8>>,
     mode: InspectionMode,
 ) -> SessionMeta {
     let entry = ctx.entry();
@@ -560,9 +574,7 @@ fn build_session_meta(
         session_id: Uuid::now_v7(),
         peer: SocketAddr::new(entry.original.src_ip, entry.original.src_port),
         server: SocketAddr::new(entry.original.dst_ip, entry.original.dst_port),
-        original_dst: SocketAddr::new(entry.original.dst_ip, entry.original.dst_port),
         sni,
-        alpn,
         client_side_interface: path.original_ingress.map(|value| value.to_string()),
         server_side_interface: path.reply_ingress.map(|value| value.to_string()),
         mode,

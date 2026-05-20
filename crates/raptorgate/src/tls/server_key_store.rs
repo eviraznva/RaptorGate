@@ -124,7 +124,6 @@ pub struct ServerKeyClearReport {
 // Wynik get_entry, ServerConfig + flagi runtime.
 pub struct InboundEntryRef {
     pub certified_key: Arc<CertifiedKey>,
-    pub common_name: String,
     pub bypass: bool,
     pub enabled: bool,
 }
@@ -252,7 +251,6 @@ impl ServerKeyStore {
     pub fn get_entry(&self, addr: SocketAddr) -> Option<InboundEntryRef> {
         self.entries.get(&addr).map(|entry| InboundEntryRef {
             certified_key: Arc::clone(&entry.certified_key),
-            common_name: entry.common_name.clone(),
             bypass: entry.bypass,
             enabled: entry.enabled,
         })

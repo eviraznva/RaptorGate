@@ -8,7 +8,9 @@ use dashmap::DashMap;
 #[derive(Debug, Clone)]
 pub enum PinningReason {
     TlsAlert { alert_description: String },
+    #[cfg(test)]
     TcpReset,
+    #[cfg(test)]
     ConnectionClosedNoData,
 }
 
@@ -16,7 +18,9 @@ impl std::fmt::Display for PinningReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::TlsAlert { alert_description } => write!(f, "tls_alert:{alert_description}"),
+            #[cfg(test)]
             Self::TcpReset => write!(f, "tcp_reset"),
+            #[cfg(test)]
             Self::ConnectionClosedNoData => write!(f, "connection_closed_no_data"),
         }
     }
@@ -160,11 +164,6 @@ impl PinningDetector {
         });
 
         removed
-    }
-
-    pub fn reload_config(&self, config: PinningConfig) {
-        self.config.store(config.into());
-        tracing::info!("Pinning detection config reloaded");
     }
 
     /// Liczba aktywnych failure'ów dla (source_ip, domain) w bieżącym oknie.

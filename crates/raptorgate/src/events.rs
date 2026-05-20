@@ -10,7 +10,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::conntrack::tcp_identity::EndpointIdentifier;
 use crate::proto::events as proto;
 use crate::proto::services::backend_event_service_client::BackendEventServiceClient;
-use crate::tls::inspection_relay::{Direction, InspectionMode};
+use crate::tls::session_meta::{Direction, InspectionMode};
 
 #[cfg(any(test, feature = "test-capture"))]
 mod capture;

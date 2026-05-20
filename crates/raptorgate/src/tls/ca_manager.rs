@@ -5,25 +5,18 @@ use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsage
 use ring::digest::{digest, SHA256};
 use time::OffsetDateTime;
 
+use crate::tls::cert_forger::CertForger;
 use crate::tls::cert_storage;
-
-// Informacje o CA przekazywane do control plane.
-#[derive(Clone)]
-pub struct CaInfo {
-    pub cert_pem: String,
-    pub fingerprint: String,
-    pub expires_at: prost_types::Timestamp,
-}
 
 // Zarządca certyfikatów CA, trust + untrust.
 pub struct CaManager {
     ca_cert_pem: String,
     ca_key_pem: String,
     fingerprint: String,
+    #[cfg(test)]
     expires_at: prost_types::Timestamp,
     untrust_cert_pem: String,
     untrust_key_pem: String,
-    untrust_fingerprint: String,
 }
 
 impl CaManager {
@@ -31,7 +24,7 @@ impl CaManager {
     pub fn init(pki_dir: &str) -> anyhow::Result<Self> {
         let dir = Path::new(pki_dir);
 
-        let (ca_cert_pem, ca_key_pem, fingerprint, expires_at) =
+        let (ca_cert_pem, ca_key_pem, fingerprint, _expires_at) =
             if let Some(loaded) = cert_storage::load_ca(dir)? {
                 tracing::info!(pki_dir, "Loaded existing CA from disk");
                 (
@@ -51,10 +44,10 @@ impl CaManager {
                 (generated.cert_pem, generated.key_pem, generated.fingerprint, generated.expires_at)
             };
 
-        let (untrust_cert_pem, untrust_key_pem, untrust_fingerprint) =
+        let (untrust_cert_pem, untrust_key_pem) =
             if let Some(loaded) = cert_storage::load_untrust_ca(dir)? {
                 tracing::info!(pki_dir, "Loaded existing Untrust CA from disk");
-                (loaded.cert_pem, loaded.key_pem, loaded.fingerprint)
+                (loaded.cert_pem, loaded.key_pem)
             } else {
                 tracing::info!(pki_dir, "Generating new Untrust CA certificate");
                 let generated = generate_ca("RaptorGate Untrust CA")?;
@@ -63,12 +56,14 @@ impl CaManager {
                     &generated.fingerprint, generated.expires_at.seconds,
                 )?;
                 tracing::info!(fingerprint = %generated.fingerprint, "Untrust CA generated and saved");
-                (generated.cert_pem, generated.key_pem, generated.fingerprint)
+                (generated.cert_pem, generated.key_pem)
             };
 
         Ok(Self {
-            ca_cert_pem, ca_key_pem, fingerprint, expires_at,
-            untrust_cert_pem, untrust_key_pem, untrust_fingerprint,
+            ca_cert_pem, ca_key_pem, fingerprint,
+            #[cfg(test)]
+            expires_at: _expires_at,
+            untrust_cert_pem, untrust_key_pem,
         })
     }
 
@@ -81,30 +76,25 @@ impl CaManager {
             ca_cert_pem: generated.cert_pem,
             ca_key_pem: generated.key_pem,
             fingerprint: generated.fingerprint,
+            #[cfg(test)]
             expires_at: generated.expires_at,
             untrust_cert_pem: untrust.cert_pem,
             untrust_key_pem: untrust.key_pem,
-            untrust_fingerprint: untrust.fingerprint,
         })
     }
 
     // Tworzy CertForger podpisujący certyfikaty tym CA.
-    pub fn cert_forger(&self, cache_capacity: usize) -> anyhow::Result<super::CertForger> {
-        super::CertForger::new(&self.ca_cert_pem, &self.ca_key_pem, cache_capacity)
+    pub fn cert_forger(&self, cache_capacity: usize) -> anyhow::Result<CertForger> {
+        CertForger::new(&self.ca_cert_pem, &self.ca_key_pem, cache_capacity)
     }
 
     // Tworzy CertForger podpisujący certyfikaty Untrust CA.
-    pub fn untrust_cert_forger(&self, cache_capacity: usize) -> anyhow::Result<super::CertForger> {
-        super::CertForger::new(&self.untrust_cert_pem, &self.untrust_key_pem, cache_capacity)
+    pub fn untrust_cert_forger(&self, cache_capacity: usize) -> anyhow::Result<CertForger> {
+        CertForger::new(&self.untrust_cert_pem, &self.untrust_key_pem, cache_capacity)
     }
 
-    // Zwraca informacje o CA do przekazania do control plane.
-    pub fn ca_info(&self) -> CaInfo {
-        CaInfo {
-            cert_pem: self.ca_cert_pem.clone(),
-            fingerprint: self.fingerprint.clone(),
-            expires_at: self.expires_at.clone(),
-        }
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
     }
 }
 
@@ -178,11 +168,10 @@ mod tests {
     fn init_generates_new_ca() {
         let dir = temp_dir();
         let manager = CaManager::init(dir.to_str().unwrap()).unwrap();
-        let info = manager.ca_info();
 
-        assert!(info.cert_pem.contains("BEGIN CERTIFICATE"));
-        assert!(!info.fingerprint.is_empty());
-        assert!(info.expires_at.seconds > 0);
+        assert!(manager.ca_cert_pem.contains("BEGIN CERTIFICATE"));
+        assert!(!manager.fingerprint.is_empty());
+        assert!(manager.expires_at.seconds > 0);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -195,8 +184,8 @@ mod tests {
         let first = CaManager::init(pki_dir).unwrap();
         let second = CaManager::init(pki_dir).unwrap();
 
-        assert_eq!(first.ca_info().fingerprint, second.ca_info().fingerprint);
-        assert_eq!(first.ca_info().cert_pem, second.ca_info().cert_pem);
+        assert_eq!(first.fingerprint, second.fingerprint);
+        assert_eq!(first.ca_cert_pem, second.ca_cert_pem);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -205,8 +194,7 @@ mod tests {
     fn fingerprint_has_correct_format() {
         let dir = temp_dir();
         let manager = CaManager::init(dir.to_str().unwrap()).unwrap();
-        let info = manager.ca_info();
-        let parts: Vec<&str> = info.fingerprint.split(':').collect();
+        let parts: Vec<&str> = manager.fingerprint.split(':').collect();
 
         assert_eq!(parts.len(), 32);
         for part in parts {
@@ -221,7 +209,7 @@ mod tests {
     fn ca_expires_in_roughly_10_years() {
         let dir = temp_dir();
         let manager = CaManager::init(dir.to_str().unwrap()).unwrap();
-        let expires = manager.ca_info().expires_at.seconds;
+        let expires = manager.expires_at.seconds;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

@@ -145,10 +145,6 @@ impl TlsDecisionEngine {
             .record_failure(source_ip, domain, reason)
     }
 
-    pub fn pinning_detector(&self) -> &PinningDetector {
-        &self.pinning_detector
-    }
-
     pub fn server_key_store(&self) -> &Arc<ServerKeyStore> {
         &self.server_key_store
     }

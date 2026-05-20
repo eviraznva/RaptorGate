@@ -16,6 +16,7 @@ use super::rustls_config::parse_private_key_pem;
 
 // Sfałszowany certyfikat domeny podpisany przez CA firewalla.
 pub struct ForgedCert {
+    #[cfg(test)]
     pub cert_pem: String,
     pub key_pem: String,
     pub cert_der: Vec<u8>,
@@ -36,6 +37,7 @@ impl ForgedCert {
 }
 
 // Statystyki cache certyfikatów.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
 pub struct CacheStats {
     pub hits: u64,
@@ -49,6 +51,7 @@ pub struct CertForger {
     ca_cert: rcgen::Certificate,
     ca_key: KeyPair,
     cache: Mutex<LruCache<String, Arc<ForgedCert>>>,
+    #[cfg(test)]
     capacity: usize,
     hits: AtomicU64,
     misses: AtomicU64,
@@ -78,6 +81,7 @@ impl CertForger {
             cache: Mutex::new(LruCache::new(
                 NonZeroUsize::new(capacity).expect("capacity > 0"),
             )),
+            #[cfg(test)]
             capacity,
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
@@ -109,6 +113,7 @@ impl CertForger {
         Ok(cert)
     }
 
+    #[cfg(test)]
     pub fn cache_stats(&self) -> CacheStats {
         let cache = self.cache.lock().expect("cache lock poisoned");
         CacheStats {
@@ -158,6 +163,7 @@ impl CertForger {
 
         Ok(ForgedCert {
             cert_der: cert.der().to_vec(),
+            #[cfg(test)]
             cert_pem: cert.pem(),
             key_pem: leaf_key.serialize_pem(),
         })
