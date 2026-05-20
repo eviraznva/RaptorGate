@@ -31,8 +31,7 @@ mod daemon;
 mod post_session;
 
 use crate::config::provider::{AppConfigProvider, DiskAppConfigProvider};
-use crate::config::AppConfig;
-use crate::daemon::{Daemon, DaemonDeps, DaemonV2, ProdDeps};
+use crate::daemon::{Daemon, DaemonV2, ProdDeps};
 use crate::control_server::ControlServer;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
@@ -49,8 +48,8 @@ use tokio::sync::mpsc;
 use crate::policy::provider::DiskPolicyProvider;
 use crate::query_server::{QueryHandler, QueryServer};
 use crate::tls::{
-    CaManager, DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, MitmProxy, MitmProxyConfig,
-    PinningConfig, ServerKeyStore, TlsDecisionEngine, TransparentRedirect,
+    CaManager, DecryptionMirror, DecryptionMirrorConfig, EchTlsPolicy, PinningConfig,
+    ServerKeyStore, TlsDecisionEngine,
 };
 use crate::interfaces::{InterfaceMonitor, NetlinkInterfaceController, NetworkInterfaceMonitor};
 use crate::netlink::listener::NetlinkListener;
@@ -484,9 +483,39 @@ async fn main() {
     ));
     let ml_detector: Arc<dyn crate::ml::MlPacketInspector> =
         Arc::new(crate::ml::MlDetector::from_env());
-    let pipeline_interface_monitor: Arc<dyn InterfaceMonitor> = interface_monitor.clone();
-
     let (exec_tx, exec_rx) = mpsc::unbounded_channel();
+
+    let tls_l4_inspection = if config.ssl_inspection_enabled {
+        match (&tls_cert_forger, &tls_untrust_forger) {
+            (Some(forger), Some(untrust)) => {
+                let decrypted_zone_resolver: Arc<dyn crate::zones::resolver::ZoneResolver> = zone_resolver.clone();
+                let decrypted_dnssec: Arc<dyn crate::data_plane::dns_inspection::dnssec::DnssecProvider> = dns_inspection.clone();
+                let decrypted_pipeline = crate::tls::decrypted_flow::DecryptedFlowPipeline::new(vec![
+                    Arc::new(crate::tls::decrypted_flow::DecryptedDpiStage::new(Arc::clone(&dpi_classifier))),
+                    Arc::new(crate::tls::decrypted_flow::DecryptedIpsStage::new(Arc::clone(&ips))),
+                    Arc::new(crate::tls::decrypted_flow::DecryptedPolicyStage::new(
+                        Arc::clone(&policy_engine),
+                        decrypted_zone_resolver,
+                        Some(decrypted_dnssec),
+                    )),
+                ]);
+                Some(Arc::new(crate::tls::l4_inspection::TlsL4InspectionConfig {
+                    cert_forger: Arc::clone(forger),
+                    untrust_forger: Arc::clone(untrust),
+                    decision_engine: Arc::clone(&decision_engine),
+                    decrypted_pipeline,
+                    dpi_classifier: Arc::clone(&dpi_classifier),
+                    identity_sessions: Arc::clone(&identity_sessions),
+                    decryption_mirror: Arc::clone(&decryption_mirror),
+                    #[cfg(test)]
+                    test_action_override: None,
+                }))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
 
     let deps = Arc::new(ProdDeps {
         metrics_collector: Arc::clone(&metrics_collector),
@@ -509,9 +538,11 @@ async fn main() {
         helpers: Arc::clone(&helpers),
         smtp_tracker: Arc::clone(&smtp_tracker),
         smtp_policy_retriever: Arc::clone(&smtp_policy_retriever),
+        tls_l4_inspection,
     });
 
-    let use_v2 = std::env::var("RAPTORGATE_PIPELINE").is_ok_and(|v| v == "v2");
+    let use_v2 = config.ssl_inspection_enabled
+        || std::env::var("RAPTORGATE_PIPELINE").is_ok_and(|v| v == "v2");
     tracing::info!(
         event = "startup.pipeline.selected",
         version = if use_v2 { "v2" } else { "v1" },
@@ -543,85 +574,13 @@ async fn main() {
         let tls_runtime_cancel = CancellationToken::new();
         decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
 
-        match (&tls_cert_forger, &tls_untrust_forger) {
-            (Some(forger), Some(untrust)) => {
-                let listen_addr = config
-                    .mitm_listen_addr
-                    .parse()
-                    .expect("MITM_LISTEN_ADDR must be a valid socket address");
-
-                match TransparentRedirect::new(
-                    listen_addr,
-                    sniffed_names.clone(),
-                    config.tls_inspection_ports.clone(),
-                    local_ips.iter().copied().collect(),
-                )
-                .and_then(|redirect| redirect.install())
-                {
-                    Ok(()) => {
-                        tracing::info!(
-                            event = "startup.tls_redirect.installed",
-                            listen_addr = %listen_addr,
-                            ports = ?config.tls_inspection_ports,
-                            interfaces = ?sniffed_names,
-                            "TLS transparent redirect installed"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to install TLS transparent redirect");
-                    }
-                }
-
-                let session_interface_lookup = Arc::new(
-                    crate::tls::inspection_relay::RoutingSessionInterfaceLookup::new(
-                        Arc::clone(&routing_table),
-                        Arc::clone(&pipeline_interface_monitor),
-                    ),
-                );
-                let decrypted_zone_resolver: Arc<dyn crate::zones::resolver::ZoneResolver> = zone_resolver.clone();
-                let decrypted_dnssec: Arc<dyn crate::data_plane::dns_inspection::dnssec::DnssecProvider> = dns_inspection.clone();
-                let decrypted_pipeline = crate::tls::decrypted_flow::DecryptedFlowPipeline::new(vec![
-                    Arc::new(crate::tls::decrypted_flow::DecryptedDpiStage::new(Arc::clone(&dpi_classifier))),
-                    Arc::new(crate::tls::decrypted_flow::DecryptedIpsStage::new(Arc::clone(&ips))),
-                    Arc::new(crate::tls::decrypted_flow::DecryptedPolicyStage::new(
-                        Arc::clone(&policy_engine),
-                        decrypted_zone_resolver,
-                        Some(decrypted_dnssec),
-                    )),
-                ]);
-
-                let proxy_config = MitmProxyConfig {
-                    listen_addr,
-                    cert_forger: Arc::clone(forger),
-                    untrust_forger: Arc::clone(untrust),
-                    decision_engine: Arc::clone(&decision_engine),
-                    decrypted_inspector: Arc::new(crate::tls::decrypted_flow::DecryptedFlowInspector::new(
-                        decrypted_pipeline,
-                        Arc::clone(&dpi_classifier),
-                        Arc::clone(&identity_sessions),
-                    )),
-                    decryption_mirror: Arc::clone(&decryption_mirror),
-                    session_interface_lookup,
-                    cancel: tls_runtime_cancel,
-                };
-
-                match MitmProxy::bind(proxy_config).await {
-                    Ok(proxy) => {
-                        tokio::spawn(proxy.serve());
-                        tracing::info!(
-                            event = "startup.mitm_proxy.spawned",
-                            listen_addr = %listen_addr,
-                            "SSL/TLS inspection enabled"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to start MITM proxy");
-                    }
-                }
-            }
-            _ => {
-                tracing::error!("SSL inspection enabled but CA/TLS config not available");
-            }
+        if deps.tls_l4_inspection.is_some() {
+            tracing::info!(
+                event = "startup.tls_l4.enabled",
+                "SSL/TLS inspection uses L4 session pipeline"
+            );
+        } else {
+            tracing::error!("SSL inspection enabled but CA/TLS config not available");
         }
     }
 
@@ -703,7 +662,6 @@ async fn main() {
         while let Some(raw_packet) = raw_rx.recv().await {
             if let Some(mut ctx) = daemon_v2.defrag().process_raw(raw_packet) {
                 let pipeline = daemon_v2.pipeline_clone();
-                let tun = Arc::clone(&tun);
                 let metrics_collector = Arc::clone(&metrics_collector);
                 let counter = Arc::clone(&pkt_counter);
 
@@ -735,7 +693,6 @@ async fn main() {
         while let Some(raw_packet) = raw_rx.recv().await {
             if let Some(mut ctx) = daemon.defrag().process_raw(raw_packet) {
                 let pipeline = daemon.pipeline_clone();
-                let tun = Arc::clone(&tun);
                 let metrics_collector = Arc::clone(&metrics_collector);
                 let counter = Arc::clone(&pkt_counter);
                 let exec_tx = daemon.exec_sender();

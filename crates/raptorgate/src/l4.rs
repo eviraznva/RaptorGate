@@ -7,6 +7,7 @@ pub mod noop;
 pub mod release;
 pub mod reset;
 pub mod stage;
+pub mod tcp_endpoint;
 pub mod tls;
 
 pub use chain::L4Chain;
@@ -20,5 +21,6 @@ pub use http::HttpL4Stage;
 pub use noop::{NoopIcmpStage, NoopTcpStage, NoopUdpStage};
 pub use release::{DropReason, ReleaseAction};
 pub use reset::{tcp_reset_segment_to_raw, TcpResetAction, TcpResetBuilder, TcpResetSegment, TcpResetUnavailable};
-pub use stage::{AppProto, CloseReason, L4Outcome, L4Stage, TerminateReason};
-pub use tls::{L4PlaintextChunk, TlsHttpL4Stage, TlsInspectionOutcome, TlsInspectionService};
+pub use stage::{AppProto, CloseReason, L4Emit, L4Outcome, L4Stage, TerminateReason};
+pub use tcp_endpoint::{L4TcpEndpoint, L4TcpEndpointHandle, L4TcpReadHalf, L4TcpWriteHalf};
+pub use tls::TlsHttpL4Stage;

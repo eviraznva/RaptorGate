@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
+use std::time::Duration;
 
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use etherparse::TransportSlice;
+use etherparse::{PacketBuilder, TransportSlice};
 use tokio::sync::mpsc;
 
 use crate::conntrack::entry::CtStatus;
@@ -18,7 +19,7 @@ use crate::l4::context::SessionContext;
 use crate::l4::egress::{policy_release_action, zone_pair_for_session_packet};
 use crate::l4::release::{DropReason, ReleaseAction};
 use crate::l4::reset::{tcp_reset_segment_to_raw, TcpResetAction};
-use crate::l4::stage::{CloseReason, L4Outcome, L4Stage};
+use crate::l4::stage::{CloseReason, L4Emit, L4Outcome, L4Stage};
 use crate::l4::{
     IcmpL4PipelineFactory, IcmpNoopPipeline, TcpL4PipelineFactory, TcpSessionPipeline, UdpL4PipelineFactory,
     UdpNoopPipeline,
@@ -67,6 +68,11 @@ struct PendingPayload {
 struct SessionPending {
     map: BTreeMap<PacketId, PendingEntry>,
     payloads: BTreeMap<PacketId, Vec<PendingPayload>>,
+}
+
+#[derive(Default)]
+struct GeneratedTcpState {
+    next_seq: [Option<u32>; 2],
 }
 
 struct SessionManagerObs<ZR, Dns>
@@ -142,15 +148,15 @@ impl<ZR: ZoneResolver + Send + Sync + 'static> Phase1L4Pipeline<ZR> {
         }
     }
 
-    fn on_session_open(&mut self, ctx: &mut SessionContext) -> L4Outcome {
+    async fn on_session_open(&mut self, ctx: &mut SessionContext) -> L4Outcome {
         match self {
-            Self::Tcp(p) => p.on_session_open(ctx),
-            Self::Udp(p) => p.on_session_open(ctx),
-            Self::Icmp(p) => p.on_session_open(ctx),
+            Self::Tcp(p) => p.on_session_open(ctx).await,
+            Self::Udp(p) => p.on_session_open(ctx).await,
+            Self::Icmp(p) => p.on_session_open(ctx).await,
         }
     }
 
-    fn on_bytes(
+    async fn on_bytes(
         &mut self,
         ctx: &mut SessionContext,
         packet_id: PacketId,
@@ -159,17 +165,25 @@ impl<ZR: ZoneResolver + Send + Sync + 'static> Phase1L4Pipeline<ZR> {
         payload: &[u8],
     ) -> L4Outcome {
         match self {
-            Self::Tcp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload),
-            Self::Udp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload),
-            Self::Icmp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload),
+            Self::Tcp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
+            Self::Udp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
+            Self::Icmp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
         }
     }
 
-    fn on_session_close(&mut self, ctx: &mut SessionContext, reason: CloseReason) {
+    async fn drain(&mut self, ctx: &mut SessionContext) -> L4Outcome {
         match self {
-            Self::Tcp(p) => p.on_session_close(ctx, reason),
-            Self::Udp(p) => p.on_session_close(ctx, reason),
-            Self::Icmp(p) => p.on_session_close(ctx, reason),
+            Self::Tcp(p) => p.drain(ctx).await,
+            Self::Udp(p) => p.drain(ctx).await,
+            Self::Icmp(p) => p.drain(ctx).await,
+        }
+    }
+
+    async fn on_session_close(&mut self, ctx: &mut SessionContext, reason: CloseReason) {
+        match self {
+            Self::Tcp(p) => p.on_session_close(ctx, reason).await,
+            Self::Udp(p) => p.on_session_close(ctx, reason).await,
+            Self::Icmp(p) => p.on_session_close(ctx, reason).await,
         }
     }
 }
@@ -192,6 +206,81 @@ fn drop_all_pending(
     }
 }
 
+fn drop_packet_ids(
+    ids: Vec<PacketId>,
+    pending: &mut SessionPending,
+    release_tx: &mpsc::UnboundedSender<ReleaseAction>,
+) {
+    for packet_id in ids {
+        pending.map.remove(&packet_id);
+        let _ = release_tx.send(ReleaseAction::Drop {
+            packet_id,
+            reason: DropReason::StageDropped,
+            temp_dst_port: None,
+        });
+    }
+}
+
+fn release_generated_emit(
+    emit: L4Emit,
+    release_tx: &mpsc::UnboundedSender<ReleaseAction>,
+    session_ctx: &SessionContext,
+    generated_tcp: &mut GeneratedTcpState,
+) {
+    let Some(packet) = generated_tcp_packet(session_ctx, emit, generated_tcp) else {
+        return;
+    };
+    let _ = release_tx.send(ReleaseAction::Forward { packet });
+}
+
+fn generated_tcp_packet(
+    session_ctx: &SessionContext,
+    emit: L4Emit,
+    generated_tcp: &mut GeneratedTcpState,
+) -> Option<PacketContext> {
+    let entry = session_ctx.entry();
+    let tuple = match emit.dir {
+        Direction::Original => entry.original,
+        Direction::Reply => entry.reply(),
+    };
+    let tcp = {
+        let guard = entry.proto_state.lock();
+        match &*guard {
+            ProtoState::Tcp(tcp) => tcp.clone(),
+            _ => return None,
+        }
+    };
+    let dir_index = match emit.dir {
+        Direction::Original => 0,
+        Direction::Reply => 1,
+    };
+    let seq_state = &tcp.seen[dir_index];
+    let seq = generated_tcp.next_seq[dir_index].unwrap_or(seq_state.last_seq);
+    let ack = seq_state.last_ack;
+    let window = seq_state.last_win.min(u16::MAX as u32) as u16;
+    let (src_ip, dst_ip) = match (tuple.src_ip, tuple.dst_ip) {
+        (std::net::IpAddr::V4(src), std::net::IpAddr::V4(dst)) => (src, dst),
+        _ => return None,
+    };
+
+    let mut raw = Vec::new();
+    PacketBuilder::ethernet2([0; 6], [0; 6])
+        .ipv4(src_ip.octets(), dst_ip.octets(), 64)
+        .tcp(tuple.src_port, tuple.dst_port, seq, window)
+        .ack(ack)
+        .write(&mut raw, &emit.payload)
+        .ok()?;
+    generated_tcp.next_seq[dir_index] = Some(seq.wrapping_add(emit.payload.len() as u32));
+
+    let path = entry.interface_path();
+    let iface = match emit.dir {
+        Direction::Original => path.original_ingress.clone(),
+        Direction::Reply => path.reply_ingress.clone(),
+    }
+    .unwrap_or_else(|| Arc::from("eth0"));
+    PacketContext::from_raw(raw, iface).ok()
+}
+
 fn handle_outcome<ZR, Dns>(
     outcome: L4Outcome,
     pending: &mut SessionPending,
@@ -202,6 +291,7 @@ fn handle_outcome<ZR, Dns>(
     dnssec: Option<&Arc<Dns>>,
     ct: &Arc<Conntrack>,
     entry_id: u64,
+    generated_tcp: &mut GeneratedTcpState,
 ) -> bool
 where
     ZR: ZoneResolver,
@@ -224,6 +314,37 @@ where
                     dnssec,
                 );
                 let _ = release_tx.send(action);
+            }
+            false
+        }
+        L4Outcome::Drop(ids) => {
+            drop_packet_ids(ids, pending, release_tx);
+            false
+        }
+        L4Outcome::Emit(items) => {
+            for emit in items {
+                release_generated_emit(emit, release_tx, session_ctx, generated_tcp);
+            }
+            false
+        }
+        L4Outcome::ForwardAndEmit { forward, emit } => {
+            for packet_id in forward {
+                let Some(entry) = pending.map.remove(&packet_id) else {
+                    continue;
+                };
+                let zone_pair_id = zone_pair_for_session_packet(session_ctx, entry.dir);
+                let action = policy_release_action(
+                    policy_engine,
+                    zone_resolver,
+                    zone_pair_id,
+                    entry.packet,
+                    session_ctx,
+                    dnssec,
+                );
+                let _ = release_tx.send(action);
+            }
+            for item in emit {
+                release_generated_emit(item, release_tx, session_ctx, generated_tcp);
             }
             false
         }
@@ -484,31 +605,75 @@ where
 
         tokio::spawn(async move {
             let mut pipeline = Phase1L4Pipeline::from_proto(&proto, session_ctx.entry(), tcp_f, udp_f, icmp_f);
+            let mut output_tick = tokio::time::interval(Duration::from_millis(10));
+            output_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut generated_tcp = GeneratedTcpState::default();
 
             if let Some(t) = &trace {
                 t.lock().expect("trace").push("open".to_string());
             }
-            let _ = pipeline.on_session_open(&mut session_ctx);
+            let _ = pipeline.on_session_open(&mut session_ctx).await;
 
-            while let Some(msg) = rx.recv().await {
-                let mut pending = pending_arc.lock().expect("session pending");
-                match msg {
-                    L4Input::Bytes {
-                        dir,
-                        bytes,
-                        packet_id,
-                        tcp_payload_start_seq,
-                    } => {
-                        if let Some(t) = &trace {
-                            t.lock().expect("trace").push("bytes".to_string());
+            loop {
+                tokio::select! {
+                    msg = rx.recv() => {
+                        let Some(msg) = msg else {
+                            break;
+                        };
+                        match msg {
+                            L4Input::Bytes {
+                                dir,
+                                bytes,
+                                packet_id,
+                                tcp_payload_start_seq,
+                            } => {
+                                if let Some(t) = &trace {
+                                    t.lock().expect("trace").push("bytes".to_string());
+                                }
+                                let outcome = pipeline.on_bytes(
+                                    &mut session_ctx,
+                                    packet_id,
+                                    dir,
+                                    tcp_payload_start_seq,
+                                    &bytes,
+                                )
+                                .await;
+                                let mut pending = pending_arc.lock().expect("session pending");
+                                let terminate = handle_outcome(
+                                    outcome,
+                                    &mut pending,
+                                    &release_tx,
+                                    &policy_engine,
+                                    &zone_resolver,
+                                    &session_ctx,
+                                    dnssec.as_ref(),
+                                    &ct,
+                                    entry_id,
+                                    &mut generated_tcp,
+                                );
+                                if terminate {
+                                    return;
+                                }
+                            }
+                            L4Input::Close { reason } => {
+                                if let Some(t) = &trace {
+                                    t.lock().expect("trace").push("close".to_string());
+                                }
+                                pipeline.on_session_close(&mut session_ctx, reason).await;
+                                let mut pending = pending_arc.lock().expect("session pending");
+                                drop_all_pending(&mut pending, &release_tx, DropReason::SessionClosed);
+                                sm.pending_by_flow.remove(&flow_key);
+                                sm.handles.remove(&flow_key);
+                                return;
+                            }
                         }
-                        let outcome = pipeline.on_bytes(
-                            &mut session_ctx,
-                            packet_id,
-                            dir,
-                            tcp_payload_start_seq,
-                            &bytes,
-                        );
+                    }
+                    _ = output_tick.tick() => {
+                        let outcome = pipeline.drain(&mut session_ctx).await;
+                        if matches!(outcome, L4Outcome::Continue) {
+                            continue;
+                        }
+                        let mut pending = pending_arc.lock().expect("session pending");
                         let terminate = handle_outcome(
                             outcome,
                             &mut pending,
@@ -519,20 +684,11 @@ where
                             dnssec.as_ref(),
                             &ct,
                             entry_id,
+                            &mut generated_tcp,
                         );
                         if terminate {
                             return;
                         }
-                    }
-                    L4Input::Close { reason } => {
-                        if let Some(t) = &trace {
-                            t.lock().expect("trace").push("close".to_string());
-                        }
-                        pipeline.on_session_close(&mut session_ctx, reason);
-                        drop_all_pending(&mut pending, &release_tx, DropReason::SessionClosed);
-                        sm.pending_by_flow.remove(&flow_key);
-                        sm.handles.remove(&flow_key);
-                        return;
                     }
                 }
             }
@@ -540,8 +696,8 @@ where
             if let Some(t) = &trace {
                 t.lock().expect("trace").push("close".to_string());
             }
+            pipeline.on_session_close(&mut session_ctx, CloseReason::Finished).await;
             let mut pending = pending_arc.lock().expect("session pending");
-            pipeline.on_session_close(&mut session_ctx, CloseReason::Finished);
             drop_all_pending(&mut pending, &release_tx, DropReason::SessionClosed);
             sm.pending_by_flow.remove(&flow_key);
             sm.handles.remove(&flow_key);
@@ -690,6 +846,13 @@ mod tests {
     }
 
     fn test_session_manager(trace: Option<Arc<StdMutex<Vec<String>>>>) -> (Arc<SessionManager<StubZoneResolver, NoDnssec>>, mpsc::UnboundedReceiver<ReleaseAction>) {
+        test_session_manager_with_tcp_factory(trace, TcpL4PipelineFactory::<StubZoneResolver>::new_force_terminate())
+    }
+
+    fn test_session_manager_with_tcp_factory(
+        trace: Option<Arc<StdMutex<Vec<String>>>>,
+        tcp_factory: TcpL4PipelineFactory<StubZoneResolver>,
+    ) -> (Arc<SessionManager<StubZoneResolver, NoDnssec>>, mpsc::UnboundedReceiver<ReleaseAction>) {
         let ct = Arc::new(Conntrack::new(
             Arc::new(ProtoRegistry::new()),
             ConntrackConfig::default(),
@@ -702,7 +865,7 @@ mod tests {
         let sm = if let Some(log) = trace {
             SessionManager::new_with_event_trace(
                 ct,
-                TcpL4PipelineFactory::<StubZoneResolver>::new_force_terminate(),
+                tcp_factory,
                 UdpL4PipelineFactory::default(),
                 IcmpL4PipelineFactory::default(),
                 log,
@@ -714,7 +877,7 @@ mod tests {
         } else {
             SessionManager::new(
                 ct,
-                TcpL4PipelineFactory::<StubZoneResolver>::new_force_terminate(),
+                tcp_factory,
                 UdpL4PipelineFactory::default(),
                 IcmpL4PipelineFactory::default(),
                 policy_engine,
@@ -824,6 +987,81 @@ mod tests {
         match action {
             ReleaseAction::Forward { packet } => assert_eq!(packet.packet_id(), packet_id),
             ReleaseAction::Drop { .. } => panic!("expected forward"),
+        }
+    }
+
+    #[tokio::test]
+    async fn l4_drop_consumes_original_packet() {
+        let (sm, mut release_rx) = test_session_manager_with_tcp_factory(
+            None,
+            TcpL4PipelineFactory::<StubZoneResolver>::new_test_drop_current(),
+        );
+        let ct = sm.conntrack().clone();
+        let entry = sample_tcp_entry_established(801);
+        assert!(ct.confirm(&entry));
+
+        let mut raw = Vec::new();
+        etherparse::PacketBuilder::ethernet2([1; 6], [2; 6])
+            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+            .tcp(12345, 80, 1000, 2000)
+            .write(&mut raw, b"encrypted request")
+            .expect("packet");
+        let packet = PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet");
+        let packet_id = packet.packet_id();
+
+        sm.admit_packet(entry.as_ref(), packet, Direction::Original);
+        sm.inject_session_payload(entry.as_ref(), Direction::Original, b"encrypted request", packet_id);
+
+        let action = tokio::time::timeout(Duration::from_secs(2), release_rx.recv())
+            .await
+            .expect("timeout")
+            .expect("release");
+
+        match action {
+            ReleaseAction::Drop { packet_id: dropped, reason, .. } => {
+                assert_eq!(dropped, packet_id);
+                assert_eq!(reason, DropReason::StageDropped);
+            }
+            ReleaseAction::Forward { .. } => panic!("expected drop"),
+        }
+    }
+
+    #[tokio::test]
+    async fn l4_emit_releases_generated_ciphertext_packet() {
+        let (sm, mut release_rx) = test_session_manager_with_tcp_factory(
+            None,
+            TcpL4PipelineFactory::<StubZoneResolver>::new_test_emit(Direction::Reply, b"encrypted response".to_vec()),
+        );
+        let ct = sm.conntrack().clone();
+        let entry = sample_tcp_entry_established(802);
+        assert!(ct.confirm(&entry));
+
+        let mut raw = Vec::new();
+        etherparse::PacketBuilder::ethernet2([1; 6], [2; 6])
+            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+            .tcp(12345, 80, 1000, 2000)
+            .write(&mut raw, b"encrypted request")
+            .expect("packet");
+        let packet = PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet");
+        let packet_id = packet.packet_id();
+
+        sm.admit_packet(entry.as_ref(), packet, Direction::Original);
+        sm.inject_session_payload(entry.as_ref(), Direction::Original, b"encrypted request", packet_id);
+
+        let action = tokio::time::timeout(Duration::from_secs(2), release_rx.recv())
+            .await
+            .expect("timeout")
+            .expect("release");
+
+        match action {
+            ReleaseAction::Forward { packet } => {
+                let sliced = packet.borrow_sliced_packet();
+                let Some(TransportSlice::Tcp(tcp)) = sliced.transport.as_ref() else {
+                    panic!("expected tcp packet");
+                };
+                assert_eq!(tcp.payload(), b"encrypted response");
+            }
+            ReleaseAction::Drop { .. } => panic!("expected generated forward"),
         }
     }
 

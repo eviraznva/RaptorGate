@@ -2,40 +2,46 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use rustls::{ClientConfig, ServerConfig};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::server::TlsStream as ServerTlsStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use x509_parser::extensions::{GeneralName, ParsedExtension};
 
 // Parametry akceptacji TLS od klienta.
-pub struct AcceptParams {
-    pub tcp_stream: TcpStream,
+pub struct AcceptParams<S> {
+    pub stream: S,
     pub server_config: Arc<ServerConfig>,
 }
 
 // Parametry połączenia TLS do serwera docelowego.
-pub struct ConnectParams {
-    pub tcp_stream: TcpStream,
+pub struct ConnectParams<S> {
+    pub stream: S,
     pub client_config: Arc<ClientConfig>,
     pub server_name: String,
 }
 
 // Akceptuje połączenie TLS od klienta (firewall jako serwer).
-pub async fn accept_client_tls(
-    params: AcceptParams,
-) -> anyhow::Result<ServerTlsStream<TcpStream>> {
+pub async fn accept_client_tls<S>(
+    params: AcceptParams<S>,
+) -> anyhow::Result<ServerTlsStream<S>>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let acceptor = TlsAcceptor::from(params.server_config);
     acceptor
-        .accept(params.tcp_stream)
+        .accept(params.stream)
         .await
         .context("TLS accept from client failed")
 }
 
 // Nawiązuje połączenie TLS do serwera docelowego (firewall jako klient).
-pub async fn connect_to_server(
-    params: ConnectParams,
-) -> anyhow::Result<ClientTlsStream<TcpStream>> {
+pub async fn connect_to_server<S>(
+    params: ConnectParams<S>,
+) -> anyhow::Result<ClientTlsStream<S>>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let server_name = params
         .server_name
         .clone()
@@ -44,13 +50,13 @@ pub async fn connect_to_server(
 
     let connector = TlsConnector::from(params.client_config);
     connector
-        .connect(server_name, params.tcp_stream)
+        .connect(server_name, params.stream)
         .await
         .context("TLS connect to server failed")
 }
 
 // Wyodrębnia DNS SAN z certyfikatu serwera po zakonczonym TLS handshake.
-pub fn extract_peer_sans(stream: &ClientTlsStream<TcpStream>) -> Vec<String> {
+pub fn extract_peer_sans<S>(stream: &ClientTlsStream<S>) -> Vec<String> {
     let Some(certs) = stream.get_ref().1.peer_certificates() else {
         return vec![];
     };
@@ -79,7 +85,7 @@ mod tests {
     use super::*;
     use rcgen::{CertificateParams, DnType, IsCa, KeyPair};
     use std::net::SocketAddr;
-    use tokio::net::TcpListener;
+    use tokio::net::{TcpListener, TcpStream};
 
     fn make_localhost_cert() -> (String, String) {
         let key = KeyPair::generate().unwrap();
@@ -129,7 +135,7 @@ mod tests {
         let server_handle = tokio::spawn(async move {
             let (tcp_stream, _) = listener.accept().await.unwrap();
             accept_client_tls(AcceptParams {
-                tcp_stream,
+                stream: tcp_stream,
                 server_config,
             })
             .await
@@ -143,6 +149,31 @@ mod tests {
         assert!(client_result.is_ok());
         let server_result = server_handle.await.unwrap();
         assert!(server_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn accept_client_tls_works_with_generic_async_io() {
+        let (cert_pem, key_pem) = make_localhost_cert();
+        let server_config =
+            crate::tls::rustls_config::build_server_config_from_pem(&cert_pem, &key_pem)
+                .unwrap();
+        let client_config = make_client_config_trusting(&cert_pem);
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+
+        let server = tokio::spawn(async move {
+            accept_client_tls(AcceptParams {
+                stream: server_io,
+                server_config,
+            })
+            .await
+        });
+
+        let server_name: rustls::pki_types::ServerName<'_> = "localhost".try_into().unwrap();
+        let connector = TlsConnector::from(client_config);
+        let client = connector.connect(server_name, client_io).await;
+
+        assert!(client.is_ok());
+        assert!(server.await.unwrap().is_ok());
     }
 
     #[tokio::test]
@@ -166,7 +197,7 @@ mod tests {
 
         let client_tcp = TcpStream::connect(addr).await.unwrap();
         let result = connect_to_server(ConnectParams {
-            tcp_stream: client_tcp,
+            stream: client_tcp,
             client_config,
             server_name: "localhost".to_string(),
         })

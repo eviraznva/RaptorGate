@@ -262,7 +262,7 @@ async fn handle_inbound_connection(
         .unwrap_or_else(|| server_addr.ip().to_string());
 
     let server_tls = match dual_session::connect_to_server(ConnectParams {
-        tcp_stream: server_tcp,
+        stream: server_tcp,
         client_config: re_encrypt_config,
         server_name: server_name.clone(),
     })
@@ -302,7 +302,7 @@ async fn handle_inbound_connection(
     .context("Failed to build inbound server config")?;
 
     let client_tls = match dual_session::accept_client_tls(AcceptParams {
-        tcp_stream: client_tcp,
+        stream: client_tcp,
         server_config: inbound_server_config,
     })
     .await
@@ -429,7 +429,7 @@ async fn handle_outbound_connection(
         .context("Failed to build recording client config")?;
 
     let server_tls = match dual_session::connect_to_server(ConnectParams {
-        tcp_stream: server_tcp,
+        stream: server_tcp,
         client_config: recording_config,
         server_name: domain.clone(),
     })
@@ -499,7 +499,7 @@ async fn handle_outbound_connection(
         .context("Failed to build server config")?;
 
     let client_tls = match dual_session::accept_client_tls(AcceptParams {
-        tcp_stream: client_tcp,
+        stream: client_tcp,
         server_config: forged_server_config,
     })
     .await

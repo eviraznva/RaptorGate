@@ -10,8 +10,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::conntrack::helper::HelperRegistry;
 use crate::conntrack::session_manager::SessionManager;
-use crate::conntrack::table::{Conntrack, LookupResult};
-use crate::conntrack::tuple::FlowTuple;
+use crate::conntrack::table::Conntrack;
 use crate::post_session::PostSessionHandler;
 use crate::config::provider::{AppConfigProvider, AppConfigStore};
 use crate::config::AppConfig;
@@ -42,6 +41,7 @@ use crate::pipeline::{
 };
 use crate::policy::engine::PolicyEngine;
 use crate::tls::TlsDecisionEngine;
+use crate::tls::l4_inspection::TlsL4InspectionConfig;
 use crate::zones::provider::ZoneInterfaceProvider;
 use crate::zones::resolver::RoutingZoneResolver;
 
@@ -67,6 +67,7 @@ pub struct StaticDeps<'a, D: DaemonDeps + ?Sized> {
     pub helpers: &'a Arc<HelperRegistry>,
     pub smtp_tracker: &'a Arc<SmtpTracker>,
     pub smtp_policy_retriever: &'a Arc<SmtpPolicyRetriever<RoutingZoneResolver<D::IfaceMon>>>,
+    pub tls_l4_inspection: &'a Option<Arc<TlsL4InspectionConfig>>,
 }
 
 pub trait DaemonDeps: Send + Sync + 'static {
@@ -99,6 +100,7 @@ pub struct ProdDeps {
     pub helpers: Arc<HelperRegistry>,
     pub smtp_tracker: Arc<SmtpTracker>,
     pub smtp_policy_retriever: Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>,
+    pub tls_l4_inspection: Option<Arc<TlsL4InspectionConfig>>,
 }
 
 impl DaemonDeps for ProdDeps {
@@ -130,6 +132,7 @@ impl DaemonDeps for ProdDeps {
             helpers: &self.helpers,
             smtp_tracker: &self.smtp_tracker,
             smtp_policy_retriever: &self.smtp_policy_retriever,
+            tls_l4_inspection: &self.tls_l4_inspection,
         }
     }
 }
@@ -503,7 +506,7 @@ where
     pub fn assemble_v2(
         deps: Arc<D>,
         defrag: IpDefragEngine,
-        exec_tx: ExecutionSender,
+        _exec_tx: ExecutionSender,
         test_exec_rx: Option<ExecutionReceiver>,
         tun: Option<Arc<crate::data_plane::tun_forwarder::TunForwarder>>,
     ) -> Arc<Self> {
@@ -512,7 +515,10 @@ where
         let (disposition_tx, _) = broadcast::channel(1024);
         let sessions = SessionManager::new(
             Arc::clone(s.conntrack),
-            TcpL4PipelineFactory::new_application_router(Arc::clone(s.smtp_policy_retriever)),
+            TcpL4PipelineFactory::new_application_router(
+                Arc::clone(s.smtp_policy_retriever),
+                s.tls_l4_inspection.as_ref().map(Arc::clone),
+            ),
             UdpL4PipelineFactory::default(),
             IcmpL4PipelineFactory::default(),
             Arc::clone(s.policy_engine),

@@ -28,20 +28,30 @@ pub enum TerminateReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L4Emit {
+    pub dir: Direction,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum L4Outcome {
     Continue,
     Forward(Vec<PacketId>),
+    Drop(Vec<PacketId>),
+    Emit(Vec<L4Emit>),
+    ForwardAndEmit { forward: Vec<PacketId>, emit: Vec<L4Emit> },
     Terminate { reason: TerminateReason, reset: bool },
 }
 
+#[tonic::async_trait]
 pub trait L4Stage: Send {
-    type Ctx;
+    type Ctx: Send;
 
     fn protocol(&self) -> AppProto;
 
-    fn on_session_open(&mut self, ctx: &mut Self::Ctx) -> L4Outcome;
+    async fn on_session_open(&mut self, ctx: &mut Self::Ctx) -> L4Outcome;
 
-    fn on_bytes(
+    async fn on_bytes(
         &mut self,
         ctx: &mut Self::Ctx,
         packet_id: PacketId,
@@ -50,14 +60,16 @@ pub trait L4Stage: Send {
         payload: &[u8],
     ) -> L4Outcome;
 
-    fn on_session_close(&mut self, ctx: &mut Self::Ctx, reason: CloseReason);
+    async fn drain(&mut self, _ctx: &mut Self::Ctx) -> L4Outcome {
+        L4Outcome::Continue
+    }
+
+    async fn on_session_close(&mut self, ctx: &mut Self::Ctx, reason: CloseReason);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use etherparse::PacketBuilder;
-    use std::sync::Arc;
 
     struct CountingStage {
         byte_hits: u32,
@@ -69,6 +81,7 @@ mod tests {
         }
     }
 
+    #[tonic::async_trait]
     impl L4Stage for CountingStage {
         type Ctx = ();
 
@@ -76,11 +89,11 @@ mod tests {
             AppProto::Any
         }
 
-        fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
+        async fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
             L4Outcome::Continue
         }
 
-        fn on_bytes(
+        async fn on_bytes(
             &mut self,
             (): &mut Self::Ctx,
             packet_id: PacketId,
@@ -92,15 +105,15 @@ mod tests {
             L4Outcome::Forward(vec![packet_id])
         }
 
-        fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) {}
+        async fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) {}
     }
 
-    #[test]
-    fn counting_stage_forwards_packet_id() {
+    #[tokio::test]
+    async fn counting_stage_forwards_packet_id() {
         let mut st = CountingStage::new();
         let mut ctx = ();
         let id = PacketId::next();
-        let out = st.on_bytes(&mut ctx, id, Direction::Original, 0, b"test");
+        let out = st.on_bytes(&mut ctx, id, Direction::Original, 0, b"test").await;
         assert_eq!(st.byte_hits, 1);
         assert_eq!(out, L4Outcome::Forward(vec![id]));
     }

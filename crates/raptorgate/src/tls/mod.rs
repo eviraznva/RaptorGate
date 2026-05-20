@@ -8,6 +8,7 @@ pub mod decision_engine;
 pub mod domain_trie;
 pub mod dual_session;
 pub mod inspection_relay;
+pub mod l4_inspection;
 pub mod mitm_proxy;
 pub mod original_dst;
 pub mod pinning_detector;

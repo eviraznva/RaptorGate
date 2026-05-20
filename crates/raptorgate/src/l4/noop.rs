@@ -16,6 +16,7 @@ pub struct NoopIcmpStage;
 
 macro_rules! impl_noop {
     ($ty:ty, $proto:expr) => {
+        #[tonic::async_trait]
         impl L4Stage for $ty {
             type Ctx = SessionContext;
 
@@ -23,11 +24,11 @@ macro_rules! impl_noop {
                 $proto
             }
 
-            fn on_session_open(&mut self, _ctx: &mut SessionContext) -> L4Outcome {
+            async fn on_session_open(&mut self, _ctx: &mut SessionContext) -> L4Outcome {
                 L4Outcome::Continue
             }
 
-            fn on_bytes(
+            async fn on_bytes(
                 &mut self,
                 _ctx: &mut SessionContext,
                 packet_id: PacketId,
@@ -39,7 +40,7 @@ macro_rules! impl_noop {
                 L4Outcome::Forward(vec![packet_id])
             }
 
-            fn on_session_close(&mut self, _ctx: &mut SessionContext, _reason: CloseReason) {}
+            async fn on_session_close(&mut self, _ctx: &mut SessionContext, _reason: CloseReason) {}
         }
     };
 }

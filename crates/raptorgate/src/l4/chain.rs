@@ -20,7 +20,7 @@ impl<A, B> L4Chain<A, B> {
             || session_proto == Some(stage_proto)
     }
 
-    fn combine_open_outcome(
+    async fn combine_open_outcome(
         head_out: L4Outcome,
         tail: &mut B,
         ctx: &mut A::Ctx,
@@ -33,16 +33,16 @@ impl<A, B> L4Chain<A, B> {
         match head_out {
             L4Outcome::Continue => {
                 if Self::stage_applies(tail.protocol(), session_proto) {
-                    tail.on_session_open(ctx)
+                    tail.on_session_open(ctx).await
                 } else {
                     L4Outcome::Continue
                 }
             }
-            L4Outcome::Forward(_) | L4Outcome::Terminate { .. } => head_out,
+            L4Outcome::Forward(_) | L4Outcome::Drop(_) | L4Outcome::Emit(_) | L4Outcome::ForwardAndEmit { .. } | L4Outcome::Terminate { .. } => head_out,
         }
     }
 
-    fn combine_bytes_outcome(
+    async fn combine_bytes_outcome(
         head_out: L4Outcome,
         tail: &mut B,
         ctx: &mut A::Ctx,
@@ -59,26 +59,26 @@ impl<A, B> L4Chain<A, B> {
         match head_out {
             L4Outcome::Continue => {
                 if Self::stage_applies(tail.protocol(), session_proto) {
-                    tail.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload)
+                    tail.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await
                 } else {
                     L4Outcome::Continue
                 }
             }
-            L4Outcome::Forward(_) | L4Outcome::Terminate { .. } => head_out,
+            L4Outcome::Forward(_) | L4Outcome::Drop(_) | L4Outcome::Emit(_) | L4Outcome::ForwardAndEmit { .. } | L4Outcome::Terminate { .. } => head_out,
         }
     }
 
-    fn run_close_tail(tail: &mut B, ctx: &mut <A as L4Stage>::Ctx, reason: CloseReason, session_proto: Option<AppProto>)
+    async fn run_close_tail(tail: &mut B, ctx: &mut <A as L4Stage>::Ctx, reason: CloseReason, session_proto: Option<AppProto>)
     where
         A: L4Stage,
         B: L4Stage<Ctx = A::Ctx>,
     {
         if Self::stage_applies(tail.protocol(), session_proto) {
-            tail.on_session_close(ctx, reason);
+            tail.on_session_close(ctx, reason).await;
         }
     }
 
-    pub fn on_session_open(&mut self, ctx: &mut A::Ctx, session_proto: Option<AppProto>) -> L4Outcome
+    pub async fn on_session_open(&mut self, ctx: &mut A::Ctx, session_proto: Option<AppProto>) -> L4Outcome
     where
         A: L4Stage,
         B: L4Stage<Ctx = A::Ctx>,
@@ -86,11 +86,11 @@ impl<A, B> L4Chain<A, B> {
         if !Self::stage_applies(self.head.protocol(), session_proto) {
             return L4Outcome::Continue;
         }
-        let head_out = self.head.on_session_open(ctx);
-        Self::combine_open_outcome(head_out, &mut self.tail, ctx, session_proto)
+        let head_out = self.head.on_session_open(ctx).await;
+        Self::combine_open_outcome(head_out, &mut self.tail, ctx, session_proto).await
     }
 
-    pub fn on_bytes(
+    pub async fn on_bytes(
         &mut self,
         ctx: &mut A::Ctx,
         packet_id: PacketId,
@@ -106,7 +106,7 @@ impl<A, B> L4Chain<A, B> {
         if !Self::stage_applies(self.head.protocol(), session_proto) {
             return L4Outcome::Continue;
         }
-        let head_out = self.head.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload);
+        let head_out = self.head.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await;
         Self::combine_bytes_outcome(
             head_out,
             &mut self.tail,
@@ -117,17 +117,18 @@ impl<A, B> L4Chain<A, B> {
             payload,
             session_proto,
         )
+        .await
     }
 
-    pub fn on_session_close(&mut self, ctx: &mut A::Ctx, reason: CloseReason, session_proto: Option<AppProto>)
+    pub async fn on_session_close(&mut self, ctx: &mut A::Ctx, reason: CloseReason, session_proto: Option<AppProto>)
     where
         A: L4Stage,
         B: L4Stage<Ctx = A::Ctx>,
     {
         if Self::stage_applies(self.head.protocol(), session_proto) {
-            self.head.on_session_close(ctx, reason);
+            self.head.on_session_close(ctx, reason).await;
         }
-        Self::run_close_tail(&mut self.tail, ctx, reason, session_proto);
+        Self::run_close_tail(&mut self.tail, ctx, reason, session_proto).await;
     }
 }
 
@@ -138,6 +139,7 @@ mod tests {
 
     struct ForwardHead;
 
+    #[tonic::async_trait]
     impl L4Stage for ForwardHead {
         type Ctx = ();
 
@@ -145,11 +147,11 @@ mod tests {
             AppProto::Any
         }
 
-        fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
+        async fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
             L4Outcome::Continue
         }
 
-        fn on_bytes(
+        async fn on_bytes(
             &mut self,
             (): &mut Self::Ctx,
             packet_id: PacketId,
@@ -160,13 +162,14 @@ mod tests {
             L4Outcome::Forward(vec![packet_id])
         }
 
-        fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) {}
+        async fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) {}
     }
 
     struct ObservingTail {
         byte_seen: bool,
     }
 
+    #[tonic::async_trait]
     impl L4Stage for ObservingTail {
         type Ctx = ();
 
@@ -174,11 +177,11 @@ mod tests {
             AppProto::Any
         }
 
-        fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
+        async fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
             L4Outcome::Continue
         }
 
-        fn on_bytes(
+        async fn on_bytes(
             &mut self,
             (): &mut Self::Ctx,
             _packet_id: PacketId,
@@ -190,11 +193,12 @@ mod tests {
             L4Outcome::Continue
         }
 
-        fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) {}
+        async fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) {}
     }
 
     struct TerminateHead;
 
+    #[tonic::async_trait]
     impl L4Stage for TerminateHead {
         type Ctx = ();
 
@@ -202,11 +206,11 @@ mod tests {
             AppProto::Any
         }
 
-        fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
+        async fn on_session_open(&mut self, (): &mut Self::Ctx) -> L4Outcome {
             L4Outcome::Continue
         }
 
-        fn on_bytes(
+        async fn on_bytes(
             &mut self,
             (): &mut Self::Ctx,
             _packet_id: PacketId,
@@ -220,24 +224,24 @@ mod tests {
             }
         }
 
-        fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) {}
+        async fn on_session_close(&mut self, (): &mut Self::Ctx, _reason: CloseReason) {}
     }
 
-    #[test]
-    fn forward_short_circuits_tail() {
+    #[tokio::test]
+    async fn forward_short_circuits_tail() {
         let mut chain = L4Chain::new(ForwardHead, ObservingTail { byte_seen: false });
         let mut ctx = ();
         let id = PacketId::next();
-        let out = chain.on_bytes(&mut ctx, id, Direction::Original, 0, b"test", None);
+        let out = chain.on_bytes(&mut ctx, id, Direction::Original, 0, b"test", None).await;
         assert!(matches!(out, L4Outcome::Forward(ids) if ids == vec![id]));
         assert!(!chain.tail.byte_seen);
     }
 
-    #[test]
-    fn terminate_stops_before_tail() {
+    #[tokio::test]
+    async fn terminate_stops_before_tail() {
         let mut chain = L4Chain::new(TerminateHead, ObservingTail { byte_seen: false });
         let mut ctx = ();
-        let out = chain.on_bytes(&mut ctx, PacketId::next(), Direction::Original, 0, b"x", None);
+        let out = chain.on_bytes(&mut ctx, PacketId::next(), Direction::Original, 0, b"x", None).await;
         assert!(matches!(out, L4Outcome::Terminate { .. }));
         assert!(!chain.tail.byte_seen);
     }

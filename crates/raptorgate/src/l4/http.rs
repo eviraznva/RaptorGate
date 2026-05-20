@@ -53,6 +53,7 @@ impl Default for HttpL4Stage {
     }
 }
 
+#[tonic::async_trait]
 impl L4Stage for HttpL4Stage {
     type Ctx = SessionContext;
 
@@ -60,12 +61,12 @@ impl L4Stage for HttpL4Stage {
         AppProto::Http
     }
 
-    fn on_session_open(&mut self, ctx: &mut SessionContext) -> L4Outcome {
+    async fn on_session_open(&mut self, ctx: &mut SessionContext) -> L4Outcome {
         ctx.set_application_protocol(AppProto::Http);
         L4Outcome::Continue
     }
 
-    fn on_bytes(
+    async fn on_bytes(
         &mut self,
         ctx: &mut SessionContext,
         packet_id: PacketId,
@@ -77,7 +78,7 @@ impl L4Stage for HttpL4Stage {
         L4Outcome::Forward(vec![packet_id])
     }
 
-    fn on_session_close(&mut self, _ctx: &mut SessionContext, _reason: CloseReason) {}
+    async fn on_session_close(&mut self, _ctx: &mut SessionContext, _reason: CloseReason) {}
 }
 
 #[cfg(test)]
@@ -87,7 +88,6 @@ mod tests {
     use crate::conntrack::proto::tcp::TcpProtoState;
     use crate::conntrack::proto::ProtoState;
     use crate::conntrack::tuple::{FlowTuple, Protocol};
-    use crate::l4::tls::{L4PlaintextChunk, TlsHttpL4Stage, TlsInspectionOutcome, TlsInspectionService};
     use crate::zones::resolver::ZoneResolver;
     use crate::zones::{DirectionalZonePairs, ResolvedZonePair, ZonePairId};
     use std::net::{IpAddr, Ipv4Addr};
@@ -116,24 +116,6 @@ mod tests {
         }
     }
 
-    struct StaticTlsInspection;
-
-    impl TlsInspectionService for StaticTlsInspection {
-        fn inspect(
-            &mut self,
-            _ctx: &mut SessionContext,
-            _packet_id: PacketId,
-            dir: Direction,
-            _tcp_payload_start_seq: u32,
-            _payload: &[u8],
-        ) -> TlsInspectionOutcome {
-            TlsInspectionOutcome::Plaintext(vec![L4PlaintextChunk {
-                dir,
-                payload: b"GET / HTTP/1.1\r\nHost: tls.example\r\n\r\n".to_vec(),
-            }])
-        }
-    }
-
     fn sample_tcp_context() -> SessionContext {
         let tuple = FlowTuple::new(
             IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
@@ -152,16 +134,14 @@ mod tests {
         SessionContext::open(entry, &StubZoneResolver)
     }
 
-    #[test]
-    fn tls_http_stage_feeds_plaintext_into_http_stage() {
-        let mut stage = TlsHttpL4Stage::new(StaticTlsInspection, HttpL4Stage::new());
+    #[tokio::test]
+    async fn http_stage_accepts_decrypted_plaintext() {
+        let mut stage = HttpL4Stage::new();
         let mut ctx = sample_tcp_context();
-        let id = PacketId::next();
 
-        let out = stage.on_bytes(&mut ctx, id, Direction::Original, 0, b"encrypted tls bytes");
+        stage.inspect_plaintext(&mut ctx, b"GET / HTTP/1.1\r\nHost: tls.example\r\n\r\n");
 
-        assert_eq!(out, L4Outcome::Forward(vec![id]));
         assert_eq!(ctx.application_protocol(), Some(AppProto::Http));
-        assert_eq!(stage.http().dpi_context().http_host.as_deref(), Some("tls.example"));
+        assert_eq!(stage.dpi_context().http_host.as_deref(), Some("tls.example"));
     }
 }
