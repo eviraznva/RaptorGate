@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use tokio::sync::mpsc;
 
-use crate::data_plane::packet_context::PacketContext;
+use crate::data_plane::packet_context::{CaptureDirection, PacketContext};
 
 #[derive(Debug)]
 pub enum ExecutionAction { Forward, Drop }
@@ -63,7 +63,18 @@ impl ExecutionSink {
 
 pub trait Stage: Send + Sync {
     fn is_applicable(&self, ctx: &PacketContext) -> bool { true }
+    fn runs_on_egress(&self) -> bool { false }
     fn process(&self, ctx: &mut PacketContext, tx: &ExecutionSender) -> impl std::future::Future<Output = StageOutcome> + Send;
+}
+
+fn stage_should_run<S: Stage + ?Sized>(stage: &S, ctx: &PacketContext) -> bool {
+    if !stage.is_applicable(ctx) {
+        return false;
+    }
+    if ctx.capture_direction() == CaptureDirection::Egress && !stage.runs_on_egress() {
+        return false;
+    }
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -83,15 +94,19 @@ impl PartialEq for StageOutcome {
 #[derive(Clone)]
 pub struct Chain<A: Stage + Clone, B: Stage + Clone> { pub head: A, pub tail: B }
 impl<A, B> Stage for Chain<A, B> where A: Stage + Clone, B: Stage + Clone {
+    fn runs_on_egress(&self) -> bool {
+        self.head.runs_on_egress() || self.tail.runs_on_egress()
+    }
+
     async fn process(&self, ctx: &mut PacketContext, tx: &ExecutionSender) -> StageOutcome {
-        let outcome = if self.head.is_applicable(ctx) {
+        let outcome = if stage_should_run(&self.head, ctx) {
             self.head.process(ctx, tx).await
         } else {
             StageOutcome::Continue
         };
         match outcome {
             StageOutcome::Continue => {
-                if self.tail.is_applicable(ctx) {
+                if stage_should_run(&self.tail, ctx) {
                     self.tail.process(ctx, tx).await
                 } else {
                     StageOutcome::Continue
@@ -103,7 +118,7 @@ impl<A, B> Stage for Chain<A, B> where A: Stage + Clone, B: Stage + Clone {
             }
             StageOutcome::ReleaseBatch(packets) => {
                 for mut packet in packets {
-                    if self.tail.is_applicable(&packet) {
+                    if stage_should_run(&self.tail, &packet) {
                         self.tail.process(&mut packet, tx).await;
                     }
                 }
