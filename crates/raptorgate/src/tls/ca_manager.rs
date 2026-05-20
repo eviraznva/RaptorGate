@@ -72,6 +72,22 @@ impl CaManager {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn init_ephemeral_for_tests() -> anyhow::Result<Self> {
+        let generated = generate_ca("RaptorGate CA")?;
+        let untrust = generate_ca("RaptorGate Untrust CA")?;
+
+        Ok(Self {
+            ca_cert_pem: generated.cert_pem,
+            ca_key_pem: generated.key_pem,
+            fingerprint: generated.fingerprint,
+            expires_at: generated.expires_at,
+            untrust_cert_pem: untrust.cert_pem,
+            untrust_key_pem: untrust.key_pem,
+            untrust_fingerprint: untrust.fingerprint,
+        })
+    }
+
     // Tworzy CertForger podpisujący certyfikaty tym CA.
     pub fn cert_forger(&self, cache_capacity: usize) -> anyhow::Result<super::CertForger> {
         super::CertForger::new(&self.ca_cert_pem, &self.ca_key_pem, cache_capacity)

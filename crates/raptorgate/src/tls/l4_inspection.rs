@@ -745,7 +745,7 @@ impl TlsL4InspectionConfig {
         let pki_dir = std::env::temp_dir()
             .join(uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string());
         std::fs::create_dir_all(&pki_dir).unwrap();
-        let ca = CaManager::init(pki_dir.to_str().unwrap()).unwrap();
+        let ca = CaManager::init_ephemeral_for_tests().unwrap();
         let bypass_domains: Vec<String> = domains.iter().map(|domain| (*domain).to_string()).collect();
         Self {
             cert_forger: Arc::new(ca.cert_forger(16).unwrap()),
