@@ -453,12 +453,11 @@ async fn run_tls_worker(
         .await {
             Ok(client_tls) => client_tls,
             Err(error) => {
+                let reason = pinning_reason_from_accept_error(&error);
                 params.config.decision_engine.report_pinning_failure(
                     params.source_ip,
                     &domain,
-                    PinningReason::TlsAlert {
-                        alert_description: error.to_string(),
-                    },
+                    reason,
                 );
                 return Err(error);
             }
@@ -482,6 +481,40 @@ async fn run_tls_worker(
     let _ = tokio::join!(c2s, s2c);
     let _ = events_tx.send(TlsWorkerEvent::Finished);
     Ok(())
+}
+
+fn pinning_reason_from_accept_error(error: &anyhow::Error) -> PinningReason {
+    for cause in error.chain() {
+        if let Some(io_error) = cause.downcast_ref::<std::io::Error>() {
+            match io_error.kind() {
+                std::io::ErrorKind::ConnectionReset => return PinningReason::TcpReset,
+                std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe => return PinningReason::ConnectionClosedNoData,
+                _ => {}
+            }
+            if let Some(rustls_error) = io_error.get_ref().and_then(|source| source.downcast_ref::<rustls::Error>())
+                && let Some(reason) = pinning_reason_from_rustls_error(rustls_error) {
+                return reason;
+            }
+        }
+        if let Some(rustls_error) = cause.downcast_ref::<rustls::Error>()
+            && let Some(reason) = pinning_reason_from_rustls_error(rustls_error) {
+            return reason;
+        }
+    }
+    PinningReason::TlsAlert {
+        alert_description: error.to_string(),
+    }
+}
+
+fn pinning_reason_from_rustls_error(error: &rustls::Error) -> Option<PinningReason> {
+    match error {
+        rustls::Error::AlertReceived(alert) => Some(PinningReason::TlsAlert {
+            alert_description: format!("{alert:?}"),
+        }),
+        _ => None,
+    }
 }
 
 async fn relay_one_direction<R, W>(
@@ -617,9 +650,13 @@ mod tests {
     use crate::l4::stage::L4Outcome;
     use crate::zones::resolver::ZoneResolver;
     use crate::zones::{DirectionalZonePairs, ResolvedZonePair, ZonePairId};
+    use rcgen::{CertificateParams, DnType, IsCa, KeyPair, SanType};
+    use std::io::ErrorKind;
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
     use std::time::Duration;
+    use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
 
     struct StubZoneResolver;
 
@@ -740,6 +777,86 @@ mod tests {
         ).await;
 
         assert!(matches!(out, L4Outcome::Terminate { .. } | L4Outcome::Drop(_)));
+    }
+
+    #[tokio::test]
+    async fn worker_records_pinning_failure_on_client_close_before_tls() {
+        let key = KeyPair::generate().unwrap();
+        let mut cert_params = CertificateParams::default();
+        cert_params.is_ca = IsCa::NoCa;
+        cert_params
+            .distinguished_name
+            .push(DnType::CommonName, "pinned.example");
+        cert_params.subject_alt_names = vec![SanType::DnsName(
+            "pinned.example".to_string().try_into().unwrap(),
+        )];
+        let cert = cert_params.self_signed(&key).unwrap();
+        let upstream_config = rustls_config::build_server_config_from_pem(&cert.pem(), &key.serialize_pem()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = listener.local_addr().unwrap();
+
+        let upstream = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let acceptor = TlsAcceptor::from(upstream_config);
+            let _tls = acceptor.accept(stream).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+
+        let mut config = TlsL4InspectionConfig::test_with_bypass_domains(&[]);
+        let pki_dir = std::env::temp_dir()
+            .join(uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string());
+        std::fs::create_dir_all(&pki_dir).unwrap();
+        let decision_engine = Arc::new(TlsDecisionEngine::new(
+            &[],
+            Arc::new(ServerKeyStore::new(pki_dir.to_str().unwrap())),
+            EchTlsPolicy::default(),
+            PinningConfig {
+                failure_threshold: 1,
+                ..PinningConfig::default()
+            },
+        ));
+        config.decision_engine = Arc::clone(&decision_engine);
+        let config = Arc::new(config);
+        let (endpoint, handle) = L4TcpEndpoint::new();
+        drop(handle);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+        let source_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+
+        let result = run_tls_worker(
+            TlsWorkerParams {
+                config,
+                endpoint,
+                server_addr: upstream_addr,
+                source_ip,
+                sni: Some("pinned.example".to_string()),
+                client_alpn_protocols: Vec::new(),
+            },
+            events_tx,
+        ).await;
+
+        assert!(result.is_err());
+        let (reason, count) = decision_engine
+            .pinning_detector_arc()
+            .bypass_detail(source_ip, "pinned.example")
+            .unwrap();
+        assert!(matches!(reason, PinningReason::ConnectionClosedNoData));
+        assert_eq!(count, 1);
+
+        upstream.await.unwrap();
+    }
+
+    #[test]
+    fn pinning_reason_classifies_tcp_reset() {
+        let error = anyhow::Error::new(std::io::Error::new(ErrorKind::ConnectionReset, "client reset"));
+
+        assert!(matches!(pinning_reason_from_accept_error(&error), PinningReason::TcpReset));
+    }
+
+    #[test]
+    fn pinning_reason_classifies_closed_without_data() {
+        let error = anyhow::Error::new(std::io::Error::new(ErrorKind::UnexpectedEof, "client closed"));
+
+        assert!(matches!(pinning_reason_from_accept_error(&error), PinningReason::ConnectionClosedNoData));
     }
 }
 
