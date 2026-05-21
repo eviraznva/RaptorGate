@@ -521,6 +521,7 @@ where
             Some(Arc::clone(s.policy_dnssec)),
             Some(Arc::clone(s.dpi_classifier)),
             Some(Arc::clone(s.dns_inspection)),
+            Some(Arc::clone(s.ips)),
             release_tx.clone(),
         );
         let pipeline = build_v2_pipeline(&s, Arc::clone(&sessions));

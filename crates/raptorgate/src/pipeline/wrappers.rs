@@ -1534,7 +1534,7 @@ where
             return StageOutcome::Continue;
         };
         let dir = ctx.ct_direction().unwrap_or(Direction::Original);
-        if self.sessions.inspect_dns_or_drop(&entry, ctx, dir) {
+        if self.sessions.inspect_or_drop(&entry, ctx, dir) {
             return StageOutcome::Halt;
         }
         if self.sessions.has_session_handle(&entry) {

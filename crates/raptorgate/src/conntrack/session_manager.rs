@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex as StdMutex, Weak};
 
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use etherparse::TransportSlice;
+use etherparse::{NetSlice, TransportSlice};
 use tokio::sync::mpsc;
 
 use crate::conntrack::entry::CtStatus;
@@ -16,8 +16,10 @@ use crate::conntrack::tuple::{Direction, FlowTuple};
 use crate::data_plane::dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection, EchMitigationVerdict};
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
+use crate::data_plane::ips::ips::{Ips, IpsSignatureMatch, IpsVerdict};
 use crate::data_plane::packet_context::{PacketContext, PacketId};
 use crate::dpi::{AppProto, DpiClassifier, InspectResult};
+use crate::events::{self, Event, EventKind};
 use crate::l4::context::SessionContext;
 use crate::l4::egress::{policy_release_action, zone_pair_for_session_packet};
 use crate::l4::release::{DropReason, ReleaseAction};
@@ -276,6 +278,7 @@ where
     dnssec: Option<Arc<Dns>>,
     dpi_classifier: Option<Arc<DpiClassifier>>,
     dns_inspection: Option<Arc<DnsInspection>>,
+    ips: Option<Arc<Ips>>,
 }
 
 pub type SessionManagerDefault = SessionManager<
@@ -298,6 +301,7 @@ where
         dnssec: Option<Arc<Dns>>,
         dpi_classifier: Option<Arc<DpiClassifier>>,
         dns_inspection: Option<Arc<DnsInspection>>,
+        ips: Option<Arc<Ips>>,
         release_tx: mpsc::UnboundedSender<ReleaseAction>,
     ) -> Arc<Self> {
         let sm = Arc::new_cyclic(|weak| Self {
@@ -316,6 +320,7 @@ where
             dnssec,
             dpi_classifier,
             dns_inspection,
+            ips,
         });
 
         sm.ct.register_observer(Arc::new(SessionManagerObs::<ZR, Dns> {
@@ -336,6 +341,7 @@ where
         dnssec: Option<Arc<Dns>>,
         dpi_classifier: Option<Arc<DpiClassifier>>,
         dns_inspection: Option<Arc<DnsInspection>>,
+        ips: Option<Arc<Ips>>,
         release_tx: mpsc::UnboundedSender<ReleaseAction>,
     ) -> Arc<Self> {
         let sm = Arc::new_cyclic(|weak| Self {
@@ -354,6 +360,7 @@ where
             dnssec,
             dpi_classifier,
             dns_inspection,
+            ips,
         });
 
         sm.ct.register_observer(Arc::new(SessionManagerObs::<ZR, Dns> {
@@ -379,18 +386,19 @@ where
         self.handles.contains_key(&flow_key_for(entry))
     }
 
-    pub fn inspect_dns_or_drop(
+    pub fn inspect_or_drop(
         &self,
         entry: &crate::conntrack::entry::ConntrackEntry,
         packet: &mut PacketContext,
         dir: Direction,
     ) -> bool {
         tracing::debug!(
-            event = "session.inspect_dns.called",
+            event = "session.inspect.called",
             flow_id = entry.id,
             has_classifier = self.dpi_classifier.is_some(),
-            has_inspection = self.dns_inspection.is_some(),
-            "inspect_dns_or_drop called"
+            has_dns_inspection = self.dns_inspection.is_some(),
+            has_ips = self.ips.is_some(),
+            "session inspection called"
         );
         let Some(reason) = self.inspect_before_admit(packet) else {
             return false;
@@ -402,11 +410,11 @@ where
         });
         packet.with_warnings_mut(|w| w.push(reason.clone()));
         tracing::warn!(
-            event = "session.dns_inspection.blocked",
+            event = "session.inspection.blocked",
             flow_id = entry.id,
             packet_id = packet_id.0,
             reason = %reason,
-            "session DNS inspection blocked packet"
+            "session inspection blocked packet"
         );
         let _ = self.release_tx.send(ReleaseAction::Drop {
             packet_id,
@@ -470,69 +478,179 @@ where
     }
 
     fn inspect_before_admit(&self, packet: &mut PacketContext) -> Option<String> {
-        let Some(classifier) = &self.dpi_classifier else {
-            tracing::debug!(event = "session.inspect_dns.no_classifier", "no classifier");
-            return None;
-        };
-
-        let classify_result = classifier.inspect_packet(packet.borrow_sliced_packet());
-        let classify_kind = match &classify_result {
-            InspectResult::Done(_) => "done",
-            InspectResult::NeedMore => "need_more",
-            InspectResult::Skipped => "skipped",
-        };
-        if let InspectResult::Done(mut dpi_ctx) = classify_result {
-            if let Some(existing) = packet.borrow_dpi_ctx().as_ref() {
-                dpi_ctx.decrypted |= existing.decrypted;
-                dpi_ctx.src_port = dpi_ctx.src_port.or(existing.src_port);
-                dpi_ctx.dst_port = dpi_ctx.dst_port.or(existing.dst_port);
-            }
-            packet.with_dpi_ctx_mut(|c| *c = Some(dpi_ctx));
-        }
-
-        let Some(inspection) = &self.dns_inspection else {
-            tracing::debug!(event = "session.inspect_dns.no_inspection", classify = classify_kind, "no inspection module");
-            return None;
-        };
-
-        let Some(dpi_ctx) = packet.borrow_dpi_ctx().clone() else {
-            tracing::debug!(event = "session.inspect_dns.no_dpi_ctx", classify = classify_kind, "no dpi ctx");
-            return None;
-        };
-        tracing::debug!(
-            event = "session.inspect_dns.classified",
-            classify = classify_kind,
-            app_proto = ?dpi_ctx.app_proto,
-            dns_query = ?dpi_ctx.dns_query_name,
-            "classified packet"
-        );
-        if dpi_ctx.app_proto != Some(AppProto::Dns) {
-            return None;
-        }
-
-        if let Some(domain) = dpi_ctx.dns_query_name.as_deref() {
-            if let BlocklistVerdict::Block(msg) = inspection.check_blocklist(domain) {
-                return Some(msg);
-            }
-        }
-
-        if let (Some(domain), Some(qtype)) = (dpi_ctx.dns_query_name.as_deref(), dpi_ctx.dns_query_type) {
-            if let DnsInspectionVerdict::Block(msg) = inspection.inspect_tunneling(domain, &qtype) {
-                return Some(msg);
-            }
-        }
-
-        if dpi_ctx.dns_is_response == Some(true) && dpi_ctx.dns_has_ech_hints {
-            if let Some(domain) = dpi_ctx.dns_query_name.as_deref() {
-                if let EchMitigationVerdict::Block(msg) = inspection.inspect_ech(domain, true) {
-                    return Some(msg);
+        let classify_kind = if let Some(classifier) = &self.dpi_classifier {
+            let classify_result = classifier.inspect_packet(packet.borrow_sliced_packet());
+            let classify_kind = match &classify_result {
+                InspectResult::Done(_) => "done",
+                InspectResult::NeedMore => "need_more",
+                InspectResult::Skipped => "skipped",
+            };
+            if let InspectResult::Done(mut dpi_ctx) = classify_result {
+                if let Some(existing) = packet.borrow_dpi_ctx().as_ref() {
+                    dpi_ctx.decrypted |= existing.decrypted;
+                    dpi_ctx.src_port = dpi_ctx.src_port.or(existing.src_port);
+                    dpi_ctx.dst_port = dpi_ctx.dst_port.or(existing.dst_port);
                 }
+                packet.with_dpi_ctx_mut(|c| *c = Some(dpi_ctx));
             }
+            classify_kind
+        } else {
+            tracing::debug!(event = "session.inspect.no_classifier", "no classifier");
+            "disabled"
+        };
+
+        if let Some(inspection) = &self.dns_inspection {
+            if let Some(dpi_ctx) = packet.borrow_dpi_ctx().clone() {
+                tracing::debug!(
+                    event = "session.inspect.classified",
+                    classify = classify_kind,
+                    app_proto = ?dpi_ctx.app_proto,
+                    dns_query = ?dpi_ctx.dns_query_name,
+                    "classified packet"
+                );
+                if dpi_ctx.app_proto == Some(AppProto::Dns) {
+                    if let Some(domain) = dpi_ctx.dns_query_name.as_deref() {
+                        if let BlocklistVerdict::Block(msg) = inspection.check_blocklist(domain) {
+                            return Some(msg);
+                        }
+                    }
+
+                    if let (Some(domain), Some(qtype)) = (dpi_ctx.dns_query_name.as_deref(), dpi_ctx.dns_query_type) {
+                        if let DnsInspectionVerdict::Block(msg) = inspection.inspect_tunneling(domain, &qtype) {
+                            return Some(msg);
+                        }
+                    }
+
+                    if dpi_ctx.dns_is_response == Some(true) && dpi_ctx.dns_has_ech_hints {
+                        if let Some(domain) = dpi_ctx.dns_query_name.as_deref() {
+                            if let EchMitigationVerdict::Block(msg) = inspection.inspect_ech(domain, true) {
+                                return Some(msg);
+                            }
+                        }
+                    }
+                }
+            } else {
+                tracing::debug!(event = "session.inspect.no_dpi_ctx", classify = classify_kind, "no dpi ctx");
+            }
+        } else {
+            tracing::debug!(event = "session.inspect.no_dns_inspection", classify = classify_kind, "no DNS inspection module");
         }
 
-        None
+        self.inspect_ips(packet)
     }
 
+    fn inspect_ips(&self, packet: &mut PacketContext) -> Option<String> {
+        let Some(ips) = &self.ips else {
+            return None;
+        };
+
+        packet.with_dpi_ctx_mut(|dpi| {
+            if let Some(dpi) = dpi.as_mut() {
+                dpi.ips_match = None;
+            }
+        });
+
+        match ips.inspect_packet(packet) {
+            IpsVerdict::Allow => None,
+            IpsVerdict::Alert(matches) => {
+                if let Some(first) = matches.first() {
+                    set_ips_match(packet, first, false);
+                }
+                for matched in &matches {
+                    emit_ips_signature_matched(packet, matched);
+                }
+                let msg = matches
+                    .iter()
+                    .map(IpsSignatureMatch::message)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                if !msg.is_empty() {
+                    packet.with_warnings_mut(|warnings| warnings.push(msg));
+                }
+                None
+            }
+            IpsVerdict::Block(matched) => {
+                set_ips_match(packet, &matched, true);
+                emit_ips_signature_matched(packet, &matched);
+                Some(matched.message())
+            }
+        }
+    }
+
+}
+
+fn set_ips_match(packet: &mut PacketContext, matched: &IpsSignatureMatch, blocked: bool) {
+    packet.with_dpi_ctx_mut(|dpi| {
+        if let Some(dpi) = dpi.as_mut() {
+            dpi.ips_match = Some(crate::dpi::IpsMatch {
+                signature_name: matched.name.clone(),
+                severity: matched.severity.as_str().to_string(),
+                blocked,
+            });
+        }
+    });
+}
+
+fn emit_ips_signature_matched(packet: &PacketContext, matched: &IpsSignatureMatch) {
+    let sliced_packet = packet.borrow_sliced_packet();
+
+    let (src_ip, dst_ip) = match &sliced_packet.net {
+        Some(NetSlice::Ipv4(ipv4)) => (
+            ipv4.header().source_addr().to_string(),
+            ipv4.header().destination_addr().to_string(),
+        ),
+        Some(NetSlice::Ipv6(ipv6)) => (
+            ipv6.header().source_addr().to_string(),
+            ipv6.header().destination_addr().to_string(),
+        ),
+        _ => return,
+    };
+
+    let (src_port, dst_port, transport_protocol, payload_length) = match &sliced_packet.transport {
+        Some(TransportSlice::Tcp(tcp)) => (
+            tcp.source_port(),
+            tcp.destination_port(),
+            "tcp",
+            tcp.payload().len(),
+        ),
+        Some(TransportSlice::Udp(udp)) => (
+            udp.source_port(),
+            udp.destination_port(),
+            "udp",
+            udp.payload().len(),
+        ),
+        _ => return,
+    };
+
+    let app_protocol = packet
+        .borrow_dpi_ctx()
+        .as_ref()
+        .and_then(|dpi_ctx| dpi_ctx.app_proto)
+        .map(|proto| proto.to_string().to_lowercase())
+        .unwrap_or_default();
+
+    events::emit(Event::new(EventKind::IpsSignatureMatched {
+        signature_id: matched.id.clone(),
+        signature_name: matched.name.clone(),
+        category: matched.category.clone(),
+        severity: matched.severity.as_str().to_string(),
+        action: matched.action.as_str().to_string(),
+        src_ip,
+        src_port,
+        dst_ip,
+        dst_port,
+        transport_protocol: transport_protocol.to_string(),
+        app_protocol,
+        interface: packet.borrow_src_interface().to_string(),
+        payload_length: u32::try_from(payload_length).unwrap_or(u32::MAX),
+    }));
+}
+
+impl<ZR, Dns> SessionManager<ZR, Dns>
+where
+    ZR: ZoneResolver + Clone + Send + Sync + 'static,
+    Dns: DnssecProvider + Send + Sync + 'static,
+{
     pub fn invalidate_session(&self, flow: &FlowKey) {
         let _ = self.ct.destroy_by_id(flow.entry_id, DestroyReason::InvalidatedByStage);
     }
@@ -666,6 +784,14 @@ where
 
     fn on_ct_destroy(&self, entry: &crate::conntrack::entry::ConntrackEntry, reason: DestroyReason) {
         self.observer_events.fetch_add(1, Ordering::Relaxed);
+        if let Some(classifier) = &self.dpi_classifier {
+            classifier.remove_session(
+                entry.original.src_ip,
+                entry.original.src_port,
+                entry.original.dst_ip,
+                entry.original.dst_port,
+            );
+        }
         let flow = flow_key_for(entry);
         let Some((_, tx)) = self.handles.remove(&flow) else {
             return;
@@ -725,6 +851,11 @@ mod tests {
     use crate::conntrack::proto::ProtoRegistry;
     use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
     use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
+    use crate::data_plane::ips::config::{
+        IpsAction, IpsConfig, IpsDetectionConfig, IpsGeneralConfig, IpsMatchType,
+        IpsPatternEncoding, IpsSeverity, IpsSignatureConfig,
+    };
+    use crate::data_plane::ips::ips::Ips;
     use crate::dpi::DpiClassifier;
     use crate::policy::engine::PolicyEngine;
     use crate::zones::resolver::ZoneResolver;
@@ -856,6 +987,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 release_tx,
             )
         } else {
@@ -866,6 +998,7 @@ mod tests {
                 IcmpL4PipelineFactory::default(),
                 policy_engine,
                 StubZoneResolver,
+                None,
                 None,
                 None,
                 None,
@@ -971,6 +1104,7 @@ mod tests {
             None,
             Some(Arc::new(DpiClassifier::new())),
             Some(dns_inspection),
+            None,
             release_tx,
         );
 
@@ -986,8 +1120,8 @@ mod tests {
         let mut packet = PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet");
         let packet_id = packet.packet_id();
 
-        let dropped = sm.inspect_dns_or_drop(&entry, &mut packet, Direction::Original);
-        assert!(dropped, "inspect_dns_or_drop should signal drop");
+        let dropped = sm.inspect_or_drop(&entry, &mut packet, Direction::Original);
+        assert!(dropped, "inspect_or_drop should signal drop");
 
         let action = tokio::time::timeout(Duration::from_secs(2), release_rx.recv())
             .await
@@ -1003,6 +1137,85 @@ mod tests {
             ReleaseAction::Forward { .. } => panic!("expected drop"),
         }
         assert!(ct.find_by_id(entry.id).is_none(), "blocked DNS flow should be destroyed");
+    }
+
+    #[tokio::test]
+    async fn ips_block_drops_before_session_release() {
+        let ct = Arc::new(Conntrack::new(
+            Arc::new(ProtoRegistry::new()),
+            ConntrackConfig::default(),
+        ));
+        let (release_tx, mut release_rx) = mpsc::unbounded_channel();
+        let policies = std::collections::HashMap::new();
+        let zone_pairs = std::collections::HashMap::new();
+        let policy_engine = Arc::new(PolicyEngine::from_policies(&policies, &zone_pairs).expect("policy engine"));
+        let ips = Ips::new(IpsConfig {
+            general: IpsGeneralConfig { enabled: true },
+            detection: IpsDetectionConfig {
+                enabled: true,
+                max_payload_bytes: 512,
+                max_matches_per_packet: 4,
+            },
+            signatures: vec![IpsSignatureConfig {
+                id: "session-evil".into(),
+                name: "Session Evil Payload".into(),
+                enabled: true,
+                category: "test".into(),
+                pattern: "evil".into(),
+                match_type: IpsMatchType::Literal,
+                pattern_encoding: IpsPatternEncoding::Text,
+                case_insensitive: false,
+                severity: IpsSeverity::High,
+                action: IpsAction::Block,
+                app_protocols: Vec::new(),
+                src_ports: Vec::new(),
+                dst_ports: vec![2000],
+            }],
+        })
+        .expect("ips");
+        let sm = SessionManager::<StubZoneResolver, NoDnssec>::new(
+            Arc::clone(&ct),
+            TcpL4PipelineFactory::<StubZoneResolver>::new_force_terminate(),
+            UdpL4PipelineFactory::default(),
+            IcmpL4PipelineFactory::default(),
+            policy_engine,
+            StubZoneResolver,
+            None,
+            Some(Arc::new(DpiClassifier::new())),
+            None,
+            Some(ips),
+            release_tx,
+        );
+
+        let entry = sample_udp_entry(702);
+        assert!(ct.confirm(&entry));
+
+        let mut raw = Vec::new();
+        etherparse::PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+            .udp(1000, 2000)
+            .write(&mut raw, b"evil payload")
+            .expect("packet");
+        let mut packet = PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet");
+        let packet_id = packet.packet_id();
+
+        let dropped = sm.inspect_or_drop(&entry, &mut packet, Direction::Original);
+        assert!(dropped, "inspect_or_drop should signal IPS drop");
+
+        let action = tokio::time::timeout(Duration::from_secs(2), release_rx.recv())
+            .await
+            .expect("timeout")
+            .expect("release");
+
+        match action {
+            ReleaseAction::Drop { packet_id: dropped, reason, temp_dst_port } => {
+                assert_eq!(dropped, packet_id);
+                assert_eq!(reason, DropReason::StageDropped);
+                assert_eq!(temp_dst_port, Some(2000));
+            }
+            ReleaseAction::Forward { .. } => panic!("expected drop"),
+        }
+        assert!(ct.find_by_id(entry.id).is_none(), "blocked IPS flow should be destroyed");
     }
 
     #[tokio::test]
