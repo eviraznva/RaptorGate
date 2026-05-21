@@ -72,7 +72,16 @@ impl DpiClassifier {
         let mut entry = self.sessions.entry(key).or_insert_with(DpiSessionEntry::new);
         let session = entry.value_mut();
 
+        let cached_proto = session.result.as_ref().map(|c| c.app_proto);
         session.append_payload(payload);
+        tracing::debug!(
+            event = "dpi.inspect.diag",
+            cached = ?cached_proto,
+            buf_len = session.buffer.len(),
+            payload_len = payload.len(),
+            first16 = ?session.buffer.iter().take(16).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""),
+            "inspect_packet diag"
+        );
 
         if let Some(ref mut ctx) = session.result {
             if ctx.app_proto == Some(AppProto::Dns) {

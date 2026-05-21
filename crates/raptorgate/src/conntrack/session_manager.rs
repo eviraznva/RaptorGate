@@ -13,7 +13,11 @@ use crate::conntrack::proto::ProtoState;
 use crate::conntrack::reassembler::DeliveredChunk;
 use crate::conntrack::table::Conntrack;
 use crate::conntrack::tuple::{Direction, FlowTuple};
+use crate::data_plane::dns_inspection::dns_inspection::{BlocklistVerdict, DnsInspection, EchMitigationVerdict};
+use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
+use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 use crate::data_plane::packet_context::{PacketContext, PacketId};
+use crate::dpi::{AppProto, DpiClassifier, InspectResult};
 use crate::l4::context::SessionContext;
 use crate::l4::egress::{policy_release_action, zone_pair_for_session_packet};
 use crate::l4::release::{DropReason, ReleaseAction};
@@ -24,7 +28,6 @@ use crate::l4::{
     UdpNoopPipeline,
 };
 use crate::policy::engine::PolicyEngine;
-use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::zones::resolver::ZoneResolver;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -271,6 +274,8 @@ where
     policy_engine: Arc<PolicyEngine>,
     zone_resolver: ZR,
     dnssec: Option<Arc<Dns>>,
+    dpi_classifier: Option<Arc<DpiClassifier>>,
+    dns_inspection: Option<Arc<DnsInspection>>,
 }
 
 pub type SessionManagerDefault = SessionManager<
@@ -291,6 +296,8 @@ where
         policy_engine: Arc<PolicyEngine>,
         zone_resolver: ZR,
         dnssec: Option<Arc<Dns>>,
+        dpi_classifier: Option<Arc<DpiClassifier>>,
+        dns_inspection: Option<Arc<DnsInspection>>,
         release_tx: mpsc::UnboundedSender<ReleaseAction>,
     ) -> Arc<Self> {
         let sm = Arc::new_cyclic(|weak| Self {
@@ -307,6 +314,8 @@ where
             policy_engine,
             zone_resolver,
             dnssec,
+            dpi_classifier,
+            dns_inspection,
         });
 
         sm.ct.register_observer(Arc::new(SessionManagerObs::<ZR, Dns> {
@@ -325,6 +334,8 @@ where
         policy_engine: Arc<PolicyEngine>,
         zone_resolver: ZR,
         dnssec: Option<Arc<Dns>>,
+        dpi_classifier: Option<Arc<DpiClassifier>>,
+        dns_inspection: Option<Arc<DnsInspection>>,
         release_tx: mpsc::UnboundedSender<ReleaseAction>,
     ) -> Arc<Self> {
         let sm = Arc::new_cyclic(|weak| Self {
@@ -341,6 +352,8 @@ where
             policy_engine,
             zone_resolver,
             dnssec,
+            dpi_classifier,
+            dns_inspection,
         });
 
         sm.ct.register_observer(Arc::new(SessionManagerObs::<ZR, Dns> {
@@ -364,6 +377,44 @@ where
 
     pub fn has_session_handle(&self, entry: &crate::conntrack::entry::ConntrackEntry) -> bool {
         self.handles.contains_key(&flow_key_for(entry))
+    }
+
+    pub fn inspect_dns_or_drop(
+        &self,
+        entry: &crate::conntrack::entry::ConntrackEntry,
+        packet: &mut PacketContext,
+        dir: Direction,
+    ) -> bool {
+        tracing::debug!(
+            event = "session.inspect_dns.called",
+            flow_id = entry.id,
+            has_classifier = self.dpi_classifier.is_some(),
+            has_inspection = self.dns_inspection.is_some(),
+            "inspect_dns_or_drop called"
+        );
+        let Some(reason) = self.inspect_before_admit(packet) else {
+            return false;
+        };
+        let packet_id = packet.packet_id();
+        let temp_dst_port = Some(match dir {
+            Direction::Original => entry.original.dst_port,
+            Direction::Reply => entry.reply().dst_port,
+        });
+        packet.with_warnings_mut(|w| w.push(reason.clone()));
+        tracing::warn!(
+            event = "session.dns_inspection.blocked",
+            flow_id = entry.id,
+            packet_id = packet_id.0,
+            reason = %reason,
+            "session DNS inspection blocked packet"
+        );
+        let _ = self.release_tx.send(ReleaseAction::Drop {
+            packet_id,
+            reason: DropReason::StageDropped,
+            temp_dst_port,
+        });
+        let _ = self.ct.destroy_by_id(entry.id, DestroyReason::InvalidatedByStage);
+        true
     }
 
     pub fn admit_packet(
@@ -416,6 +467,70 @@ where
                 tcp_payload_start_seq,
             });
         }
+    }
+
+    fn inspect_before_admit(&self, packet: &mut PacketContext) -> Option<String> {
+        let Some(classifier) = &self.dpi_classifier else {
+            tracing::debug!(event = "session.inspect_dns.no_classifier", "no classifier");
+            return None;
+        };
+
+        let classify_result = classifier.inspect_packet(packet.borrow_sliced_packet());
+        let classify_kind = match &classify_result {
+            InspectResult::Done(_) => "done",
+            InspectResult::NeedMore => "need_more",
+            InspectResult::Skipped => "skipped",
+        };
+        if let InspectResult::Done(mut dpi_ctx) = classify_result {
+            if let Some(existing) = packet.borrow_dpi_ctx().as_ref() {
+                dpi_ctx.decrypted |= existing.decrypted;
+                dpi_ctx.src_port = dpi_ctx.src_port.or(existing.src_port);
+                dpi_ctx.dst_port = dpi_ctx.dst_port.or(existing.dst_port);
+            }
+            packet.with_dpi_ctx_mut(|c| *c = Some(dpi_ctx));
+        }
+
+        let Some(inspection) = &self.dns_inspection else {
+            tracing::debug!(event = "session.inspect_dns.no_inspection", classify = classify_kind, "no inspection module");
+            return None;
+        };
+
+        let Some(dpi_ctx) = packet.borrow_dpi_ctx().clone() else {
+            tracing::debug!(event = "session.inspect_dns.no_dpi_ctx", classify = classify_kind, "no dpi ctx");
+            return None;
+        };
+        tracing::debug!(
+            event = "session.inspect_dns.classified",
+            classify = classify_kind,
+            app_proto = ?dpi_ctx.app_proto,
+            dns_query = ?dpi_ctx.dns_query_name,
+            "classified packet"
+        );
+        if dpi_ctx.app_proto != Some(AppProto::Dns) {
+            return None;
+        }
+
+        if let Some(domain) = dpi_ctx.dns_query_name.as_deref() {
+            if let BlocklistVerdict::Block(msg) = inspection.check_blocklist(domain) {
+                return Some(msg);
+            }
+        }
+
+        if let (Some(domain), Some(qtype)) = (dpi_ctx.dns_query_name.as_deref(), dpi_ctx.dns_query_type) {
+            if let DnsInspectionVerdict::Block(msg) = inspection.inspect_tunneling(domain, &qtype) {
+                return Some(msg);
+            }
+        }
+
+        if dpi_ctx.dns_is_response == Some(true) && dpi_ctx.dns_has_ech_hints {
+            if let Some(domain) = dpi_ctx.dns_query_name.as_deref() {
+                if let EchMitigationVerdict::Block(msg) = inspection.inspect_ech(domain, true) {
+                    return Some(msg);
+                }
+            }
+        }
+
+        None
     }
 
     pub fn invalidate_session(&self, flow: &FlowKey) {
@@ -608,6 +723,9 @@ mod tests {
     use crate::conntrack::config::ConntrackConfig;
     use crate::conntrack::proto::udp::UdpProtoState;
     use crate::conntrack::proto::ProtoRegistry;
+    use crate::data_plane::dns_inspection::config::DnsInspectionConfig;
+    use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
+    use crate::dpi::DpiClassifier;
     use crate::policy::engine::PolicyEngine;
     use crate::zones::resolver::ZoneResolver;
     use crate::zones::{ResolvedZonePair, ZonePairId};
@@ -661,6 +779,34 @@ mod tests {
         ))
     }
 
+    fn sample_dns_entry(id: u64) -> Arc<crate::conntrack::entry::ConntrackEntry> {
+        let tuple = FlowTuple::new(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            12345,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            53,
+            crate::conntrack::tuple::Protocol::Udp,
+        );
+
+        Arc::new(crate::conntrack::entry::ConntrackEntry::new(
+            id,
+            tuple,
+            ProtoState::Udp(UdpProtoState::default()),
+            Duration::from_secs(60),
+            0,
+        ))
+    }
+
+    fn dns_query(name: &str) -> Vec<u8> {
+        let mut payload = vec![0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        for label in name.split('.') {
+            payload.push(label.len() as u8);
+            payload.extend_from_slice(label.as_bytes());
+        }
+        payload.extend_from_slice(&[0x00, 0x00, 0x01, 0x00, 0x01]);
+        payload
+    }
+
     fn sample_tcp_entry_established(id: u64) -> Arc<crate::conntrack::entry::ConntrackEntry> {
         use crate::conntrack::proto::tcp::{TcpConntrack, TcpProtoState};
 
@@ -708,6 +854,8 @@ mod tests {
                 policy_engine,
                 StubZoneResolver,
                 None,
+                None,
+                None,
                 release_tx,
             )
         } else {
@@ -718,6 +866,8 @@ mod tests {
                 IcmpL4PipelineFactory::default(),
                 policy_engine,
                 StubZoneResolver,
+                None,
+                None,
                 None,
                 release_tx,
             )
@@ -794,6 +944,65 @@ mod tests {
             ReleaseAction::Forward { packet } => assert_eq!(packet.packet_id(), packet_id),
             ReleaseAction::Drop { .. } => panic!("expected forward"),
         }
+    }
+
+    #[tokio::test]
+    async fn dns_blocklist_drops_before_session_release() {
+        let ct = Arc::new(Conntrack::new(
+            Arc::new(ProtoRegistry::new()),
+            ConntrackConfig::default(),
+        ));
+        let (release_tx, mut release_rx) = mpsc::unbounded_channel();
+        let policies = std::collections::HashMap::new();
+        let zone_pairs = std::collections::HashMap::new();
+        let policy_engine = Arc::new(PolicyEngine::from_policies(&policies, &zone_pairs).expect("policy engine"));
+        let mut dns_config = DnsInspectionConfig::default();
+        dns_config.general.enabled = true;
+        dns_config.blocklist.enabled = true;
+        dns_config.blocklist.domains = vec!["blocked.test".to_string()];
+        let dns_inspection = DnsInspection::new(dns_config).expect("dns inspection");
+        let sm = SessionManager::<StubZoneResolver, NoDnssec>::new(
+            Arc::clone(&ct),
+            TcpL4PipelineFactory::<StubZoneResolver>::new_force_terminate(),
+            UdpL4PipelineFactory::default(),
+            IcmpL4PipelineFactory::default(),
+            policy_engine,
+            StubZoneResolver,
+            None,
+            Some(Arc::new(DpiClassifier::new())),
+            Some(dns_inspection),
+            release_tx,
+        );
+
+        let entry = sample_dns_entry(701);
+        assert!(ct.confirm(&entry));
+
+        let mut raw = Vec::new();
+        etherparse::PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+            .udp(12345, 53)
+            .write(&mut raw, &dns_query("blocked.test"))
+            .expect("packet");
+        let mut packet = PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet");
+        let packet_id = packet.packet_id();
+
+        let dropped = sm.inspect_dns_or_drop(&entry, &mut packet, Direction::Original);
+        assert!(dropped, "inspect_dns_or_drop should signal drop");
+
+        let action = tokio::time::timeout(Duration::from_secs(2), release_rx.recv())
+            .await
+            .expect("timeout")
+            .expect("release");
+
+        match action {
+            ReleaseAction::Drop { packet_id: dropped, reason, temp_dst_port } => {
+                assert_eq!(dropped, packet_id);
+                assert_eq!(reason, DropReason::StageDropped);
+                assert_eq!(temp_dst_port, Some(53));
+            }
+            ReleaseAction::Forward { .. } => panic!("expected drop"),
+        }
+        assert!(ct.find_by_id(entry.id).is_none(), "blocked DNS flow should be destroyed");
     }
 
     #[tokio::test]

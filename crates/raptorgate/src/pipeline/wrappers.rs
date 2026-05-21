@@ -1533,8 +1533,11 @@ where
         let Some(entry) = ctx.ct().cloned() else {
             return StageOutcome::Continue;
         };
+        let dir = ctx.ct_direction().unwrap_or(Direction::Original);
+        if self.sessions.inspect_dns_or_drop(&entry, ctx, dir) {
+            return StageOutcome::Halt;
+        }
         if self.sessions.has_session_handle(&entry) {
-            let dir = ctx.ct_direction().unwrap_or(Direction::Original);
             self.sessions.admit_packet(&entry, ctx.clone(), dir);
             self.ct.flush_deferred_payload_observers(&entry);
         }
