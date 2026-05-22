@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use crate::conntrack::entry::CtStatus;
 use crate::conntrack::observer::{AnomalyKind, CtObserver, DestroyReason};
 use crate::conntrack::proto::ProtoState;
+use crate::conntrack::proto::tcp::record_generated_tcp_segment;
 use crate::conntrack::reassembler::DeliveredChunk;
 use crate::conntrack::table::Conntrack;
 use crate::conntrack::tuple::{Direction, FlowTuple};
@@ -271,6 +272,9 @@ fn generated_tcp_packet(
         .write(&mut raw, &emit.payload)
         .ok()?;
     generated_tcp.next_seq[dir_index] = Some(seq.wrapping_add(emit.payload.len() as u32));
+    if let ProtoState::Tcp(tcp) = &mut *entry.proto_state.lock() {
+        record_generated_tcp_segment(tcp, emit.dir, seq, ack, emit.payload.len() as u32, u32::from(window));
+    }
 
     let path = entry.interface_path();
     let iface = match emit.dir {
@@ -1059,6 +1063,8 @@ mod tests {
                 let Some(TransportSlice::Tcp(tcp)) = sliced.transport.as_ref() else {
                     panic!("expected tcp packet");
                 };
+                assert_eq!(tcp.source_port(), 80);
+                assert_eq!(tcp.destination_port(), 12345);
                 assert_eq!(tcp.payload(), b"encrypted response");
             }
             ReleaseAction::Drop { .. } => panic!("expected generated forward"),

@@ -53,7 +53,6 @@ impl TunForwarder {
             );
             return;
         }
-
         match &*self.device.load() {
             Some(dev) => {
                 if let Err(e) = dev.send(&raw[ETH_HDR..]).await {

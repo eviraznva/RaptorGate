@@ -563,6 +563,15 @@ async fn main() {
     );
 
     let daemon_v2 = if use_v2 {
+        let live_zone_interfaces = zone_interfaces.get_live_zone_interfaces(interface_monitor.as_ref());
+        if let Err(err) = crate::data_plane::tun_notrack::install_for_zone_interfaces(&config.tun_device_name, &live_zone_interfaces) {
+            tracing::error!(
+                event = "startup.tun_notrack.failed",
+                error = %err,
+                "failed to install TUN notrack rules"
+            );
+            return;
+        }
         let defrag_v2 = IpDefragEngine::new(DefragConfig::default());
         Some(DaemonV2::assemble_v2(deps.clone(), defrag_v2, exec_tx.clone(), None, Some(Arc::clone(&tun))))
     } else {

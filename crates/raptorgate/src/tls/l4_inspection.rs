@@ -136,6 +136,10 @@ impl TlsL4InspectionService {
     where
         A: TlsPlaintextTarget,
     {
+        if payload.is_empty() {
+            return L4Outcome::Forward(vec![packet_id]);
+        }
+
         if matches!(self.state, TlsL4State::Peeking { .. }) {
             let previous = std::mem::replace(&mut self.state, TlsL4State::Blocked);
             let TlsL4State::Peeking { mut buffer, mut pending_ids } = previous else {
@@ -742,6 +746,24 @@ mod tests {
 
     fn test_service_with_block_decision() -> TlsL4InspectionService {
         TlsL4InspectionService::new(Arc::new(TlsL4InspectionConfig::test_block_all()))
+    }
+
+    #[tokio::test]
+    async fn service_forwards_empty_tcp_segment() {
+        let mut service = test_service();
+        let mut ctx = test_session_context(443);
+        let packet_id = PacketId::next();
+
+        let out = service.on_encrypted_bytes(
+            &mut ctx,
+            packet_id,
+            Direction::Original,
+            0,
+            b"",
+            &mut HttpL4Stage::new(),
+        ).await;
+
+        assert!(matches!(out, L4Outcome::Forward(ids) if ids == vec![packet_id]));
     }
 
     #[tokio::test]

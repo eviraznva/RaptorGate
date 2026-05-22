@@ -875,6 +875,17 @@ where
             .filter_map(|(id, _)| crate::zones::resolve_os_name(&new_zone_interfaces, id))
             .collect();
         self.interface_sniffer.reconcile_capture_interfaces(&sniffed_names);
+        let app_config = self.config_provider.get_config();
+        if app_config.ssl_inspection_enabled {
+            let live_zone_interfaces = self.zone_interface_store.get_live_zone_interfaces(self.interface_monitor.as_ref());
+            if let Err(err) = crate::data_plane::tun_notrack::install_for_zone_interfaces(&app_config.tun_device_name, &live_zone_interfaces) {
+                tracing::warn!(
+                    event = "config_snapshot.tun_notrack.failed",
+                    error = %err,
+                    "failed to refresh TUN notrack rules"
+                );
+            }
+        }
 
         self.zone_pair_store
             .swap_zone_pairs(zone_pairs.into_iter().collect())
