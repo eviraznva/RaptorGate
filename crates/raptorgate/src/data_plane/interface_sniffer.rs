@@ -298,7 +298,7 @@ impl InterfaceSniffer {
             .promisc(true)
             .timeout(timeout_ms)
             .open()?;
-        if let Err(e) = cap.direction(Direction::InOut) {
+        if let Err(e) = cap.direction(Direction::In) {
             tracing::warn!(
                 event = "sniffer.capture.direction_failed",
                 iface = %iface,

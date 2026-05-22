@@ -1527,8 +1527,6 @@ where
     ZR: crate::zones::resolver::ZoneResolver + Clone + Send + Sync + 'static,
     Dns: DnssecProvider + Send + Sync + 'static,
 {
-    fn runs_on_egress(&self) -> bool { true }
-
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let Some(entry) = ctx.ct().cloned() else {
             return StageOutcome::Continue;
@@ -1554,8 +1552,6 @@ impl Stage for ConntrackInStage {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
         !packet_is_decrypted(ctx)
     }
-
-    fn runs_on_egress(&self) -> bool { true }
 
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let outcome = self.ct.process(ctx.borrow_sliced_packet(), 0, ctx.packet_id());
@@ -1612,8 +1608,6 @@ impl Stage for ConntrackConfirmStage {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
         ctx.ct().is_some() && ctx.ct_is_new()
     }
-
-    fn runs_on_egress(&self) -> bool { true }
 
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let entry = ctx.ct().unwrap().clone();

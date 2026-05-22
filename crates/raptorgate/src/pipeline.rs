@@ -148,8 +148,10 @@ impl Stage for ExecutionStage {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use super::*;
     use std::sync::Arc;
+    use crate::data_plane::packet_context::CaptureDirection;
 
     #[derive(Clone)]
     struct PassStage;
@@ -197,6 +199,22 @@ mod tests {
             .write(&mut raw, b"test")
             .unwrap();
         PacketContext::from_raw(raw, Arc::from("eth0")).unwrap()
+    }
+
+    fn egress_test_packet() -> PacketContext {
+        use etherparse::PacketBuilder;
+        let mut raw = Vec::new();
+        PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+            .tcp(12345, 80, 1, 65535)
+            .write(&mut raw, b"test")
+            .unwrap();
+        PacketContext::from_raw_with_capture_direction(
+            raw,
+            Arc::from("eth0"),
+            CaptureDirection::Egress,
+        )
+        .unwrap()
     }
 
     #[tokio::test]
@@ -275,5 +293,55 @@ mod tests {
 
         let item = rx.recv().await.unwrap();
         assert!(matches!(item.action, ExecutionAction::Forward));
+    }
+
+    #[tokio::test]
+    async fn egress_packet_skips_stages_without_egress_opt_in() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let chain = Chain {
+            head: PassStage,
+            tail: ExecutionStage { tx: tx.clone() },
+        };
+        let mut ctx = egress_test_packet();
+
+        let outcome = chain.process(&mut ctx, &tx).await;
+
+        assert!(matches!(outcome, StageOutcome::Continue));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn egress_packet_reaches_stage_that_opts_in() {
+        #[derive(Clone)]
+        struct EgressPassStage {
+            called: Arc<AtomicBool>,
+        }
+
+        impl Stage for EgressPassStage {
+            fn runs_on_egress(&self) -> bool { true }
+
+            async fn process(&self, _ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+                self.called.store(true, Ordering::Relaxed);
+                StageOutcome::Continue
+            }
+        }
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let called = Arc::new(AtomicBool::new(false));
+        let chain = Chain {
+            head: EgressPassStage {
+                called: Arc::clone(&called),
+            },
+            tail: Chain {
+                head: ExecutionStage { tx: tx.clone() },
+                tail: PassStage,
+            },
+        };
+        let mut ctx = egress_test_packet();
+
+        chain.process(&mut ctx, &tx).await;
+
+        assert!(called.load(Ordering::Relaxed));
+        assert!(rx.try_recv().is_err());
     }
 }
