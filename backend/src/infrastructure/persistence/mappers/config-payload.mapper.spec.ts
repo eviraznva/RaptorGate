@@ -121,6 +121,8 @@ function configPayloadWithIdentity(input: {
             ),
           ],
         },
+        authentication_sequences: { items: [] },
+        identity_groups: { items: [] },
         settings: IdentitySettings.create('auth-1', null, input.now, 'tester'),
       },
     },
@@ -154,6 +156,8 @@ describe('config payload mapper identity config', () => {
       radius_server_profiles: { items: [] },
       ldap_server_profiles: { items: [] },
       authentication_profiles: { items: [] },
+      authentication_sequences: { items: [] },
+      identity_groups: { items: [] },
       settings: {
         portalAuthenticationProfileId: null,
         adminAuthenticationProfileId: null,
