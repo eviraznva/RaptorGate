@@ -1,6 +1,10 @@
 import { ClientGrpc } from "@nestjs/microservices";
 import { of } from "rxjs";
+import { IdentityAuthenticationProfile } from "src/domain/entities/identity-authentication-profile.entity.js";
+import { IdentitySettings } from "src/domain/entities/identity-settings.entity.js";
+import { LdapServerProfile } from "src/domain/entities/ldap-server-profile.entity.js";
 import { NatRule } from "src/domain/entities/nat-rule.entity.js";
+import { RadiusServerProfile } from "src/domain/entities/radius-server-profile.entity.js";
 import { NatConfigIsInvalidException } from "src/domain/exceptions/nat-config-is-invalid.exception.js";
 import { Priority } from "src/domain/value-objects/priority.vo.js";
 import { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
@@ -39,6 +43,102 @@ function makeSnapshot(natRule: NatRule): ConfigurationSnapshot {
     null,
     new Date("2026-03-20T23:11:43.970Z"),
     "8d3fae59-d1b7-4812-9f31-caf772a9252c",
+  );
+}
+
+function activeSnapshotWithIdentitySecretRefs(): ConfigurationSnapshot {
+  const now = new Date("2026-05-23T10:00:00.000Z");
+  return ConfigurationSnapshot.create(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    1,
+    SnapshotType.create("auto_save"),
+    Checksum.create("0".repeat(64)),
+    true,
+    {
+      bundle: {
+        rules: { items: [] },
+        zones: { items: [] },
+        zone_interfaces: { items: [] },
+        zone_pairs: { items: [] },
+        nat_rules: { items: [] },
+        dns_blacklist: { items: [] },
+        ssl_bypass_list: { items: [] },
+        ips_signatures: { items: [] },
+        ml_model: null,
+        firewall_certificates: { items: [] },
+        users: { items: [] },
+        identity_config: {
+          radius_server_profiles: {
+            items: [
+              RadiusServerProfile.create(
+                "radius-1",
+                "corp-radius",
+                null,
+                true,
+                "192.0.2.10",
+                1812,
+                "secret://identity/radius/corp",
+                3000,
+                2,
+                null,
+                "raptorgate",
+                null,
+                now,
+                now,
+                "tester",
+              ),
+            ],
+          },
+          ldap_server_profiles: {
+            items: [
+              LdapServerProfile.create(
+                "ldap-1",
+                "corp-ad",
+                null,
+                true,
+                "ldap.example.test",
+                389,
+                "disabled",
+                "cn=admin,dc=example,dc=test",
+                "secret://identity/ldap/corp",
+                "ou=users,dc=example,dc=test",
+                "uid",
+                "ou=groups,dc=example,dc=test",
+                "memberUid",
+                "cn",
+                3000,
+                300,
+                now,
+                now,
+                "tester",
+              ),
+            ],
+          },
+          authentication_profiles: {
+            items: [
+              IdentityAuthenticationProfile.create(
+                "auth-1",
+                "corp-portal",
+                null,
+                true,
+                "radius",
+                "radius-1",
+                "ldap-1",
+                "ldap",
+                3600,
+                now,
+                now,
+                "tester",
+              ),
+            ],
+          },
+          settings: IdentitySettings.create("auth-1", null, now, "tester"),
+        },
+      },
+    },
+    "test",
+    now,
+    "tester",
   );
 }
 
@@ -204,6 +304,29 @@ describe("GrpcConfigSnapshotPushService", () => {
         ],
         message: [],
       },
+    });
+  });
+
+  it("does not push RADIUS or LDAP provider secrets to firewall active config", async () => {
+    let request: any;
+    const client = {
+      getService: () => ({
+        pushActiveConfigSnapshot: (value: any) => {
+          request = value;
+          return of({ accepted: true, appliedSnapshotId: value.snapshot.id });
+        },
+      }),
+    } as any;
+    const service = new GrpcConfigSnapshotPushService(client);
+    service.onModuleInit();
+
+    await service.pushActiveConfigSnapshot(activeSnapshotWithIdentitySecretRefs(), "apply");
+
+    expect(JSON.stringify(request)).not.toContain("secret://identity/radius/corp");
+    expect(JSON.stringify(request)).not.toContain("secret://identity/ldap/corp");
+    expect(request.snapshot?.bundle?.identity).toEqual({
+      userGroups: [],
+      identityUsers: [],
     });
   });
 });

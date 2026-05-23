@@ -43,7 +43,7 @@ syntax = "proto3";
     repeated raptorgate.config.IpsSignature ips_signatures = 8;
     raptorgate.config.MlModel ml_model = 9;
     repeated raptorgate.config.FirewallCertificate firewall_certificates = 10;
-    raptorgate.config.IdentityBundle identity = 11;
+    raptorgate.config.IdentityPolicyCatalog identity = 11;
     raptorgate.config.TlsInspectionPolicy tls_inspection_policy = 12;
     raptorgate.config.AppConfig app_config = 13;
     raptorgate.config.DnsInspectionConfig dns_inspection_config = 14;
@@ -73,4 +73,3 @@ syntax = "proto3";
     uint64 removed_server_key_files = 6;
     uint64 removed_ca_files = 7;
   }
-

@@ -312,7 +312,14 @@ export class GrpcConfigSnapshotPushService
         ? this.toDnsInspectionConfig(b.dns_inspection_config)
         : undefined,
       ipsConfig: b.ips_config ? this.toIpsConfig(b.ips_config) : undefined,
-      identity: undefined,
+      identity: this.toIdentityPolicyCatalog(),
+    };
+  }
+
+  private toIdentityPolicyCatalog() {
+    return {
+      userGroups: [],
+      identityUsers: [],
     };
   }
 
