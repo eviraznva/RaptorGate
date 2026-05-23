@@ -17,12 +17,6 @@ export class TcpLdapAuthenticatorAdapter implements ILdapAuthenticator {
     if (!directory.enabled) {
       return { kind: 'disabled' };
     }
-    if (directory.tlsMode !== 'disabled') {
-      return {
-        kind: 'error',
-        message: `LDAP tlsMode ${directory.tlsMode} is not supported by the TCP adapter`,
-      };
-    }
     if (!isSafeFilterValue(request.username)) {
       return {
         kind: 'error',
@@ -33,7 +27,10 @@ export class TcpLdapAuthenticatorAdapter implements ILdapAuthenticator {
     const client = new TcpLdapClient({
       host: directory.host,
       port: directory.port,
-      timeoutMs: directory.timeoutMs,
+      timeoutMs: directory.connectTimeoutMs,
+      tlsMode: directory.tlsMode,
+      verifyServerCertificate: directory.verifyServerCertificate,
+      servername: directory.servername,
     });
     try {
       await client.connect();
@@ -55,7 +52,7 @@ export class TcpLdapAuthenticatorAdapter implements ILdapAuthenticator {
         filterValue: request.username,
         attributes: ['1.1'],
         sizeLimit: 1,
-        timeLimitSeconds: Math.max(1, Math.floor(directory.timeoutMs / 1000)),
+        timeLimitSeconds: Math.max(1, Math.floor(directory.searchTimeoutMs / 1000)),
       });
       if (TcpLdapClient.isNoSuchObject(userSearch.result)) {
         return { kind: 'reject', reason: 'LDAP user was not found' };
@@ -77,7 +74,7 @@ export class TcpLdapAuthenticatorAdapter implements ILdapAuthenticator {
         filterValue: request.username,
         attributes: [directory.groupNameAttribute],
         sizeLimit: 0,
-        timeLimitSeconds: Math.max(1, Math.floor(directory.timeoutMs / 1000)),
+        timeLimitSeconds: Math.max(1, Math.floor(directory.searchTimeoutMs / 1000)),
       });
       if (!TcpLdapClient.isNoSuchObject(groupSearch.result)) {
         if (!TcpLdapClient.isResultSuccess(groupSearch.result)) {

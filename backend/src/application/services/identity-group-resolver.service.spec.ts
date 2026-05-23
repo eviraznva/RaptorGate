@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from 'bun:test';
 import { ConfigService } from '@nestjs/config';
 import type {
   ILdapDirectory,
@@ -89,6 +89,44 @@ describe('IdentityGroupResolverService', () => {
     expect(result.groups).toEqual(['admins', 'auditors']);
     expect(cache.get).not.toHaveBeenCalled();
     expect(cache.set).toHaveBeenCalledWith('admin', ['admins', 'auditors']);
+  });
+
+  it('passes selected ldap profile options to directory lookup', async () => {
+    build('ldap');
+    directory.resolveGroups.mockResolvedValue({
+      kind: 'ok',
+      userDn: 'uid=admin,ou=users,dc=raptorgate,dc=local',
+      groups: ['admins'],
+    });
+    const ldapOptions = {
+      enabled: true,
+      host: 'ldap.example.test',
+      port: 636,
+      tlsMode: 'ldaps' as const,
+      verifyServerCertificate: true,
+      servername: 'ldap.example.test',
+      bindDn: 'cn=admin,dc=raptorgate,dc=local',
+      bindPassword: 'secret',
+      userBaseDn: 'ou=users,dc=raptorgate,dc=local',
+      userFilterAttribute: 'uid',
+      userNameAttribute: 'uid',
+      groupBaseDn: 'ou=groups,dc=raptorgate,dc=local',
+      groupMemberAttribute: 'memberUid',
+      groupNameAttribute: 'cn',
+      includeGroups: [],
+      connectTimeoutMs: 2000,
+      searchTimeoutMs: 4000,
+      timeoutMs: 4000,
+    };
+
+    await service.resolve({
+      username: 'admin',
+      vsaGroups: [],
+      ldapOptions,
+      forceRefresh: true,
+    });
+
+    expect(directory.resolveGroups).toHaveBeenCalledWith('admin', ldapOptions);
   });
 
   it('fallback na VSA gdy LDAP zwroci error i przekazuje ldapError diagnostycznie', async () => {

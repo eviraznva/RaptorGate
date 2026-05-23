@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   LDAP_DIRECTORY_TOKEN,
   type ILdapDirectory,
+  type LdapDirectoryOptions,
 } from '../ports/ldap-directory.interface.js';
 import {
   LDAP_GROUP_CACHE_TOKEN,
@@ -31,6 +32,7 @@ export interface IdentityGroupResolution {
 export interface ResolveGroupsInput {
   username: string;
   vsaGroups: string[];
+  ldapOptions?: LdapDirectoryOptions;
   forceRefresh?: boolean;
 }
 
@@ -51,7 +53,7 @@ export class IdentityGroupResolverService {
     const primary = this.config.get('IDENTITY_GROUP_SOURCE_PRIMARY', {
       infer: true,
     });
-    const ldapEnabled = this.directory.isEnabled();
+    const ldapEnabled = input.ldapOptions ? input.ldapOptions.enabled : this.directory.isEnabled();
 
     if (!ldapEnabled) {
       return this.fallbackToVsa(input, 'disabled');
@@ -72,7 +74,7 @@ export class IdentityGroupResolverService {
       }
     }
 
-    const lookup = await this.directory.resolveGroups(input.username);
+    const lookup = await this.directory.resolveGroups(input.username, input.ldapOptions);
     if (lookup.kind === 'ok') {
       this.cache.set(input.username, lookup.groups);
       return {

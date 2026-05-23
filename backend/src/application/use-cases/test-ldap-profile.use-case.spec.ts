@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, expect, it, jest } from 'bun:test';
 import { IdentityConfiguration } from '../../domain/entities/identity-configuration.entity.js';
 import { IdentitySettings } from '../../domain/entities/identity-settings.entity.js';
 import { LdapServerProfile } from '../../domain/entities/ldap-server-profile.entity.js';
@@ -79,13 +79,19 @@ describe('TestLdapProfileUseCase', () => {
       host: '10.0.0.20',
       port: 389,
       tlsMode: 'disabled',
+      verifyServerCertificate: false,
+      servername: '10.0.0.20',
       bindDn: 'cn=admin,dc=example,dc=com',
       bindPassword: 'bind-password',
       userBaseDn: 'ou=users,dc=example,dc=com',
       userFilterAttribute: 'uid',
+      userNameAttribute: 'uid',
       groupBaseDn: 'ou=groups,dc=example,dc=com',
       groupMemberAttribute: 'memberUid',
       groupNameAttribute: 'cn',
+      includeGroups: [],
+      connectTimeoutMs: 4000,
+      searchTimeoutMs: 4000,
       timeoutMs: 4000,
     });
   });

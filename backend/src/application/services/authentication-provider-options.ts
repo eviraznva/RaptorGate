@@ -22,18 +22,30 @@ export function ldapOptionsFromProfile(
   profile: LdapServerProfile,
   bindPassword: string,
 ): LdapDirectoryOptions {
+  const server = profile
+    .getServers()
+    .filter((item) => item.getIsActive())
+    .sort((a, b) => a.getPriority() - b.getPriority())[0];
+  const groupMapping = profile.getGroupMapping();
+
   return {
     enabled: profile.getIsActive(),
-    host: profile.getHost(),
-    port: profile.getPort(),
+    host: server?.getHost() ?? profile.getHost(),
+    port: server?.getPort() ?? profile.getPort(),
     tlsMode: profile.getTlsMode(),
+    verifyServerCertificate: profile.getVerifyServerCertificate(),
+    servername: server?.getHost() ?? profile.getHost(),
     bindDn: profile.getBindDn(),
     bindPassword,
-    userBaseDn: profile.getUserBaseDn(),
-    userFilterAttribute: profile.getUserFilterAttribute(),
-    groupBaseDn: profile.getGroupBaseDn(),
-    groupMemberAttribute: profile.getGroupMemberAttribute(),
-    groupNameAttribute: profile.getGroupNameAttribute(),
+    userBaseDn: groupMapping.userBaseDn,
+    userFilterAttribute: groupMapping.userFilterAttribute,
+    userNameAttribute: groupMapping.userNameAttribute,
+    groupBaseDn: groupMapping.groupBaseDn,
+    groupMemberAttribute: groupMapping.groupMemberAttribute,
+    groupNameAttribute: groupMapping.groupNameAttribute,
+    includeGroups: groupMapping.includeGroups,
+    connectTimeoutMs: profile.getConnectTimeoutMs(),
+    searchTimeoutMs: profile.getSearchTimeoutMs(),
     timeoutMs: profile.getTimeoutMs(),
   };
 }

@@ -16,10 +16,14 @@ const TAG_UNBIND_REQUEST = 0x42;
 const TAG_SEARCH_REQUEST = 0x63;
 const TAG_SEARCH_RESULT_ENTRY = 0x64;
 const TAG_SEARCH_RESULT_DONE = 0x65;
+const TAG_EXTENDED_REQUEST = 0x77;
+const TAG_EXTENDED_RESPONSE = 0x78;
 const TAG_SEARCH_RESULT_REFERENCE = 0x73;
 
 const TAG_BIND_SIMPLE_AUTH = 0x80;
+const TAG_EXTENDED_REQUEST_NAME = 0x80;
 const TAG_FILTER_EQUALITY_MATCH = 0xa3;
+const LDAP_STARTTLS_OID = '1.3.6.1.4.1.1466.20037';
 
 export const LDAP_MESSAGE_TAG = TAG_SEQUENCE;
 export const LDAP_BIND_REQUEST_TAG = TAG_BIND_REQUEST;
@@ -28,6 +32,7 @@ export const LDAP_UNBIND_REQUEST_TAG = TAG_UNBIND_REQUEST;
 export const LDAP_SEARCH_REQUEST_TAG = TAG_SEARCH_REQUEST;
 export const LDAP_SEARCH_RESULT_ENTRY_TAG = TAG_SEARCH_RESULT_ENTRY;
 export const LDAP_SEARCH_RESULT_DONE_TAG = TAG_SEARCH_RESULT_DONE;
+export const LDAP_EXTENDED_RESPONSE_TAG = TAG_EXTENDED_RESPONSE;
 
 // Result codes per RFC 4511 sec. 4.1.9.
 export const LDAP_RESULT_SUCCESS = 0;
@@ -132,6 +137,18 @@ export function encodeUnbindRequest(messageId: number): Buffer {
   );
 }
 
+export function encodeStartTlsRequest(messageId: number): Buffer {
+  const protocolOp = encodeTLV(
+    TAG_EXTENDED_REQUEST,
+    encodeOctetString(
+      TAG_EXTENDED_REQUEST_NAME,
+      Buffer.from(LDAP_STARTTLS_OID, 'utf8'),
+    ),
+  );
+
+  return wrapLdapMessage(messageId, protocolOp);
+}
+
 export interface LdapResultBody {
   resultCode: number;
   matchedDn: string;
@@ -162,6 +179,12 @@ export interface SearchResultReferenceMessage {
   messageId: number;
 }
 
+export interface ExtendedResponseMessage {
+  kind: 'extended-response';
+  messageId: number;
+  result: LdapResultBody;
+}
+
 export interface UnknownLdapMessage {
   kind: 'unknown';
   messageId: number;
@@ -173,6 +196,7 @@ export type ParsedLdapMessage =
   | SearchResultEntryMessage
   | SearchResultDoneMessage
   | SearchResultReferenceMessage
+  | ExtendedResponseMessage
   | UnknownLdapMessage;
 
 export interface LdapFrame {
@@ -228,6 +252,12 @@ export function parseLdapMessage(buffer: Buffer): ParsedLdapMessage {
       };
     case TAG_SEARCH_RESULT_REFERENCE:
       return { kind: 'search-result-reference', messageId };
+    case TAG_EXTENDED_RESPONSE:
+      return {
+        kind: 'extended-response',
+        messageId,
+        result: parseLdapResult(buffer, op),
+      };
     default:
       return { kind: 'unknown', messageId, tag: op.tag };
   }
