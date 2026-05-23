@@ -87,7 +87,16 @@ impl DpiClassifier {
         let mut entry = self.sessions.entry(key).or_insert_with(DpiSessionEntry::new);
         let session = entry.value_mut();
 
+        let cached_proto = session.result.as_ref().map(|c| c.app_proto);
         session.append_payload(payload);
+        tracing::debug!(
+            event = "dpi.inspect.diag",
+            cached = ?cached_proto,
+            buf_len = session.buffer.len(),
+            payload_len = payload.len(),
+            first16 = ?session.buffer.iter().take(16).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""),
+            "inspect_packet diag"
+        );
 
         if let Some(ref mut ctx) = session.result {
             if ctx.app_proto == Some(AppProto::Dns) {
@@ -188,9 +197,9 @@ type Classifier = fn(&[u8]) -> Option<DpiContext>;
 // Tablica klasyfikatorów wywoływanych kolejno aż do pierwszego dopasowania.
 const CLASSIFIERS: &[Classifier] = &[
     classify_tls,
+    classify_dns,
     classify_http,
     classify_ssh,
-    classify_dns,
     classify_ftp,
     classify_smtp,
     classify_smb,
@@ -340,7 +349,6 @@ mod tests {
 
     #[test]
     fn test_classify_dns() {
-        // Pełny pakiet DNS query: example.com, QTYPE=A
         let buf = [
             0x12, 0x34,       // Transaction ID
             0x01, 0x00,       // Flags: query, RD=1
@@ -361,6 +369,28 @@ mod tests {
         assert_eq!(ctx.dns_query_name.as_deref(), Some("example.com"));
         assert_eq!(ctx.dns_query_type, Some(dns::DnsRecordType::A));
         assert_eq!(ctx.dns_is_response, Some(false));
+    }
+
+    #[test]
+    fn test_classify_dns_zero_transaction_id_before_http() {
+        let buf = [
+            0x00, 0x00,
+            0x01, 0x00,
+            0x00, 0x01,
+            0x00, 0x00,
+            0x00, 0x00,
+            0x00, 0x00,
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e',
+            0x03, b'c', b'o', b'm',
+            0x00,
+            0x00, 0x01,
+            0x00, 0x01,
+        ];
+        let result = DpiClassifier::try_classify(&buf);
+        assert!(result.is_some());
+        let ctx = result.unwrap();
+        assert_eq!(ctx.app_proto, Some(AppProto::Dns));
+        assert_eq!(ctx.dns_query_name.as_deref(), Some("example.com"));
     }
 
     #[test]

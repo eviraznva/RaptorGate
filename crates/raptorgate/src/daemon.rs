@@ -17,6 +17,7 @@ use crate::config::AppConfig;
 use crate::data_plane::dns_inspection::dns_inspection::DnsInspection;
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
 use crate::data_plane::interface_sniffer::RawPacket;
+use crate::data_plane::packet_context::CaptureDirection;
 use crate::data_plane::ips::ips::Ips;
 use crate::disk_store::SingleDiskStore;
 use crate::dpi::smtp::SmtpTracker;
@@ -454,7 +455,7 @@ impl<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>> Daemon<D> {
     }
 
     pub async fn process_raw(&self, raw: Vec<u8>, iface: Arc<str>) -> ProcessOutput {
-        let packet = RawPacket { raw, iface };
+        let packet = RawPacket { raw, iface, capture_direction: CaptureDirection::Ingress };
         let Some(mut ctx) = self.defrag.process_raw(packet) else {
             return ProcessOutput {
                 emitted: Vec::new(),
@@ -524,6 +525,9 @@ where
             Arc::clone(s.policy_engine),
             s.zone_resolver.as_ref().clone(),
             Some(Arc::clone(s.policy_dnssec)),
+            Some(Arc::clone(s.dpi_classifier)),
+            Some(Arc::clone(s.dns_inspection)),
+            Some(Arc::clone(s.ips)),
             release_tx.clone(),
         );
         let pipeline = build_v2_pipeline(&s, Arc::clone(&sessions));
@@ -576,7 +580,7 @@ where
         raw: Vec<u8>,
         iface: Arc<str>,
     ) -> ProcessOutputWithPacketId {
-        let packet = RawPacket { raw, iface };
+        let packet = RawPacket { raw, iface, capture_direction: CaptureDirection::Ingress };
         let Some(mut ctx) = self.defrag.process_raw(packet) else {
             return ProcessOutputWithPacketId {
                 packet_id: None,

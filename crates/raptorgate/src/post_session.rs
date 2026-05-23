@@ -5,7 +5,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::conntrack::entry::CtInfo;
 use crate::conntrack::tuple::Direction;
-use crate::data_plane::packet_context::PacketContext;
+use crate::data_plane::packet_context::{CaptureDirection, PacketContext};
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::interfaces::InterfaceMonitor;
 use crate::l4::release::{PacketDispositionEvent, PacketDispositionOutcome, ReleaseAction};
@@ -103,8 +103,23 @@ where
                         flow.dst_port
                     });
 
-                    tracing::trace!(packet_id=?packet.borrow_id(), dst_port=?dst_port, "forwarding packet");
+                    tracing::trace!(packet_id=?packet.borrow_id(), dst_port=?dst_port, "releasing packet");
                     let packet_id = packet.packet_id();
+                    if packet.capture_direction() == CaptureDirection::Egress {
+                        tracing::trace!(
+                            packet_id=?packet.borrow_id(),
+                            dst_port=?dst_port,
+                            event = "post_session.forward.egress_skipped",
+                            "egress-captured packet already left the router"
+                        );
+                        let _ = self.disposition_tx.send(PacketDispositionEvent {
+                            packet_id,
+                            outcome: PacketDispositionOutcome::Forward,
+                            drop_reason: None,
+                        });
+                        continue;
+                    }
+
                     apply_nat_postrouting(
                         &mut packet,
                         &self.nat_engine,
