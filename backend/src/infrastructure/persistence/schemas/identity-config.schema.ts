@@ -213,6 +213,15 @@ export const IdentityAuthenticationProfileRecordSchema = z
         role: z.enum(['super_admin', 'admin', 'operator', 'viewer']),
       }).strict(),
     ).default([]),
+    allowList: z.object({
+      usernames: z.array(z.string().min(1).max(256)).default([]),
+      groups: z.array(z.string().min(1).max(512)).default([]),
+      includeAllAuthenticated: z.boolean().default(true),
+    }).strict().default({
+      usernames: [],
+      groups: [],
+      includeAllAuthenticated: true,
+    }),
     createdAt: isoDateTimeSchema,
     updatedAt: isoDateTimeSchema,
     createdBy: z.string().min(1).max(128),

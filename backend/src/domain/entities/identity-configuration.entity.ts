@@ -2,7 +2,7 @@ import { IdentityConfigIsInvalidException } from '../exceptions/identity-config-
 import { IdentityAuthenticationSequence } from './identity-authentication-sequence.entity.js';
 import { IdentityAuthenticationProfile } from './identity-authentication-profile.entity.js';
 import { IdentityGroup } from './identity-group.entity.js';
-import { IdentitySettings } from './identity-settings.entity.js';
+import { type IdentityAuthenticationTarget, IdentitySettings } from './identity-settings.entity.js';
 import { LdapServerProfile } from './ldap-server-profile.entity.js';
 import { RadiusServerProfile } from './radius-server-profile.entity.js';
 
@@ -92,6 +92,7 @@ export class IdentityConfiguration {
     }
 
     const authIds = new Set(authenticationProfiles.map((p) => p.getId()));
+    const sequenceIds = new Set(authenticationSequences.map((p) => p.getId()));
     for (const sequence of authenticationSequences) {
       for (const profileId of sequence.getProfileIds()) {
         if (!authIds.has(profileId)) {
@@ -99,8 +100,8 @@ export class IdentityConfiguration {
         }
       }
     }
-    assertSettingsReference(settings.getPortalAuthenticationProfileId(), authIds, 'portalAuthenticationProfileId');
-    assertSettingsReference(settings.getAdminAuthenticationProfileId(), authIds, 'adminAuthenticationProfileId');
+    assertSettingsTarget(settings.getPortalAuthenticationTarget(), authIds, sequenceIds, 'portalAuthenticationTarget');
+    assertSettingsTarget(settings.getAdminAuthenticationTarget(), authIds, sequenceIds, 'adminAuthenticationTarget');
 
     return new IdentityConfiguration(
       [...radiusServerProfiles],
@@ -148,12 +149,17 @@ function assertUnique(values: string[], field: string): void {
   }
 }
 
-function assertSettingsReference(
-  profileId: string | null,
+function assertSettingsTarget(
+  target: IdentityAuthenticationTarget | null,
   authIds: Set<string>,
+  sequenceIds: Set<string>,
   field: string,
 ): void {
-  if (profileId && !authIds.has(profileId)) {
-    throw new IdentityConfigIsInvalidException(`${field} references missing authentication profile ${profileId}`);
+  if (!target) return;
+  if (target.kind === 'profile' && !authIds.has(target.id)) {
+    throw new IdentityConfigIsInvalidException(`${field} references missing authentication profile ${target.id}`);
+  }
+  if (target.kind === 'sequence' && !sequenceIds.has(target.id)) {
+    throw new IdentityConfigIsInvalidException(`${field} references missing authentication sequence ${target.id}`);
   }
 }

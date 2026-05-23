@@ -12,6 +12,10 @@ export interface PortalListenerSettingsInput {
   bindPort: number;
 }
 
+export type IdentityAuthenticationTarget =
+  | { kind: 'profile'; id: string }
+  | { kind: 'sequence'; id: string };
+
 export class PortalListenerSettings {
   private constructor(
     private readonly enabled: boolean,
@@ -85,23 +89,23 @@ export class PortalListenerSettings {
 export class IdentitySettings {
   // TODO(Issue VPN): add vpnAuthenticationProfileId when VPN auth flow exists.
   private constructor(
-    private portalAuthenticationProfileId: string | null,
-    private adminAuthenticationProfileId: string | null,
+    private portalAuthenticationTarget: IdentityAuthenticationTarget | null,
+    private adminAuthenticationTarget: IdentityAuthenticationTarget | null,
     private updatedAt: Date | null,
     private updatedBy: string | null,
     private portalListener: PortalListenerSettings,
   ) {}
 
   public static create(
-    portalAuthenticationProfileId: string | null,
-    adminAuthenticationProfileId: string | null,
+    portalAuthenticationProfileId: string | IdentityAuthenticationTarget | null,
+    adminAuthenticationProfileId: string | IdentityAuthenticationTarget | null,
     updatedAt: Date | null,
     updatedBy: string | null,
     portalListener: PortalListenerSettingsInput | PortalListenerSettings = PortalListenerSettings.disabled(),
   ): IdentitySettings {
     return new IdentitySettings(
-      normalizeNullable(portalAuthenticationProfileId),
-      normalizeNullable(adminAuthenticationProfileId),
+      normalizeTarget(portalAuthenticationProfileId),
+      normalizeTarget(adminAuthenticationProfileId),
       updatedAt,
       normalizeNullable(updatedBy),
       portalListener instanceof PortalListenerSettings
@@ -111,11 +115,23 @@ export class IdentitySettings {
   }
 
   public getPortalAuthenticationProfileId(): string | null {
-    return this.portalAuthenticationProfileId;
+    return this.portalAuthenticationTarget?.kind === 'profile'
+      ? this.portalAuthenticationTarget.id
+      : null;
   }
 
   public getAdminAuthenticationProfileId(): string | null {
-    return this.adminAuthenticationProfileId;
+    return this.adminAuthenticationTarget?.kind === 'profile'
+      ? this.adminAuthenticationTarget.id
+      : null;
+  }
+
+  public getPortalAuthenticationTarget(): IdentityAuthenticationTarget | null {
+    return this.portalAuthenticationTarget ? { ...this.portalAuthenticationTarget } : null;
+  }
+
+  public getAdminAuthenticationTarget(): IdentityAuthenticationTarget | null {
+    return this.adminAuthenticationTarget ? { ...this.adminAuthenticationTarget } : null;
   }
 
   public getUpdatedAt(): Date | null {
@@ -134,4 +150,24 @@ export class IdentitySettings {
 function normalizeNullable(value: string | null): string | null {
   const normalized = value?.trim() ?? '';
   return normalized ? normalized : null;
+}
+
+function normalizeTarget(
+  value: string | IdentityAuthenticationTarget | null,
+): IdentityAuthenticationTarget | null {
+  if (typeof value === 'string') {
+    const id = normalizeNullable(value);
+    return id ? { kind: 'profile', id } : null;
+  }
+  if (!value) return null;
+
+  const id = normalizeNullable(value.id);
+  if (!id) {
+    throw new IdentityConfigIsInvalidException('authentication target id is required');
+  }
+  if (value.kind !== 'profile' && value.kind !== 'sequence') {
+    throw new IdentityConfigIsInvalidException('authentication target kind is invalid');
+  }
+
+  return { kind: value.kind, id };
 }
