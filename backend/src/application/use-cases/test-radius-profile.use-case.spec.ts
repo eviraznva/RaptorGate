@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, expect, it, jest } from 'bun:test';
 import { IdentityConfiguration } from '../../domain/entities/identity-configuration.entity.js';
 import { IdentitySettings } from '../../domain/entities/identity-settings.entity.js';
 import { RadiusServerProfile } from '../../domain/entities/radius-server-profile.entity.js';
@@ -71,15 +71,22 @@ describe('TestRadiusProfileUseCase', () => {
       username: 'admin',
       password: 'password',
       callingStationId: '198.51.100.10',
-      server: {
-        host: '10.0.0.10',
-        port: 1812,
-        secret: 'radius-secret',
+      profile: {
+        authenticationProtocol: 'pap',
         timeoutMs: 4000,
         retries: 2,
         nasIp: '192.0.2.1',
         nasIdentifier: 'raptorgate',
         calledStationId: 'portal',
+        servers: [
+          {
+            name: 'Radius',
+            host: '10.0.0.10',
+            port: 1812,
+            secret: 'radius-secret',
+            priority: 1,
+          },
+        ],
       },
     });
   });

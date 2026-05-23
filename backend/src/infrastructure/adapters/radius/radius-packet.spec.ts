@@ -3,6 +3,7 @@ import {
   buildAccessRequest,
   encodeUserPassword,
   extractGroupsFromAttributes,
+  extractRadiusAttributes,
   parseResponse,
   RADIUS_ATTR_CLASS,
   RADIUS_ATTR_FILTER_ID,
@@ -238,7 +239,7 @@ describe('radius-packet', () => {
       expect(extractGroupsFromAttributes(attrs)).toEqual([]);
     });
 
-    it('wyciaga role i grupy z Palo Alto VSAs', () => {
+    it('separates Palo Alto admin role from user group VSAs', () => {
       const paloAlto = Buffer.concat([
         vsa(25461, [
           vendorSubAttr(1, 'super_admin'),
@@ -247,10 +248,36 @@ describe('radius-packet', () => {
       ]);
       const attrs = attr(RADIUS_ATTR_VENDOR_SPECIFIC, paloAlto);
 
-      expect(extractGroupsFromAttributes(attrs)).toEqual([
-        'super_admin',
-        'Domain Admins',
+      expect(extractGroupsFromAttributes(attrs)).toEqual(['Domain Admins']);
+      expect(extractRadiusAttributes(attrs)).toEqual({
+        userGroups: ['Domain Admins'],
+        adminRole: 'super_admin',
+        accessDomain: null,
+        panoramaAdminRole: null,
+        panoramaAccessDomain: null,
+        userDomain: null,
+        rawDiagnostics: [],
+      });
+    });
+
+    it('parses typed Palo Alto VSAs', () => {
+      const paloAlto = Buffer.concat([
+        vsa(25461, [
+          vendorSubAttr(1, 'superuser'),
+          vendorSubAttr(5, 'admins'),
+        ]),
       ]);
+      const attrs = attr(RADIUS_ATTR_VENDOR_SPECIFIC, paloAlto);
+
+      expect(extractRadiusAttributes(attrs)).toEqual({
+        userGroups: ['admins'],
+        adminRole: 'superuser',
+        accessDomain: null,
+        panoramaAdminRole: null,
+        panoramaAccessDomain: null,
+        userDomain: null,
+        rawDiagnostics: [],
+      });
     });
   });
 });

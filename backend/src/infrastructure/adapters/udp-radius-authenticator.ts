@@ -4,15 +4,26 @@ import type {
   IRadiusAuthenticator,
   RadiusAuthRequest,
   RadiusAuthResult,
+  RadiusAuthServerOptions,
 } from '../../application/ports/radius-authenticator.interface.js';
 import {
   buildAccessRequest,
-  extractGroupsFromAttributes,
+  extractRadiusAttributes,
   parseResponse,
   RADIUS_CODE_ACCESS_ACCEPT,
   RADIUS_CODE_ACCESS_REJECT,
   verifyResponseAuthenticator,
 } from './radius/radius-packet.js';
+
+export interface RadiusSendAttempt {
+  server: RadiusAuthServerOptions;
+  packet: Buffer;
+  identifier: number;
+  requestAuthenticator: Buffer;
+  timeoutMs: number;
+}
+
+export type RadiusPacketSender = (attempt: RadiusSendAttempt) => Promise<RadiusAuthResult>;
 
 // Klient RADIUS PAP nad UDP. Implementuje retransmisje (RADIUS_RETRIES)
 // i timeout per probe (RADIUS_TIMEOUT_MS). Zwraca tagged union zamiast
@@ -21,90 +32,127 @@ import {
 export class UdpRadiusAuthenticator implements IRadiusAuthenticator {
   private readonly logger = new Logger(UdpRadiusAuthenticator.name);
 
-  async authenticate(request: RadiusAuthRequest): Promise<RadiusAuthResult> {
-    const server = request.server;
+  constructor(private readonly packetSender: RadiusPacketSender | null = null) {}
 
-    let built;
-    try {
-      built = buildAccessRequest({
-        username: request.username,
-        password: request.password,
-        secret: server.secret,
-        nasIp: server.nasIp,
-        nasIdentifier: server.nasIdentifier,
-        calledStationId: server.calledStationId,
-        callingStationId: request.callingStationId,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown error';
-      return { kind: 'error', message };
+  async authenticate(request: RadiusAuthRequest): Promise<RadiusAuthResult> {
+    const profile = request.profile;
+    if (profile.authenticationProtocol !== 'pap') {
+      return { kind: 'error', message: 'unsupported RADIUS authentication protocol' };
     }
 
-    this.logger.log({
-      event: 'auth.radius.access_request',
-      message: 'sending RADIUS Access-Request',
-      username: request.username,
-      callingStationId: request.callingStationId,
-      identifier: built.identifier,
-      host: server.host,
-      port: server.port,
-    });
+    const servers = [...profile.servers].sort((a, b) => a.priority - b.priority);
+    if (servers.length === 0) {
+      return { kind: 'error', message: 'RADIUS profile has no endpoints' };
+    }
 
-    const totalAttempts = server.retries + 1;
+    const totalAttempts = profile.retries + 1;
+    const attemptedEndpoints: string[] = [];
+    let sawTimeout = false;
     let lastError: string | null = null;
 
-    for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
-      const result = await this.sendOnce(
-        server.host,
-        server.port,
-        built.packet,
-        built.identifier,
-        built.requestAuthenticator,
-        server.secret,
-        server.timeoutMs,
-      );
+    for (const server of servers) {
+      attemptedEndpoints.push(server.name);
 
-      if (result.kind === 'accept' || result.kind === 'reject') {
-        this.logger.log({
-          event:
-            result.kind === 'accept'
-              ? 'auth.radius.access_accept'
-              : 'auth.radius.access_reject',
-          message: `RADIUS ${result.kind === 'accept' ? 'Access-Accept' : 'Access-Reject'}`,
+      let built;
+      try {
+        built = buildAccessRequest({
           username: request.username,
-          attempt,
+          password: request.password,
+          secret: server.secret,
+          nasIp: profile.nasIp,
+          nasIdentifier: profile.nasIdentifier,
+          calledStationId: profile.calledStationId,
+          callingStationId: request.callingStationId,
         });
-        return result;
-      }
-
-      if (result.kind === 'timeout') {
-        this.logger.warn({
-          event: 'auth.radius.timeout',
-          message: 'RADIUS timeout',
-          username: request.username,
-          attempt,
-          timeoutMs: server.timeoutMs,
-        });
-        if (attempt === totalAttempts) {
-          return { kind: 'timeout' };
-        }
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : 'unknown error';
         continue;
       }
 
-      lastError = result.message;
-      this.logger.error({
-        event: 'auth.radius.error',
-        message: 'RADIUS error',
+      this.logger.log({
+        event: 'auth.radius.access_request',
+        message: 'sending RADIUS Access-Request',
         username: request.username,
-        attempt,
-        error: result.message,
+        callingStationId: request.callingStationId,
+        identifier: built.identifier,
+        endpoint: server.name,
+        host: server.host,
+        port: server.port,
       });
-      if (attempt === totalAttempts) {
-        return { kind: 'error', message: result.message };
+
+      for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+        const result = await this.sendAttempt({
+          server,
+          packet: built.packet,
+          identifier: built.identifier,
+          requestAuthenticator: built.requestAuthenticator,
+          timeoutMs: profile.timeoutMs,
+        });
+
+        if (result.kind === 'accept' || result.kind === 'reject') {
+          this.logger.log({
+            event:
+              result.kind === 'accept'
+                ? 'auth.radius.access_accept'
+                : 'auth.radius.access_reject',
+            message: `RADIUS ${result.kind === 'accept' ? 'Access-Accept' : 'Access-Reject'}`,
+            username: request.username,
+            endpoint: server.name,
+            attempt,
+          });
+          return { ...result, attemptedEndpoints };
+        }
+
+        if (result.kind === 'timeout') {
+          sawTimeout = true;
+          this.logger.warn({
+            event: 'auth.radius.timeout',
+            message: 'RADIUS timeout',
+            username: request.username,
+            endpoint: server.name,
+            attempt,
+            timeoutMs: profile.timeoutMs,
+          });
+          continue;
+        }
+
+        lastError = result.message;
+        this.logger.error({
+          event: 'auth.radius.error',
+          message: 'RADIUS error',
+          username: request.username,
+          endpoint: server.name,
+          attempt,
+          error: result.message,
+        });
+        break;
       }
     }
 
-    return { kind: 'error', message: lastError ?? 'RADIUS attempts exhausted' };
+    if (lastError) {
+      return { kind: 'error', message: lastError, attemptedEndpoints };
+    }
+    if (sawTimeout) {
+      return { kind: 'timeout', attemptedEndpoints };
+    }
+
+    return { kind: 'error', message: 'RADIUS attempts exhausted', attemptedEndpoints };
+  }
+
+  private sendAttempt(attempt: RadiusSendAttempt): Promise<RadiusAuthResult> {
+    if (this.packetSender) {
+      return this.packetSender(attempt);
+    }
+
+    return this.sendOnce(
+      attempt.server.host,
+      attempt.server.port,
+      attempt.packet,
+      attempt.identifier,
+      attempt.requestAuthenticator,
+      attempt.server.secret,
+      attempt.timeoutMs,
+    );
   }
 
   private sendOnce(
@@ -157,9 +205,11 @@ export class UdpRadiusAuthenticator implements IRadiusAuthenticator {
           }
 
           if (parsed.code === RADIUS_CODE_ACCESS_ACCEPT) {
+            const attributes = extractRadiusAttributes(parsed.attributesRaw);
             settle({
               kind: 'accept',
-              groups: extractGroupsFromAttributes(parsed.attributesRaw),
+              groups: attributes.userGroups,
+              attributes,
             });
           } else if (parsed.code === RADIUS_CODE_ACCESS_REJECT) {
             settle({ kind: 'reject', reason: 'Access-Reject' });

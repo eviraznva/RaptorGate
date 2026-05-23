@@ -25,7 +25,11 @@ const MAX_USERNAME_LENGTH = 253;
 const NAS_PORT_TYPE_VIRTUAL = 5;
 const PALO_ALTO_VENDOR_ID = 25461;
 const PALO_ALTO_ATTR_ADMIN_ROLE = 1;
+const PALO_ALTO_ATTR_ACCESS_DOMAIN = 2;
+const PALO_ALTO_ATTR_PANORAMA_ADMIN_ROLE = 3;
+const PALO_ALTO_ATTR_PANORAMA_ACCESS_DOMAIN = 4;
 const PALO_ALTO_ATTR_USER_GROUP = 5;
+const PALO_ALTO_ATTR_USER_DOMAIN = 6;
 
 export interface RadiusAccessRequestInput {
   username: string;
@@ -120,6 +124,16 @@ export interface ParsedRadiusResponse {
   attributesRaw: Buffer;
 }
 
+export interface RadiusAttributeResult {
+  userGroups: string[];
+  adminRole: string | null;
+  accessDomain: string | null;
+  panoramaAdminRole: string | null;
+  panoramaAccessDomain: string | null;
+  userDomain: string | null;
+  rawDiagnostics: string[];
+}
+
 // Parsuje naglowek odpowiedzi RADIUS bez weryfikacji autentykatora.
 export function parseResponse(buffer: Buffer): ParsedRadiusResponse {
   if (buffer.length < HEADER_SIZE) {
@@ -146,29 +160,54 @@ export function parseResponse(buffer: Buffer): ParsedRadiusResponse {
 }
 
 export function extractGroupsFromAttributes(attributes: Buffer): string[] {
+  return extractRadiusAttributes(attributes).userGroups;
+}
+
+export function extractRadiusAttributes(attributes: Buffer): RadiusAttributeResult {
   const values = decodeAttributes(attributes);
   const rawGroups = [
     ...(values.get(RADIUS_ATTR_FILTER_ID) ?? []),
     ...(values.get(RADIUS_ATTR_CLASS) ?? []),
     ...extractCiscoAvPairs(values.get(RADIUS_ATTR_VENDOR_SPECIFIC) ?? []),
   ];
-  const groups: string[] = [];
+  const result: RadiusAttributeResult = {
+    userGroups: [],
+    adminRole: null,
+    accessDomain: null,
+    panoramaAdminRole: null,
+    panoramaAccessDomain: null,
+    userDomain: null,
+    rawDiagnostics: [],
+  };
 
   for (const raw of rawGroups) {
     for (const group of splitGroupValue(raw.toString('utf8'))) {
-      if (!groups.includes(group)) {
-        groups.push(group);
-      }
-    }
-  }
-  for (const raw of extractPaloAltoVsas(values.get(RADIUS_ATTR_VENDOR_SPECIFIC) ?? [])) {
-    const group = raw.toString('utf8').trim();
-    if (group && !groups.includes(group)) {
-      groups.push(group);
+      addUnique(result.userGroups, group);
     }
   }
 
-  return groups;
+  for (const vsa of extractPaloAltoVsas(values.get(RADIUS_ATTR_VENDOR_SPECIFIC) ?? [])) {
+    const value = vsa.value.toString('utf8').trim();
+    if (!value) continue;
+
+    if (vsa.vendorType === PALO_ALTO_ATTR_ADMIN_ROLE) {
+      result.adminRole ??= value;
+    } else if (vsa.vendorType === PALO_ALTO_ATTR_ACCESS_DOMAIN) {
+      result.accessDomain ??= value;
+    } else if (vsa.vendorType === PALO_ALTO_ATTR_PANORAMA_ADMIN_ROLE) {
+      result.panoramaAdminRole ??= value;
+    } else if (vsa.vendorType === PALO_ALTO_ATTR_PANORAMA_ACCESS_DOMAIN) {
+      result.panoramaAccessDomain ??= value;
+    } else if (vsa.vendorType === PALO_ALTO_ATTR_USER_GROUP) {
+      addUnique(result.userGroups, value);
+    } else if (vsa.vendorType === PALO_ALTO_ATTR_USER_DOMAIN) {
+      result.userDomain ??= value;
+    } else {
+      result.rawDiagnostics.push(`unsupported Palo Alto VSA ${vsa.vendorType}`);
+    }
+  }
+
+  return result;
 }
 
 // Sprawdza Response Authenticator wedlug RFC 2865 sec. 3:
@@ -244,8 +283,13 @@ function extractCiscoAvPairs(attributes: Buffer[]): Buffer[] {
   return pairs;
 }
 
-function extractPaloAltoVsas(attributes: Buffer[]): Buffer[] {
-  const values: Buffer[] = [];
+interface PaloAltoVsa {
+  vendorType: number;
+  value: Buffer;
+}
+
+function extractPaloAltoVsas(attributes: Buffer[]): PaloAltoVsa[] {
+  const values: PaloAltoVsa[] = [];
 
   for (const attribute of attributes) {
     if (attribute.length < 6) continue;
@@ -258,12 +302,10 @@ function extractPaloAltoVsas(attributes: Buffer[]): Buffer[] {
       const vendorType = attribute.readUInt8(offset);
       const vendorLength = attribute.readUInt8(offset + 1);
       if (vendorLength < 2 || offset + vendorLength > attribute.length) break;
-      if (
-        vendorType === PALO_ALTO_ATTR_ADMIN_ROLE ||
-        vendorType === PALO_ALTO_ATTR_USER_GROUP
-      ) {
-        values.push(attribute.subarray(offset + 2, offset + vendorLength));
-      }
+      values.push({
+        vendorType,
+        value: attribute.subarray(offset + 2, offset + vendorLength),
+      });
       offset += vendorLength;
     }
   }
@@ -291,6 +333,12 @@ function splitGroupValue(value: string): string[] {
     .split(/[,\s;]+/)
     .map((group) => group.trim())
     .filter((group) => group.length > 0);
+}
+
+function addUnique(values: string[], value: string): void {
+  if (value && !values.includes(value)) {
+    values.push(value);
+  }
 }
 
 function timingSafeEqualBuffer(a: Buffer, b: Buffer): boolean {
