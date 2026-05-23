@@ -1,5 +1,8 @@
 # Issue A — First-Class Identity Configuration Implementation Plan
 
+> Superseded by `docs/superpowers/specs/2026-05-23-identity-radius-ldap-production-design.md` and `docs/superpowers/plans/2026-05-23-identity-radius-ldap-production.md`.
+> This file remains historical context for the first configuration-only issue. Do not execute it as the production RADIUS/LDAP plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move RADIUS/LDAP from process env into the firewall's first-class configuration model (named server profiles + authentication profiles + identity settings), so that captive portal, admin login, and future VPN-style flows all consume the same config snapshot — and so that import/export/apply/rollback round-trip identity config like every other firewall section.
@@ -3259,4 +3262,3 @@ If lint or smoke surfaces issues, fix and commit a single follow-up commit befor
 - **`overwriteAll` for settings:** there is no list, so `IIdentitySettingsRepository` exposes `save()` not `overwriteAll()`. Apply/import/rollback use `save()` accordingly.
 - **`SecretRef` and Issue B:** This plan stores only the reference string, never plaintext. If reviewer asks "where do secrets go?" — that is Issue B. The contract here is fixed: `secret://<scope>/<owner-id>/<field>`.
 - **Existing Rust code:** The Rust crate currently does not consume `identity_config`. That is expected — Issues D/E/G adapt the firewall side. For Issue A, only the backend → firewall transport contract has to be ready.
-
