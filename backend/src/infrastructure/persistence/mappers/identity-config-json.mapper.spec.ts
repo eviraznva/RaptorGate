@@ -72,6 +72,13 @@ function config(): IdentityConfiguration {
         now,
         createdBy,
         [{ matchType: 'ldap_group', matchValue: 'admins', role: 'admin' }],
+        {
+          allowList: {
+            usernames: ['alice'],
+            groups: ['vpn-users'],
+            includeAllAuthenticated: false,
+          },
+        },
       ),
     ],
     IdentitySettings.create('auth-1', null, now, null, {
@@ -105,6 +112,16 @@ describe('IdentityConfigJsonMapper', () => {
     expect(roundtrip.getAuthenticationProfiles()[0].getAdminRoleMappings()).toEqual([
       { matchType: 'ldap_group', matchValue: 'admins', role: 'admin' },
     ]);
+    expect(record.authentication_profiles.items[0].allowList).toEqual({
+      usernames: ['alice'],
+      groups: ['vpn-users'],
+      includeAllAuthenticated: false,
+    });
+    expect(roundtrip.getAuthenticationProfiles()[0].getAllowList()).toEqual({
+      usernames: ['alice'],
+      groups: ['vpn-users'],
+      includeAllAuthenticated: false,
+    });
   });
 
   it('maps legacy radius profile records to one ordered endpoint', () => {

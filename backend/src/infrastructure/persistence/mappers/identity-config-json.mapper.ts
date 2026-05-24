@@ -399,6 +399,7 @@ export class IdentityConfigJsonMapper {
       groupSource: profile.getGroupSource(),
       sessionTtlSeconds: profile.getSessionTtlSeconds(),
       adminRoleMappings: profile.getAdminRoleMappings(),
+      allowList: profile.getAllowList(),
       createdAt: profile.getCreatedAt().toISOString(),
       updatedAt: profile.getUpdatedAt().toISOString(),
       createdBy: profile.getCreatedBy(),
@@ -422,6 +423,7 @@ export class IdentityConfigJsonMapper {
       new Date(record.updatedAt),
       record.createdBy,
       record.adminRoleMappings as AdminRoleMapping[],
+      { allowList: record.allowList },
     );
   }
 
