@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 use std::time::Duration;
@@ -66,6 +66,7 @@ struct PendingEntry {
 }
 
 struct PendingPayload {
+    packet_id: PacketId,
     dir: Direction,
     bytes: Vec<u8>,
     tcp_payload_start_seq: u32,
@@ -73,7 +74,7 @@ struct PendingPayload {
 
 struct SessionPending {
     map: BTreeMap<PacketId, PendingEntry>,
-    payloads: BTreeMap<PacketId, Vec<PendingPayload>>,
+    payloads: VecDeque<PendingPayload>,
 }
 
 #[derive(Default)]
@@ -223,6 +224,33 @@ fn drop_packet_ids(
             packet_id,
             reason: DropReason::StageDropped,
             temp_dst_port: None,
+        });
+    }
+}
+
+fn take_ready_payloads(pending: &mut SessionPending) -> Vec<PendingPayload> {
+    let mut ready = Vec::new();
+    loop {
+        let Some(payload) = pending.payloads.front() else {
+            break;
+        };
+
+        if !pending.map.contains_key(&payload.packet_id) {
+            break;
+        }
+
+        ready.push(pending.payloads.pop_front().expect("front payload"));
+    }
+    ready
+}
+
+fn send_l4_payloads(tx: &mpsc::UnboundedSender<L4Input>, payloads: Vec<PendingPayload>) {
+    for payload in payloads {
+        let _ = tx.send(L4Input::Bytes {
+            dir: payload.dir,
+            bytes: payload.bytes,
+            packet_id: payload.packet_id,
+            tcp_payload_start_seq: payload.tcp_payload_start_seq,
         });
     }
 }
@@ -581,17 +609,10 @@ where
         let queued_payloads = {
             let mut pending = pending_arc.lock().expect("session pending");
             pending.map.insert(packet_id, PendingEntry { packet, dir });
-            pending.payloads.remove(&packet_id).unwrap_or_default()
+            take_ready_payloads(&mut pending)
         };
 
-        for payload in queued_payloads {
-            let _ = tx.send(L4Input::Bytes {
-                dir: payload.dir,
-                bytes: payload.bytes,
-                packet_id,
-                tcp_payload_start_seq: payload.tcp_payload_start_seq,
-            });
-        }
+        send_l4_payloads(&tx, queued_payloads);
 
         if let Some(tcp_payload_start_seq) = empty_payload_start_seq {
             let _ = tx.send(L4Input::Bytes {
@@ -812,7 +833,7 @@ where
 
         let pending_arc = Arc::new(StdMutex::new(SessionPending {
             map: BTreeMap::new(),
-            payloads: BTreeMap::new(),
+            payloads: VecDeque::new(),
         }));
         self.pending_by_flow.insert(flow, Arc::clone(&pending_arc));
 
@@ -980,24 +1001,25 @@ where
             return;
         };
 
-        if let Some(pending_arc) = self.pending_by_flow.get(&flow) {
+        let queued_payloads = if let Some(pending_arc) = self.pending_by_flow.get(&flow) {
             let mut pending = pending_arc.lock().expect("session pending");
-            if !pending.map.contains_key(&chunk.packet_id) {
-                pending.payloads.entry(chunk.packet_id).or_default().push(PendingPayload {
-                    dir,
-                    bytes: chunk.payload.clone(),
-                    tcp_payload_start_seq: chunk.tcp_payload_start_seq,
-                });
-                return;
-            }
-        }
+            pending.payloads.push_back(PendingPayload {
+                packet_id: chunk.packet_id,
+                dir,
+                bytes: chunk.payload.clone(),
+                tcp_payload_start_seq: chunk.tcp_payload_start_seq,
+            });
+            take_ready_payloads(&mut pending)
+        } else {
+            vec![PendingPayload {
+                packet_id: chunk.packet_id,
+                dir,
+                bytes: chunk.payload.clone(),
+                tcp_payload_start_seq: chunk.tcp_payload_start_seq,
+            }]
+        };
 
-        let _ = tx.send(L4Input::Bytes {
-            dir,
-            bytes: chunk.payload.clone(),
-            packet_id: chunk.packet_id,
-            tcp_payload_start_seq: chunk.tcp_payload_start_seq,
-        });
+        send_l4_payloads(&tx, queued_payloads);
     }
 }
 
@@ -1097,6 +1119,16 @@ mod tests {
         }
         payload.extend_from_slice(&[0x00, 0x00, 0x01, 0x00, 0x01]);
         payload
+    }
+
+    fn pending_packet() -> PacketContext {
+        let mut raw = Vec::new();
+        etherparse::PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+            .udp(1000, 2000)
+            .write(&mut raw, b"payload")
+            .expect("packet");
+        PacketContext::from_raw(raw, Arc::from("eth0")).expect("packet")
     }
 
     fn sample_tcp_entry_established(id: u64) -> Arc<crate::conntrack::entry::ConntrackEntry> {
@@ -1414,6 +1446,47 @@ mod tests {
             ReleaseAction::Forward { packet } => assert_eq!(packet.packet_id(), packet_id),
             ReleaseAction::Drop { .. } => panic!("expected forward"),
         }
+    }
+
+    #[test]
+    fn pending_payloads_keep_reassembly_order_across_admit_race() {
+        let early_id = PacketId(1);
+        let late_id = PacketId(2);
+        let mut pending = SessionPending {
+            map: BTreeMap::new(),
+            payloads: VecDeque::new(),
+        };
+
+        pending.map.insert(late_id, PendingEntry {
+            packet: pending_packet(),
+            dir: Direction::Original,
+        });
+        pending.payloads.push_back(PendingPayload {
+            packet_id: early_id,
+            dir: Direction::Original,
+            bytes: b"first".to_vec(),
+            tcp_payload_start_seq: 1000,
+        });
+        pending.payloads.push_back(PendingPayload {
+            packet_id: late_id,
+            dir: Direction::Original,
+            bytes: b"second".to_vec(),
+            tcp_payload_start_seq: 1005,
+        });
+
+        assert!(take_ready_payloads(&mut pending).is_empty());
+
+        pending.map.insert(early_id, PendingEntry {
+            packet: pending_packet(),
+            dir: Direction::Original,
+        });
+        let payloads = take_ready_payloads(&mut pending);
+
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0].packet_id, early_id);
+        assert_eq!(payloads[0].bytes, b"first");
+        assert_eq!(payloads[1].packet_id, late_id);
+        assert_eq!(payloads[1].bytes, b"second");
     }
 
     #[tokio::test]

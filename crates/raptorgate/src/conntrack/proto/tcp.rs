@@ -186,6 +186,7 @@ impl ProtocolHandler for TcpHandler {
         let tcp = extract_tcp(pkt)?;
         let flags = parse_flags(&tcp);
         let flag_bit = classify_flags(flags);
+        let payload_len = tcp.payload().len() as u32;
 
         if flag_bit != TcpFlagBit::Syn && !config.tcp.loose {
             return Err(NewStateError::InvalidFirst {
@@ -196,7 +197,13 @@ impl ProtocolHandler for TcpHandler {
 
         let initial_state = match flag_bit {
             TcpFlagBit::Syn => TcpConntrack::SynSent,
-            TcpFlagBit::Ack | TcpFlagBit::SynAck if config.tcp.loose => TcpConntrack::Established,
+            TcpFlagBit::Ack | TcpFlagBit::SynAck if config.tcp.loose && payload_len == 0 => {
+                TcpConntrack::Established
+            },
+            TcpFlagBit::Ack | TcpFlagBit::SynAck if config.tcp.loose => return Err(NewStateError::InvalidFirst {
+                proto: Protocol::Tcp,
+                reason: "first loose TCP packet has payload",
+            }),
 
             _ => return Err(NewStateError::InvalidFirst {
                 proto: Protocol::Tcp,
@@ -205,8 +212,6 @@ impl ProtocolHandler for TcpHandler {
         };
 
         let mut seen_orig = TcpDirState::default();
-
-        let payload_len = tcp.payload().len() as u32;
 
         let seq = tcp.sequence_number();
         let ack = tcp.acknowledgment_number();
@@ -1151,6 +1156,29 @@ mod tests {
         let NewStateOutcome::State(ProtoState::Tcp(s)) = state else { panic!(); };
 
         assert_eq!(s.state, TcpConntrack::Established);
+    }
+
+    #[test]
+    fn new_state_loose_rejects_ack_with_payload() {
+        let payload = b"HTTP/1.1 200 OK\r\n\r\n";
+        let b = PacketBuilder::ipv4(SERVER_IP, CLIENT_IP, 64)
+            .tcp(SERVER_PORT, CLIENT_PORT, 2000, 5840)
+            .psh()
+            .ack(1001);
+        let mut buf = Vec::with_capacity(b.size(payload.len()));
+
+        b.write(&mut buf, payload).unwrap();
+
+        let pkt = parse(&buf);
+
+        let h = TcpHandler::new(Arc::new(ObserverRegistry::default()));
+
+        let r = h.new_state(&pkt, Direction::Original, &cfg_loose());
+
+        assert!(matches!(
+            r,
+            Err(NewStateError::InvalidFirst { reason: "first loose TCP packet has payload", .. })
+        ));
     }
 
     #[test]
