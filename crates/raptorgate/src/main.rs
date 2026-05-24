@@ -647,6 +647,7 @@ async fn main() {
             pinning_detector: decision_engine.pinning_detector_arc(),
             interface_monitor: Arc::clone(&interface_monitor),
             interface_controller: Arc::clone(&interface_controller),
+            physical_reconciler: Arc::new(crate::interfaces::PhysicalInterfaceReconciler::new(Arc::clone(&interface_controller))),
             vlan_reconciler,
             interface_sniffer: Arc::clone(&sniffer),
             metrics_collector: Arc::clone(&metrics_collector),

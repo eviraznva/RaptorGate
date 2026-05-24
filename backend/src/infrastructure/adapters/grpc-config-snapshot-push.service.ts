@@ -14,6 +14,7 @@ import type {
   FactoryResetResult,
   IConfigSnapshotPushService,
 } from "../../application/ports/config-snapshot-push-service.interface.js";
+import { normalizeZoneInterfaceAddressesForConfig } from "../../application/services/zone-interface-config-normalizer.js";
 import type { ConfigurationSnapshot } from "../../domain/entities/configuration-snapshot.entity.js";
 import type {
   DnssecFailureAction,
@@ -253,7 +254,10 @@ export class GrpcConfigSnapshotPushService
         id: zi.getId(),
         zoneId: zi.getZoneId(),
         status: this.toZoneInterfaceStatus(zi.getStatus()),
-        addresses: zi.getAddresses(),
+        addresses: normalizeZoneInterfaceAddressesForConfig(
+          zi.getVlanId(),
+          zi.getAddresses(),
+        ),
         ...(zi.getVlanId() === null
           ? { physical: { interfaceName: zi.getInterfaceName() } }
           : {

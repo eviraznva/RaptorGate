@@ -13,7 +13,6 @@ import type { ClientGrpc } from "@nestjs/microservices";
 import { firstValueFrom } from "rxjs";
 import type {
   IFirewallZoneQueryService,
-  UpdateZoneInterfacePropertiesInput,
 } from "../../application/ports/firewall-zone-query-service.interface.js";
 import { Zone } from "../../domain/entities/zone.entity.js";
 import {
@@ -165,12 +164,6 @@ export class GrpcFirewallZoneQueryService
     } catch (error) {
       throw this.toTransportException("set interface state", error);
     }
-  }
-
-  async updatePhysicalInterfaceProperties(
-    _input: UpdateZoneInterfacePropertiesInput,
-  ): Promise<void> {
-    return;
   }
 
   async getZonePairs(): Promise<ZonePair[]> {

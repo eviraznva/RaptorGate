@@ -47,8 +47,7 @@ use crate::proto::services::{
     GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse,
     FactoryResetRequest, FactoryResetResponse, GetSystemTimeRequest, GetSystemTimeResponse,
     PushActiveConfigSnapshotRequest, PushActiveConfigSnapshotResponse, SetInterfaceStateRequest,
-    SetInterfaceStateResponse, UpdatePhysicalInterfacePropertiesRequest,
-    UpdatePhysicalInterfacePropertiesResponse,
+    SetInterfaceStateResponse,
 };
 use crate::tls::pinning_detector::PinningDetector;
 use crate::tls::cert_storage::clear_ca_files;
@@ -56,9 +55,9 @@ use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
 use crate::tls::decryption_mirror::{DecryptionMirror, DecryptionMirrorConfig};
 use crate::validation::validate_bundle;
 use crate::zones::Zone;
-use crate::interfaces::{InterfaceController, InterfaceMonitor};
+use crate::interfaces::{InterfaceController, InterfaceMonitor, PhysicalInterfaceReconciler};
 use crate::zones::provider::{ZonePairProvider, ZoneProvider};
-use crate::zones::{ZoneInterfaceId, ZonePair, ZoneInterface};
+use crate::zones::{ZoneInterfaceId, ZoneInterfaceKind, ZoneInterface, ZonePair};
 
 pub struct QueryServer<PolicySwap, Monitor, Controller>
 where
@@ -169,6 +168,7 @@ where
     pub pinning_detector: Arc<PinningDetector>,
     pub interface_monitor: Arc<Monitor>,
     pub interface_controller: Arc<Controller>,
+    pub physical_reconciler: Arc<PhysicalInterfaceReconciler<Controller>>,
     pub vlan_reconciler: Arc<crate::interfaces::VlanReconciler<Controller>>,
     pub interface_sniffer: Arc<crate::data_plane::interface_sniffer::InterfaceSniffer>,
     pub metrics_collector: Arc<MetricsCollector>,
@@ -202,6 +202,7 @@ where
             pinning_detector: Arc::clone(&self.pinning_detector),
             interface_monitor: Arc::clone(&self.interface_monitor),
             interface_controller: Arc::clone(&self.interface_controller),
+            physical_reconciler: Arc::clone(&self.physical_reconciler),
             vlan_reconciler: Arc::clone(&self.vlan_reconciler),
             interface_sniffer: Arc::clone(&self.interface_sniffer),
             metrics_collector: Arc::clone(&self.metrics_collector),
@@ -550,56 +551,6 @@ where
         Ok(Response::new(crate::proto::services::SetInterfaceStateResponse {}))
     }
 
-    async fn update_physical_interface_properties(
-        &self,
-        request: Request<UpdatePhysicalInterfacePropertiesRequest>,
-    ) -> Result<Response<UpdatePhysicalInterfacePropertiesResponse>, Status> {
-        let req = request.into_inner();
-        let id: ZoneInterfaceId = Uuid::try_parse(&req.id)
-            .map_err(|e| Status::invalid_argument(format!("invalid id: {e}")))?
-            .into();
-
-        let zone_interface = self.zone_interface_store.get_zone_interface(&id)
-            .ok_or_else(|| Status::not_found(format!("zone interface with id {id} not found")))?;
-
-        // Validate that this is a physical interface
-        if !matches!(zone_interface.kind, crate::zones::ZoneInterfaceKind::Physical(_)) {
-            return Err(Status::invalid_argument(
-                "Cannot update VLAN interface properties directly; VLANs are managed declaratively via bundle"
-            ));
-        }
-
-        let os_name = self.zone_interface_store.resolve_os_name(&id)
-            .ok_or_else(|| Status::not_found(format!("OS name for interface {id} could not be resolved")))?;
-
-        tracing::info!(
-            event = "grpc.query.update_physical_interface_properties.started",
-            zone_interface_id = %id,
-            os_name = %os_name,
-            new_name = req.new_name.as_deref().unwrap_or(""),
-            new_address = req.new_address.as_deref().unwrap_or(""),
-            "updating physical interface properties"
-        );
-
-        self.interface_controller
-            .set_interface_properties(
-                &os_name,
-                req.new_name.as_deref(),
-                req.new_address.as_deref(),
-            )
-            .await
-            .map_err(|e| Status::internal(format!("failed to set interface properties: {e}")))?;
-
-        tracing::info!(
-            event = "grpc.query.update_physical_interface_properties.succeeded",
-            zone_interface_id = %id,
-            os_name = %os_name,
-            "physical interface properties updated"
-        );
-        Ok(Response::new(UpdatePhysicalInterfacePropertiesResponse {
-            message: "Physical interface properties updated successfully".to_string(),
-        }))
-    }
 }
 
 #[tonic::async_trait]
@@ -749,6 +700,24 @@ where
             }));
         }
 
+        let old_zone_interfaces = self.zone_interface_store.get_zone_interfaces().clone();
+
+        if let Some(error) = validate_physical_declarative_updates(&old_zone_interfaces, &zone_interfaces) {
+            tracing::warn!(
+                event = "config_snapshot.push.rejected",
+                correlation_id,
+                snapshot_id,
+                message = %error,
+                "active config snapshot rejected by physical interface validation"
+            );
+            return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                correlation_id,
+                accepted: false,
+                message: error,
+                applied_snapshot_id: String::new(),
+            }));
+        }
+
         let bypass_domains: Vec<String> = bundle
             .ssl_bypass_list
             .iter()
@@ -850,8 +819,23 @@ where
             .await
             .map_err(|e| Status::internal(format!("failed to swap zones: {e}")))?;
 
-        // Capture old zone interfaces before swapping
         let old_zone_interfaces = self.zone_interface_store.get_zone_interfaces().clone();
+
+        if let Some(error) = validate_physical_declarative_updates(&old_zone_interfaces, &zone_interfaces) {
+            tracing::warn!(
+                event = "config_snapshot.push.rejected",
+                correlation_id,
+                snapshot_id,
+                message = %error,
+                "active config snapshot rejected by physical interface validation"
+            );
+            return Ok(Response::new(PushActiveConfigSnapshotResponse {
+                correlation_id,
+                accepted: false,
+                message: error,
+                applied_snapshot_id: String::new(),
+            }));
+        }
 
         self.zone_interface_store
             .swap_zone_interfaces(zone_interfaces.into_iter().collect())
@@ -859,6 +843,14 @@ where
             .map_err(|e| Status::internal(format!("failed to swap zone interfaces: {e}")))?;
 
         let new_zone_interfaces = self.zone_interface_store.get_zone_interfaces();
+
+        let physical_errors = self
+            .physical_reconciler
+            .reconcile(&old_zone_interfaces, &new_zone_interfaces)
+            .await;
+        if !physical_errors.is_empty() {
+            tracing::warn!(errors = ?physical_errors, "physical reconciliation partial failures");
+        }
 
         // VLAN reconciliation must run before sniffer so OS interfaces exist
         let reconciliation_errors = self.vlan_reconciler
@@ -909,6 +901,54 @@ where
             applied_snapshot_id: snapshot_id,
         }))
     }
+
+}
+
+fn has_vlan_child(
+    zone_interfaces: &HashMap<ZoneInterfaceId, ZoneInterface>,
+    parent_id: &ZoneInterfaceId,
+) -> bool {
+    zone_interfaces.values().any(|zone_interface| {
+        matches!(
+            &zone_interface.kind,
+            ZoneInterfaceKind::Vlan(vlan) if &vlan.parent_interface_id == parent_id
+        )
+    })
+}
+
+fn validate_physical_declarative_updates(
+    old_zone_interfaces: &HashMap<ZoneInterfaceId, ZoneInterface>,
+    new_zone_interfaces: &HashMap<ZoneInterfaceId, ZoneInterface>,
+) -> Option<String> {
+    for (id, zone_interface) in new_zone_interfaces {
+        let ZoneInterfaceKind::Physical(new_physical) = &zone_interface.kind else {
+            continue;
+        };
+
+        if zone_interface.addresses.len() > 1 {
+            return Some(format!(
+                "physical zone interface {id} may specify at most one desired address"
+            ));
+        }
+
+        let Some(old_zone_interface) = old_zone_interfaces.get(id) else {
+            continue;
+        };
+
+        let ZoneInterfaceKind::Physical(old_physical) = &old_zone_interface.kind else {
+            continue;
+        };
+
+        if old_physical.interface_name != new_physical.interface_name
+            && (has_vlan_child(old_zone_interfaces, id) || has_vlan_child(new_zone_interfaces, id))
+        {
+            return Some(format!(
+                "physical zone interface {id} cannot be renamed while VLAN dependents exist"
+            ));
+        }
+    }
+
+    None
 }
 
 impl<PolicySwap, Monitor, Controller> QueryHandler<PolicySwap, Monitor, Controller>
