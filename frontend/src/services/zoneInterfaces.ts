@@ -65,6 +65,13 @@ export const zoneInterfacesApi = createApi({
       }),
       invalidatesTags: ["ZoneInterfaces"],
     }),
+    deleteZoneInterface: builder.mutation<void, string>({
+      query: (id) => ({
+        url: `/zone-interface/${id}`,
+        method: "DELETE",
+      }),
+      invalidatesTags: ["ZoneInterfaces"],
+    }),
   }),
 });
 
@@ -72,4 +79,5 @@ export const {
   useGetZoneInterfacesQuery,
   useEditZoneInterfaceMutation,
   useCreateZoneInterfaceMutation,
+  useDeleteZoneInterfaceMutation,
 } = zoneInterfacesApi;

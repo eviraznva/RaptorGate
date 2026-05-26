@@ -33,6 +33,7 @@ import {
   useGetZoneInterfacesQuery,
   useEditZoneInterfaceMutation,
   useCreateZoneInterfaceMutation,
+  useDeleteZoneInterfaceMutation,
   type ZoneInterfacesPayload,
   type EditZoneInterfaceBody,
   type CreateZoneInterfaceBody,
@@ -63,6 +64,8 @@ export default function Zones() {
 
   const [editZoneInterface] = useEditZoneInterfaceMutation();
   const [createZoneInterface] = useCreateZoneInterfaceMutation();
+  const [deleteZoneInterface, { isError: isDeletingZoneInterfaceError }] =
+    useDeleteZoneInterfaceMutation();
 
   const [createZonePair] = useCreateZonePairMutation();
   const [updateZonePair] = useUpdateZonePairMutation();
@@ -117,6 +120,9 @@ export default function Zones() {
   const [creatingVlanParentId, setCreatingVlanParentId] = useState<
     string | null
   >(null);
+  const [confirmDeleteInterfaceId, setConfirmDeleteInterfaceId] = useState<string | null>(
+    null,
+  );
 
   // ── Zone handlers ──
   const handleCreateZone = async function (data: CreateZoneBody) {
@@ -351,6 +357,32 @@ export default function Zones() {
     [dispatch, createZoneInterface],
   );
 
+  const handleDeleteZoneInterfaceApi = async function (id: string) {
+    try {
+      await deleteZoneInterface(id).unwrap();
+    } catch (error) {}
+  };
+
+  const handleInterfaceDeleteClick = useCallback(
+    (id: string) => setConfirmDeleteInterfaceId(id),
+    [],
+  );
+  const handleInterfaceDeleteCancel = useCallback(
+    () => setConfirmDeleteInterfaceId(null),
+    [],
+  );
+
+  const handleInterfaceDeleteConfirm = useCallback(
+    async (id: string) => {
+      await handleDeleteZoneInterfaceApi(id);
+      if (!isDeletingZoneInterfaceError) {
+        dispatch(zoneInterfacesSliceReducers.deleteZoneInterface(id));
+      }
+      setConfirmDeleteInterfaceId(null);
+    },
+    [dispatch, isDeletingZoneInterfaceError],
+  );
+
   return (
     <>
       <div className="min-h-screen bg-[#0c0c0c] flex flex-col text-[#f5f5f5]">
@@ -392,12 +424,16 @@ export default function Zones() {
                 {activeTab === "zone-interfaces" && (
                   <ZoneInterfacesView
                     zoneInterfaces={zoneInterfacesState.zoneInterfaces}
+                    confirmDeleteId={confirmDeleteInterfaceId}
                     isRefreshing={isFetchingZoneInterfaces}
                     onRefresh={() => {
                       void refetchZoneInterfaces();
                     }}
                     onEdit={handleEditZoneInterfaceClick}
                     onCreateVlan={handleCreateVlanClick}
+                    onDeleteClick={handleInterfaceDeleteClick}
+                    onDeleteConfirm={handleInterfaceDeleteConfirm}
+                    onDeleteCancel={handleInterfaceDeleteCancel}
                   />
                 )}
               </div>

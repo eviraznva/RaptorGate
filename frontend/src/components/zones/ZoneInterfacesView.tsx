@@ -9,10 +9,14 @@ import ZoneInterfacesToolbar, {
 
 type ZoneInterfacesViewProps = {
   zoneInterfaces: ZoneInterface[];
+  confirmDeleteId: string | null;
   isRefreshing: boolean;
   onRefresh: () => void;
   onEdit: (zoneInterface: ZoneInterface) => void;
   onCreateVlan: (zoneInterface: ZoneInterface) => void;
+  onDeleteClick: (id: string) => void;
+  onDeleteConfirm: (id: string) => void;
+  onDeleteCancel: () => void;
 };
 
 function matchesSearch(zoneInterface: ZoneInterface, search: string) {
@@ -32,10 +36,14 @@ function matchesSearch(zoneInterface: ZoneInterface, search: string) {
 
 export default function ZoneInterfacesView({
   zoneInterfaces,
+  confirmDeleteId,
   isRefreshing,
   onRefresh,
   onEdit,
   onCreateVlan,
+  onDeleteClick,
+  onDeleteConfirm,
+  onDeleteCancel,
 }: ZoneInterfacesViewProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ZoneInterfaceFilter>("all");
@@ -77,8 +85,12 @@ export default function ZoneInterfacesView({
         />
         <ZoneInterfacesTable
           zoneInterfaces={filteredZoneInterfaces}
+          confirmDeleteId={confirmDeleteId}
           onEdit={onEdit}
           onCreateVlan={onCreateVlan}
+          onDeleteClick={onDeleteClick}
+          onDeleteConfirm={onDeleteConfirm}
+          onDeleteCancel={onDeleteCancel}
         />
       </div>
     </>

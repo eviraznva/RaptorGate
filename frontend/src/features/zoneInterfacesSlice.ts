@@ -22,9 +22,18 @@ export const zoneInterfacesSlice = createSlice({
     addZoneInterface: (state, action: PayloadAction<ZoneInterface>) => {
       state.zoneInterfaces.push(action.payload);
     },
+    deleteZoneInterface: (state, action: PayloadAction<string>) => {
+      state.zoneInterfaces = state.zoneInterfaces.filter(
+        (zi) => zi.id !== action.payload,
+      );
+    },
   },
 });
 
-export const { setZoneInterfaces, editZoneInterface, addZoneInterface } =
-  zoneInterfacesSlice.actions;
+export const {
+  setZoneInterfaces,
+  editZoneInterface,
+  addZoneInterface,
+  deleteZoneInterface,
+} = zoneInterfacesSlice.actions;
 export default zoneInterfacesSlice.reducer;
