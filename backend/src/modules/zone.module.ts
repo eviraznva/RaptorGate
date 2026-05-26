@@ -5,6 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { FIREWALL_ZONE_QUERY_SERVICE_TOKEN } from '../application/ports/firewall-zone-query-service.interface.js';
 import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
+import { CreateZoneInterfaceUseCase } from '../application/use-cases/create-zone-interface.use-case.js';
 import { CreateZoneUseCase } from '../application/use-cases/create-zone.use-case.js';
 import { DeleteZoneUseCase } from '../application/use-cases/delete-zone.use-case.js';
 import { EditZoneInterfaceUseCase } from '../application/use-cases/edit-zone-interface.use-case.js';
@@ -70,6 +71,7 @@ import type { Env } from '../shared/config/env.validation.js';
   ],
   controllers: [ZoneController, ZoneInterfaceController],
   providers: [
+    CreateZoneInterfaceUseCase,
     CreateZoneUseCase,
     GetAllZonesUseCase,
     GetLiveZoneInterfacesUseCase,

@@ -32,8 +32,10 @@ import {
 import {
   useGetZoneInterfacesQuery,
   useEditZoneInterfaceMutation,
+  useCreateZoneInterfaceMutation,
   type ZoneInterfacesPayload,
   type EditZoneInterfaceBody,
+  type CreateZoneInterfaceBody,
 } from "../services/zoneInterfaces";
 import * as zonesSliceReducers from "../features/zonesSlice";
 import * as zonePairsSliceReducers from "../features/zonePairsSlice";
@@ -60,6 +62,7 @@ export default function Zones() {
     useDeleteZoneMutation();
 
   const [editZoneInterface] = useEditZoneInterfaceMutation();
+  const [createZoneInterface] = useCreateZoneInterfaceMutation();
 
   const [createZonePair] = useCreateZonePairMutation();
   const [updateZonePair] = useUpdateZonePairMutation();
@@ -111,6 +114,9 @@ export default function Zones() {
   const [isZoneInterfaceFormOpen, setIsZoneInterfaceFormOpen] = useState(false);
   const [editingZoneInterface, setEditingZoneInterface] =
     useState<ZoneInterface | null>(null);
+  const [creatingVlanParentId, setCreatingVlanParentId] = useState<
+    string | null
+  >(null);
 
   // ── Zone handlers ──
   const handleCreateZone = async function (data: CreateZoneBody) {
@@ -297,13 +303,20 @@ export default function Zones() {
   // ── Zone interface handlers ──
   const handleEditZoneInterfaceClick = useCallback((zi: ZoneInterface) => {
     setEditingZoneInterface(zi);
+    setCreatingVlanParentId(null);
     setIsZoneInterfaceFormOpen(true);
   }, []);
 
-  const handleCloseZoneInterfaceForm = useCallback(
-    () => setIsZoneInterfaceFormOpen(false),
-    [],
-  );
+  const handleCreateVlanClick = useCallback((zi: ZoneInterface) => {
+    setEditingZoneInterface(null);
+    setCreatingVlanParentId(zi.id);
+    setIsZoneInterfaceFormOpen(true);
+  }, []);
+
+  const handleCloseZoneInterfaceForm = useCallback(() => {
+    setIsZoneInterfaceFormOpen(false);
+    setCreatingVlanParentId(null);
+  }, []);
 
   const handleZoneInterfaceSuccess = useCallback(
     async (id: string, body: EditZoneInterfaceBody) => {
@@ -319,6 +332,23 @@ export default function Zones() {
       } catch (error) {}
     },
     [dispatch, editZoneInterface],
+  );
+
+  const handleCreateVlanSubmit = useCallback(
+    async (body: CreateZoneInterfaceBody) => {
+      try {
+        const res = await createZoneInterface(body).unwrap();
+        if (res.statusCode === 201) {
+          const { data } = res as ApiSuccess<{ zoneInterface: ZoneInterface }>;
+          dispatch(
+            zoneInterfacesSliceReducers.addZoneInterface(data.zoneInterface),
+          );
+          setIsZoneInterfaceFormOpen(false);
+          setCreatingVlanParentId(null);
+        }
+      } catch (error) {}
+    },
+    [dispatch, createZoneInterface],
   );
 
   return (
@@ -362,12 +392,12 @@ export default function Zones() {
                 {activeTab === "zone-interfaces" && (
                   <ZoneInterfacesView
                     zoneInterfaces={zoneInterfacesState.zoneInterfaces}
-                    zones={zonesState.zones}
                     isRefreshing={isFetchingZoneInterfaces}
                     onRefresh={() => {
                       void refetchZoneInterfaces();
                     }}
                     onEdit={handleEditZoneInterfaceClick}
+                    onCreateVlan={handleCreateVlanClick}
                   />
                 )}
               </div>
@@ -392,10 +422,12 @@ export default function Zones() {
       />
       <ZoneInterfaceForm
         zoneInterface={editingZoneInterface}
+        createParentInterfaceId={creatingVlanParentId}
         isOpen={isZoneInterfaceFormOpen}
         zones={zonesState.zones}
         onClose={handleCloseZoneInterfaceForm}
-        onSuccess={handleZoneInterfaceSuccess}
+        onEdit={handleZoneInterfaceSuccess}
+        onCreate={handleCreateVlanSubmit}
       />
     </>
   );

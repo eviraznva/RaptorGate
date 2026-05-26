@@ -262,7 +262,7 @@ export class GrpcConfigSnapshotPushService
           ? { physical: { interfaceName: zi.getInterfaceName() } }
           : {
               vlan: {
-                parentInterfaceId: zi.getInterfaceName(),
+                parentInterfaceId: zi.getParentInterfaceId() ?? zi.getInterfaceName(),
                 vlanId: zi.getVlanId() ?? 0,
               },
             }),

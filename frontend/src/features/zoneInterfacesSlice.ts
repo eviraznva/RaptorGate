@@ -19,9 +19,12 @@ export const zoneInterfacesSlice = createSlice({
       );
       if (idx !== -1) state.zoneInterfaces[idx] = action.payload;
     },
+    addZoneInterface: (state, action: PayloadAction<ZoneInterface>) => {
+      state.zoneInterfaces.push(action.payload);
+    },
   },
 });
 
-export const { setZoneInterfaces, editZoneInterface } =
+export const { setZoneInterfaces, editZoneInterface, addZoneInterface } =
   zoneInterfacesSlice.actions;
 export default zoneInterfacesSlice.reducer;

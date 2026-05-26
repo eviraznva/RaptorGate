@@ -74,6 +74,16 @@ export class EditZoneInterfaceUseCase {
       throw new EntityNotFoundException("zone interface", dto.id);
     }
 
+    if (
+      savedZoneInterface.getVlanId() === null &&
+      dto.vlanId !== undefined &&
+      dto.vlanId !== null
+    ) {
+      throw new BadRequestException(
+        "Cannot convert a physical interface into a VLAN. Create a new VLAN subinterface instead.",
+      );
+    }
+
     const addresses = this.buildAddresses(
       dto,
       savedZoneInterface.getAddresses(),
@@ -98,10 +108,25 @@ export class EditZoneInterfaceUseCase {
 
     const nextVlanId =
       dto.vlanId !== undefined ? dto.vlanId : savedZoneInterface.getVlanId();
+    const nextParentInterfaceId =
+      dto.parentInterfaceId !== undefined
+        ? dto.parentInterfaceId
+        : savedZoneInterface.getParentInterfaceId();
+
+    let nextInterfaceName = savedZoneInterface.getInterfaceName();
+    if (nextVlanId !== null && nextParentInterfaceId) {
+      const parent = await this.zoneInterfaceRepository.findById(
+        nextParentInterfaceId,
+      );
+      if (parent) {
+        nextInterfaceName = `${parent.getInterfaceName()}.${nextVlanId}`;
+      }
+    }
+
     const zoneInterface = ZoneInterface.create(
       savedZoneInterface.getId(),
       dto.zoneId ?? savedZoneInterface.getZoneId(),
-      savedZoneInterface.getInterfaceName(),
+      nextInterfaceName,
       nextVlanId,
       dto.isActive === undefined
         ? savedZoneInterface.getStatus()
@@ -111,6 +136,7 @@ export class EditZoneInterfaceUseCase {
       normalizeZoneInterfaceAddressesForConfig(nextVlanId, addresses),
       savedZoneInterface.getCreatedAt(),
       dto.sniffed ?? savedZoneInterface.getSniffed(),
+      nextParentInterfaceId,
     );
 
     await this.zoneInterfaceRepository.save(zoneInterface);
@@ -222,5 +248,16 @@ export class EditZoneInterfaceUseCase {
       addresses.find((address) => address.includes(".")) ??
       addresses.find((address) => address.includes(":"))
     );
+  }
+
+  async getAllInterfaces(): Promise<ZoneInterface[]> {
+    const saved = await this.zoneInterfaceRepository.findAll();
+    if (saved.length) return saved;
+
+    const live = (
+      await this.firewallZoneQueryService.getLiveZoneInterfaces()
+    ).map((zoneInterface) => normalizeZoneInterfaceForConfig(zoneInterface));
+
+    return live;
   }
 }
