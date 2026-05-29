@@ -1,5 +1,5 @@
 import { createSocket, type Socket } from 'node:dgram';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type {
   IRadiusAuthenticator,
   RadiusAuthRequest,
@@ -24,6 +24,7 @@ export interface RadiusSendAttempt {
 }
 
 export type RadiusPacketSender = (attempt: RadiusSendAttempt) => Promise<RadiusAuthResult>;
+export const RADIUS_PACKET_SENDER_TOKEN = Symbol('RADIUS_PACKET_SENDER_TOKEN');
 
 // Klient RADIUS PAP nad UDP. Implementuje retransmisje (RADIUS_RETRIES)
 // i timeout per probe (RADIUS_TIMEOUT_MS). Zwraca tagged union zamiast
@@ -32,7 +33,10 @@ export type RadiusPacketSender = (attempt: RadiusSendAttempt) => Promise<RadiusA
 export class UdpRadiusAuthenticator implements IRadiusAuthenticator {
   private readonly logger = new Logger(UdpRadiusAuthenticator.name);
 
-  constructor(private readonly packetSender: RadiusPacketSender | null = null) {}
+  constructor(
+    @Inject(RADIUS_PACKET_SENDER_TOKEN)
+    private readonly packetSender: RadiusPacketSender | null = null,
+  ) {}
 
   async authenticate(request: RadiusAuthRequest): Promise<RadiusAuthResult> {
     const profile = request.profile;

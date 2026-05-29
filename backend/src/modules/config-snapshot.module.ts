@@ -61,7 +61,10 @@ import {
 } from "../infrastructure/adapters/grpc-raptor-lang-validation.service.js";
 import { TokenService } from "../infrastructure/adapters/jwt-token.service.js";
 import { TcpLdapDirectoryAdapter } from "../infrastructure/adapters/ldap/tcp-ldap-directory.js";
-import { UdpRadiusAuthenticator } from "../infrastructure/adapters/udp-radius-authenticator.js";
+import {
+  RADIUS_PACKET_SENDER_TOKEN,
+  UdpRadiusAuthenticator,
+} from "../infrastructure/adapters/udp-radius-authenticator.js";
 import { IdentityBootstrapSeedService } from "../infrastructure/identity/identity-bootstrap-seed.service.js";
 import { Mutex } from "../infrastructure/persistence/json/file-mutex.js";
 import { FileStore } from "../infrastructure/persistence/json/file-store.js";
@@ -255,6 +258,10 @@ import { SecretModule } from "./secret.module.js";
     {
       provide: TOKEN_SERVICE_TOKEN,
       useClass: TokenService,
+    },
+    {
+      provide: RADIUS_PACKET_SENDER_TOKEN,
+      useValue: null,
     },
     {
       provide: RADIUS_AUTHENTICATOR_TOKEN,

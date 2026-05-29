@@ -34,6 +34,30 @@ Zakres: weryfikacja wszystkich zakładek Identity we frontendzie NGFW – RADIUS
 - Sprawdź, czy pokazują poprawne liczby profili i nazwy aktywnych profili
 - **Oczekiwany wynik:** Wszystkie kafelki mają dane (nie puste)
 
+### 1.4 Konta i adresy do testów RADIUS/LDAP
+
+Management frontend i captive portal używają innych ekranów logowania:
+
+- Management frontend: `https://192.168.56.254/login`
+- Captive portal: `https://192.168.10.254/portal/login`
+
+Konta labowe:
+
+| Cel | Login | Hasło | Źródło / grupa |
+|-----|-------|-------|----------------|
+| Lokalny admin awaryjny | `admin` | `admin123` | lokalna baza adminów |
+| Admin zewnętrzny | `admin` | `admin1234` | RADIUS/LDAP, LDAP group `admins` |
+| Użytkownik portalu | `user` | `user123` | RADIUS/LDAP, LDAP group `users` |
+| Gość portalu | `guest` | `guest123` | RADIUS/LDAP, LDAP group `guests` |
+
+Ważne rozróżnienie:
+
+- Login do management frontendu przechodzi przez zakładkę **Admin Login** i wymaga **Admin role mapping**, np. `ldap_group = admins -> admin`.
+- Login do captive portal przechodzi przez zakładkę **Portal Settings** i tworzy sesję identity widoczną w **Active Sessions**.
+- `Group source = ldap` oznacza, że RADIUS/LDAP tylko uwierzytelnia, a grupy są czytane z LDAP.
+- `Group source = radius_vsa` oznacza, że grupy muszą przyjść z atrybutów RADIUS, np. `Filter-Id`, `Class` albo VSA; LDAP nie powinien być użyty jako fallback.
+- Do testów enforcementu portal powinien widzieć klienta jako `192.168.10.10`, więc test portalu najlepiej wykonać z `h1` albo z przeglądarki tunelowanej przez `h1`.
+
 ---
 
 ## 2. RADIUS Profiles
@@ -55,7 +79,7 @@ Zakres: weryfikacja wszystkich zakładek Identity we frontendzie NGFW – RADIUS
    - **Timeout ms:** `3000`
    - **Retries:** `2`
    - **Shared secret ref:** `secret://identity/radius/test-radius` (powinno się auto-uzupełnić)
-   - **Set shared secret:** `testsecret`
+   - **Set shared secret:** `radiussecret`
    - **NAS IP:** _(puste)_
    - **NAS identifier:** _(puste)_
    - **Called station ID:** _(puste)_
@@ -121,7 +145,7 @@ Zakres: weryfikacja wszystkich zakładek Identity we frontendzie NGFW – RADIUS
    - **User base DN:** `ou=users,dc=raptorgate,dc=local`
    - **User filter attribute:** `uid`
    - **Group base DN:** `ou=groups,dc=raptorgate,dc=local`
-   - **Group member attribute:** `member`
+   - **Group member attribute:** `memberUid`
    - **Group name attribute:** `cn`
    - **Timeout ms:** `3000`
    - **Cache TTL seconds:** `60`
@@ -287,6 +311,80 @@ Zakres: weryfikacja wszystkich zakładek Identity we frontendzie NGFW – RADIUS
 3. **Oczekiwany:** Sukces, listener wyłączony.
 4. Przywróć poprzednie ustawienia.
 
+### ID-FE-PORT-06 – Logowanie do captive portal przez RADIUS + LDAP groups
+1. Upewnij się, że istnieją profile:
+   - RADIUS: `default-radius` albo profil testowy z hostem `192.168.20.30`, portem `1812` i sekretem `radiussecret`
+   - LDAP: `default-ldap` albo profil testowy z hostem `192.168.20.40`, portem `389`, bind DN `cn=admin,dc=raptorgate,dc=local`, hasłem `admin` i `Group member attribute = memberUid`
+2. W **Authentication Profiles** utwórz lub zaktualizuj profil:
+   - **Name:** `test-portal-radius-ldap-groups`
+   - **Provider:** `radius`
+   - **RADIUS profile:** profil RADIUS z kroku 1
+   - **LDAP profile:** profil LDAP z kroku 1
+   - **Group source:** `ldap`
+   - **Session TTL:** `300`
+   - **Admin role mappings:** puste
+3. W **Portal Settings** wybierz `test-portal-radius-ldap-groups`.
+4. Ustaw listener:
+   - **Enabled:** ✓
+   - **Interface:** `eth1`
+   - **Bind address:** `192.168.10.254`
+   - **Bind port:** `443`
+5. Kliknij **Save**.
+6. Otwórz `https://192.168.10.254/portal/login`.
+7. Zaloguj się jako `user` / `user123`.
+8. Przejdź do **Active Sessions**.
+9. **Oczekiwany:** Widać sesję `user`, `authenticated = true`, grupa zawiera `users`; przy teście z `h1` source IP powinien być `192.168.10.10`.
+
+### ID-FE-PORT-07 – Logowanie do captive portal przez LDAP
+1. W **Authentication Profiles** utwórz lub zaktualizuj profil:
+   - **Name:** `test-portal-ldap`
+   - **Provider:** `ldap`
+   - **RADIUS profile:** puste
+   - **LDAP profile:** profil LDAP z `Group member attribute = memberUid`
+   - **Group source:** `ldap`
+   - **Session TTL:** `300`
+   - **Admin role mappings:** puste
+2. W **Portal Settings** wybierz `test-portal-ldap` i kliknij **Save**.
+3. Otwórz `https://192.168.10.254/portal/login`.
+4. Zaloguj się jako `user` / `user123`.
+5. Przejdź do **Active Sessions**.
+6. **Oczekiwany:** Widać sesję `user`, `authenticated = true`, grupa zawiera `users`.
+
+### ID-FE-PORT-08 – Portal przyjmuje gościa, ale sesja ma grupę `guests`
+1. Użyj profilu portalowego z ID-FE-PORT-06 albo ID-FE-PORT-07.
+2. Wyloguj lub zrewokuj poprzednią sesję `user`.
+3. Otwórz `https://192.168.10.254/portal/login`.
+4. Zaloguj się jako `guest` / `guest123`.
+5. Przejdź do **Active Sessions**.
+6. **Oczekiwany:** Login jest poprawny, ale sesja ma grupę `guests`. Jeśli aktywna polityka przepuszcza tylko `identity_group = "users"`, ruch gościa powinien zostać zablokowany.
+
+### ID-FE-PORT-09 – Logowanie do captive portal przez RADIUS z `groupSource = radius_vsa`
+1. Upewnij się, że profil RADIUS wskazuje serwer `192.168.20.30:1812` z sekretem `radiussecret`.
+2. Upewnij się, że serwer RADIUS zwraca grupy w atrybutach RADIUS dla testowanego użytkownika:
+   - `user` powinien zwracać grupę `users`
+   - `guest` powinien zwracać grupę `guests`
+3. W **Authentication Profiles** utwórz lub zaktualizuj profil:
+   - **Name:** `test-portal-radius-vsa`
+   - **Provider:** `radius`
+   - **RADIUS profile:** profil RADIUS z kroku 1
+   - **LDAP profile:** puste
+   - **Group source:** `radius_vsa`
+   - **Session TTL:** `300`
+   - **Admin role mappings:** puste
+4. W **Portal Settings** wybierz `test-portal-radius-vsa` i kliknij **Save**.
+5. Otwórz `https://192.168.10.254/portal/login`.
+6. Zaloguj się jako `user` / `user123`.
+7. Przejdź do **Active Sessions**.
+8. **Oczekiwany:** Sesja `user` jest aktywna, a grupy pochodzą z RADIUS i zawierają `users`. Jeśli RADIUS nie zwraca grup, sesja może być aktywna z pustą listą grup; wtedy polityka oparta o `identity_group = "users"` ma blokować ruch.
+
+### ID-FE-PORT-10 – `radius_vsa` nie używa LDAP jako fallbacku
+1. Zostaw aktywny profil `test-portal-radius-vsa` z ID-FE-PORT-09.
+2. Wyloguj lub zrewokuj poprzednią sesję.
+3. Tymczasowo użyj RADIUS usera, dla którego RADIUS robi Access-Accept, ale nie zwraca grup w `Filter-Id`/`Class`/VSA.
+4. Zaloguj się w portalu tym użytkownikiem.
+5. Przejdź do **Active Sessions**.
+6. **Oczekiwany:** Login może się udać, ale grupy są puste albo zawierają tylko wartości z RADIUS. Backend nie powinien dociągnąć grup z LDAP tylko dlatego, że taki sam użytkownik istnieje w LDAP.
+
 ---
 
 ## 6. Admin Login
@@ -312,7 +410,84 @@ Zakres: weryfikacja wszystkich zakładek Identity we frontendzie NGFW – RADIUS
 3. Kliknij **Save**
 4. **Oczekiwany:** Backend zwróci błąd (profile `local` nie są dozwolone dla admin login).
 
-### ID-FE-ADM-05 – Przywrócenie domyślnych ustawień
+### ID-FE-ADM-05 – Logowanie do management frontendu przez RADIUS
+1. W **Authentication Profiles** utwórz lub zaktualizuj profil:
+   - **Name:** `test-admin-radius-ldap-groups`
+   - **Provider:** `radius`
+   - **RADIUS profile:** profil RADIUS z hostem `192.168.20.30`, portem `1812` i sekretem `radiussecret`
+   - **LDAP profile:** profil LDAP z hostem `192.168.20.40` i `Group member attribute = memberUid`
+   - **Group source:** `ldap`
+   - **Session TTL:** `300`
+2. W sekcji **Admin role mappings** dodaj:
+   - **Match type:** `ldap_group`
+   - **Match value:** `admins`
+   - **Role:** `admin`
+3. Kliknij **Save**.
+4. W **Admin Login** wybierz `test-admin-radius-ldap-groups` i kliknij **Save**.
+5. Wyloguj się z management frontendu.
+6. Otwórz `https://192.168.56.254/login`.
+7. Zaloguj się jako `admin` / `admin1234`.
+8. **Oczekiwany:** Login przechodzi, dashboard jest dostępny, a sesja admina ma rolę `admin`.
+
+### ID-FE-ADM-06 – Logowanie do management frontendu przez LDAP
+1. W **Authentication Profiles** utwórz lub zaktualizuj profil:
+   - **Name:** `test-admin-ldap`
+   - **Provider:** `ldap`
+   - **RADIUS profile:** puste
+   - **LDAP profile:** profil LDAP z hostem `192.168.20.40` i `Group member attribute = memberUid`
+   - **Group source:** `ldap`
+   - **Session TTL:** `300`
+2. W sekcji **Admin role mappings** dodaj:
+   - **Match type:** `ldap_group`
+   - **Match value:** `admins`
+   - **Role:** `admin`
+3. Kliknij **Save**.
+4. W **Admin Login** wybierz `test-admin-ldap` i kliknij **Save**.
+5. Wyloguj się z management frontendu.
+6. Otwórz `https://192.168.56.254/login`.
+7. Zaloguj się jako `admin` / `admin1234`.
+8. **Oczekiwany:** Login przechodzi, dashboard jest dostępny, a sesja admina ma rolę `admin`.
+
+### ID-FE-ADM-07 – Zwykły użytkownik nie dostaje dostępu do management frontendu
+1. Zostaw aktywny profil z ID-FE-ADM-05 albo ID-FE-ADM-06.
+2. Wyloguj się z management frontendu.
+3. Otwórz `https://192.168.56.254/login`.
+4. Spróbuj zalogować się jako `user` / `user123`.
+5. **Oczekiwany:** Uwierzytelnienie może zostać zaakceptowane przez RADIUS/LDAP, ale login do panelu admina jest odrzucony, bo `user` nie pasuje do mappingu `ldap_group = admins`.
+
+### ID-FE-ADM-08 – Logowanie do management frontendu przez RADIUS z `groupSource = radius_vsa`
+1. Upewnij się, że profil RADIUS wskazuje serwer `192.168.20.30:1812` z sekretem `radiussecret`.
+2. Upewnij się, że RADIUS dla `admin` / `admin1234` zwraca grupę `admins` w atrybutach RADIUS.
+3. W **Authentication Profiles** utwórz lub zaktualizuj profil:
+   - **Name:** `test-admin-radius-vsa`
+   - **Provider:** `radius`
+   - **RADIUS profile:** profil RADIUS z kroku 1
+   - **LDAP profile:** puste
+   - **Group source:** `radius_vsa`
+   - **Session TTL:** `300`
+4. W sekcji **Admin role mappings** dodaj:
+   - **Match type:** `radius_vsa`
+   - **Match value:** `admins`
+   - **Role:** `admin`
+5. Kliknij **Save**.
+6. W **Admin Login** wybierz `test-admin-radius-vsa` i kliknij **Save**.
+7. Wyloguj się z management frontendu.
+8. Otwórz `https://192.168.56.254/login`.
+9. Zaloguj się jako `admin` / `admin1234`.
+10. **Oczekiwany:** Jeśli RADIUS zwrócił `admins`, login przechodzi i sesja admina ma rolę `admin`. Jeśli RADIUS nie zwraca grup, login zewnętrzny jest odrzucony mimo poprawnego hasła, bo mapping `radius_vsa = admins` nie ma czego dopasować.
+
+### ID-FE-ADM-09 – `radius_vsa` nie używa LDAP group mappingu
+1. Zostaw aktywny profil `test-admin-radius-vsa`.
+2. W profilu ustaw albo zostaw tylko mapping:
+   - **Match type:** `ldap_group`
+   - **Match value:** `admins`
+   - **Role:** `admin`
+3. Upewnij się, że **Group source** nadal ma wartość `radius_vsa`.
+4. Wyloguj się z management frontendu.
+5. Spróbuj zalogować się jako `admin` / `admin1234`.
+6. **Oczekiwany:** Login jest odrzucony, jeżeli profil ma tylko mapping `ldap_group`. Przy `groupSource = radius_vsa` poprawny mapping dla grup z RADIUS to `matchType = radius_vsa`.
+
+### ID-FE-ADM-10 – Przywrócenie domyślnych ustawień
 1. Ustaw Admin Login na `null` (lub poprzedni profil)
 2. Kliknij **Save**
 3. **Oczekiwany:** Sukces.
@@ -440,11 +615,21 @@ Zakres: weryfikacja wszystkich zakładek Identity we frontendzie NGFW – RADIUS
 | ID-FE-PORT-03 | Portal – null | ☐ |
 | ID-FE-PORT-04 | Portal – listener | ☐ |
 | ID-FE-PORT-05 | Portal – listener disabled | ☐ |
+| ID-FE-PORT-06 | Portal – login RADIUS + LDAP groups | ☐ |
+| ID-FE-PORT-07 | Portal – login LDAP | ☐ |
+| ID-FE-PORT-08 | Portal – guest session | ☐ |
+| ID-FE-PORT-09 | Portal – login RADIUS radius_vsa | ☐ |
+| ID-FE-PORT-10 | Portal – radius_vsa bez LDAP fallbacku | ☐ |
 | ID-FE-ADM-01 | Admin – wyświetlanie | ☐ |
 | ID-FE-ADM-02 | Admin – zmiana profilu | ☐ |
 | ID-FE-ADM-03 | Admin – null | ☐ |
 | ID-FE-ADM-04 | Admin – local odrzucony | ☐ |
-| ID-FE-ADM-05 | Admin – przywracanie | ☐ |
+| ID-FE-ADM-05 | Admin – login RADIUS | ☐ |
+| ID-FE-ADM-06 | Admin – login LDAP | ☐ |
+| ID-FE-ADM-07 | Admin – user bez roli admin | ☐ |
+| ID-FE-ADM-08 | Admin – login RADIUS radius_vsa | ☐ |
+| ID-FE-ADM-09 | Admin – radius_vsa bez LDAP mappingu | ☐ |
+| ID-FE-ADM-10 | Admin – przywracanie | ☐ |
 | ID-FE-SES-01 | Sessions – lista | ☐ |
 | ID-FE-SES-02 | Sessions – refresh | ☐ |
 | ID-FE-SES-03 | Sessions – revoke | ☐ |
