@@ -20,18 +20,35 @@ Konta:
 
 Do testow enforcementu portal musi widziec klienta jako `192.168.10.10`, czyli ruch portalu i h2 najlepiej puszczac z `h1` albo z przegladarki przez SOCKS/PAC przez `h1`.
 
+Uwaga: ten dokument sprawdza flow przez frontend, backend i portal. Automatyczne testy `test-env` sa teraz nizej poziomowo: `test-env/run.sh` deployuje r1 z `--no-backend`, sprawdza RADIUS/LDAP bezposrednio i tworzy sesje identity przez gRPC `IdentitySessionService`.
+
 ## Przygotowanie
 
-1. Upewnij sie, ze h2 HTTP dziala:
+1. Do testu manualnego uruchom lab z backendem i frontendem, a nie przez `test-env/run.sh`:
+
+```bash
+cd vagrant
+./deploy.sh
+vagrant ssh r1 -c "systemctl is-active backend frontend ngfw"
+```
+
+2. Upewnij sie, ze h2 HTTP dziala:
 
 ```bash
 cd vagrant
 vagrant ssh h2 -c "sudo systemctl restart h2-http && systemctl is-active h2-http"
 ```
 
-2. Zaloguj sie do dashboardu jako admin i wejdz w `Identity`.
+3. Zaloguj sie do dashboardu jako admin i wejdz w `Identity`.
 
-3. W `Policy Engine` przygotuj jedna aktywna regule enforcementu dla domyslnego zone-pair. Tymczasowo wylacz broad allow-all reguly, bo inaczej test blokowania nie ma sensu.
+4. W konfiguracji stref przygotuj ruch h1 -> h2:
+
+- zone client: przypisana do `eth1`
+- zone server: przypisana do `eth2`
+- zone-pair client -> server
+- zone-pair server -> client
+
+5. W `Policy Engine` przygotuj aktywna regule enforcementu na zone-pair client -> server. Tymczasowo wylacz broad allow-all reguly dla tego ruchu, bo inaczej test blokowania nie ma sensu.
 
 ```text
 match auth_state {
@@ -52,7 +69,20 @@ match auth_state {
 }
 ```
 
-4. Wejdz w `Config` -> `Apply`, zostaw `isActive=true`, ustaw `changeSummary`, kliknij `Apply Snapshot`.
+6. Na zone-pair server -> client dodaj regule dla odpowiedzi h2 HTTP:
+
+```text
+match protocol {
+  = tcp:
+    match src_port {
+      = 8080: verdict allow
+      _: verdict drop
+    }
+  _: verdict drop
+}
+```
+
+7. Wejdz w `Config` -> `Apply`, zostaw `isActive=true`, ustaw `changeSummary`, kliknij `Apply Snapshot`.
 
 ## FE-ID-01: RADIUS profile i diagnostics
 

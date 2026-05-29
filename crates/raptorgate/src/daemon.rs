@@ -217,19 +217,22 @@ pub type V2Pipeline<D> = Chain<
         Chain<
             LocalOwnershipStage<<D as DaemonDeps>::ConfigStore>,
             Chain<
-                ConntrackInStage,
+                IdentityLookupStage,
                 Chain<
-                    NatPreroutingStage,
+                    ConntrackInStage,
                     Chain<
-                        NatPostroutingStage<
-                            <D as DaemonDeps>::IfaceMon,
-                            <D as DaemonDeps>::Routes,
-                        >,
+                        NatPreroutingStage,
                         Chain<
-                            ConntrackConfirmStage,
-                            SessionHandoffStage<
-                                RoutingZoneResolver<<D as DaemonDeps>::IfaceMon>,
-                                <D as DaemonDeps>::Dnssec,
+                            NatPostroutingStage<
+                                <D as DaemonDeps>::IfaceMon,
+                                <D as DaemonDeps>::Routes,
+                            >,
+                            Chain<
+                                ConntrackConfirmStage,
+                                SessionHandoffStage<
+                                    RoutingZoneResolver<<D as DaemonDeps>::IfaceMon>,
+                                    <D as DaemonDeps>::Dnssec,
+                                >,
                             >,
                         >,
                     >,
@@ -260,26 +263,31 @@ where
                     local_ips: Arc::clone(deps.local_ips),
                 },
                 tail: Chain {
-                    head: ConntrackInStage {
-                        ct: Arc::clone(deps.conntrack),
+                    head: IdentityLookupStage {
+                        store: Arc::clone(deps.identity_sessions),
                     },
                     tail: Chain {
-                        head: NatPreroutingStage {
-                            engine: Arc::clone(deps.nat_engine),
+                        head: ConntrackInStage {
+                            ct: Arc::clone(deps.conntrack),
                         },
                         tail: Chain {
-                            head: NatPostroutingStage {
+                            head: NatPreroutingStage {
                                 engine: Arc::clone(deps.nat_engine),
-                                routes: Arc::clone(deps.routing_table),
-                                interface_monitor: Arc::clone(deps.interface_monitor),
                             },
                             tail: Chain {
-                                head: ConntrackConfirmStage {
-                                    ct: Arc::clone(deps.conntrack),
+                                head: NatPostroutingStage {
+                                    engine: Arc::clone(deps.nat_engine),
+                                    routes: Arc::clone(deps.routing_table),
+                                    interface_monitor: Arc::clone(deps.interface_monitor),
                                 },
-                                tail: SessionHandoffStage {
-                                    sessions,
-                                    ct: Arc::clone(deps.conntrack),
+                                tail: Chain {
+                                    head: ConntrackConfirmStage {
+                                        ct: Arc::clone(deps.conntrack),
+                                    },
+                                    tail: SessionHandoffStage {
+                                        sessions,
+                                        ct: Arc::clone(deps.conntrack),
+                                    },
                                 },
                             },
                         },

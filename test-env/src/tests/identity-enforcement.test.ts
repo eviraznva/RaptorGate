@@ -1,17 +1,16 @@
 import { beforeAll, describe, test } from "bun:test";
 import "../harness";
 import {
-	clearPortalSession,
-	configureLdapIdentityEnforcement,
-	configureRadiusIdentityEnforcement,
+	applyIdentityPolicy,
+	assertLdapAccepts,
+	assertLdapGroup,
+	assertRadiusAccepts,
+	assertRadiusRejects,
 	ensureProtectedHttpService,
-	expectBackendIdentityLoginRejected,
 	expectH1ToH2Allowed,
 	expectH1ToH2Blocked,
-	expectNoBackendIdentitySession,
-	expectPortalSession,
-	portalLogin,
-	portalLogout,
+	revokeIdentitySession,
+	upsertIdentitySession,
 	verifyIdentityProviderFixtures,
 } from "./identity-enforcement-helpers";
 
@@ -22,70 +21,57 @@ beforeAll(async () => {
 
 describe("Identity Enforcement RADIUS", () => {
 	beforeAll(async () => {
-		await configureRadiusIdentityEnforcement();
+		await applyIdentityPolicy("radius");
+		await revokeIdentitySession();
 	}, { timeout: 120_000 });
 
-	test("allows users after RADIUS login and blocks again after logout", async () => {
-		const rejectedSourceIp = "192.168.10.101";
-
-		await clearPortalSession();
+	test("allows users after RADIUS accept with LDAP users group and blocks again after revoke", async () => {
 		await expectH1ToH2Blocked();
-		await expectBackendIdentityLoginRejected(
-			"user",
-			"wrong-password",
-			rejectedSourceIp,
-		);
-		await expectNoBackendIdentitySession(rejectedSourceIp);
+		await assertRadiusRejects("user", "wrong-password");
 		await expectH1ToH2Blocked();
 
-		await portalLogin("user", "user123");
-		await expectPortalSession("user", "users");
+		await assertRadiusAccepts("user", "user123");
+		await assertLdapGroup("user", "users");
+		await upsertIdentitySession("user", ["users"]);
 		await expectH1ToH2Allowed();
 
-		await portalLogout();
+		await revokeIdentitySession();
 		await expectH1ToH2Blocked();
 	}, { timeout: 60_000 });
 
 	test("keeps authenticated RADIUS guests blocked by identity_group", async () => {
-		await clearPortalSession();
-		await portalLogin("guest", "guest123");
-		await expectPortalSession("guest", "guests");
+		await revokeIdentitySession();
+		await assertRadiusAccepts("guest", "guest123");
+		await assertLdapGroup("guest", "guests");
+		await upsertIdentitySession("guest", ["guests"]);
 		await expectH1ToH2Blocked();
-		await portalLogout();
+		await revokeIdentitySession();
 	}, { timeout: 45_000 });
 });
 
 describe("Identity Enforcement LDAP", () => {
 	beforeAll(async () => {
-		await configureLdapIdentityEnforcement();
+		await applyIdentityPolicy("ldap");
+		await revokeIdentitySession();
 	}, { timeout: 120_000 });
 
-	test("allows users after LDAP login and blocks again after logout", async () => {
-		const rejectedSourceIp = "192.168.10.102";
-
-		await clearPortalSession();
+	test("allows users after LDAP accept with users group and blocks again after revoke", async () => {
 		await expectH1ToH2Blocked();
-		await expectBackendIdentityLoginRejected(
-			"user",
-			"wrong-password",
-			rejectedSourceIp,
-		);
-		await expectNoBackendIdentitySession(rejectedSourceIp);
-		await expectH1ToH2Blocked();
-
-		await portalLogin("user", "user123");
-		await expectPortalSession("user", "users");
+		await assertLdapAccepts("user", "user123");
+		await assertLdapGroup("user", "users");
+		await upsertIdentitySession("user", ["users"]);
 		await expectH1ToH2Allowed();
 
-		await portalLogout();
+		await revokeIdentitySession();
 		await expectH1ToH2Blocked();
 	}, { timeout: 60_000 });
 
 	test("keeps authenticated LDAP guests blocked by identity_group", async () => {
-		await clearPortalSession();
-		await portalLogin("guest", "guest123");
-		await expectPortalSession("guest", "guests");
+		await revokeIdentitySession();
+		await assertLdapAccepts("guest", "guest123");
+		await assertLdapGroup("guest", "guests");
+		await upsertIdentitySession("guest", ["guests"]);
 		await expectH1ToH2Blocked();
-		await portalLogout();
+		await revokeIdentitySession();
 	}, { timeout: 45_000 });
 });

@@ -29,6 +29,7 @@ import type { ConfigBundle } from "../generated/services/config_snapshot_service
 
 const HTTP_SERVER_PORT = 18080;
 const HTTP_SERVER_HOST = "192.168.20.10";
+let nextHttpLocalPort = 42000 + Math.floor(Math.random() * 1000);
 
 function defaultGeneral(
 	overrides: Partial<IpsGeneralConfig> = {},
@@ -109,6 +110,7 @@ async function pushIpsSnapshot(ips: IpsConfig): Promise<void> {
 			bundle: buildBundle(ips),
 		},
 	}).run();
+	await new Promise((resolve) => setTimeout(resolve, 750));
 }
 
 let httpServer: DetachedCommand | null = null;
@@ -139,9 +141,14 @@ async function stopHttpServer(): Promise<void> {
 	}
 }
 
+function nextCurlLocalPortArg(): string {
+	return `--local-port ${nextHttpLocalPort++}`;
+}
+
 async function httpRequest(payload: string, expectReply: boolean): Promise<void> {
 	const command =
 		`curl --silent --show-error --max-time 4 ` +
+		`${nextCurlLocalPortArg()} ` +
 		`--write-out 'STATUS=%{http_code}\\n' --output /dev/null ` +
 		`'http://${HTTP_SERVER_HOST}:${HTTP_SERVER_PORT}/?q=${encodeURIComponent(payload)}'; ` +
 		`code=$?; echo CURL_EXIT=$code; exit $code`;
@@ -209,7 +216,7 @@ describe("IPS", () => {
 			await performCommand({
 				host: "h1",
 				command:
-					`curl --silent --max-time 4 --write-out 'STATUS=%{http_code}\\n' ` +
+					`curl --silent --max-time 4 ${nextCurlLocalPortArg()} --write-out 'STATUS=%{http_code}\\n' ` +
 					`--output /dev/null http://${HTTP_SERVER_HOST}:${HTTP_SERVER_PORT}/`,
 			})
 				.expectOutput([/^STATUS=200$/])

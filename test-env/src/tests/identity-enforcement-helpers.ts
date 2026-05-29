@@ -1,146 +1,63 @@
+import * as grpc from "@grpc/grpc-js";
+import * as protoLoader from "@grpc/proto-loader";
+import path from "node:path";
+import { DefaultPolicy } from "../generated/common/common";
 import { performCommand, request } from "../harness";
-import { createDefaultSnapshotBundle } from "../harness/fixtures";
-import { sshWithResult, type KnownHost } from "../ssh-helper";
+import { createDefaultSnapshotBundle, DEFAULT_ZONES } from "../harness/fixtures";
 
-const BACKEND_API = "https://127.0.0.1:3000";
-const PORTAL_API = "https://192.168.10.254/api/identity";
+const PROTO_ROOT = path.resolve(__dirname, "../../../proto");
+const QUERY_LOCAL_PORT = 50051;
 const H1_SOURCE_IP = "192.168.10.10";
+const LDAP_BASE_DN = "dc=raptorgate,dc=local";
+const LDAP_USERS_DN = `ou=users,${LDAP_BASE_DN}`;
+const LDAP_GROUPS_DN = `ou=groups,${LDAP_BASE_DN}`;
 
-type IdentityProfile = { id: string; name: string };
-type IdentityConfig = {
-	radiusServerProfiles: IdentityProfile[];
-	ldapServerProfiles: IdentityProfile[];
-	authenticationProfiles: IdentityProfile[];
-	settings: {
-		portalAuthenticationProfileId: string | null;
-		adminAuthenticationProfileId: string | null;
-		portalListener: {
-			enabled: boolean;
-			interfaceName: string | null;
-			zoneId: string | null;
-			bindAddress: string | null;
-			bindPort: number;
-		};
+const identityProto = grpc.loadPackageDefinition(
+	protoLoader.loadSync(
+		[path.join(PROTO_ROOT, "services", "identity_session_service.proto")],
+		{
+			keepCase: false,
+			longs: String,
+			enums: String,
+			defaults: true,
+			oneofs: true,
+			includeDirs: [PROTO_ROOT],
+		},
+	),
+) as any;
+
+type IdentitySessionServiceClient = grpc.Client & {
+	upsertIdentitySession(
+		request: unknown,
+		callback: (err: grpc.ServiceError | null, response: unknown) => void,
+	): void;
+	revokeIdentitySession(
+		request: unknown,
+		callback: (err: grpc.ServiceError | null, response: { removed?: boolean }) => void,
+	): void;
+};
+
+function identitySessionClient(): IdentitySessionServiceClient {
+	return new identityProto.raptorgate.services.IdentitySessionService(
+		`localhost:${QUERY_LOCAL_PORT}`,
+		grpc.credentials.createInsecure(),
+	) as IdentitySessionServiceClient;
+}
+
+function timestamp(secondsFromNow: number): { seconds: string; nanos: number } {
+	return {
+		seconds: String(Math.floor(Date.now() / 1000) + secondsFromNow),
+		nanos: 0,
 	};
-};
-
-type RadiusProfileInput = {
-	name: string;
-	description: string;
-	isActive: boolean;
-	host: string;
-	port: number;
-	sharedSecretRef: string;
-	timeoutMs: number;
-	retries: number;
-	nasIp: string | null;
-	nasIdentifier: string | null;
-	calledStationId: string | null;
-};
-
-type LdapProfileInput = {
-	name: string;
-	description: string;
-	isActive: boolean;
-	host: string;
-	port: number;
-	tlsMode: "disabled" | "starttls" | "ldaps";
-	bindDn: string;
-	bindPasswordRef: string;
-	userBaseDn: string;
-	userFilterAttribute: string;
-	groupBaseDn: string;
-	groupMemberAttribute: string;
-	groupNameAttribute: string;
-	timeoutMs: number;
-	cacheTtlSeconds: number;
-};
-
-type AuthProfileInput = {
-	name: string;
-	description: string;
-	isActive: boolean;
-	provider: "radius" | "ldap" | "local";
-	radiusProfileId: string | null;
-	ldapProfileId: string | null;
-	groupSource: "none" | "ldap" | "radius_vsa";
-	sessionTtlSeconds: number;
-	adminRoleMappings: unknown[];
-};
-
-function shellQuote(value: string): string {
-	return "'" + value.replace(/'/g, "'\\''") + "'";
-}
-
-async function sshOutput(host: KnownHost, command: string): Promise<string> {
-	const result = await sshWithResult(host, command);
-	if (result.exitCode !== 0) {
-		throw new Error(
-			`command failed on ${host} (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
-		);
-	}
-	return result.stdout;
-}
-
-async function backendJson<T>(
-	method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
-	path: string,
-	body?: unknown,
-	token?: string,
-): Promise<T> {
-	const auth = token
-		? ` -H ${shellQuote(`authorization: Bearer ${token}`)}`
-		: "";
-	const contentType =
-		body === undefined
-			? ""
-			: ` -H ${shellQuote("content-type: application/json")} -d ${shellQuote(JSON.stringify(body))}`;
-	const command = `curl -k -sS --max-time 10 -X ${method}${auth}${contentType} ${shellQuote(`${BACKEND_API}${path}`)}`;
-	const raw = (await sshOutput("r1", command)).trim();
-	const parsed = JSON.parse(raw);
-	if (typeof parsed?.statusCode === "number" && parsed.statusCode >= 400) {
-		throw new Error(`backend ${method} ${path} failed: ${raw}`);
-	}
-	return parsed.data as T;
-}
-
-export async function adminAccessToken(): Promise<string> {
-	const passwords = ["Test1234", "admin", "admin1234"];
-	let lastError: unknown = null;
-
-	for (const password of passwords) {
-		try {
-			const response = await backendJson<{ accessToken: string }>(
-				"POST",
-				"/auth/login",
-				{ username: "admin", password },
-			);
-			return response.accessToken;
-		} catch (error) {
-			lastError = error;
-		}
-	}
-
-	throw lastError instanceof Error
-		? lastError
-		: new Error("could not obtain admin access token");
 }
 
 export async function verifyIdentityProviderFixtures(): Promise<void> {
-	await performCommand({
-		host: "r1",
-		command: "radtest user user123 192.168.20.30 0 radiussecret",
-	})
-		.expectOutput([/Access-Accept/])
-		.run();
-
-	await performCommand({
-		host: "r1",
-		command:
-			"ldapsearch -x -H ldap://192.168.20.40:389 -b ou=users,dc=raptorgate,dc=local '(uid=user)' uid | grep -q '^uid: user$' && echo ldap-ok",
-	})
-		.expectOutput([/ldap-ok/])
-		.run();
+	await assertRadiusAccepts("user", "user123");
+	await assertRadiusRejects("user", "wrong-password");
+	await assertLdapAccepts("user", "user123");
+	await assertLdapRejects("user", "wrong-password");
+	await assertLdapGroup("user", "users");
+	await assertLdapGroup("guest", "guests");
 }
 
 export async function ensureProtectedHttpService(): Promise<void> {
@@ -158,304 +75,55 @@ export async function ensureProtectedHttpService(): Promise<void> {
 		.run();
 }
 
-export async function clearPortalSession(): Promise<void> {
-	await performCommand({
-		host: "h1",
-		command: `curl -k -sS --max-time 5 -X POST ${PORTAL_API}/logout`,
-	})
-		.discardError()
-		.run();
-}
+export async function applyIdentityPolicy(label: string): Promise<void> {
+	const clientZoneId = crypto.randomUUID();
+	const serverZoneId = crypto.randomUUID();
+	const clientToServerZonePairId = crypto.randomUUID();
+	const serverToClientZonePairId = crypto.randomUUID();
 
-export async function expectH1ToH2Allowed(): Promise<void> {
-	await performCommand({
-		host: "h1",
-		command:
-			"curl -sS --connect-timeout 2 --max-time 6 --write-out 'STATUS=%{http_code}\\n' --output /dev/null http://192.168.20.10:8080/",
-	})
-		.expectOutput([/STATUS=200/])
-		.run();
-}
-
-export async function expectH1ToH2Blocked(): Promise<void> {
-	await performCommand({
-		host: "h1",
-		command:
-			"curl -sS --connect-timeout 2 --max-time 4 http://192.168.20.10:8080/",
-	})
-		.isErr()
-		.run();
-}
-
-export async function portalLogin(
-	username: string,
-	password: string,
-): Promise<void> {
-	await performCommand({
-		host: "h1",
-		command: `curl -k -sS --max-time 8 -X POST ${PORTAL_API}/login -H 'content-type: application/json' -d ${shellQuote(JSON.stringify({ username, password }))}`,
-	})
-		.expectOutput([
-			/"sessionId"\s*:/,
-			new RegExp(`"username"\\s*:\\s*"${username}"`),
-			new RegExp(`"sourceIp"\\s*:\\s*"${H1_SOURCE_IP}"`),
-		])
-		.run();
-}
-
-export async function expectBackendIdentityLoginRejected(
-	username: string,
-	password: string,
-	sourceIp: string,
-): Promise<void> {
-	await performCommand({
-		host: "r1",
-		command:
-			`curl -k -sS --max-time 8 -X POST ${BACKEND_API}/identity/login ` +
-			`-H 'x-raptorgate-portal-ingress: 1' ` +
-			`-H 'x-forwarded-for: ${sourceIp}' ` +
-			`-H 'content-type: application/json' ` +
-			`--write-out '\\nSTATUS=%{http_code}\\n' ` +
-			`-d ${shellQuote(JSON.stringify({ username, password }))}`,
-	})
-		.expectOutput([/STATUS=401/])
-		.run();
-}
-
-export async function expectNoBackendIdentitySession(
-	sourceIp: string,
-): Promise<void> {
-	await performCommand({
-		host: "r1",
-		command:
-			`curl -k -sS --max-time 8 ${BACKEND_API}/identity/session ` +
-			`-H 'x-raptorgate-portal-ingress: 1' ` +
-			`-H 'x-forwarded-for: ${sourceIp}'`,
-	})
-		.expectOutput([/"authenticated"\s*:\s*false/])
-		.run();
-}
-
-export async function expectPortalSession(
-	username: string,
-	groupName: string,
-): Promise<void> {
-	await performCommand({
-		host: "h1",
-		command: `curl -k -sS --max-time 8 ${PORTAL_API}/session`,
-	})
-		.expectOutput([
-			/"authenticated"\s*:\s*true/,
-			new RegExp(`"username"\\s*:\\s*"${username}"`),
-			new RegExp(`"groups"\\s*:\\s*\\[[^\\]]*"${groupName}"`),
-		])
-		.run();
-}
-
-export async function portalLogout(): Promise<void> {
-	await performCommand({
-		host: "h1",
-		command: `curl -k -sS --max-time 8 -X POST ${PORTAL_API}/logout`,
-	})
-		.expectOutput([/"revoked"\s*:\s*true/])
-		.run();
-}
-
-export async function configureRadiusIdentityEnforcement(): Promise<void> {
-	const token = await adminAccessToken();
-	const radiusProfile = await upsertRadiusProfile(token);
-	const ldapProfile = await upsertLdapProfile(token);
-	const authProfile = await upsertAuthenticationProfile(token, {
-		name: "test-env-radius-with-ldap-groups",
-		description: "test-env RADIUS portal profile with LDAP groups",
-		isActive: true,
-		provider: "radius",
-		radiusProfileId: radiusProfile.id,
-		ldapProfileId: ldapProfile.id,
-		groupSource: "ldap",
-		sessionTtlSeconds: 300,
-		adminRoleMappings: [],
-	});
-
-	await selectPortalAuthenticationProfile(token, authProfile.id);
-	await pushIdentityPolicySnapshot("radius");
-	await clearPortalSession();
-}
-
-export async function configureLdapIdentityEnforcement(): Promise<void> {
-	const token = await adminAccessToken();
-	const ldapProfile = await upsertLdapProfile(token);
-	const authProfile = await upsertAuthenticationProfile(token, {
-		name: "test-env-ldap-portal",
-		description: "test-env LDAP portal profile",
-		isActive: true,
-		provider: "ldap",
-		radiusProfileId: null,
-		ldapProfileId: ldapProfile.id,
-		groupSource: "ldap",
-		sessionTtlSeconds: 300,
-		adminRoleMappings: [],
-	});
-
-	await selectPortalAuthenticationProfile(token, authProfile.id);
-	await pushIdentityPolicySnapshot("ldap");
-	await clearPortalSession();
-}
-
-async function currentIdentityConfig(token: string): Promise<IdentityConfig> {
-	return backendJson<IdentityConfig>("GET", "/identity-config", undefined, token);
-}
-
-async function upsertSecret(
-	token: string,
-	type: "radius" | "ldap",
-	name: string,
-	value: string,
-): Promise<string> {
-	const path = `/secrets/identity/${type}/${name}`;
-	await backendJson("PUT", path, { value }, token);
-	return `secret://identity/${type}/${name}`;
-}
-
-async function upsertRadiusProfile(token: string): Promise<IdentityProfile> {
-	const sharedSecretRef = await upsertSecret(
-		token,
-		"radius",
-		"test-radius-enforcement",
-		"radiussecret",
-	);
-	const body: RadiusProfileInput = {
-		name: "test-env-radius-enforcement",
-		description: "test-env RADIUS enforcement profile",
-		isActive: true,
-		host: "192.168.20.30",
-		port: 1812,
-		sharedSecretRef,
-		timeoutMs: 1500,
-		retries: 1,
-		nasIp: "192.168.20.254",
-		nasIdentifier: "raptorgate-test-env",
-		calledStationId: "test-env-portal",
-	};
-	const config = await currentIdentityConfig(token);
-	const existing = config.radiusServerProfiles.find(
-		(profile) => profile.name === body.name,
-	);
-	const next = existing
-		? await backendJson<IdentityConfig>(
-				"PUT",
-				`/identity-config/radius-profiles/${existing.id}`,
-				body,
-				token,
-			)
-		: await backendJson<IdentityConfig>(
-				"POST",
-				"/identity-config/radius-profiles",
-				body,
-				token,
-			);
-
-	return requiredProfile(next.radiusServerProfiles, body.name);
-}
-
-async function upsertLdapProfile(token: string): Promise<IdentityProfile> {
-	const bindPasswordRef = await upsertSecret(
-		token,
-		"ldap",
-		"test-ldap-enforcement",
-		"admin",
-	);
-	const body: LdapProfileInput = {
-		name: "test-env-ldap-enforcement",
-		description: "test-env LDAP enforcement profile",
-		isActive: true,
-		host: "192.168.20.40",
-		port: 389,
-		tlsMode: "disabled",
-		bindDn: "cn=admin,dc=raptorgate,dc=local",
-		bindPasswordRef,
-		userBaseDn: "ou=users,dc=raptorgate,dc=local",
-		userFilterAttribute: "uid",
-		groupBaseDn: "ou=groups,dc=raptorgate,dc=local",
-		groupMemberAttribute: "memberUid",
-		groupNameAttribute: "cn",
-		timeoutMs: 1500,
-		cacheTtlSeconds: 60,
-	};
-	const config = await currentIdentityConfig(token);
-	const existing = config.ldapServerProfiles.find(
-		(profile) => profile.name === body.name,
-	);
-	const next = existing
-		? await backendJson<IdentityConfig>(
-				"PUT",
-				`/identity-config/ldap-profiles/${existing.id}`,
-				body,
-				token,
-			)
-		: await backendJson<IdentityConfig>(
-				"POST",
-				"/identity-config/ldap-profiles",
-				body,
-				token,
-			);
-
-	return requiredProfile(next.ldapServerProfiles, body.name);
-}
-
-async function upsertAuthenticationProfile(
-	token: string,
-	body: AuthProfileInput,
-): Promise<IdentityProfile> {
-	const config = await currentIdentityConfig(token);
-	const existing = config.authenticationProfiles.find(
-		(profile) => profile.name === body.name,
-	);
-	const next = existing
-		? await backendJson<IdentityConfig>(
-				"PUT",
-				`/identity-config/authentication-profiles/${existing.id}`,
-				body,
-				token,
-			)
-		: await backendJson<IdentityConfig>(
-				"POST",
-				"/identity-config/authentication-profiles",
-				body,
-				token,
-			);
-
-	return requiredProfile(next.authenticationProfiles, body.name);
-}
-
-async function selectPortalAuthenticationProfile(
-	token: string,
-	profileId: string,
-): Promise<void> {
-	await backendJson(
-		"PATCH",
-		"/identity-config/settings",
-		{
-			portalAuthenticationProfileId: profileId,
-			portalListener: {
-				enabled: true,
-				interfaceName: "eth1",
-				zoneId: null,
-				bindAddress: "192.168.10.254",
-				bindPort: 443,
-			},
-		},
-		token,
-	);
-}
-
-async function pushIdentityPolicySnapshot(label: string): Promise<void> {
 	const bundle = createDefaultSnapshotBundle({
+		zones: [
+			...DEFAULT_ZONES.map((zone) => ({ ...zone })),
+			{ id: clientZoneId, name: `identity-${label}-client` },
+			{ id: serverZoneId, name: `identity-${label}-server` },
+		],
+		zoneInterfaces: [
+			{
+				id: crypto.randomUUID(),
+				zoneId: clientZoneId,
+				physical: { interfaceName: "eth1" },
+				sniffed: true,
+				status: 0,
+				addresses: [],
+			},
+			{
+				id: crypto.randomUUID(),
+				zoneId: serverZoneId,
+				physical: { interfaceName: "eth2" },
+				sniffed: true,
+				status: 0,
+				addresses: [],
+			},
+		] as any,
+		zonePairs: [
+			{
+				id: clientToServerZonePairId,
+				srcZoneId: clientZoneId,
+				dstZoneId: serverZoneId,
+				defaultPolicy: DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED,
+			},
+			{
+				id: serverToClientZonePairId,
+				srcZoneId: serverZoneId,
+				dstZoneId: clientZoneId,
+				defaultPolicy: DefaultPolicy.DEFAULT_POLICY_UNSPECIFIED,
+			},
+		],
 		rules: [
 			{
 				id: crypto.randomUUID(),
 				name: `identity-${label}-users-only`,
-				zonePairId: "00000000-0000-0000-0000-000000000000",
+				zonePairId: clientToServerZonePairId,
 				priority: 0,
 				content: `
 					match auth_state {
@@ -470,6 +138,22 @@ async function pushIdentityPolicySnapshot(label: string): Promise<void> {
 											}
 										_: verdict drop
 									}
+								_: verdict drop
+							}
+						_: verdict drop
+					}
+				`,
+			},
+			{
+				id: crypto.randomUUID(),
+				name: `identity-${label}-server-replies`,
+				zonePairId: serverToClientZonePairId,
+				priority: 0,
+				content: `
+					match protocol {
+						= tcp:
+							match src_port {
+								= 8080: verdict allow
 								_: verdict drop
 							}
 						_: verdict drop
@@ -496,13 +180,138 @@ async function pushIdentityPolicySnapshot(label: string): Promise<void> {
 	})
 		.expectResponse((response: any) => response?.accepted === true)
 		.run();
+
+	await new Promise((resolve) => setTimeout(resolve, 500));
 }
 
-function requiredProfile(
-	profiles: IdentityProfile[],
-	name: string,
-): IdentityProfile {
-	const profile = profiles.find((item) => item.name === name);
-	if (!profile) throw new Error(`identity profile ${name} was not returned`);
-	return profile;
+export async function assertRadiusAccepts(
+	username: string,
+	password: string,
+): Promise<void> {
+	await performCommand({
+		host: "r1",
+		command: `radtest ${username} ${password} 192.168.20.30 0 radiussecret`,
+	})
+		.expectOutput([/Access-Accept/])
+		.run();
+}
+
+export async function assertRadiusRejects(
+	username: string,
+	password: string,
+): Promise<void> {
+	await performCommand({
+		host: "r1",
+		command: `radtest ${username} ${password} 192.168.20.30 0 radiussecret 2>&1 || true`,
+	})
+		.expectOutput([/Access-Reject/])
+		.run();
+}
+
+export async function assertLdapAccepts(
+	username: string,
+	password: string,
+): Promise<void> {
+	await performCommand({
+		host: "r1",
+		command:
+			`ldapwhoami -x -H ldap://192.168.20.40:389 ` +
+			`-D 'uid=${username},${LDAP_USERS_DN}' -w '${password}'`,
+	})
+		.expectOutput([new RegExp(`dn:uid=${username},${LDAP_USERS_DN}`)])
+		.run();
+}
+
+export async function assertLdapRejects(
+	username: string,
+	password: string,
+): Promise<void> {
+	await performCommand({
+		host: "r1",
+		command:
+			`ldapwhoami -x -H ldap://192.168.20.40:389 ` +
+			`-D 'uid=${username},${LDAP_USERS_DN}' -w '${password}' 2>&1 || true`,
+	})
+		.expectOutput([/Invalid credentials|ldap_bind/])
+		.run();
+}
+
+export async function assertLdapGroup(
+	username: string,
+	groupName: string,
+): Promise<void> {
+	await performCommand({
+		host: "r1",
+		command:
+			`ldapsearch -x -H ldap://192.168.20.40:389 -b ${LDAP_GROUPS_DN} ` +
+			`'(memberUid=${username})' cn | grep -q '^cn: ${groupName}$' && echo ldap-group-ok`,
+	})
+		.expectOutput([/ldap-group-ok/])
+		.run();
+}
+
+export async function upsertIdentitySession(
+	username: string,
+	groups: string[],
+): Promise<void> {
+	const client = identitySessionClient();
+	const now = timestamp(0);
+	const expiresAt = timestamp(300);
+
+	await new Promise<void>((resolve, reject) => {
+		client.upsertIdentitySession(
+			{
+				session: {
+					id: crypto.randomUUID(),
+					identityUserId: `test-env-${username}`,
+					radiusUsername: username,
+					macAddress: "00:00:00:00:00:00",
+					ipAddress: H1_SOURCE_IP,
+					nasIp: "192.168.20.254",
+					calledStationId: "test-env",
+					authenticatedAt: now,
+					expiresAt,
+					groups,
+				},
+			},
+			(err) => {
+				if (err) reject(err);
+				else resolve();
+			},
+		);
+	});
+}
+
+export async function revokeIdentitySession(): Promise<void> {
+	const client = identitySessionClient();
+
+	await new Promise<void>((resolve, reject) => {
+		client.revokeIdentitySession(
+			{ ipAddress: H1_SOURCE_IP },
+			(err) => {
+				if (err) reject(err);
+				else resolve();
+			},
+		);
+	});
+}
+
+export async function expectH1ToH2Allowed(): Promise<void> {
+	await performCommand({
+		host: "h1",
+		command:
+			"curl -sS --connect-timeout 2 --max-time 6 --write-out 'STATUS=%{http_code}\\n' --output /dev/null http://192.168.20.10:8080/api/ping",
+	})
+		.expectOutput([/STATUS=200/])
+		.run();
+}
+
+export async function expectH1ToH2Blocked(): Promise<void> {
+	await performCommand({
+		host: "h1",
+		command:
+			"curl -sS --connect-timeout 2 --max-time 4 http://192.168.20.10:8080/api/ping",
+	})
+		.isErr()
+		.run();
 }

@@ -56,6 +56,10 @@ function httpsRequestCommand(host: string) {
 	return `timeout 25 bash -lc 'set -o pipefail; printf "GET / HTTP/1.1\\r\\nHost: ${host}\\r\\nConnection: close\\r\\n\\r\\n" | openssl s_client -connect ${host}:443 -servername ${host} -quiet 2>&1'`;
 }
 
+async function waitForSnapshotSettle(): Promise<void> {
+	await new Promise((resolve) => setTimeout(resolve, 750));
+}
+
 describe("TLS Inspection", () => {
 	beforeAll(async () => {
 		await resetFirewallState(getClient(), getSnapshotClient());
@@ -74,6 +78,7 @@ describe("TLS Inspection", () => {
 				bundle: buildTlsInspectionSnapshot(),
 			},
 		}).run();
+		await waitForSnapshotSettle();
 	}, { timeout: 120_000 });
 
 	test("presents a trusted RaptorGate certificate on h2", async () => {
@@ -125,6 +130,7 @@ describe("TLS Inspection", () => {
 				}),
 			},
 		}).run();
+		await waitForSnapshotSettle();
 
 		await performCommand({
 			host: "r1",
