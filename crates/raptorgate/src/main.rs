@@ -39,7 +39,7 @@ use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
-use crate::nat::{NatConfigProvider, NatEngine};
+use crate::nat::{NatConfigProvider, NatEngine, NatKernelSync, RedirectParams};
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
 use crate::identity::IdentitySessionStore;
@@ -539,6 +539,10 @@ async fn main() {
         None
     };
 
+    // Redirect parameters captured for the NAT kernel-coexistence sync so it can
+    // reinstall the TLS redirect with NAT VIP bypass entries when rules change.
+    let mut nat_redirect_params: Option<RedirectParams> = None;
+
     if config.ssl_inspection_enabled {
         let tls_runtime_cancel = CancellationToken::new();
         decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
@@ -549,6 +553,13 @@ async fn main() {
                     .mitm_listen_addr
                     .parse()
                     .expect("MITM_LISTEN_ADDR must be a valid socket address");
+
+                nat_redirect_params = Some(RedirectParams {
+                    listen_addr,
+                    capture_interfaces: sniffed_names.clone(),
+                    inspection_ports: config.tls_inspection_ports.clone(),
+                    local_addresses: local_ips.iter().copied().collect(),
+                });
 
                 match TransparentRedirect::new(
                     listen_addr,
@@ -610,9 +621,18 @@ async fn main() {
         }
     }
 
+    // Kernel-side coexistence for userspace NAT: notrack SNAT/MASQ replies and
+    // bypass DNAT/PAT VIPs in the TLS redirect. Apply once for the startup rule
+    // set; refreshed on every NAT config change via the query server.
+    let nat_kernel_sync = Arc::new(NatKernelSync::new(nat_redirect_params));
+    nat_kernel_sync.apply(
+        nat_engine.rules().as_deref(),
+        &nat_engine.interface_ips_snapshot(),
+    );
+
     let (sniffer, mut raw_rx) = InterfaceSniffer::with_sniffing(config.pcap_timeout_ms);
     let sniffer = Arc::new(sniffer);
-    
+
     // Startup sniffer reconciliation
     tracing::info!(
         event = "sniffer.reconcile.start",
@@ -631,6 +651,7 @@ async fn main() {
             conntrack: Arc::clone(&conntrack),
             nat_engine: Arc::clone(&nat_engine),
             nat_store: Arc::clone(&nat_store),
+            nat_kernel_sync: Arc::clone(&nat_kernel_sync),
             policy_store: Arc::clone(&policy_provider),
             policy_engine: Arc::clone(&policy_engine),
             zone_store: zones,

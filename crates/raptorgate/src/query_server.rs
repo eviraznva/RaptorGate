@@ -22,7 +22,7 @@ use crate::nat::config::NatConfig;
 use crate::data_plane::ips::config::IpsConfig;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
-use crate::nat::{NatConfigProvider, NatEngine};
+use crate::nat::{NatConfigProvider, NatEngine, NatKernelSync};
 use crate::factory_reset::{safe_app_config, FactoryResetOptions, FactoryResetReport};
 use crate::identity::{IdentitySessionHandler, IdentitySessionStore};
 use crate::metrics::{MetricsCollector, MetricsService};
@@ -148,6 +148,9 @@ where
 {
     pub nat_engine: Arc<NatEngine>,
     pub nat_store: Arc<NatConfigProvider>,
+    /// Installs kernel-side nft rules that let userspace NAT coexist with the
+    /// host stack (notrack for SNAT/MASQ replies, TLS-redirect VIP bypass).
+    pub nat_kernel_sync: Arc<NatKernelSync>,
     pub conntrack: Arc<crate::conntrack::table::Conntrack>,
     pub policy_store: Arc<PolicySwap>,
     pub policy_engine: Arc<PolicyEngine>,
@@ -185,6 +188,7 @@ where
         Self {
             nat_engine: Arc::clone(&self.nat_engine),
             nat_store: Arc::clone(&self.nat_store),
+            nat_kernel_sync: Arc::clone(&self.nat_kernel_sync),
             conntrack: Arc::clone(&self.conntrack),
             policy_store: Arc::clone(&self.policy_store),
             policy_engine: Arc::clone(&self.policy_engine),
@@ -1025,7 +1029,14 @@ where
 
         self.nat_store.swap_config(nat_config).await?;
 
-        self.nat_engine.replace_rules(runtime_rules);
+        self.nat_engine.replace_rules(runtime_rules.clone());
+
+        // Refresh kernel-side coexistence rules (notrack for SNAT/MASQ replies,
+        // TLS-redirect VIP bypass) to match the new active NAT rule set.
+        let interface_ips = self.nat_engine.interface_ips_snapshot();
+        self.nat_kernel_sync
+            .apply(runtime_rules.as_deref(), &interface_ips);
+
         Ok(())
     }
 

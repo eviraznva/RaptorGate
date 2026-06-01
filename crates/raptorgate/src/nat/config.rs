@@ -182,7 +182,7 @@ impl NatConfigRule {
             },
             
             Self::Masquerade { id, priority, common, src_cidr, src_port_min, src_port_max } => {
-                if common.out_interface.as_deref().unwrap_or("").is_empty() {
+                if normalize_optional_matcher(common.out_interface.clone()).is_none() {
                     bail!("masquerade rule '{id}' requires common.out_interface");
                 }
                 
@@ -255,15 +255,23 @@ fn build_rule(id: &str, priority: u32, common: &CommonMatchers, action: NatActio
     Ok(NatRule::new(
         id.to_string(),
         priority,
-        common.in_interface.clone(),
-        common.out_interface.clone(),
-        common.in_zone.clone(),
-        common.out_zone.clone(),
+        normalize_optional_matcher(common.in_interface.clone()),
+        normalize_optional_matcher(common.out_interface.clone()),
+        normalize_optional_matcher(common.in_zone.clone()),
+        normalize_optional_matcher(common.out_zone.clone()),
         common.protocol.to_runtime(),
         pair_ports(common.match_src_port_min, common.match_src_port_max, "match_src_port")?,
         pair_ports(common.match_dst_port_min, common.match_dst_port_max, "match_dst_port")?,
         action,
     ))
+}
+
+fn normalize_optional_matcher(value: Option<String>) -> Option<String> {
+    value.and_then(|s| {
+        let trimmed = s.trim();
+
+        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    })
 }
 
 fn pair_ports(min: Option<u16>, max: Option<u16>, scope: &str) -> Result<Option<(u16, u16)>> {
@@ -373,6 +381,10 @@ impl NatRule {
 
     pub fn try_from_proto(value: config::NatRule) -> Result<Self> {
         let action_proto = value.action.context("nat rule has no action")?;
+        let in_interface = normalize_optional_matcher(value.in_interface);
+        let out_interface = normalize_optional_matcher(value.out_interface);
+        let in_zone = normalize_optional_matcher(value.in_zone);
+        let out_zone = normalize_optional_matcher(value.out_zone);
 
         let action = match action_proto {
             config::nat_rule::Action::Snat(s) => NatAction::Snat {
@@ -395,7 +407,7 @@ impl NatRule {
             },
 
             config::nat_rule::Action::Masquerade(m) => {
-                if value.out_interface.as_deref().unwrap_or("").is_empty() {
+                if out_interface.is_none() {
                     bail!("masquerade requires out_interface");
                 }
 
@@ -409,10 +421,10 @@ impl NatRule {
         Ok(Self::new(
             value.id,
             value.priority,
-            value.in_interface,
-            value.out_interface,
-            value.in_zone,
-            value.out_zone,
+            in_interface,
+            out_interface,
+            in_zone,
+            out_zone,
             NatProtocol::from_proto(value.protocol)?,
             parse_port_range(value.match_src_port_min, value.match_src_port_max, "match_src_port")?,
             parse_port_range(value.match_dst_port_min, value.match_dst_port_max, "match_dst_port")?,
@@ -724,5 +736,59 @@ mod tests {
         let back = NatRule::try_from_proto(proto_msg).unwrap();
 
         assert_eq!(runtime, back);
+    }
+
+    #[test]
+    fn empty_optional_matchers_are_absent_in_runtime_config() {
+        let cfg = NatConfigRule::Dnat {
+            id: "d6".into(),
+            priority: 7,
+            common: CommonMatchers {
+                in_interface: Some("".into()),
+                out_interface: Some("  ".into()),
+                in_zone: Some("".into()),
+                out_zone: Some("  ".into()),
+                ..Default::default()
+            },
+            dst_cidr: "203.0.113.10/32".into(),
+            translated_ip: "10.0.0.5".into(),
+            translated_port: Some(443),
+        };
+
+        let runtime = cfg.to_runtime_rule().unwrap();
+
+        assert_eq!(runtime.in_interface(), None);
+        assert_eq!(runtime.out_interface(), None);
+        assert_eq!(runtime.in_zone(), None);
+        assert_eq!(runtime.out_zone(), None);
+    }
+
+    #[test]
+    fn proto_optional_matchers_are_trimmed_or_absent() {
+        let proto = config::NatRule {
+            id: "d7".into(),
+            priority: 7,
+            in_interface: Some(" eth1 ".into()),
+            out_interface: Some("".into()),
+            in_zone: Some("  ".into()),
+            out_zone: Some("zone-b".into()),
+            protocol: common::NatProtocol::Tcp as i32,
+            match_src_port_min: None,
+            match_src_port_max: None,
+            match_dst_port_min: None,
+            match_dst_port_max: None,
+            action: Some(config::nat_rule::Action::Dnat(config::DnatRule {
+                dst_cidr: "203.0.113.10/32".into(),
+                translated_ip: "10.0.0.5".into(),
+                translated_port: Some(443),
+            })),
+        };
+
+        let runtime = NatRule::try_from_proto(proto).unwrap();
+
+        assert_eq!(runtime.in_interface(), Some("eth1"));
+        assert_eq!(runtime.out_interface(), None);
+        assert_eq!(runtime.in_zone(), None);
+        assert_eq!(runtime.out_zone(), Some("zone-b"));
     }
 }

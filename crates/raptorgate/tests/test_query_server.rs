@@ -207,6 +207,7 @@ fn shared_server() -> &'static SharedServer {
                 let handler = QueryHandler {
                     nat_engine: NatEngine::new(None, HashMap::new()),
                     nat_store,
+                    nat_kernel_sync: Arc::new(ngfw::nat::NatKernelSync::new(None)),
                     conntrack: conntrack_for_test,
                     policy_store: Arc::new(policy),
                     policy_engine,

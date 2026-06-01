@@ -66,7 +66,7 @@ impl NatEngine {
         out_zone: Option<&str>) -> NatOutcome {
 
         if let Some(existing) = ct.nat.lock().clone() {
-            if !self.would_apply_in_stage(&existing, manip) {
+            if !self.would_apply_in_stage(packet, ct, &existing, manip) {
                 return NatOutcome::NoMatch;
             }
             return self.apply_existing(packet, ct, &existing, manip);
@@ -114,10 +114,18 @@ impl NatEngine {
 
     pub fn port_store(&self) -> &Arc<PortStore> { &self.port_store }
 
-    fn would_apply_in_stage(&self, t: &NatTransform, manip: ManipType) -> bool {
-        match manip {
-            ManipType::Source      => t.has_src_manip(),
-            ManipType::Destination => t.has_dst_manip(),
+    /// Snapshot of the interface → IPs map, used to derive kernel coexistence
+    /// rules (e.g. resolving the MASQUERADE source IP for an out-interface).
+    pub fn interface_ips_snapshot(&self) -> Arc<HashMap<String, Vec<IpAddr>>> {
+        self.interface_ips.load_full()
+    }
+
+    fn would_apply_in_stage(&self, packet: &[u8], ct: &Arc<ConntrackEntry>, t: &NatTransform, manip: ManipType) -> bool {
+        match (self.detect_direction(ct, packet, Some(t)), manip) {
+            (PacketDirection::Original, ManipType::Source) => t.has_src_manip(),
+            (PacketDirection::Original, ManipType::Destination) => t.has_dst_manip(),
+            (PacketDirection::Reply, ManipType::Source) => t.has_dst_manip(),
+            (PacketDirection::Reply, ManipType::Destination) => t.has_src_manip(),
         }
     }
 
@@ -135,7 +143,7 @@ impl NatEngine {
     }
 
     fn apply_to_packet(&self, packet: &mut [u8], ct: &Arc<ConntrackEntry>, transform: &NatTransform, _manip: ManipType) -> bool {
-        let direction = self.detect_direction(ct, packet);
+        let direction = self.detect_direction(ct, packet, Some(transform));
 
         let (orig_for_apply, translated) = match direction {
             PacketDirection::Original => {
@@ -154,11 +162,14 @@ impl NatEngine {
     /// Direction wykrywany przez parsing pakietu i porównanie z `ct.original`.
     /// Pipeline (ConntrackInStage) ma już tę informację w `PacketContext` ale
     /// engine tu jej nie dostaje — recompute z bytes.
-    fn detect_direction(&self, ct: &Arc<ConntrackEntry>, packet: &[u8]) -> PacketDirection {
+    fn detect_direction(&self, ct: &Arc<ConntrackEntry>, packet: &[u8], transform: Option<&NatTransform>) -> PacketDirection {
         match crate::nat::packet::parse_flow_tuple_from_ethernet(packet) {
-            Some(flow) if flow.src_ip == ct.original.src_ip && flow.dst_ip == ct.original.dst_ip => {
+            Some(flow) if tuple_matches_direction(&flow, &ct.original) => {
                 PacketDirection::Original
             }
+            Some(flow) if transform
+                .map(|t| tuple_matches_direction(&flow, &apply_transform_to_tuple_original(&ct.original, t)))
+                .unwrap_or(false) => PacketDirection::Original,
             Some(_) => PacketDirection::Reply,
             None => PacketDirection::Original,
         }
@@ -479,6 +490,14 @@ fn apply_transform_to_tuple_original(original: &FlowTuple, t: &NatTransform) -> 
 #[derive(Debug, Clone, Copy)]
 enum PacketDirection { Original, Reply }
 
+fn tuple_matches_direction(packet: &FlowTuple, tuple: &FlowTuple) -> bool {
+    packet.src_ip == tuple.src_ip
+        && packet.dst_ip == tuple.dst_ip
+        && packet.src_port == tuple.src_port
+        && packet.dst_port == tuple.dst_port
+        && packet.protocol == tuple.protocol
+}
+
 /// Match port flow vs Optional zakres reguły. None = brak ograniczenia (zawsze pasuje).
 fn port_in_range(range: Option<(u16, u16)>, port: u16) -> bool {
     match range {
@@ -512,6 +531,7 @@ fn flow_matches_action(action: &NatAction, flow: &FlowTuple) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use etherparse::PacketBuilder;
     use std::net::Ipv4Addr;
     use std::collections::HashMap;
     use std::time::Duration;
@@ -535,6 +555,19 @@ mod tests {
                 dst_cidr: dst_cidr.parse().unwrap(),
                 translated_ip: translated_ip.parse().unwrap(),
                 translated_port,
+            },
+        )
+    }
+
+    fn snat_rule(id: &str, src_cidr: &str, translated_ip: &str) -> NatRule {
+        NatRule::new(
+            id.into(), 1,
+            None, None, None, None,
+            NatProtocol::All, None, None,
+            NatAction::Snat {
+                src_cidr: src_cidr.parse().unwrap(),
+                translated_ip: translated_ip.parse().unwrap(),
+                src_port_range: None,
             },
         )
     }
@@ -570,6 +603,24 @@ mod tests {
             Duration::from_secs(300),
             0,
         ))
+    }
+
+    fn tcp_packet(src_ip: IpAddr, src_port: u16, dst_ip: IpAddr, dst_port: u16) -> Vec<u8> {
+        let IpAddr::V4(src) = src_ip else { panic!("test packet only supports IPv4") };
+        let IpAddr::V4(dst) = dst_ip else { panic!("test packet only supports IPv4") };
+        let mut raw = Vec::new();
+
+        PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12])
+            .ipv4(src.octets(), dst.octets(), 64)
+            .tcp(src_port, dst_port, 1, 65535)
+            .write(&mut raw, b"hello")
+            .unwrap();
+
+        raw
+    }
+
+    fn packet_tuple(packet: &[u8]) -> FlowTuple {
+        crate::nat::packet::parse_flow_tuple_from_ethernet(packet).unwrap()
     }
 
     #[test]
@@ -656,5 +707,105 @@ mod tests {
         assert_eq!(range.min_port, 80);
         assert_eq!(range.max_port, 80);
     }
-}
 
+    #[test]
+    fn reverse_snat_applies_in_prerouting() {
+        let engine = make_engine(vec![
+            snat_rule("s1", "192.168.10.0/24", "192.168.20.100"),
+        ]);
+        let ct = make_entry(ip(192,168,10,10), 40000, ip(192,168,20,10), 9999);
+
+        let mut original = tcp_packet(ip(192,168,10,10), 40000, ip(192,168,20,10), 9999);
+        assert!(matches!(
+            engine.postrouting(&mut original, &ct, CtInfo::New, "eth2", None),
+            NatOutcome::Created { .. }
+        ));
+        assert_eq!(
+            packet_tuple(&original),
+            FlowTuple::new(ip(192,168,20,100), 40000, ip(192,168,20,10), 9999, Protocol::Tcp),
+        );
+
+        let mut reply = tcp_packet(ip(192,168,20,10), 9999, ip(192,168,20,100), 40000);
+        assert!(matches!(
+            engine.prerouting(&mut reply, &ct, CtInfo::Established, "eth2", None),
+            NatOutcome::AppliedExisting { .. }
+        ));
+        assert_eq!(
+            packet_tuple(&reply),
+            FlowTuple::new(ip(192,168,20,10), 9999, ip(192,168,10,10), 40000, Protocol::Tcp),
+        );
+    }
+
+    #[test]
+    fn source_nat_postrouting_is_idempotent_for_translated_original() {
+        let engine = make_engine(vec![
+            snat_rule("s1", "192.168.10.0/24", "192.168.20.100"),
+        ]);
+        let ct = make_entry(ip(192,168,10,10), 40000, ip(192,168,20,10), 9999);
+        let mut packet = tcp_packet(ip(192,168,10,10), 40000, ip(192,168,20,10), 9999);
+
+        assert!(matches!(
+            engine.postrouting(&mut packet, &ct, CtInfo::New, "eth2", None),
+            NatOutcome::Created { .. }
+        ));
+        assert_eq!(
+            packet_tuple(&packet),
+            FlowTuple::new(ip(192,168,20,100), 40000, ip(192,168,20,10), 9999, Protocol::Tcp),
+        );
+
+        assert!(matches!(
+            engine.postrouting(&mut packet, &ct, CtInfo::New, "eth2", None),
+            NatOutcome::AppliedExisting { .. }
+        ));
+        assert_eq!(
+            packet_tuple(&packet),
+            FlowTuple::new(ip(192,168,20,100), 40000, ip(192,168,20,10), 9999, Protocol::Tcp),
+        );
+    }
+
+    #[test]
+    fn dnat_reply_applies_in_postrouting() {
+        let engine = make_engine(vec![
+            dnat_rule("d1", "192.168.20.200/32", "192.168.20.10", Some(80)),
+        ]);
+        let ct = make_entry(ip(192,168,10,10), 40000, ip(192,168,20,200), 443);
+
+        let mut original = tcp_packet(ip(192,168,10,10), 40000, ip(192,168,20,200), 443);
+        assert!(matches!(
+            engine.prerouting(&mut original, &ct, CtInfo::New, "eth1", None),
+            NatOutcome::Created { .. }
+        ));
+        assert_eq!(
+            packet_tuple(&original),
+            FlowTuple::new(ip(192,168,10,10), 40000, ip(192,168,20,10), 80, Protocol::Tcp),
+        );
+
+        assert!(matches!(
+            engine.postrouting(&mut original, &ct, CtInfo::New, "eth2", None),
+            NatOutcome::NoMatch
+        ));
+        assert_eq!(
+            packet_tuple(&original),
+            FlowTuple::new(ip(192,168,10,10), 40000, ip(192,168,20,10), 80, Protocol::Tcp),
+        );
+
+        let mut reply = tcp_packet(ip(192,168,20,10), 80, ip(192,168,10,10), 40000);
+        assert!(matches!(
+            engine.prerouting(&mut reply, &ct, CtInfo::Established, "eth2", None),
+            NatOutcome::NoMatch
+        ));
+        assert_eq!(
+            packet_tuple(&reply),
+            FlowTuple::new(ip(192,168,20,10), 80, ip(192,168,10,10), 40000, Protocol::Tcp),
+        );
+
+        assert!(matches!(
+            engine.postrouting(&mut reply, &ct, CtInfo::Established, "eth1", None),
+            NatOutcome::AppliedExisting { .. }
+        ));
+        assert_eq!(
+            packet_tuple(&reply),
+            FlowTuple::new(ip(192,168,20,200), 443, ip(192,168,10,10), 40000, Protocol::Tcp),
+        );
+    }
+}

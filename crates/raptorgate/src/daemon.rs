@@ -255,6 +255,7 @@ where
                     config_provider: Arc::clone(deps.config_provider),
                     zone_interface_provider: Arc::clone(deps.zone_interfaces),
                     local_ips: Arc::clone(deps.local_ips),
+                    conntrack: Arc::clone(deps.conntrack),
                 },
                 tail: Chain {
                     head: ConntrackInStage {
@@ -263,12 +264,14 @@ where
                     tail: Chain {
                         head: NatPreroutingStage {
                             engine: Arc::clone(deps.nat_engine),
+                            zone_interface_provider: Arc::clone(deps.zone_interfaces),
                         },
                         tail: Chain {
                             head: NatPostroutingStage {
                                 engine: Arc::clone(deps.nat_engine),
                                 routes: Arc::clone(deps.routing_table),
                                 interface_monitor: Arc::clone(deps.interface_monitor),
+                                zone_interface_provider: Arc::clone(deps.zone_interfaces),
                             },
                             tail: Chain {
                                 head: ConntrackConfirmStage {
@@ -300,6 +303,7 @@ fn build_pipeline<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>>(deps: &Arc<
                     config_provider: Arc::clone(s.config_provider),
                     zone_interface_provider: Arc::clone(s.zone_interfaces),
                     local_ips: Arc::clone(s.local_ips),
+                    conntrack: Arc::clone(s.conntrack),
                 },
                 tail: Chain {
                     head: IdentityLookupStage {
@@ -338,6 +342,7 @@ fn build_pipeline<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>>(deps: &Arc<
                                                 tail: Chain {
                                                     head: NatPreroutingStage {
                                                         engine: Arc::clone(s.nat_engine),
+                                                        zone_interface_provider: Arc::clone(s.zone_interfaces),
                                                     },
                                                     tail: Chain {
                                                         head: L4StateStage {
@@ -356,6 +361,7 @@ fn build_pipeline<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>>(deps: &Arc<
                                                                         engine: Arc::clone(s.nat_engine),
                                                                         routes: Arc::clone(s.routing_table),
                                                                         interface_monitor: Arc::clone(s.interface_monitor),
+                                                                        zone_interface_provider: Arc::clone(s.zone_interfaces),
                                                                     },
                                                                     tail: Chain {
                                                                         head: FtpAlgStage {
@@ -522,6 +528,12 @@ where
             Some(Arc::clone(s.dpi_classifier)),
             Some(Arc::clone(s.dns_inspection)),
             Some(Arc::clone(s.ips)),
+            Some(MlAlertStage::new(Arc::clone(s.ml_detector))),
+            Some(Arc::clone(s.ml_flow_stats)),
+            Some(FtpAlgStage {
+                conntrack: Arc::clone(s.conntrack),
+                helpers: Arc::clone(s.helpers),
+            }),
             release_tx.clone(),
         );
         let pipeline = build_v2_pipeline(&s, Arc::clone(&sessions));
@@ -530,6 +542,7 @@ where
             Arc::clone(s.nat_engine),
             Arc::clone(s.routing_table),
             Arc::clone(s.interface_monitor),
+            Arc::clone(s.zone_interfaces),
             tun,
             disposition_tx.clone(),
         );

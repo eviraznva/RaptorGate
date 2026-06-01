@@ -85,6 +85,7 @@ pub struct LocalOwnershipStage<Store: AppConfigStore> {
     pub config_provider: Arc<AppConfigProvider<Store>>,
     pub zone_interface_provider: Arc<ZoneInterfaceProvider>,
     pub local_ips: Arc<HashSet<IpAddr>>,
+    pub conntrack: Arc<Conntrack>,
 }
 
 impl<Store: AppConfigStore> Clone for LocalOwnershipStage<Store> {
@@ -93,6 +94,34 @@ impl<Store: AppConfigStore> Clone for LocalOwnershipStage<Store> {
             config_provider: Arc::clone(&self.config_provider),
             zone_interface_provider: Arc::clone(&self.zone_interface_provider),
             local_ips: Arc::clone(&self.local_ips),
+            conntrack: Arc::clone(&self.conntrack),
+        }
+    }
+}
+
+impl<Store: AppConfigStore> LocalOwnershipStage<Store> {
+    /// A packet whose destination is a firewall-local IP is normally host-bound
+    /// and halted here. The exception is the reply of an active SNAT/MASQUERADE
+    /// session: its destination is the *translated* source IP (a local address
+    /// assigned so it answers ARP), but it must continue down the pipeline so
+    /// NAT prerouting can reverse-translate it back to the real client and the
+    /// firewall can forward it. Without this, such replies are swallowed as
+    /// host-owned and the userspace-forwarded session stalls.
+    fn is_source_nat_reply(&self, ctx: &PacketContext) -> bool {
+        let Some(tuple) = crate::nat::packet::parse_flow_tuple_from_ethernet(ctx.borrow_raw()) else {
+            return false;
+        };
+
+        match self.conntrack.lookup(&tuple) {
+            crate::conntrack::table::LookupResult::Found { entry, direction } => {
+                direction == Direction::Reply
+                    && entry
+                        .nat
+                        .lock()
+                        .as_ref()
+                        .is_some_and(|transform| transform.has_src_manip())
+            }
+            crate::conntrack::table::LookupResult::NotFound => false,
         }
     }
 }
@@ -108,8 +137,16 @@ impl<Store: AppConfigStore> Stage for LocalOwnershipStage<Store> {
         };
 
         if self.local_ips.contains(&dst_ip) {
-            tracing::trace!(dst_ip = %dst_ip, iface = %ctx.borrow_src_interface(), "packet owned by local stack");
-            return StageOutcome::Halt;
+            if self.is_source_nat_reply(ctx) {
+                tracing::trace!(
+                    dst_ip = %dst_ip,
+                    iface = %ctx.borrow_src_interface(),
+                    "local-destined packet is a source-NAT reply; deferring to NAT prerouting"
+                );
+            } else {
+                tracing::trace!(dst_ip = %dst_ip, iface = %ctx.borrow_src_interface(), "packet owned by local stack");
+                return StageOutcome::Halt;
+            }
         }
 
         let config = self.config_provider.get_config();
@@ -205,9 +242,16 @@ fn packet_is_decrypted(ctx: &PacketContext) -> bool {
         .is_some_and(|dpi_ctx| dpi_ctx.decrypted)
 }
 
+fn zone_id_for_interface(provider: &ZoneInterfaceProvider, iface: &str) -> Option<String> {
+    provider
+        .get_zone_interface_by_name(iface)
+        .map(|(_, zi)| zi.zone_id.to_string())
+}
+
 #[derive(Clone)]
 pub struct NatPreroutingStage {
     pub engine: Arc<NatEngine>,
+    pub zone_interface_provider: Arc<ZoneInterfaceProvider>,
 }
 
 impl Stage for NatPreroutingStage {
@@ -219,6 +263,7 @@ impl Stage for NatPreroutingStage {
         let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
         let info = ctx.ct_info().unwrap_or(crate::conntrack::entry::CtInfo::Established);
         let iface = ctx.borrow_src_interface().to_string();
+        let zone = zone_id_for_interface(&self.zone_interface_provider, &iface);
 
         // Safety: NatEngine rewrites packet header fields in-place without
         // reallocating the buffer.
@@ -227,7 +272,7 @@ impl Stage for NatPreroutingStage {
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        let result = self.engine.prerouting(raw_mut, &ct, info, &iface, None);
+        let result = self.engine.prerouting(raw_mut, &ct, info, &iface, zone.as_deref());
         tracing::trace!(
             event = "nat.prerouting.completed",
             stage = "nat_prerouting",
@@ -245,6 +290,7 @@ pub struct NatPostroutingStage<M: InterfaceMonitor, Routes: RouteLookup> {
     pub engine: Arc<NatEngine>,
     pub routes: Arc<Routes>,
     pub interface_monitor: Arc<M>,
+    pub zone_interface_provider: Arc<ZoneInterfaceProvider>,
 }
 
 impl<M: InterfaceMonitor, Routes: RouteLookup> Clone for NatPostroutingStage<M, Routes> {
@@ -253,6 +299,7 @@ impl<M: InterfaceMonitor, Routes: RouteLookup> Clone for NatPostroutingStage<M, 
             engine: Arc::clone(&self.engine),
             routes: Arc::clone(&self.routes),
             interface_monitor: Arc::clone(&self.interface_monitor),
+            zone_interface_provider: Arc::clone(&self.zone_interface_provider),
         }
     }
 }
@@ -284,13 +331,14 @@ impl<M: InterfaceMonitor, Routes: RouteLookup> Stage for NatPostroutingStage<M, 
             ctx.ct_direction().unwrap_or(Direction::Original),
             &out_iface_sys.name,
         );
+        let out_zone = zone_id_for_interface(&self.zone_interface_provider, &out_iface_sys.name);
 
         let raw_mut = unsafe {
             let ptr = ctx.borrow_raw().as_ptr() as *mut u8;
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        let result = self.engine.postrouting(raw_mut, &ct, info, &out_iface_sys.name, None);
+        let result = self.engine.postrouting(raw_mut, &ct, info, &out_iface_sys.name, out_zone.as_deref());
         tracing::trace!(
             event = "nat.postrouting.completed",
             stage = "nat_postrouting",
@@ -312,12 +360,12 @@ pub struct FtpAlgStage {
     pub helpers: Arc<crate::conntrack::helper::HelperRegistry>,
 }
 
-impl Stage for FtpAlgStage {
-    fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        ctx.ct().is_some() && matches!(ctx.borrow_dpi_ctx(), Some(dpi_ctx) if dpi_ctx.app_proto == Some(AppProto::Ftp) && !dpi_ctx.decrypted)
-    }
-
-    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+impl FtpAlgStage {
+    /// Synchronous core of the FTP ALG (payload rewrite + helper expectation
+    /// install). Shared by the inline `Stage::process` path and the V2
+    /// SessionManager inspection path, which runs payload-level inspection
+    /// post-handoff once DPI has classified the flow (`app_proto == Ftp`).
+    pub(crate) fn run(&self, ctx: &mut PacketContext) -> StageOutcome {
         let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
 
         let Some(dpi_ctx) = ctx.borrow_dpi_ctx().clone() else {
@@ -418,6 +466,16 @@ impl Stage for FtpAlgStage {
         }
 
         StageOutcome::Continue
+    }
+}
+
+impl Stage for FtpAlgStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        ctx.ct().is_some() && matches!(ctx.borrow_dpi_ctx(), Some(dpi_ctx) if dpi_ctx.app_proto == Some(AppProto::Ftp) && !dpi_ctx.decrypted)
+    }
+
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+        self.run(ctx)
     }
 }
 
@@ -917,7 +975,7 @@ where
     }
 }
 
-fn populate_ml_tcp_and_flow_stats(
+pub(crate) fn populate_ml_tcp_and_flow_stats(
     ctx: &mut PacketContext,
     flow_stats: &crate::ml::FlowStatsAggregator,
 ) {
@@ -1023,18 +1081,13 @@ impl MlAlertStage {
         self.last_alert.insert(key, now);
         true
     }
-}
 
-impl Stage for MlAlertStage {
-    fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        self.detector.is_enabled()
-            && matches!(
-                &ctx.borrow_sliced_packet().transport,
-                Some(TransportSlice::Tcp(_) | TransportSlice::Udp(_))
-            )
-    }
-
-    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+    /// Synchronous core of the ML anomaly check. Shared by the inline
+    /// `Stage::process` path and the V2 SessionManager inspection path
+    /// (which runs flow-level inspection post-handoff rather than inline).
+    /// Caller must ensure `is_applicable` and that the ML feature vector
+    /// has been populated (via `populate_ml_tcp_and_flow_stats`) first.
+    pub(crate) fn inspect(&self, ctx: &mut PacketContext) {
         let features = ctx.borrow_ml_feature_vector().to_f32_array();
 
         match self.detector.inspect_features(features) {
@@ -1053,7 +1106,20 @@ impl Stage for MlAlertStage {
                 );
             }
         }
+    }
+}
 
+impl Stage for MlAlertStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        self.detector.is_enabled()
+            && matches!(
+                &ctx.borrow_sliced_packet().transport,
+                Some(TransportSlice::Tcp(_) | TransportSlice::Udp(_))
+            )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+        self.inspect(ctx);
         StageOutcome::Continue
     }
 }
