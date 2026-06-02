@@ -36,7 +36,7 @@ impl From<AppProto> for MlAppProto {
             AppProto::Ftp => Self::Ftp,
             AppProto::Rdp => Self::Rdp,
             AppProto::Smb => Self::Smb,
-            AppProto::Unknown => Self::Unknown,
+            AppProto::Unknown | AppProto::Any => Self::Unknown,
         }
     }
 }

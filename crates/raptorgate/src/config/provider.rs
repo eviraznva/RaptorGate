@@ -6,7 +6,22 @@ use tokio::sync::Mutex;
 use anyhow::{Context, Result};
 
 use crate::config::{AppConfig, ConfigObserver};
-use crate::disk_store::SingleDiskStore;
+use crate::disk_store::{SingleDiskStore, StoreError};
+
+pub trait AppConfigStore: Send + Sync {
+    fn save_app_config(&self, config: AppConfig) -> impl std::future::Future<Output = Result<(), StoreError>> + Send + '_;
+    fn load_app_config(&self) -> impl std::future::Future<Output = Result<AppConfig, StoreError>> + Send + '_;
+}
+
+impl AppConfigStore for SingleDiskStore<AppConfig> {
+    fn save_app_config(&self, config: AppConfig) -> impl std::future::Future<Output = Result<(), StoreError>> + Send + '_ {
+        self.save(config)
+    }
+
+    fn load_app_config(&self) -> impl std::future::Future<Output = Result<AppConfig, StoreError>> + Send + '_ {
+        self.load()
+    }
+}
 
 pub struct ConfigSwapError {
     pub original_error: anyhow::Error,
@@ -38,13 +53,15 @@ impl std::error::Error for ConfigSwapError {
     }
 }
 
-pub struct AppConfigProvider {
+pub struct AppConfigProvider<Store: AppConfigStore> {
     config: ArcSwap<AppConfig>,
-    store: SingleDiskStore<AppConfig>,
+    store: Store,
     observers: Mutex<Vec<(Arc<dyn ConfigObserver>, &'static str)>>,
 }
 
-impl AppConfigProvider {
+pub type DiskAppConfigProvider = AppConfigProvider<SingleDiskStore<AppConfig>>;
+
+impl AppConfigProvider<SingleDiskStore<AppConfig>> {
     pub async fn from_env() -> Result<Self> {
         let _ = dotenvy::dotenv();
 
@@ -153,7 +170,7 @@ impl AppConfigProvider {
 
         let store = SingleDiskStore::new("app_config", config.data_dir.clone());
 
-        if store.save(config.clone()).await.is_err() {
+        if store.save_app_config(config.clone()).await.is_err() {
             tracing::warn!("Failed to persist initial AppConfig to disk, continuing in-memory");
         }
 
@@ -162,6 +179,16 @@ impl AppConfigProvider {
             store,
             observers: Mutex::new(Vec::new()),
         })
+    }
+}
+
+impl<Store: AppConfigStore> AppConfigProvider<Store> {
+    pub fn with_store_and_config(store: Store, config: AppConfig) -> Self {
+        Self {
+            config: ArcSwap::from_pointee(config),
+            store,
+            observers: Mutex::new(Vec::new()),
+        }
     }
 
     pub async fn register<T: ConfigObserver + 'static>(&self, observer: Arc<T>, name: &'static str) {
@@ -186,11 +213,11 @@ impl AppConfigProvider {
 
         new.dev_config = old.dev_config.clone();
 
-        self.store.save(new.clone()).await
+        self.store.save_app_config(new.clone()).await
             .context("failed to persist new AppConfig to disk")?;
         tracing::debug!(event = "config.swap.persisted", "new AppConfig persisted to disk");
 
-        let loaded = self.store.load().await
+        let loaded = self.store.load_app_config().await
             .context("failed to verify AppConfig round-trip after save");
 
         match loaded {
@@ -243,7 +270,7 @@ impl AppConfigProvider {
                             }
                         }
 
-                        if let Err(disk_err) = self.store.save((**old).clone()).await {
+                        if let Err(disk_err) = self.store.save_app_config((**old).clone()).await {
                             tracing::error!(
                                 event = "config.swap.rollback.disk.failed",
                                 error = %disk_err,
@@ -282,7 +309,7 @@ impl AppConfigProvider {
                     error = %err,
                     "AppConfig round-trip verification failed, rolling back"
                 );
-                self.store.save((**old).clone()).await
+                self.store.save_app_config((**old).clone()).await
                     .context("CRITICAL: failed to rollback AppConfig after verification failure")?;
                 tracing::warn!(event = "config.swap.rollback.disk.succeeded", "AppConfig disk rollback succeeded");
                 Err(err)

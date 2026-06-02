@@ -1,4 +1,4 @@
-import { describe, test, beforeAll, expect } from "bun:test";
+import { describe, test, beforeAll, beforeEach, afterEach, expect } from "bun:test";
 import "../harness";
 import {
 	request,
@@ -30,6 +30,16 @@ function pushNatSnapshot(natRules: any[]) {
 	});
 }
 
+async function cleanupNatListeners() {
+	await performCommand({
+		host: "h2",
+		command: "pkill -f 'python3 -m http[.]server 80 --bind 192[.]168[.]20[.]10|[n]cat -l 9999' || true",
+	})
+		.discardError()
+		.run();
+	await sleep(200);
+}
+
 // ---------------------------------------------------------------------------
 // PAT — port address translation (dst ip+port → translated ip+port)
 // ---------------------------------------------------------------------------
@@ -38,6 +48,9 @@ describe("NAT E2E", () => {
 	beforeAll(async () => {
 		await resetFirewallState(getClient(), getSnapshotClient());
 	});
+
+	beforeEach(cleanupNatListeners);
+	afterEach(cleanupNatListeners);
 
 	test(
 		"PAT: h1 → VIP:8080 translates to h2:80",

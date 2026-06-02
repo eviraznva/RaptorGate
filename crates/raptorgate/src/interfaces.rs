@@ -1,8 +1,10 @@
 mod controller;
+mod physical_reconciler;
 mod monitor;
 pub mod vlan_reconciler;
 
 pub use controller::{InterfaceController, InterfaceControllerError, NetlinkInterfaceController};
+pub use physical_reconciler::{PhysicalInterfaceReconciler, PhysicalReconciliationError};
 pub use monitor::{
     InterfaceMonitor, NetworkInterfaceMonitor, NetworkInterfaceMonitorError, OperState,
     SystemInterface, SystemInterfaceId,
@@ -13,4 +15,3 @@ pub use vlan_reconciler::{VlanReconciler, VlanReconciliationError};
 pub use controller::MockInterfaceController;
 #[cfg(test)]
 pub use monitor::MockInterfaceMonitor;
-

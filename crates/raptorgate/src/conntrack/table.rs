@@ -8,12 +8,18 @@ use etherparse::{SlicedPacket, TransportSlice};
 use dashmap::{DashMap, mapref::entry::Entry as DashEntry};
 
 use crate::conntrack::reassembler;
+use crate::data_plane::packet_context::PacketId;
 use crate::conntrack::config::{ConntrackConfig, ConfigError};
 use crate::conntrack::tuple::{Direction, FlowTuple, Protocol};
 use crate::conntrack::entry::{ConntrackEntry, ConntrackInterfacePath, CtInfo, CtStatus};
 use crate::conntrack::expectation::{ExpectationConfig, ExpectationTable};
-use crate::conntrack::proto::{CtVerdict, NewStateOutcome, ProtoRegistry};
+use crate::conntrack::proto::{CtVerdict, NewStateOutcome, ProtoRegistry, ProtoState};
+use crate::conntrack::proto::tcp::TcpConntrack;
 use crate::conntrack::observer::{CtObserver, DestroyReason, ObserverRegistry};
+use crate::conntrack::tcp_identity::EndpointIdentifier;
+use crate::events::{emit, Event, EventKind};
+use crate::proto::events as pe;
+use crate::rule_tree::types::Port;
 
 #[derive(Debug)]
 pub struct ConntrackMetrics {
@@ -281,7 +287,7 @@ impl ConntrackFlowRegistry {
 ///
 /// Dzięki temu jeden lookup po `FlowTuple` z pakietu od razu mówi
 /// czy to ruch original (od inicjatora) czy reply (od peera).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TupleSlot {
     entry: Arc<ConntrackEntry>,
     direction: Direction,
@@ -305,6 +311,41 @@ pub enum ProcessOutcome {
     Invalid,
     Drop,
     TableFull,
+}
+
+fn tcp_conntrack_to_pe_state(s: TcpConntrack) -> pe::TcpSessionState {
+    match s {
+        TcpConntrack::None => pe::TcpSessionState::None,
+        TcpConntrack::SynSent => pe::TcpSessionState::SynSent,
+        TcpConntrack::SynRecv => pe::TcpSessionState::SynRecv,
+        TcpConntrack::Established => pe::TcpSessionState::Established,
+        TcpConntrack::FinWait => pe::TcpSessionState::FinWait,
+        TcpConntrack::CloseWait => pe::TcpSessionState::CloseWait,
+        TcpConntrack::LastAck => pe::TcpSessionState::LastAck,
+        TcpConntrack::TimeWait => pe::TcpSessionState::TimeWait,
+        TcpConntrack::Close => pe::TcpSessionState::Close,
+        TcpConntrack::SynSent2 => pe::TcpSessionState::SynSent2,
+    }
+}
+
+fn ct_direction_to_pe(d: Direction) -> pe::ConntrackPacketDirection {
+    match d {
+        Direction::Original => pe::ConntrackPacketDirection::Original,
+        Direction::Reply => pe::ConntrackPacketDirection::Reply,
+    }
+}
+
+fn original_tuple_endpoints(orig: &FlowTuple) -> (EndpointIdentifier, EndpointIdentifier) {
+    (
+        EndpointIdentifier {
+            ip: orig.src_ip,
+            port: Port::from(orig.src_port),
+        },
+        EndpointIdentifier {
+            ip: orig.dst_ip,
+            port: Port::from(orig.dst_port),
+        },
+    )
 }
 
 pub struct Conntrack {
@@ -335,6 +376,12 @@ impl Conntrack {
         }
     }
 
+    pub fn flush_deferred_payload_observers(&self, entry: &Arc<ConntrackEntry>) {
+        if let Some(chunk) = entry.deferred_first_payload.lock().take() {
+            self.observers.fire_payload(entry, Direction::Original, &chunk);
+        }
+    }
+
     /// Zwraca następny bucket reapera (round-robin po 1/REAP_BUCKETS tabeli).
     pub fn next_reap_bucket(&self) -> u64 {
         self.reap_cursor.fetch_add(1, Ordering::Relaxed) % crate::conntrack::reaper::REAP_BUCKETS
@@ -355,7 +402,7 @@ impl Conntrack {
         LookupResult::NotFound
     }
 
-    pub fn process(&self, pkt: &SlicedPacket, zone: u16) -> ProcessOutcome {
+    pub fn process(&self, pkt: &SlicedPacket, zone: u16, packet_id: PacketId) -> ProcessOutcome {
         let Some(mut tuple) = FlowTuple::from_sliced(pkt) else {
             self.metrics.invalid.fetch_add(1, Ordering::Relaxed);
             return ProcessOutcome::Invalid;
@@ -368,11 +415,11 @@ impl Conntrack {
 
         match self.lookup(&tuple) {
             LookupResult::Found { entry, direction } => {
-                self.update_existing(&entry, pkt, direction, now, &config)
+                self.update_existing(&entry, pkt, direction, now, &config, packet_id)
             },
-            
+
             LookupResult::NotFound => {
-                self.create_new(tuple, pkt, zone, now, &config)
+                self.create_new(tuple, pkt, zone, now, &config, packet_id)
             }
         }
     }
@@ -442,6 +489,7 @@ impl Conntrack {
         self.expectations.remove_for_parent(entry.id);
         
         self.observers.fire_destroy(entry, reason);
+        // tracing::trace!(entries=?self.by_tuple, "conntrack entries on destroy");
 
         self.metrics.destroyed.fetch_add(1, Ordering::Relaxed);
     }
@@ -475,7 +523,13 @@ impl Conntrack {
     }
 
     pub fn register_observer(&self, observer: Arc<dyn CtObserver>) {
-        self.observers.register(observer);
+        self.observers.register(Arc::clone(&observer));
+
+        for proto in [Protocol::Tcp, Protocol::Udp, Protocol::Icmp, Protocol::IcmpV6] {
+            if let Some(handler) = self.proto.get(proto) {
+                handler.register_observer(Arc::clone(&observer));
+            }
+        }
     }
 
     pub fn expectations(&self) -> &Arc<ExpectationTable> {
@@ -516,7 +570,24 @@ impl Conntrack {
             .map(|kv| kv.value().entry.clone())
     }
 
-    fn create_new(&self, tuple: FlowTuple, pkt: &SlicedPacket, zone: u16, _now: Instant, config: &ConntrackConfig) -> ProcessOutcome {
+    pub fn destroy_by_id(&self, id: u64, reason: DestroyReason) -> bool {
+        let Some(entry) = self.find_by_id(id) else {
+            return false;
+        };
+
+        self.destroy(&entry, reason);
+        true
+    }
+
+    fn create_new(
+        &self,
+        tuple: FlowTuple,
+        pkt: &SlicedPacket,
+        zone: u16,
+        _now: Instant,
+        config: &ConntrackConfig,
+        packet_id: PacketId,
+    ) -> ProcessOutcome {
         if self.entries_count() >= config.max_entries as usize {
             self.metrics.drops_table_full.fetch_add(1, Ordering::Relaxed);
 
@@ -594,6 +665,7 @@ impl Conntrack {
                             &mut reass.dirs[Direction::Original as usize],
                             &config.reassembly,
                             t.sequence_number(),
+                            packet_id,
                             payload,
                         );
                         
@@ -604,8 +676,11 @@ impl Conntrack {
                         }
                     }
                 } else {
-                    // UDP/ICMP — datagram bezpośrednio.
-                    self.observers.fire_payload(&entry, Direction::Original, payload);
+                    *entry.deferred_first_payload.lock() = Some(reassembler::DeliveredChunk {
+                        packet_id,
+                        payload: payload.to_vec(),
+                        tcp_payload_start_seq: 0,
+                    });
                 }
             }
         }
@@ -621,17 +696,56 @@ impl Conntrack {
         }
     }
 
-    fn update_existing(&self, entry: &Arc<ConntrackEntry>, pkt: &SlicedPacket, direction: Direction, now: Instant, config: &ConntrackConfig) -> ProcessOutcome {
+    fn update_existing(
+        &self,
+        entry: &Arc<ConntrackEntry>,
+        pkt: &SlicedPacket,
+        direction: Direction,
+        now: Instant,
+        config: &ConntrackConfig,
+        packet_id: PacketId,
+    ) -> ProcessOutcome {
         let proto = entry.original.protocol;
 
         let Some(handler) = self.proto.get(proto) else {
             return ProcessOutcome::Invalid;
         };
 
-        let verdict = handler.update(entry, pkt, direction, now, config);
+        let prev_tcp = if proto == Protocol::Tcp {
+            match &*entry.proto_state.lock() {
+                ProtoState::Tcp(t) => Some(t.state),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let verdict = handler.update(entry, pkt, direction, now, config, packet_id);
 
         match verdict {
             CtVerdict::Accept => {
+                if let Some(prev) = prev_tcp {
+                    let new_tcp = match &*entry.proto_state.lock() {
+                        ProtoState::Tcp(t) => Some(t.state),
+                        _ => None,
+                    };
+
+                    if let Some(new) = new_tcp {
+                        if prev != new {
+                            let (src, dst) = original_tuple_endpoints(&entry.original);
+
+                            emit(Event::new(EventKind::TcpSessionSubstateChanged {
+                                flow_id: entry.id,
+                                src,
+                                dst,
+                                packet_direction: ct_direction_to_pe(direction),
+                                previous_state: tcp_conntrack_to_pe_state(prev),
+                                new_state: tcp_conntrack_to_pe_state(new),
+                            }));
+                        }
+                    }
+                }
+
                 let prev_status = if self.observers.observer_count() > 0 {
                     Some(entry.status())
                 } else {
@@ -698,9 +812,10 @@ mod tests {
     use parking_lot::Mutex;
     use std::time::Duration;
     use std::net::{IpAddr, Ipv4Addr};
-    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
     use crate::conntrack::tuple::Protocol;
+    use crate::conntrack::observer::CtObserver;
     use crate::conntrack::proto::udp::UdpProtoState;
     use crate::conntrack::proto::{NewStateError, NewStateOutcome, ProtoState, ProtocolHandler};
 
@@ -709,6 +824,7 @@ mod tests {
         verdict: Mutex<CtVerdict>,
         timeout: Duration,
         new_state_ok: bool,
+        register_count: AtomicUsize,
     }
 
     impl MockHandler {
@@ -718,6 +834,7 @@ mod tests {
                 verdict: Mutex::new(CtVerdict::Accept),
                 timeout: Duration::from_secs(60),
                 new_state_ok: true,
+                register_count: AtomicUsize::new(0),
             }
         }
     }
@@ -745,12 +862,17 @@ mod tests {
             _dir: Direction,
             _now: Instant,
             _config: &ConntrackConfig,
+            _packet_id: crate::data_plane::packet_context::PacketId,
         ) -> CtVerdict {
             *self.verdict.lock()
         }
 
         fn timeout(&self, _state: &ProtoState, _config: &ConntrackConfig) -> Duration {
             self.timeout
+        }
+
+        fn register_observer(&self, _observer: Arc<dyn CtObserver>) {
+            self.register_count.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -760,6 +882,21 @@ mod tests {
 
     fn build_ct_with_config(config: ConntrackConfig) -> (Conntrack, Arc<MockHandler>) {
         let handler = Arc::new(MockHandler::new(Protocol::Udp));
+
+        let mut registry = ProtoRegistry::new();
+        registry.register(handler.clone());
+
+        let ct = Conntrack::new(Arc::new(registry), config);
+
+        (ct, handler)
+    }
+
+    fn build_tcp_ct() -> (Conntrack, Arc<MockHandler>) {
+        build_tcp_ct_with_config(ConntrackConfig::default())
+    }
+
+    fn build_tcp_ct_with_config(config: ConntrackConfig) -> (Conntrack, Arc<MockHandler>) {
+        let handler = Arc::new(MockHandler::new(Protocol::Tcp));
 
         let mut registry = ProtoRegistry::new();
         registry.register(handler.clone());
@@ -841,6 +978,19 @@ mod tests {
     }
 
     #[test]
+    fn register_observer_fanouts_to_tcp_handler() {
+        let (ct, handler) = build_tcp_ct();
+
+        struct DummyObserver;
+
+        impl CtObserver for DummyObserver {}
+
+        ct.register_observer(Arc::new(DummyObserver));
+
+        assert_eq!(handler.register_count.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn flush_all_removes_every_entry() {
         let (ct, _h) = build_ct();
 
@@ -891,6 +1041,17 @@ mod tests {
         let v = ct.iter_entries();
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].id, entry.id);
+    }
+
+    #[test]
+    fn destroy_by_id_removes_confirmed_entry() {
+        let (ct, _h) = build_ct();
+        let entry = make_entry(&ct, tuple_a());
+        assert!(ct.confirm(&entry));
+        let id = entry.id;
+        assert!(ct.destroy_by_id(id, DestroyReason::InvalidatedByStage));
+        assert_eq!(ct.entries_count(), 0);
+        assert!(!ct.destroy_by_id(id, DestroyReason::Manual));
     }
 
     #[test]

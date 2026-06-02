@@ -253,8 +253,11 @@ export class SshProcessHandle {
 const activeHandles = new Set<SshProcessHandle>();
 
 /** Spawn a one-off SSH command. Returns a handle you can kill/wait on. */
-export function spawnSsh(host: KnownHost, command: string): SshProcessHandle {
-	const configPath = sshConfigPath(host);
+export async function spawnSsh(
+	host: KnownHost,
+	command: string,
+): Promise<SshProcessHandle> {
+	const configPath = await ensureSshConfig(host);
 
 	const proc = spawn(
 		"ssh",

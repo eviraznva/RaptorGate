@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use crate::conntrack::tuple::Direction;
 use crate::conntrack::entry::{ConntrackEntry, CtStatus};
+use crate::conntrack::reassembler::DeliveredChunk;
+use crate::conntrack::tuple::Direction;
 
 /// Powód usunięcia entry, dołączany do `CtEvent::Destroy`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +15,8 @@ pub enum DestroyReason {
     Replaced,
     /// Tabela conntrack jest zamykana
     Shutdown,
+    /// L4 lub inna warstwa unieważniła flow (np. policy / inspekcja)
+    InvalidatedByStage,
 }
 
 /// Anomalia protokołu wykryta podczas update(). Pakiet NIE jest dropowany
@@ -59,7 +62,7 @@ pub trait CtObserver: Send + Sync {
     /// Reassembler emituje ciągły, posortowany po seq fragment streamu TCP
     /// Wołane synchronicznie w hot path. NIE zawiera retransmisji ani out-of-order
     /// dziur — subscriber dostaje tylko nowe bajty w kolejności wysyłki nadawcy
-    fn on_payload(&self, _entry: &ConntrackEntry, _dir: Direction, _payload: &[u8]) {}
+    fn on_payload(&self, _entry: &ConntrackEntry, _dir: Direction, _chunk: &DeliveredChunk) {}
 }
 
 #[derive(Default)]
@@ -73,7 +76,11 @@ impl ObserverRegistry {
     }
 
     pub fn register(&self, observer: Arc<dyn CtObserver>) {
-        self.observers.write().push(observer);
+        let mut observers = self.observers.write();
+        if observers.iter().any(|existing| Arc::ptr_eq(existing, &observer)) {
+            return;
+        }
+        observers.push(observer);
     }
 
     pub fn fire_new(&self, entry: &ConntrackEntry) {
@@ -104,11 +111,13 @@ impl ObserverRegistry {
         }
     }
 
-    pub fn fire_payload(&self, entry: &ConntrackEntry, dir: Direction, payload: &[u8]) {
-        if payload.is_empty() { return; }
+    pub fn fire_payload(&self, entry: &ConntrackEntry, dir: Direction, chunk: &DeliveredChunk) {
+        if chunk.payload.is_empty() {
+            return;
+        }
 
         for o in self.snapshot() {
-            o.on_payload(entry, dir, payload);
+            o.on_payload(entry, dir, chunk);
         }
     }
 
@@ -118,5 +127,25 @@ impl ObserverRegistry {
 
     fn snapshot(&self) -> Vec<Arc<dyn CtObserver>> {
         self.observers.read().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DummyObserver;
+
+    impl CtObserver for DummyObserver {}
+
+    #[test]
+    fn register_is_idempotent_for_same_observer_arc() {
+        let registry = ObserverRegistry::new();
+        let observer = Arc::new(DummyObserver);
+
+        registry.register(observer.clone());
+        registry.register(observer);
+
+        assert_eq!(registry.observer_count(), 1);
     }
 }

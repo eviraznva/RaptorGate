@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import type { Zone } from "../../types/zones/Zone";
 import type { ZoneInterface } from "../../types/zones/ZoneInterface";
 import ZoneInterfacesOverview from "./ZoneInterfacesOverview";
 import ZoneInterfacesSignalRail from "./ZoneInterfacesSignalRail";
@@ -10,10 +9,14 @@ import ZoneInterfacesToolbar, {
 
 type ZoneInterfacesViewProps = {
   zoneInterfaces: ZoneInterface[];
-  zones: Zone[];
+  confirmDeleteId: string | null;
   isRefreshing: boolean;
   onRefresh: () => void;
   onEdit: (zoneInterface: ZoneInterface) => void;
+  onCreateVlan: (zoneInterface: ZoneInterface) => void;
+  onDeleteClick: (id: string) => void;
+  onDeleteConfirm: (id: string) => void;
+  onDeleteCancel: () => void;
 };
 
 function matchesSearch(zoneInterface: ZoneInterface, search: string) {
@@ -25,15 +28,22 @@ function matchesSearch(zoneInterface: ZoneInterface, search: string) {
     zoneInterface.zoneId,
     zoneInterface.status,
     String(zoneInterface.vlanId ?? "untagged"),
+    zoneInterface.parentInterfaceName,
+    zoneInterface.parentInterfaceId,
     ...zoneInterface.addresses,
-  ].some((value) => value.toLowerCase().includes(term));
+  ].some((value) => value?.toLowerCase().includes(term));
 }
 
 export default function ZoneInterfacesView({
   zoneInterfaces,
+  confirmDeleteId,
   isRefreshing,
   onRefresh,
   onEdit,
+  onCreateVlan,
+  onDeleteClick,
+  onDeleteConfirm,
+  onDeleteCancel,
 }: ZoneInterfacesViewProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ZoneInterfaceFilter>("all");
@@ -75,7 +85,12 @@ export default function ZoneInterfacesView({
         />
         <ZoneInterfacesTable
           zoneInterfaces={filteredZoneInterfaces}
+          confirmDeleteId={confirmDeleteId}
           onEdit={onEdit}
+          onCreateVlan={onCreateVlan}
+          onDeleteClick={onDeleteClick}
+          onDeleteConfirm={onDeleteConfirm}
+          onDeleteCancel={onDeleteCancel}
         />
       </div>
     </>

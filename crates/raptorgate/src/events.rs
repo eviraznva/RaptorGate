@@ -7,12 +7,20 @@ use std::sync::OnceLock;
 use tokio::{select, sync::mpsc, time::interval};
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::data_plane::tcp_session_tracker::EndpointIdentifier;
+use crate::conntrack::tcp_identity::EndpointIdentifier;
 use crate::proto::events as proto;
 use crate::proto::services::backend_event_service_client::BackendEventServiceClient;
 use crate::tls::inspection_relay::{Direction, InspectionMode};
 
-#[derive(Debug, Clone, Copy)]
+#[cfg(any(test, feature = "test-capture"))]
+mod capture;
+
+#[cfg(any(test, feature = "test-capture"))]
+pub use capture::{
+    set_event_capture, EventCapture, EventPredicate, WaitForSubsequenceError, WaitForSubsequenceResult,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandshakeStage {
     ClientHello,
     ServerHandshake,
@@ -29,7 +37,7 @@ impl HandshakeStage {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EchOrigin {
     DnsHttpsRecord,
     ClientHelloOuterSni,
@@ -44,7 +52,7 @@ impl EchOrigin {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EchAction {
     Logged,
     Stripped,
@@ -141,6 +149,8 @@ async fn try_connect(socket_path: &str) -> Result<BackendConnection, tonic::tran
 }
 
 pub fn emit(event: Event) {
+    #[cfg(any(test, feature = "test-capture"))]
+    capture::forward_to_capture(&event);
     if let Some(tx) = EVENT_TX.get() {
         if let Err(e) = tx.try_send(event) {
             record_dropped_event(e.into_inner().kind, "internal_channel_full");
@@ -293,7 +303,7 @@ async fn attempt_reconnect(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     pub emitted_at: SystemTime,
     pub kind: EventKind,
@@ -305,21 +315,29 @@ impl Event {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RouteInfo {
     pub destination: String,
     pub out_interface_index: u32,
     pub priority: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SmtpSessionInfo {
     pub client: Option<EndpointIdentifier>,
     pub server: Option<EndpointIdentifier>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
+    TcpSessionSubstateChanged {
+        flow_id: u64,
+        src: EndpointIdentifier,
+        dst: EndpointIdentifier,
+        packet_direction: proto::ConntrackPacketDirection,
+        previous_state: proto::TcpSessionState,
+        new_state: proto::TcpSessionState,
+    },
     TcpSessionEstabilished { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpSessionRemoved { src: EndpointIdentifier, dst: EndpointIdentifier },
     TcpConnectionRejected { src: EndpointIdentifier, dst: EndpointIdentifier },
@@ -393,7 +411,8 @@ impl EventKind {
     pub const fn is_immediate(&self) -> bool {
         use EventKind as E;
         match self {
-            E::TcpSessionEstabilished { .. }
+            E::TcpSessionSubstateChanged { .. }
+            | E::TcpSessionEstabilished { .. }
             | E::TcpSessionRemoved { .. }
             | E::TcpConnectionRejected { .. }
             | E::TcpSessionAbortedMidClose { .. }
@@ -456,6 +475,22 @@ impl From<EventKind> for proto::EventKind {
         use proto::event_kind::Item;
         proto::EventKind {
             item: Some(match kind {
+                EventKind::TcpSessionSubstateChanged {
+                    flow_id,
+                    src,
+                    dst,
+                    packet_direction,
+                    previous_state,
+                    new_state,
+                } =>
+                    Item::TcpSessionSubstateChanged(proto::TcpSessionSubstateChangedEvent {
+                        flow_id,
+                        src: Some(src.into()),
+                        dst: Some(dst.into()),
+                        packet_direction: packet_direction as i32,
+                        previous_state: previous_state as i32,
+                        new_state: new_state as i32,
+                    }),
                 EventKind::TcpSessionEstabilished { src, dst } =>
                     Item::TcpSessionEstablished(proto::TcpSessionEstablishedEvent {
                         src: Some(src.into()),

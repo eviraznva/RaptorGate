@@ -1,19 +1,25 @@
 import { useEffect, useState } from "react";
 import type { Zone } from "../../types/zones/Zone";
 import type { ZoneInterface } from "../../types/zones/ZoneInterface";
-import type { EditZoneInterfaceBody } from "../../services/zoneInterfaces";
+import type {
+  EditZoneInterfaceBody,
+  CreateZoneInterfaceBody,
+} from "../../services/zoneInterfaces";
 
 type ZoneInterfaceFormProps = {
   zoneInterface: ZoneInterface | null;
+  createParentInterfaceId: string | null;
   isOpen: boolean;
   zones: Zone[];
   onClose: () => void;
-  onSuccess: (id: string, body: EditZoneInterfaceBody) => void;
+  onEdit: (id: string, body: EditZoneInterfaceBody) => void;
+  onCreate: (body: CreateZoneInterfaceBody) => void;
 };
 
 interface FormState {
   zoneId: string;
   vlanId: string;
+  parentInterfaceId: string;
   isActive: boolean;
   sniffed: boolean;
   ipv4Address: string;
@@ -24,6 +30,7 @@ interface FormState {
 
 interface FormErrors {
   zoneId?: string;
+  vlanId?: string;
   ipv4Address?: string;
   ipv4Mask?: string;
   ipv6Mask?: string;
@@ -32,6 +39,7 @@ interface FormErrors {
 const EMPTY: FormState = {
   zoneId: "",
   vlanId: "",
+  parentInterfaceId: "",
   isActive: true,
   sniffed: false,
   ipv4Address: "",
@@ -74,15 +82,18 @@ function fromZoneInterface(zi: ZoneInterface): FormState {
   return {
     zoneId: zi.zoneId,
     vlanId: zi.vlanId !== null ? String(zi.vlanId) : "",
+    parentInterfaceId: zi.parentInterfaceId ?? "",
     isActive: zi.status === "active",
     sniffed: zi.sniffed,
     ...parsed,
   };
 }
 
-function validate(f: FormState): FormErrors {
+function validate(f: FormState, isCreate: boolean): FormErrors {
   const e: FormErrors = {};
   if (!f.zoneId) e.zoneId = "Required";
+  if (isCreate && !f.vlanId) e.vlanId = "Required";
+  if (isCreate && !f.parentInterfaceId) e.zoneId = "Parent interface required";
   if (f.ipv4Address && !f.ipv4Mask)
     e.ipv4Mask = "Mask required when address is set";
   if (f.ipv4Mask && !f.ipv4Address)
@@ -90,19 +101,6 @@ function validate(f: FormState): FormErrors {
   if (f.ipv6Address && !f.ipv6Mask)
     e.ipv6Mask = "Mask required when address is set";
   return e;
-}
-
-function toBody(f: FormState): EditZoneInterfaceBody {
-  return {
-    zoneId: f.zoneId,
-    vlanId: f.vlanId !== "" ? Number(f.vlanId) : null,
-    ipv4Address: f.ipv4Address || null,
-    ipv4Mask: f.ipv4Mask !== "" ? Number(f.ipv4Mask) : null,
-    ipv6Address: f.ipv6Address || null,
-    ipv6Mask: f.ipv6Mask !== "" ? Number(f.ipv6Mask) : null,
-    isActive: f.isActive,
-    sniffed: f.sniffed,
-  };
 }
 
 function previewAddress(f: FormState): string {
@@ -113,20 +111,29 @@ function previewAddress(f: FormState): string {
 
 export default function ZoneInterfaceForm({
   zoneInterface,
+  createParentInterfaceId,
   isOpen,
   zones,
   onClose,
-  onSuccess,
+  onEdit,
+  onCreate,
 }: ZoneInterfaceFormProps) {
+  const isCreate = createParentInterfaceId !== null && zoneInterface === null;
   const [form, setForm] = useState<FormState>(EMPTY);
   const [errors, setErrors] = useState<FormErrors>({});
 
   useEffect(() => {
     if (isOpen) {
-      setForm(zoneInterface ? fromZoneInterface(zoneInterface) : EMPTY);
+      if (zoneInterface) {
+        setForm(fromZoneInterface(zoneInterface));
+      } else if (createParentInterfaceId) {
+        setForm({ ...EMPTY, parentInterfaceId: createParentInterfaceId });
+      } else {
+        setForm(EMPTY);
+      }
       setErrors({});
     }
-  }, [isOpen, zoneInterface]);
+  }, [isOpen, zoneInterface, createParentInterfaceId]);
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -137,16 +144,44 @@ export default function ZoneInterfaceForm({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const errs = validate(form);
+    const errs = validate(form, isCreate);
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       return;
     }
-    if (!zoneInterface) return;
-    onSuccess(zoneInterface.id, toBody(form));
+
+    if (isCreate) {
+      onCreate({
+        parentInterfaceId: form.parentInterfaceId,
+        vlanId: Number(form.vlanId),
+        zoneId: form.zoneId,
+        ipv4Address: form.ipv4Address || null,
+        ipv4Mask: form.ipv4Mask !== "" ? Number(form.ipv4Mask) : null,
+        ipv6Address: form.ipv6Address || null,
+        ipv6Mask: form.ipv6Mask !== "" ? Number(form.ipv6Mask) : null,
+        isActive: form.isActive,
+        sniffed: form.sniffed,
+      });
+    } else if (zoneInterface) {
+      onEdit(zoneInterface.id, {
+        zoneId: form.zoneId,
+        vlanId: form.vlanId !== "" ? Number(form.vlanId) : null,
+        parentInterfaceId: form.parentInterfaceId || null,
+        ipv4Address: form.ipv4Address || null,
+        ipv4Mask: form.ipv4Mask !== "" ? Number(form.ipv4Mask) : null,
+        ipv6Address: form.ipv6Address || null,
+        ipv6Mask: form.ipv6Mask !== "" ? Number(form.ipv6Mask) : null,
+        isActive: form.isActive,
+        sniffed: form.sniffed,
+      });
+    }
   }
 
   const selectedZone = zones.find((z) => z.id === form.zoneId);
+
+  const headerLabel = isCreate ? "Create VLAN" : "Edit Zone Interface";
+  const headerSubLabel = isCreate ? "New VLAN Subinterface" : "Editing";
+  const submitLabel = isCreate ? "Create VLAN" : "Save Interface";
 
   return (
     <>
@@ -162,21 +197,26 @@ export default function ZoneInterfaceForm({
         style={{ transform: isOpen ? "translateX(0)" : "translateX(100%)" }}
         role="dialog"
         aria-modal="true"
-        aria-label="Edit zone interface"
+        aria-label={headerLabel}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#262626] flex-shrink-0">
           <div>
             <div className="text-[9px] text-[#4a4a4a] tracking-[0.4em] uppercase mb-0.5">
-              Editing
+              {headerSubLabel}
             </div>
             <div className="text-[13px] tracking-[0.3em] uppercase text-[#f5f5f5]">
-              Edit Zone Interface
+              {headerLabel}
             </div>
             {zoneInterface && (
               <div className="text-[10px] text-[#06b6d4] font-mono mt-0.5 tracking-wider">
                 {zoneInterface.interfaceName} ·{" "}
                 {zoneInterface.id.slice(0, 8)}…
+              </div>
+            )}
+            {isCreate && form.parentInterfaceId && (
+              <div className="text-[10px] text-[#06b6d4] font-mono mt-0.5 tracking-wider">
+                Parent: {form.parentInterfaceId.slice(0, 8)}…
               </div>
             )}
           </div>
@@ -224,17 +264,23 @@ export default function ZoneInterfaceForm({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-[10px] text-[#8a8a8a] uppercase tracking-[0.25em] mb-1.5">
-                VLAN
+                {isCreate ? "VLAN ID *" : "VLAN"}
               </label>
               <input
                 type="number"
                 min={1}
                 max={4094}
-                placeholder="untagged"
+                placeholder={isCreate ? "e.g. 100" : "untagged"}
                 className="input text-sm w-full"
                 value={form.vlanId}
                 onChange={(e) => setField("vlanId", e.target.value)}
+                disabled={!isCreate && (zoneInterface?.vlanId === null)}
               />
+              {errors.vlanId && (
+                <p className="text-[10px] text-[#f43f5e] mt-1 tracking-wider">
+                  {errors.vlanId}
+                </p>
+              )}
             </div>
 
             <div>
@@ -380,7 +426,11 @@ export default function ZoneInterfaceForm({
             <div className="border border-[#262626] bg-[#101010] p-4 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[#f5f5f5] text-sm font-bold">
-                  {zoneInterface?.interfaceName ?? "—"}
+                  {isCreate
+                    ? form.vlanId
+                      ? `vlan.${form.vlanId}`
+                      : "—"
+                    : (zoneInterface?.interfaceName ?? "—")}
                 </span>
                 <span
                   className={`text-[10px] uppercase tracking-[0.15em] ${form.isActive ? "text-[#10b981]" : "text-[#f43f5e]"}`}
@@ -400,7 +450,13 @@ export default function ZoneInterfaceForm({
                   {previewAddress(form)}
                 </span>
               </div>
-              {form.vlanId && (
+              {!isCreate && form.vlanId && (
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-[#4a4a4a]">vlan</span>
+                  <span className="text-[#06b6d4]">VLAN {form.vlanId}</span>
+                </div>
+              )}
+              {isCreate && form.vlanId && (
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="text-[#4a4a4a]">vlan</span>
                   <span className="text-[#06b6d4]">VLAN {form.vlanId}</span>
@@ -432,7 +488,7 @@ export default function ZoneInterfaceForm({
             onClick={handleSubmit}
             className="btn-primary px-5 py-2 text-[10px] uppercase tracking-[0.25em]"
           >
-            Save Interface
+            {submitLabel}
           </button>
         </div>
       </div>

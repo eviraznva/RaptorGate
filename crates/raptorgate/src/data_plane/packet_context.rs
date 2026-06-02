@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -10,10 +11,29 @@ use crate::dpi::DpiContext;
 use crate::identity::IdentityContext;
 use crate::ml::MlFeatureVector;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct PacketId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CaptureDirection {
+    #[default]
+    Ingress,
+    Egress,
+}
+
+impl PacketId {
+    pub fn next() -> Self {
+        static COUNTER: AtomicU64 = AtomicU64::new(1);
+        PacketId(COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 #[self_referencing]
 #[derive(Debug)]
 pub struct PacketContext {
+    pub id: PacketId,
     pub src_interface: Arc<str>,
+    pub capture_direction: CaptureDirection,
     pub warnings: Vec<String>,
     pub arrival_time: SystemTime,
     pub raw: Vec<u8>,
@@ -33,9 +53,10 @@ pub struct PacketContext {
 
 impl Clone for PacketContext {
     fn clone(&self) -> Self {
-        Self::from_raw_full(
+        let mut cloned = Self::from_raw_full(
             self.borrow_raw().clone(),
             self.borrow_src_interface().clone(),
+            *self.borrow_capture_direction(),
             self.borrow_warnings().clone(),
             *self.borrow_arrival_time(),
             self.borrow_dpi_ctx().clone(),
@@ -45,15 +66,27 @@ impl Clone for PacketContext {
             *self.borrow_ct_direction(),
             *self.borrow_ct_is_new(),
         )
-        .expect("cloning PacketContext should never fail since it's already been parsed once")
+        .expect("cloning PacketContext should never fail since it's already been parsed once");
+        let id = *self.borrow_id();
+        cloned.with_mut(|fields| *fields.id = id);
+        cloned
     }
 }
 
 impl PacketContext {
     pub fn from_raw(raw: Vec<u8>, src_interface: Arc<str>) -> Result<Self, packet::SliceError> {
+        Self::from_raw_with_capture_direction(raw, src_interface, CaptureDirection::Ingress)
+    }
+
+    pub fn from_raw_with_capture_direction(
+        raw: Vec<u8>,
+        src_interface: Arc<str>,
+        capture_direction: CaptureDirection,
+    ) -> Result<Self, packet::SliceError> {
         Self::from_raw_full(
             raw,
             src_interface,
+            capture_direction,
             Vec::new(),
             SystemTime::now(),
             None,
@@ -68,6 +101,7 @@ impl PacketContext {
     pub fn from_raw_full(
         raw: Vec<u8>,
         src_interface: Arc<str>,
+        capture_direction: CaptureDirection,
         warnings: Vec<String>,
         arrival_time: SystemTime,
         dpi_ctx: Option<DpiContext>,
@@ -78,7 +112,9 @@ impl PacketContext {
         ct_is_new: bool,
     ) -> Result<Self, packet::SliceError> {
         let mut ctx = PacketContextTryBuilder {
+            id: PacketId::default(),
             src_interface,
+            capture_direction,
             warnings,
             arrival_time,
             raw,
@@ -95,6 +131,7 @@ impl PacketContext {
 
         let arrival = *ctx.borrow_arrival_time();
         ctx.with_mut(|fields| {
+            *fields.id = PacketId::next();
             fields
                 .ml_feature_vector
                 .init_from_packet(fields.sliced_packet, arrival);
@@ -129,5 +166,13 @@ impl PacketContext {
     }
     pub fn ct_is_new(&self) -> bool {
         *self.borrow_ct_is_new()
+    }
+
+    pub fn packet_id(&self) -> PacketId {
+        *self.borrow_id()
+    }
+
+    pub fn capture_direction(&self) -> CaptureDirection {
+        *self.borrow_capture_direction()
     }
 }

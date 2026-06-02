@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicU64, AtomicU32, AtomicU8, Ordering};
 
 use crate::conntrack::proto::ProtoState;
-use crate::conntrack::reassembler::ReassemblyState;
+use crate::conntrack::reassembler::{DeliveredChunk, ReassemblyState};
 use crate::conntrack::tuple::{Direction, FlowTuple};
 
 bitflags! {
@@ -89,6 +89,8 @@ pub struct ConntrackEntry {
     pub nat: parking_lot::Mutex<Option<NatTransform>>,
     pub reassembly: parking_lot::Mutex<ReassemblyState>,
 
+    pub deferred_first_payload: parking_lot::Mutex<Option<DeliveredChunk>>,
+
     pub bytes_orig: AtomicU64,
     pub bytes_reply: AtomicU64,
     pub packets_orig: AtomicU64,
@@ -120,6 +122,7 @@ impl ConntrackEntry {
             proto_state: parking_lot::Mutex::new(proto_state),
             nat: parking_lot::Mutex::new(None),
             reassembly: parking_lot::Mutex::new(ReassemblyState::default()),
+            deferred_first_payload: parking_lot::Mutex::new(None),
             bytes_orig: AtomicU64::new(0),
             bytes_reply: AtomicU64::new(0),
             packets_orig: AtomicU64::new(0),

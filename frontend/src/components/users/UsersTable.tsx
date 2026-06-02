@@ -31,14 +31,12 @@ function roleBadgeClass(role: UserRole) {
 }
 
 function statusClass(status: DashboardUser["isFirstLogin"]) {
-  console.log(status);
   if (status === false) return "status-active text-[#10b981]";
   if (status === true) return "status-pending text-[#f59e0b]";
   return "status-locked text-[#f43f5e]";
 }
 
 function statusLabel(status: DashboardUser["isFirstLogin"]) {
-  console.log(status);
 
   if (status === false) return "Active";
   if (status === true) return "First Login";
@@ -67,8 +65,6 @@ export default function UsersTable({
   onEdit,
   onDelete,
 }: UsersTableProps) {
-  console.log(users);
-
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[920px]">
@@ -157,12 +153,24 @@ export default function UsersTable({
                     </button>
                     <button
                       type="button"
+                      disabled={user.roles.includes("super_admin")}
                       onClick={(event) => {
                         event.stopPropagation();
+
+                        if (user.roles.includes("super_admin")) return;
+
                         onDelete(user.id);
                       }}
-                      className="text-[#8a8a8a] hover:text-[#f43f5e] transition-colors text-lg"
-                      title="Delete"
+                      className={`text-[#8a8a8a] transition-colors text-lg ${
+                        user.roles.includes("super_admin")
+                          ? "opacity-35 cursor-not-allowed"
+                          : "hover:text-[#f43f5e]"
+                      }`}
+                      title={
+                        user.roles.includes("super_admin")
+                          ? "Super admin cannot be deleted"
+                          : "Delete"
+                      }
                     >
                       <Icon icon="lucide:x" width="16" height="16" />
                     </button>

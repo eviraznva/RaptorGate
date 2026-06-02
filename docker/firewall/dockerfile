@@ -11,6 +11,8 @@ RUN curl -fsSL https://github.com/protocolbuffers/protobuf/releases/download/v29
     && unzip /tmp/protoc.zip -d /usr/local \
     && rm /tmp/protoc.zip
 
+RUN cargo install --locked cargo-nextest
+
 COPY Cargo.toml Cargo.lock ./
 COPY proto ./proto
 
@@ -21,7 +23,7 @@ COPY proto ./proto
 COPY ./crates ./crates
 COPY ./backend/data/json-db ./backend/data/json-db
 
-RUN cargo test -- --skip tls::
+RUN cargo nextest run -- --skip tls::
 RUN cargo build
 
 RUN mkdir -p /build/output && \

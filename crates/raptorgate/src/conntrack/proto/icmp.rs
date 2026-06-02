@@ -1,8 +1,10 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use etherparse::{Icmpv4Type, Icmpv6Type, SlicedPacket, TransportSlice};
 
 use crate::conntrack::entry::{ConntrackEntry};
 use crate::conntrack::config::ConntrackConfig;
+use crate::conntrack::observer::{CtObserver, ObserverRegistry};
 use crate::conntrack::tuple::{Direction, FlowTuple, Protocol};
 use crate::conntrack::proto::{CtVerdict, ProtocolHandler, NewStateError, NewStateOutcome, ProtoState};
 
@@ -60,12 +62,21 @@ fn classify_v6(t: Icmpv6Type) -> IcmpClass {
 
 pub struct IcmpHandler {
     is_v6: bool,
+    observers: Arc<ObserverRegistry>,
 }
 
 impl IcmpHandler {
-    pub fn v4() -> Self { Self { is_v6: false } }
+    pub fn new(observers: Arc<ObserverRegistry>, is_v6: bool) -> Self {
+        Self { observers, is_v6 }
+    }
 
-    pub fn v6() -> Self { Self { is_v6: true } }
+    pub fn v4(observers: Arc<ObserverRegistry>) -> Self {
+        Self::new(observers, false)
+    }
+
+    pub fn v6(observers: Arc<ObserverRegistry>) -> Self {
+        Self::new(observers, true)
+    }
 
     fn classify_packet(&self, pkt: &SlicedPacket) -> Result<IcmpClass, NewStateError> {
         let transport = pkt.transport.as_ref().ok_or(NewStateError::MissingTransport)?;
@@ -137,7 +148,15 @@ impl ProtocolHandler for IcmpHandler {
         }
     }
 
-    fn update(&self, entry: &ConntrackEntry, pkt: &SlicedPacket, dir: Direction, _now: Instant, _config: &ConntrackConfig) -> CtVerdict {
+    fn update(
+        &self,
+        entry: &ConntrackEntry,
+        pkt: &SlicedPacket,
+        dir: Direction,
+        _now: Instant,
+        _config: &ConntrackConfig,
+        packet_id: crate::data_plane::packet_context::PacketId,
+    ) -> CtVerdict {
         let Ok(class) = self.classify_packet(pkt) else {
             return CtVerdict::Invalid;
         };
@@ -148,7 +167,7 @@ impl ProtocolHandler for IcmpHandler {
             return CtVerdict::Invalid;
         };
 
-        match (class, dir) {
+        let verdict = match (class, dir) {
             (IcmpClass::Request, Direction::Original) | (IcmpClass::Reply, Direction::Reply) => {
                 state.count = state.count.saturating_add(1);
 
@@ -168,7 +187,35 @@ impl ProtocolHandler for IcmpHandler {
             },
 
             (IcmpClass::Unsupported, _) => CtVerdict::Invalid,
+        };
+
+        if verdict == CtVerdict::Accept {
+            if let Some(transport) = pkt.transport.as_ref() {
+                let payload = match (self.is_v6, transport) {
+                    (false, TransportSlice::Icmpv4(icmp)) => icmp.payload(),
+                    (true, TransportSlice::Icmpv6(icmp)) => icmp.payload(),
+                    _ => &[],
+                };
+
+                if !payload.is_empty() {
+                    self.observers.fire_payload(
+                        entry,
+                        dir,
+                        &crate::conntrack::reassembler::DeliveredChunk {
+                            packet_id,
+                            payload: payload.to_vec(),
+                            tcp_payload_start_seq: 0,
+                        },
+                    );
+                }
+            }
         }
+
+        verdict
+    }
+
+    fn register_observer(&self, observer: Arc<dyn CtObserver>) {
+        self.observers.register(observer);
     }
 
     fn timeout(&self, _state: &ProtoState, config: &ConntrackConfig) -> Duration {
@@ -185,9 +232,14 @@ impl ProtocolHandler for IcmpHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data_plane::packet_context::PacketId;
     use etherparse::{PacketBuilder};
     use std::net::{IpAddr, Ipv4Addr};
     use crate::conntrack::tuple::FlowTuple;
+
+    fn test_handler() -> IcmpHandler {
+        IcmpHandler::v4(Arc::new(ObserverRegistry::default()))
+    }
 
     fn build_echo_request(id: u16, seq: u16) -> Vec<u8> {
         let payload = b"hello";
@@ -247,7 +299,7 @@ mod tests {
         
         let pkt = slice(&buf);
         
-        let h = IcmpHandler::v4();
+        let h = test_handler();
         
         let outcome = h.new_state(&pkt, Direction::Original, &ConntrackConfig::default()).unwrap();
 
@@ -263,7 +315,7 @@ mod tests {
         
         let pkt = slice(&buf);
         
-        let h = IcmpHandler::v4();
+        let h = test_handler();
         
         assert!(matches!(
               h.new_state(&pkt, Direction::Original, &ConntrackConfig::default()),
@@ -279,9 +331,9 @@ mod tests {
         
         let entry = fresh_entry();
         
-        let h = IcmpHandler::v4();
+        let h = test_handler();
 
-        let v = h.update(&entry, &pkt, Direction::Reply, Instant::now(), &ConntrackConfig::default());
+        let v = h.update(&entry, &pkt, Direction::Reply, Instant::now(), &ConntrackConfig::default(), PacketId(0));
 
         assert_eq!(v, CtVerdict::Accept);
         
@@ -301,16 +353,16 @@ mod tests {
         
         let entry = fresh_entry();
         
-        let h = IcmpHandler::v4();
+        let h = test_handler();
 
-        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &ConntrackConfig::default());
+        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &ConntrackConfig::default(), PacketId(0));
 
         assert_eq!(v, CtVerdict::Invalid);
     }
 
     #[test]
     fn timeout_uses_config() {
-        let h = IcmpHandler::v4();
+        let h = test_handler();
         
         let cfg = ConntrackConfig::default();
         
@@ -321,7 +373,7 @@ mod tests {
 
     #[test]
     fn is_assured_requires_reply_and_two_packets() {
-        let h = IcmpHandler::v4();
+        let h = test_handler();
         
         let cases = [
             (IcmpProtoState { kind: IcmpKind::Echo, seen_reply: false, count: 5 }, false),
@@ -337,7 +389,7 @@ mod tests {
 
     #[test]
     fn proto_dispatches_by_family() {
-        assert_eq!(IcmpHandler::v4().proto(), Protocol::Icmp);
-        assert_eq!(IcmpHandler::v6().proto(), Protocol::IcmpV6);
+        assert_eq!(IcmpHandler::v4(Arc::new(ObserverRegistry::default())).proto(), Protocol::Icmp);
+        assert_eq!(IcmpHandler::v6(Arc::new(ObserverRegistry::default())).proto(), Protocol::IcmpV6);
     }
 }

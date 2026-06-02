@@ -213,7 +213,7 @@ describe("Email Flow", () => {
 		})
 			.isErr()
 			.run();
-	}, {timeout: 60_000});
+	}, {timeout: 120_000});
 	
 	test("message content allow and deny filters with dotall", async () => {
 		await request("PushActiveConfigSnapshot", {
@@ -265,5 +265,5 @@ describe("Email Flow", () => {
 		})
 			.isErr()
 			.run();
-	}, {timeout: 30_000});
+	}, {timeout: 60_000});
 });

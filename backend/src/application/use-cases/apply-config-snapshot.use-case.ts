@@ -49,6 +49,7 @@ import type { IConfigSnapshotPushService } from "../ports/config-snapshot-push-s
 import { CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN } from "../ports/config-snapshot-push-service.interface.js";
 import type { IFirewallZoneQueryService } from "../ports/firewall-zone-query-service.interface.js";
 import { FIREWALL_ZONE_QUERY_SERVICE_TOKEN } from "../ports/firewall-zone-query-service.interface.js";
+import { normalizeZoneInterfaceForConfig } from "../services/zone-interface-config-normalizer.js";
 import type { ITokenService } from "../ports/token-service.interface.js";
 import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 import { IdentitySecretReferenceValidatorService } from "../services/identity-secret-reference-validator.service.js";
@@ -256,7 +257,9 @@ export class ApplyConfigSnapshotUseCase {
         "no zone interfaces in backend, fetching live state from firewall",
     });
 
-    const live = await this.firewallZoneQueryService.getLiveZoneInterfaces();
+    const live = (
+      await this.firewallZoneQueryService.getLiveZoneInterfaces()
+    ).map((zoneInterface) => normalizeZoneInterfaceForConfig(zoneInterface));
     if (live.length > 0) {
       await this.zoneInterfaceRepository.overwriteAll(live);
     }

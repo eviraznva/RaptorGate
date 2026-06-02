@@ -12,7 +12,7 @@ use crate::data_plane::ips::config::{
     IpsSignatureConfig,
 };
 
-use crate::data_plane::packet_context::PacketContext;
+use crate::data_plane::packet_context::{CaptureDirection, PacketContext};
 use crate::dpi::AppProto;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -469,6 +469,7 @@ mod tests {
         PacketContext::from_raw_full(
             raw,
             Arc::<str>::from("eth1"),
+            CaptureDirection::Ingress,
             Vec::new(),
             SystemTime::now(),
             Some(dpi_ctx),
@@ -520,6 +521,7 @@ mod tests {
         let ctx = PacketContext::from_raw_full(
             raw,
             Arc::<str>::from("eth1"),
+            CaptureDirection::Ingress,
             Vec::new(),
             SystemTime::now(),
             None,

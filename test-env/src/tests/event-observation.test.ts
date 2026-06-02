@@ -49,16 +49,50 @@ describe("Event Observation", () => {
 			})
 				.expectEvents([
 					{
-						kind: "tcpSessionEstablished",
-						match: {},
+						kind: "tcpSessionSubstateChanged",
+						match: {
+							previousState: "TCP_SESSION_STATE_SYN_SENT",
+							newState: "TCP_SESSION_STATE_SYN_RECV",
+						},
 					},
 					{
-						kind: "tcpSessionEnteredTimewait",
-						match: {},
+						kind: "tcpSessionSubstateChanged",
+						match: {
+							previousState: "TCP_SESSION_STATE_SYN_RECV",
+							newState: "TCP_SESSION_STATE_ESTABLISHED",
+						},
+					},
+					{
+						kind: "tcpSessionSubstateChanged",
+						match: {
+							previousState: "TCP_SESSION_STATE_ESTABLISHED",
+							newState: "TCP_SESSION_STATE_FIN_WAIT",
+						},
+					},
+					{
+						kind: "tcpSessionSubstateChanged",
+						match: {
+							previousState: "TCP_SESSION_STATE_FIN_WAIT",
+							newState: "TCP_SESSION_STATE_CLOSE_WAIT",
+						},
+					},
+					{
+						kind: "tcpSessionSubstateChanged",
+						match: {
+							previousState: "TCP_SESSION_STATE_CLOSE_WAIT",
+							newState: "TCP_SESSION_STATE_LAST_ACK",
+						},
+					},
+					{
+						kind: "tcpSessionSubstateChanged",
+						match: {
+							previousState: "TCP_SESSION_STATE_LAST_ACK",
+							newState: "TCP_SESSION_STATE_TIME_WAIT",
+						},
 					},
 				])
 				.run();
 		},
-		{ timeout: 10_000 },
+		{ timeout: 15_000 },
 	);
 });

@@ -27,6 +27,11 @@ export class EditZoneInterfaceDto {
   @Max(4094)
   vlanId?: number | null;
 
+  @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000', required: false, nullable: true })
+  @IsOptional()
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+  parentInterfaceId?: string | null;
+
   @ApiProperty({ example: '192.168.20.1', required: false, nullable: true })
   @IsOptional()
   @ValidateIf((_, value) => value !== null)

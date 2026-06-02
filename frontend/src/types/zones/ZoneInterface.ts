@@ -14,4 +14,6 @@ export interface ZoneInterface {
   addresses: string[];
   sniffed: boolean;
   createdAt: string;
+  parentInterfaceId: string | null;
+  parentInterfaceName: string | null;
 }

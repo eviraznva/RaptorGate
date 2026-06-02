@@ -5,7 +5,7 @@ use etherparse::{SlicedPacket, TransportSlice};
 
 use crate::conntrack::config::ConntrackConfig;
 use crate::conntrack::entry::{ConntrackEntry};
-use crate::conntrack::observer::ObserverRegistry;
+use crate::conntrack::observer::{CtObserver, ObserverRegistry};
 use crate::conntrack::tuple::{Direction, Protocol};
 use crate::conntrack::proto::{CtVerdict, ProtocolHandler, NewStateError, NewStateOutcome, ProtoState};
 
@@ -47,7 +47,15 @@ impl ProtocolHandler for UdpHandler {
         })))
     }
 
-    fn update(&self, entry: &ConntrackEntry, pkt: &SlicedPacket, dir: Direction, _now: Instant, _config: &ConntrackConfig) -> CtVerdict {
+    fn update(
+        &self,
+        entry: &ConntrackEntry,
+        pkt: &SlicedPacket,
+        dir: Direction,
+        _now: Instant,
+        _config: &ConntrackConfig,
+        packet_id: crate::data_plane::packet_context::PacketId,
+    ) -> CtVerdict {
         let Some(TransportSlice::Udp(udp)) = pkt.transport.as_ref() else {
             return CtVerdict::Invalid;
         };
@@ -69,7 +77,15 @@ impl ProtocolHandler for UdpHandler {
         let payload = udp.payload();
         
         if !payload.is_empty() {
-            self.observers.fire_payload(entry, dir, payload);
+            self.observers.fire_payload(
+                entry,
+                dir,
+                &crate::conntrack::reassembler::DeliveredChunk {
+                    packet_id,
+                    payload: payload.to_vec(),
+                    tcp_payload_start_seq: 0,
+                },
+            );
         }
 
         CtVerdict::Accept
@@ -94,11 +110,16 @@ impl ProtocolHandler for UdpHandler {
 
         udp.stream && udp.packets_orig >= 2 && udp.packets_reply >= 2
     }
+
+    fn register_observer(&self, observer: Arc<dyn CtObserver>) {
+        self.observers.register(observer);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data_plane::packet_context::PacketId;
     use etherparse::PacketBuilder;
     use std::net::{IpAddr, Ipv4Addr};
     use crate::conntrack::tuple::FlowTuple;
@@ -164,7 +185,7 @@ mod tests {
 
         let h = UdpHandler::new(Arc::new(ObserverRegistry::default()));
 
-        let verdict = h.update(&entry, &pkt, Direction::Reply, Instant::now(), &ConntrackConfig::default());
+        let verdict = h.update(&entry, &pkt, Direction::Reply, Instant::now(), &ConntrackConfig::default(), PacketId(0));
 
         assert_eq!(verdict, CtVerdict::Accept);
 
@@ -227,7 +248,7 @@ mod tests {
         let h = UdpHandler::new(Arc::new(ObserverRegistry::default()));
 
         assert_eq!(
-            h.update(&entry, &pkt, Direction::Original, Instant::now(), &ConntrackConfig::default()),
+            h.update(&entry, &pkt, Direction::Original, Instant::now(), &ConntrackConfig::default(), PacketId(0)),
             CtVerdict::Invalid
         );
     }

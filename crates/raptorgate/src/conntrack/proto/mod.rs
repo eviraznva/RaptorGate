@@ -9,10 +9,12 @@ use std::time::{Duration, Instant};
 
 use crate::conntrack::config::ConntrackConfig;
 use crate::conntrack::entry::{ConntrackEntry};
+use crate::conntrack::observer::CtObserver;
 use crate::conntrack::proto::udp::UdpProtoState;
 use crate::conntrack::proto::tcp::TcpProtoState;
 use crate::conntrack::proto::icmp::IcmpProtoState;
 use crate::conntrack::tuple::{Direction, FlowTuple, Protocol};
+use crate::data_plane::packet_context::PacketId;
 
 #[derive(Debug, Clone)]
 pub enum ProtoState {
@@ -56,11 +58,21 @@ pub trait ProtocolHandler: Send + Sync {
 
     fn new_state(&self, pkt: &SlicedPacket, dir: Direction, config: &ConntrackConfig) -> Result<NewStateOutcome, NewStateError>;
 
-    fn update(&self, entry: &ConntrackEntry, pkt: &SlicedPacket, dir: Direction, now: Instant, config: &ConntrackConfig) -> CtVerdict;
+    fn update(
+        &self,
+        entry: &ConntrackEntry,
+        pkt: &SlicedPacket,
+        dir: Direction,
+        now: Instant,
+        config: &ConntrackConfig,
+        packet_id: PacketId,
+    ) -> CtVerdict;
 
     fn timeout(&self, state: &ProtoState, config: &ConntrackConfig) -> Duration;
 
     fn is_assured(&self, _state: &ProtoState) -> bool { false }
+
+    fn register_observer(&self, _observer: Arc<dyn CtObserver>) {}
 }
 
 pub struct ProtoRegistry {
@@ -115,7 +127,15 @@ mod tests {
             Ok(NewStateOutcome::State(ProtoState::Udp(UdpProtoState::default())))
         }
 
-        fn update(&self, _entry: &ConntrackEntry, _pkt: &SlicedPacket, _dir: Direction, _now: Instant, _config: &ConntrackConfig) -> CtVerdict {
+        fn update(
+            &self,
+            _entry: &ConntrackEntry,
+            _pkt: &SlicedPacket,
+            _dir: Direction,
+            _now: Instant,
+            _config: &ConntrackConfig,
+            _packet_id: PacketId,
+        ) -> CtVerdict {
             CtVerdict::Accept
         }
 

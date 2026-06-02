@@ -6,6 +6,7 @@ pub mod factory_reset;
 pub mod identity;
 pub mod interfaces;
 pub mod ip_defrag;
+pub mod l4;
 pub mod metrics;
 pub mod ml;
 pub mod netlink;
@@ -18,9 +19,17 @@ pub mod routing;
 pub mod rule_tree;
 pub mod tls;
 mod disk_store;
+pub use disk_store::SingleDiskStore;
 pub mod zones;
 mod swapper;
 pub mod validation;
 
 pub mod nat;
 pub mod conntrack;
+pub mod daemon;
+pub mod post_session;
+
+pub use daemon::{
+    Daemon, DaemonDeps, DaemonV2, DataPipeline, ProcessOutput, ProcessOutputWithPacketId, ProdDeps, SessionsFor,
+    StaticDeps,
+};

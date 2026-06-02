@@ -113,6 +113,7 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
                 "smb" => Ok(FieldValue::AppProto(AppProto::Smb)),
                 "quic" => Ok(FieldValue::AppProto(AppProto::Quic)),
                 "unknown" => Ok(FieldValue::AppProto(AppProto::Unknown)),
+                "any" => Ok(FieldValue::AppProto(AppProto::Any)),
                 other => Err(LowerError::UnknownValue {
                     kind,
                     value: other.to_string(),

@@ -22,6 +22,10 @@ import {
   FIREWALL_ZONE_QUERY_SERVICE_TOKEN,
   type IFirewallZoneQueryService,
 } from "../ports/firewall-zone-query-service.interface.js";
+import {
+  normalizeZoneInterfaceAddressesForConfig,
+  normalizeZoneInterfaceForConfig,
+} from "../services/zone-interface-config-normalizer.js";
 import type { ITokenService } from "../ports/token-service.interface.js";
 import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
 
@@ -70,6 +74,16 @@ export class EditZoneInterfaceUseCase {
       throw new EntityNotFoundException("zone interface", dto.id);
     }
 
+    if (
+      savedZoneInterface.getVlanId() === null &&
+      dto.vlanId !== undefined &&
+      dto.vlanId !== null
+    ) {
+      throw new BadRequestException(
+        "Cannot convert a physical interface into a VLAN. Create a new VLAN subinterface instead.",
+      );
+    }
+
     const addresses = this.buildAddresses(
       dto,
       savedZoneInterface.getAddresses(),
@@ -77,7 +91,7 @@ export class EditZoneInterfaceUseCase {
     // const firewallAddress = this.getFirewallAddress(dto, addresses);
 
     // if (this.shouldUpdateFirewallProperties(dto)) {
-    //   await this.firewallZoneQueryService.updatePhysicalInterfaceProperties({
+    //   await this.firewallZoneQueryService.setInterfaceState({
     //     id: dto.id,
     //     interfaceName: savedZoneInterface.getInterfaceName(),
     //     vlanId: dto.vlanId === null ? undefined : dto.vlanId,
@@ -92,21 +106,37 @@ export class EditZoneInterfaceUseCase {
     //   );
     // }
 
+    const nextVlanId =
+      dto.vlanId !== undefined ? dto.vlanId : savedZoneInterface.getVlanId();
+    const nextParentInterfaceId =
+      dto.parentInterfaceId !== undefined
+        ? dto.parentInterfaceId
+        : savedZoneInterface.getParentInterfaceId();
+
+    let nextInterfaceName = savedZoneInterface.getInterfaceName();
+    if (nextVlanId !== null && nextParentInterfaceId) {
+      const parent = await this.zoneInterfaceRepository.findById(
+        nextParentInterfaceId,
+      );
+      if (parent) {
+        nextInterfaceName = `${parent.getInterfaceName()}.${nextVlanId}`;
+      }
+    }
+
     const zoneInterface = ZoneInterface.create(
       savedZoneInterface.getId(),
       dto.zoneId ?? savedZoneInterface.getZoneId(),
-      savedZoneInterface.getInterfaceName(),
-      dto.vlanId !== undefined
-        ? dto.vlanId
-        : savedZoneInterface.getVlanId(),
+      nextInterfaceName,
+      nextVlanId,
       dto.isActive === undefined
         ? savedZoneInterface.getStatus()
         : dto.isActive
           ? "active"
           : "inactive",
-      addresses,
+      normalizeZoneInterfaceAddressesForConfig(nextVlanId, addresses),
       savedZoneInterface.getCreatedAt(),
       dto.sniffed ?? savedZoneInterface.getSniffed(),
+      nextParentInterfaceId,
     );
 
     await this.zoneInterfaceRepository.save(zoneInterface);
@@ -126,8 +156,9 @@ export class EditZoneInterfaceUseCase {
     const savedZoneInterfaces = await this.zoneInterfaceRepository.findAll();
     if (savedZoneInterfaces.length) return savedZoneInterfaces;
 
-    const liveZoneInterfaces =
-      await this.firewallZoneQueryService.getLiveZoneInterfaces();
+    const liveZoneInterfaces = (
+      await this.firewallZoneQueryService.getLiveZoneInterfaces()
+    ).map((zoneInterface) => normalizeZoneInterfaceForConfig(zoneInterface));
 
     if (
       !liveZoneInterfaces.some((zoneInterface) => zoneInterface.getId() === id)
@@ -217,5 +248,16 @@ export class EditZoneInterfaceUseCase {
       addresses.find((address) => address.includes(".")) ??
       addresses.find((address) => address.includes(":"))
     );
+  }
+
+  async getAllInterfaces(): Promise<ZoneInterface[]> {
+    const saved = await this.zoneInterfaceRepository.findAll();
+    if (saved.length) return saved;
+
+    const live = (
+      await this.firewallZoneQueryService.getLiveZoneInterfaces()
+    ).map((zoneInterface) => normalizeZoneInterfaceForConfig(zoneInterface));
+
+    return live;
   }
 }

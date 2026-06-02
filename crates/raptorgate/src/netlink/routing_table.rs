@@ -22,6 +22,14 @@ pub struct RoutingTable {
 }
 
 impl RoutingTable {
+    #[cfg(any(test, feature = "test-capture"))]
+    pub fn from_static_routes(mut routes: Vec<RouteEntry>) -> Arc<Self> {
+        routes.sort_by_key(|r| (r.destination.prefix_len(), -i64::from(r.priority)));
+        Arc::new(Self {
+            routes: ArcSwap::from_pointee(routes),
+        })
+    }
+
     pub async fn new(
         listener: &NetlinkListener,
         cancel: CancellationToken
@@ -178,6 +186,10 @@ impl RoutingTable {
     }
 
     pub fn route_lookup(&self, ip: IpAddr) -> Option<SystemInterfaceId> {
+        self.lookup_out_if_index(ip)
+    }
+
+    fn lookup_out_if_index(&self, ip: IpAddr) -> Option<SystemInterfaceId> {
         let routes = self.routes.load();
         // Since routes is sorted by prefix_len (asc) and then priority (desc),
         // we should look for matches and take the one with highest prefix_len.
@@ -186,6 +198,16 @@ impl RoutingTable {
             .filter(|r| r.destination.contains(&ip))
             .last()
             .map(|r| r.out_interface_index)
+    }
+}
+
+pub trait RouteLookup: Send + Sync + 'static {
+    fn route_lookup(&self, ip: IpAddr) -> Option<SystemInterfaceId>;
+}
+
+impl RouteLookup for RoutingTable {
+    fn route_lookup(&self, ip: IpAddr) -> Option<SystemInterfaceId> {
+        self.lookup_out_if_index(ip)
     }
 }
 

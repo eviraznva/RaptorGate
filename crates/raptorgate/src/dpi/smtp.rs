@@ -1,4 +1,4 @@
-use dashmap::{DashMap, mapref::one::RefMut};
+use dashmap::DashMap;
 use etherparse::{PacketBuilder, TransportSlice};
 use smtp_proto::{request::receiver::{RequestReceiver, DataReceiver, BdatReceiver}, response::parser::ResponseReceiver};
 use std::borrow::Cow;
@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use crate::conntrack::observer::{CtObserver, DestroyReason};
 use crate::conntrack::entry::ConntrackEntry;
-use crate::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
+use crate::conntrack::tcp_identity::{EndpointIdentifier, TcpIdentifier};
+use crate::data_plane::packet_context::PacketId;
 use crate::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
 use crate::interfaces::NetworkInterfaceMonitor;
@@ -22,9 +23,23 @@ pub(crate) struct TcpSeqSnapshot {
 }
 
 #[derive(Clone, Debug)]
-struct TerminatedSmtpSession {
+pub(crate) struct TerminatedSmtpSession {
     client: EndpointIdentifier,
     server: EndpointIdentifier,
+}
+
+impl TerminatedSmtpSession {
+    pub(crate) fn new(client: EndpointIdentifier, server: EndpointIdentifier) -> Self {
+        Self { client, server }
+    }
+
+    pub(crate) fn client(&self) -> &EndpointIdentifier {
+        &self.client
+    }
+
+    pub(crate) fn server(&self) -> &EndpointIdentifier {
+        &self.server
+    }
 }
 
 pub(crate) struct SmtpPolicyEvaluator;
@@ -37,12 +52,12 @@ enum SmtpEvaluationPhase {
 }
 
 impl SmtpPolicyEvaluator {
-    fn evaluate_sender(session: &SmtpSession, policies: &[SmtpPolicy]) -> bool {
+    fn evaluate_sender(session: &SmtpMachineState, policies: &[SmtpPolicy]) -> bool {
         let sender = session.current_sender.as_deref().unwrap_or("");
         Self::evaluate_policies(policies, |policy| Self::evaluate_field(&policy.sender, sender.as_bytes()))
     }
 
-    fn evaluate_recipients(session: &SmtpSession, policies: &[SmtpPolicy]) -> bool {
+    fn evaluate_recipients(session: &SmtpMachineState, policies: &[SmtpPolicy]) -> bool {
         Self::evaluate_policies(policies, |policy| {
             session
                 .current_recipients
@@ -51,7 +66,7 @@ impl SmtpPolicyEvaluator {
         })
     }
 
-    fn evaluate_message(session: &SmtpSession, policies: &[SmtpPolicy]) -> bool {
+    fn evaluate_message(session: &SmtpMachineState, policies: &[SmtpPolicy]) -> bool {
         Self::evaluate_policies(policies, |policy| Self::evaluate_field(&policy.message, &session.current_message))
     }
 
@@ -142,7 +157,7 @@ pub(crate) enum SessionTransition<'a> {
 }
 
 impl SessionState {
-    fn transition(&self, event: SessionTransition) -> Result<Option<SessionState>, ()> {
+    pub(crate) fn transition(&self, event: SessionTransition) -> Result<Option<SessionState>, ()> {
         match event {
             SessionTransition::Greeting => match self {
                 SessionState::TcpEstabilished => Ok(Some(SessionState::GreetingReceived)),
@@ -223,33 +238,31 @@ impl SessionState {
     }
 }
 
-struct SmtpSession {
-    state: SessionState,
-    client: Option<EndpointIdentifier>,
-    server: Option<EndpointIdentifier>,
-    policies: Option<SmtpSessionPolicies>,
-    request_receiver: RequestReceiver,
-    response_receiver: ResponseReceiver,
-    queued_packets: VecDeque<crate::data_plane::packet_context::PacketContext>,
-    current_sender: Option<String>,
-    current_recipients: Vec<String>,
-    current_message: Vec<u8>,
-    data_receiver: Option<DataReceiver>,
-    bdat_receiver: Option<BdatReceiver>,
-    client_seq: Option<TcpSeqSnapshot>,
-    server_seq: Option<TcpSeqSnapshot>,
+pub(crate) struct SmtpMachineState {
+    pub state: SessionState,
+    pub client: Option<EndpointIdentifier>,
+    pub server: Option<EndpointIdentifier>,
+    pub policies: Option<SmtpSessionPolicies>,
+    pub request_receiver: RequestReceiver,
+    pub response_receiver: ResponseReceiver,
+    pub current_sender: Option<String>,
+    pub current_recipients: Vec<String>,
+    pub current_message: Vec<u8>,
+    pub data_receiver: Option<DataReceiver>,
+    pub bdat_receiver: Option<BdatReceiver>,
+    pub client_seq: Option<TcpSeqSnapshot>,
+    pub server_seq: Option<TcpSeqSnapshot>,
 }
 
-impl std::fmt::Debug for SmtpSession {
+impl std::fmt::Debug for SmtpMachineState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SmtpSession")
+        f.debug_struct("SmtpMachineState")
             .field("state", &self.state)
             .field("client", &self.client)
             .field("server", &self.server)
             .field("policies", &self.policies)
             .field("request_receiver", &"RequestReceiver")
             .field("response_receiver", &"ResponseReceiver")
-            .field("queued_packets", &self.queued_packets)
             .field("current_sender", &self.current_sender)
             .field("current_recipients", &self.current_recipients)
             .field("current_message", &self.current_message.len())
@@ -261,13 +274,23 @@ impl std::fmt::Debug for SmtpSession {
     }
 }
 
-impl SmtpSession {
-    fn apply_transition(&mut self, event: SessionTransition<'_>) -> Result<(), ()> {
+impl SmtpMachineState {
+    fn apply_transition(
+        &mut self,
+        packet_queue: &mut Option<&mut VecDeque<crate::data_plane::packet_context::PacketContext>>,
+        id_queue: &mut Option<&mut VecDeque<PacketId>>,
+        event: SessionTransition<'_>,
+    ) -> Result<(), ()> {
         let result = self.state.transition(event);
-        self.apply_transition_result(result)
+        self.apply_transition_result(packet_queue, id_queue, result)
     }
 
-    fn apply_transition_result(&mut self, result: Result<Option<SessionState>, ()>) -> Result<(), ()> {
+    fn apply_transition_result(
+        &mut self,
+        packet_queue: &mut Option<&mut VecDeque<crate::data_plane::packet_context::PacketContext>>,
+        id_queue: &mut Option<&mut VecDeque<PacketId>>,
+        result: Result<Option<SessionState>, ()>,
+    ) -> Result<(), ()> {
         match result {
             Ok(Some(next)) => {
                 if matches!(next, SessionState::Ready) {
@@ -281,7 +304,12 @@ impl SmtpSession {
                     if !matches!(self.state, SessionState::GreetingReceived | SessionState::TcpEstabilished) {
                         self.current_sender = None;
                         self.current_recipients.clear();
-                        self.queued_packets.clear();
+                        if let Some(q) = packet_queue.as_mut() {
+                            q.clear();
+                        }
+                        if let Some(ids) = id_queue.as_mut() {
+                            ids.clear();
+                        }
                     }
                 }
                 self.state = next;
@@ -289,7 +317,6 @@ impl SmtpSession {
                 Ok(())
             }
             Ok(None) => {
-                // self.emit_state_changed();
                 Ok(())
             }
             Err(()) => Err(()),
@@ -315,8 +342,388 @@ impl SmtpSession {
     }
 }
 
+pub(crate) struct SmtpFlow {
+    pub(crate) machine: SmtpProtocolMachine,
+    pub(crate) queued_packets: VecDeque<crate::data_plane::packet_context::PacketContext>,
+}
+
+impl Default for SmtpFlow {
+    fn default() -> Self {
+        Self {
+            machine: SmtpProtocolMachine::default(),
+            queued_packets: VecDeque::new(),
+        }
+    }
+}
+
+pub(crate) struct SmtpProtocolMachine {
+    pub(crate) inner: SmtpMachineState,
+    pending_rst: Vec<Vec<u8>>,
+}
+
+impl Default for SmtpProtocolMachine {
+    fn default() -> Self {
+        Self {
+            inner: SmtpMachineState {
+                state: SessionState::TcpEstabilished,
+                client: None,
+                server: None,
+                policies: None,
+                request_receiver: RequestReceiver::default(),
+                response_receiver: ResponseReceiver::default(),
+                current_sender: None,
+                current_recipients: Vec::new(),
+                current_message: Vec::new(),
+                data_receiver: None,
+                bdat_receiver: None,
+                client_seq: None,
+                server_seq: None,
+            },
+            pending_rst: Vec::new(),
+        }
+    }
+}
+
+fn smtp_build_rst_packet(src: &TcpSeqSnapshot, dst: &TcpSeqSnapshot) -> Option<Vec<u8>> {
+    use std::net::IpAddr;
+
+    let (src_ip, dst_ip) = match (src.endpoint.ip, dst.endpoint.ip) {
+        (IpAddr::V4(src), IpAddr::V4(dst)) => (src, dst),
+        _ => return None,
+    };
+    let builder = PacketBuilder::ethernet2([0; 6], [0; 6])
+        .ipv4(src_ip.octets(), dst_ip.octets(), 64)
+        .tcp(
+            u16::from(src.endpoint.port),
+            u16::from(dst.endpoint.port),
+            src.next_seq,
+            0,
+        )
+        .ack(dst.next_seq)
+        .rst();
+
+    let mut packet = Vec::with_capacity(builder.size(0));
+    builder.write(&mut packet, &[]).ok()?;
+    Some(packet)
+}
+
+impl SmtpProtocolMachine {
+    #[allow(clippy::too_many_lines)]
+    pub(crate) fn feed_tcp<ZR: ZoneResolver>(
+        &mut self,
+        packet_queue: Option<&mut VecDeque<crate::data_plane::packet_context::PacketContext>>,
+        id_queue: Option<&mut VecDeque<PacketId>>,
+        policy_retriever: &Arc<SmtpPolicyRetriever<ZR>>,
+        terminated_sessions: &DashMap<TcpIdentifier, TerminatedSmtpSession>,
+        flow: &TcpIdentifier,
+        src: EndpointIdentifier,
+        dst: EndpointIdentifier,
+        seq: u32,
+        payload: &[u8],
+    ) -> (BufferingDisposition, bool, Vec<Vec<u8>>) {
+        let mut extra_rst = Vec::new();
+        let mut should_remove = false;
+        let mut packet_queue = packet_queue;
+        let mut id_queue = id_queue;
+        let mut disposition = BufferingDisposition {
+            packet: PacketAction::Pass,
+            unit: UnitStatus::Incomplete,
+        };
+
+        let payload_len = payload.len() as u32;
+        let next_seq = seq.wrapping_add(payload_len);
+        let snapshot = TcpSeqSnapshot {
+            endpoint: src.clone(),
+            seq,
+            next_seq,
+        };
+
+        let st = &mut self.inner;
+
+        let is_from_client = st.client.as_ref().is_some_and(|c| *c == src);
+        let is_from_server = st.server.as_ref().is_some_and(|s| *s == src);
+
+        if is_from_client {
+            st.client_seq = Some(snapshot.clone());
+        } else if is_from_server {
+            st.server_seq = Some(snapshot.clone());
+        }
+
+        if is_from_client || is_from_server {
+            let mut evaluation_phase = None;
+
+            if is_from_server {
+                disposition.packet = PacketAction::Pass;
+                let mut bytes = payload.iter();
+                loop {
+                    match st.response_receiver.parse(&mut bytes) {
+                        Ok(response) => {
+                            if st
+                                .apply_transition(&mut packet_queue, &mut id_queue, SessionTransition::Response(response))
+                                .is_err()
+                            {
+                                should_remove = true;
+                                break;
+                            }
+                            if matches!(st.state, SessionState::Data(DataState::Collecting)) {
+                                st.data_receiver = Some(DataReceiver::new());
+                            }
+                            st.response_receiver.reset();
+                        }
+                        Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
+                        Err(_) => {
+                            should_remove = true;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                disposition.packet = match st.state {
+                    SessionState::Ready | SessionState::EnvelopeOpen | SessionState::ReciepientSet
+                        | SessionState::Data(DataState::Await354 | DataState::Collecting)
+                        | SessionState::Bdat(BdatState::Collecting) => PacketAction::QueueAndHalt,
+                    _ => PacketAction::Pass,
+                };
+
+                let mut bytes = payload.iter();
+                loop {
+                    let current_state = st.state;
+
+                    if matches!(current_state, SessionState::Data(DataState::Collecting)) {
+                        if let Some(mut receiver) = st.data_receiver.take() {
+                            let completed = receiver.ingest(&mut bytes, &mut st.current_message);
+                            if completed {
+                                st.state = SessionState::Data(DataState::Complete);
+                                st.emit_state_changed();
+                                disposition.packet = PacketAction::QueueAndHalt;
+                                disposition.unit = UnitStatus::Complete;
+                                evaluation_phase = Some(SmtpEvaluationPhase::Message);
+                            } else {
+                                st.data_receiver = Some(receiver);
+                            }
+                        }
+                        break;
+                    }
+
+                    if matches!(current_state, SessionState::Bdat(BdatState::Collecting)) {
+                        if let Some(mut receiver) = st.bdat_receiver.take() {
+                            let completed = receiver.ingest(&mut bytes, &mut st.current_message);
+                            if completed {
+                                let is_last = receiver.is_last;
+                                if is_last {
+                                    st.state = SessionState::Bdat(BdatState::Complete);
+                                    disposition.packet = PacketAction::QueueAndHalt;
+                                    disposition.unit = UnitStatus::Complete;
+                                    evaluation_phase = Some(SmtpEvaluationPhase::Message);
+                                } else {
+                                    st.state = SessionState::ReciepientSet;
+                                }
+                            } else {
+                                st.bdat_receiver = Some(receiver);
+                            }
+                        }
+                        break;
+                    }
+
+                    match st.request_receiver.ingest(&mut bytes) {
+                        Ok(request) => {
+                            tracing::debug!(request=?request, "Smtp Received received request");
+                            let is_quit = matches!(&request, smtp_proto::Request::Quit);
+                            let completes_buffered_unit = matches!(
+                                &request,
+                                smtp_proto::Request::Mail { .. }
+                                    | smtp_proto::Request::Rcpt { .. }
+                                    | smtp_proto::Request::Data
+                                    | smtp_proto::Request::Rset
+                            );
+                            evaluation_phase = match &request {
+                                smtp_proto::Request::Mail { .. } => Some(SmtpEvaluationPhase::Sender),
+                                smtp_proto::Request::Rcpt { .. } => Some(SmtpEvaluationPhase::Recipients),
+                                _ => None,
+                            };
+                            let bdat_params = match &request {
+                                smtp_proto::Request::Bdat { chunk_size, is_last } => Some((*chunk_size, *is_last)),
+                                _ => None,
+                            };
+
+                            let sender = match &request {
+                                smtp_proto::Request::Mail { from } => Some(from.address.to_string()),
+                                _ => None,
+                            };
+
+                            let recipient = match &request {
+                                smtp_proto::Request::Rcpt { to } => Some(to.address.to_string()),
+                                _ => None,
+                            };
+
+                            let result = current_state.transition(SessionTransition::Request(request));
+
+                            if let Some(sender_addr) = sender {
+                                st.current_sender = Some(sender_addr);
+                            }
+
+                            if let Some(rcpt_addr) = recipient {
+                                st.current_recipients.push(rcpt_addr);
+                            }
+
+                            if let Some((chunk_size, is_last)) = bdat_params {
+                                st.bdat_receiver = Some(BdatReceiver::new(chunk_size, is_last));
+                            }
+
+                            if st
+                                .apply_transition_result(&mut packet_queue, &mut id_queue, result)
+                                .is_err()
+                            {
+                                should_remove = true;
+                                break;
+                            }
+
+                            st.request_receiver = RequestReceiver::default();
+
+                            if is_quit {
+                                disposition.packet = PacketAction::Pass;
+                                should_remove = true;
+                            }
+
+                            if disposition.packet == PacketAction::QueueAndHalt && completes_buffered_unit {
+                                disposition.unit = UnitStatus::Complete;
+                            }
+                        }
+                        Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
+                        Err(_) => {
+                            if matches!(current_state, SessionState::Data(_) | SessionState::Bdat(_)) {
+                                st.request_receiver = RequestReceiver::default();
+                                break;
+                            }
+                            should_remove = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if disposition.unit == UnitStatus::Complete && let Some(phase) = evaluation_phase {
+                if let Some(ref policies) = st.policies {
+                    let allowed = match phase {
+                        SmtpEvaluationPhase::Sender => {
+                            SmtpPolicyEvaluator::evaluate_sender(st, &policies.client_to_server)
+                        }
+                        SmtpEvaluationPhase::Recipients => {
+                            SmtpPolicyEvaluator::evaluate_recipients(st, &policies.client_to_server)
+                        }
+                        SmtpEvaluationPhase::Message => {
+                            SmtpPolicyEvaluator::evaluate_message(st, &policies.client_to_server)
+                        }
+                    };
+
+                    if !allowed {
+                        tracing::debug!(phase = ?phase, session=?*st, "Denied SMTP session");
+                        if let Some(q) = packet_queue.as_mut() {
+                            q.clear();
+                        }
+                        if let Some(ids) = id_queue.as_mut() {
+                            ids.clear();
+                        }
+                        disposition.packet = PacketAction::Drop;
+
+                        if let (Some(client), Some(server)) = (&st.client, &st.server) {
+                            terminated_sessions.insert(
+                                flow.clone(),
+                                TerminatedSmtpSession {
+                                    client: client.clone(),
+                                    server: server.clone(),
+                                },
+                            );
+                        }
+
+                        let mut rst_packets = Vec::new();
+                        if let (Some(client_seq), Some(_server), Some(server_seq), Some(_client)) =
+                            (&st.client_seq, &st.server, &st.server_seq, &st.client)
+                        {
+                            if let Some(rst_to_server) = smtp_build_rst_packet(client_seq, server_seq) {
+                                rst_packets.push(rst_to_server);
+                            }
+                            if let Some(rst_to_client) = smtp_build_rst_packet(server_seq, client_seq) {
+                                rst_packets.push(rst_to_client);
+                            }
+                        }
+                        extra_rst = rst_packets;
+                        should_remove = true;
+                    } else {
+                        tracing::debug!(phase = ?phase, session=?*st, "Allowed SMTP session");
+                    }
+                }
+            }
+
+            return (disposition, should_remove, extra_rst);
+        }
+
+        let mut response_bytes = payload.iter();
+        match st.response_receiver.parse(&mut response_bytes) {
+            Ok(response) => {
+                tracing::debug!(response=%response, "Smtp Received received response");
+
+                st.server = Some(src.clone());
+                st.client = Some(dst.clone());
+                if st.server_seq.is_none() {
+                    st.server_seq = Some(snapshot.clone());
+                }
+                st.policies = Some(policy_retriever.retrieve(dst.ip, src.ip));
+                st.request_receiver = RequestReceiver::default();
+                if st
+                    .apply_transition(&mut packet_queue, &mut id_queue, SessionTransition::Response(response))
+                    .is_err()
+                {
+                    should_remove = true;
+                }
+                st.response_receiver.reset();
+            }
+            Err(smtp_proto::Error::NeedsMoreData { .. }) => {}
+            Err(_) => {
+                let mut request_bytes = payload.iter();
+                let current_state = st.state;
+                let ingest_result = {
+                    let receiver = &mut st.request_receiver;
+                    receiver.ingest(&mut request_bytes)
+                };
+                match ingest_result {
+                    Ok(request) => {
+                        tracing::debug!(request=?request, "Smtp Received received request");
+                        let result = current_state.transition(SessionTransition::Request(request));
+                        st.client = Some(src.clone());
+                        st.server = Some(dst.clone());
+                        if st.client_seq.is_none() {
+                            st.client_seq = Some(snapshot.clone());
+                        }
+                        st.policies = Some(policy_retriever.retrieve(src.ip, dst.ip));
+                        st.response_receiver = ResponseReceiver::default();
+                        if st.apply_transition_result(&mut packet_queue, &mut id_queue, result).is_err() {
+                            should_remove = true;
+                        }
+                    }
+                    Err(smtp_proto::Error::NeedsMoreData { .. }) => {
+                        st.policies = Some(policy_retriever.retrieve(src.ip, dst.ip));
+                        st.client = Some(src);
+                        st.server = Some(dst);
+                        if st.client_seq.is_none() {
+                            st.client_seq = Some(snapshot);
+                        }
+                        st.response_receiver = ResponseReceiver::default();
+                        disposition.packet = PacketAction::QueueAndHalt;
+                    }
+                    Err(_) => {
+                        should_remove = true;
+                    }
+                }
+            }
+        }
+
+        (disposition, should_remove, extra_rst)
+    }
+}
+
 pub struct SmtpTracker<ZR = RoutingZoneResolver<NetworkInterfaceMonitor>> {
-    sessions: DashMap<TcpIdentifier, SmtpSession>,
+    sessions: DashMap<TcpIdentifier, SmtpFlow>,
     rst_packets: DashMap<TcpIdentifier, Vec<Vec<u8>>>,
     terminated_sessions: DashMap<TcpIdentifier, TerminatedSmtpSession>,
     policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
@@ -332,39 +739,24 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         }
     }
 
-    fn build_rst_packet(src: &TcpSeqSnapshot, dst: &TcpSeqSnapshot) -> Option<Vec<u8>> {
-        use std::net::IpAddr;
-        
-        let (src_ip, dst_ip) = match (src.endpoint.ip, dst.endpoint.ip) {
-            (IpAddr::V4(src), IpAddr::V4(dst)) => (src, dst),
-            _ => return None, // IPv6 not supported for now
-        };
-        let builder = PacketBuilder::ethernet2([0; 6], [0; 6])
-            .ipv4(src_ip.octets(), dst_ip.octets(), 64)
-            .tcp(
-                u16::from(src.endpoint.port),
-                u16::from(dst.endpoint.port),
-                src.next_seq,
-                0,
-            )
-            .ack(dst.next_seq)
-            .rst();
+    pub fn policy_retriever(&self) -> Arc<SmtpPolicyRetriever<ZR>> {
+        Arc::clone(&self.policy_retriever)
+    }
 
-        let mut packet = Vec::with_capacity(builder.size(0));
-        builder.write(&mut packet, &[]).ok()?;
-        Some(packet)
+    fn build_rst_packet(src: &TcpSeqSnapshot, dst: &TcpSeqSnapshot) -> Option<Vec<u8>> {
+        smtp_build_rst_packet(src, dst)
     }
 
     pub fn get_session_policies(&self, id: &TcpIdentifier) -> Option<SmtpSessionPolicies> {
-        self.sessions.get(id).and_then(|s| s.policies.clone())
+        self.sessions.get(id).and_then(|s| s.machine.inner.policies.clone())
     }
-    
+
     pub fn enqueue_packet(&self, id: &TcpIdentifier, packet: crate::data_plane::packet_context::PacketContext) {
         if let Some(mut session) = self.sessions.get_mut(id) {
             session.queued_packets.push_back(packet);
         }
     }
-    
+
     pub fn clear_queued_packets(&self, id: &TcpIdentifier) {
         if let Some(mut session) = self.sessions.get_mut(id) {
             session.queued_packets.clear();
@@ -383,35 +775,12 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         self.rst_packets.remove(id).map(|(_, packets)| packets).unwrap_or_default()
     }
 
-    fn cleanup_session(&self, should_remove: bool, session: RefMut<'_, TcpIdentifier, SmtpSession>) {
-        if should_remove {
-            let key = session.key().clone();
-            drop(session);
-            self.sessions.remove(&key);
-        }
-    }
-
     fn store_rst_packets(&self, id: &TcpIdentifier, packets: Vec<Vec<u8>>) {
         if packets.is_empty() {
             return;
         }
 
         self.rst_packets.entry(id.clone()).or_default().extend(packets);
-    }
-
-    fn mark_session_terminated(
-        &self,
-        id: &TcpIdentifier,
-        client: &EndpointIdentifier,
-        server: &EndpointIdentifier,
-    ) {
-        self.terminated_sessions.insert(
-            id.clone(),
-            TerminatedSmtpSession {
-                client: client.clone(),
-                server: server.clone(),
-            },
-        );
     }
 
     fn maybe_clear_terminated_session(
@@ -449,314 +818,48 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
     pub fn on_new_packet(
         &self,
         packet: TransportSlice,
-        session: &TcpIdentifier,
+        flow: &TcpIdentifier,
         src: EndpointIdentifier,
         dst: EndpointIdentifier,
     ) -> BufferingDisposition {
-        let TransportSlice::Tcp(tcp) = packet else { 
+        let TransportSlice::Tcp(tcp) = packet else {
             return BufferingDisposition {
                 packet: PacketAction::Pass,
                 unit: UnitStatus::Incomplete,
-            }
+            };
         };
 
-        if self.maybe_clear_terminated_session(session, &src, &dst, tcp.payload()) {
+        if self.maybe_clear_terminated_session(flow, &src, &dst, tcp.payload()) {
             return BufferingDisposition {
                 packet: PacketAction::Drop,
                 unit: UnitStatus::Incomplete,
             };
         }
 
-        let mut session = self.sessions.entry(session.clone()).or_insert(SmtpSession {
-            state: SessionState::TcpEstabilished,
-            client: None,
-            server: None,
-            policies: None,
-            request_receiver: RequestReceiver::default(),
-            response_receiver: ResponseReceiver::default(),
-            queued_packets: VecDeque::new(),
-            current_sender: None,
-            current_recipients: Vec::new(),
-            current_message: Vec::new(),
-            data_receiver: None,
-            bdat_receiver: None,
-            client_seq: None,
-            server_seq: None,
-        });
-
-        let mut should_remove = false; // need this since dashmap deadlocks when removing an entry without dropping
-        let mut disposition = BufferingDisposition {
-            packet: PacketAction::Pass,
-            unit: UnitStatus::Incomplete,
-        };
-
-        // Update TCP sequence snapshot for this direction
-        let payload_len = tcp.payload().len() as u32;
         let seq = tcp.sequence_number();
-        let next_seq = seq.wrapping_add(payload_len);
-        let snapshot = TcpSeqSnapshot {
-            endpoint: src.clone(),
-            seq,
-            next_seq,
+        let payload = tcp.payload();
+
+        let mut slot = self.sessions.entry(flow.clone()).or_insert_with(SmtpFlow::default);
+        let (disposition, remove, rsts) = {
+            let f = slot.value_mut();
+            f.machine.feed_tcp(
+                Some(&mut f.queued_packets),
+                None,
+                &self.policy_retriever,
+                &self.terminated_sessions,
+                flow,
+                src,
+                dst,
+                seq,
+                payload,
+            )
         };
-
-        let is_from_client = session.client.as_ref().is_some_and(|c| *c == src);
-        let is_from_server = session.server.as_ref().is_some_and(|s| *s == src);
-
-        if is_from_client {
-            session.client_seq = Some(snapshot.clone());
-        } else if is_from_server {
-            session.server_seq = Some(snapshot.clone());
+        self.store_rst_packets(flow, rsts);
+        if remove {
+            let k = flow.clone();
+            drop(slot);
+            self.sessions.remove(&k);
         }
-
-        if is_from_client || is_from_server {
-            let mut evaluation_phase = None;
-
-            if is_from_server {
-                disposition.packet = PacketAction::Pass;
-                let mut bytes = tcp.payload().iter();
-                loop {
-                    match session.response_receiver.parse(&mut bytes) {
-                        Ok(response) => {
-                            if session.apply_transition(SessionTransition::Response(response)).is_err() {
-                                should_remove = true;
-                                break;
-                            }
-                            if matches!(session.state, SessionState::Data(DataState::Collecting)) {
-                                session.data_receiver = Some(DataReceiver::new());
-                            }
-                            session.response_receiver.reset();
-                        }
-                        Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
-                        Err(_) => { should_remove = true; break; }
-                    }
-                }
-            } else {
-                disposition.packet = match session.state {
-                    SessionState::Ready | SessionState::EnvelopeOpen | SessionState::ReciepientSet
-                        | SessionState::Data(DataState::Await354 | DataState::Collecting) |
-                        SessionState::Bdat(BdatState::Collecting) => PacketAction::QueueAndHalt,
-                    _ => PacketAction::Pass,
-                };
-                
-                let mut bytes = tcp.payload().iter();
-                loop {
-                    let current_state = session.state;
-                    
-                    if matches!(current_state, SessionState::Data(DataState::Collecting)) {
-                        if let Some(mut receiver) = session.data_receiver.take() {
-                            let completed = receiver.ingest(&mut bytes, &mut session.current_message);
-                            if completed {
-                                session.state = SessionState::Data(DataState::Complete);
-                                session.emit_state_changed();
-                                disposition.packet = PacketAction::QueueAndHalt;
-                                disposition.unit = UnitStatus::Complete;
-                                evaluation_phase = Some(SmtpEvaluationPhase::Message);
-                            } else {
-                                session.data_receiver = Some(receiver);
-                            }
-                        }
-                        break;
-                    }
-                    
-                    if matches!(current_state, SessionState::Bdat(BdatState::Collecting)) {
-                        if let Some(mut receiver) = session.bdat_receiver.take() {
-                            let completed = receiver.ingest(&mut bytes, &mut session.current_message);
-                            if completed {
-                                let is_last = receiver.is_last;
-                                if is_last {
-                                    session.state = SessionState::Bdat(BdatState::Complete);
-                                    disposition.packet = PacketAction::QueueAndHalt;
-                                    disposition.unit = UnitStatus::Complete;
-                                    evaluation_phase = Some(SmtpEvaluationPhase::Message);
-                                } else {
-                                    session.state = SessionState::ReciepientSet;
-                                }
-                            } else {
-                                session.bdat_receiver = Some(receiver);
-                            }
-                        }
-                        break;
-                    }
-                    
-                    match session.request_receiver.ingest(&mut bytes) {
-                        Ok(request) => {
-                            tracing::debug!(request=?request, "Smtp Received received request");
-                            let is_quit = matches!(&request, smtp_proto::Request::Quit);
-                            let completes_buffered_unit = matches!(
-                                &request,
-                                smtp_proto::Request::Mail { .. }
-                                    | smtp_proto::Request::Rcpt { .. }
-                                    | smtp_proto::Request::Data
-                                    | smtp_proto::Request::Rset
-                            );
-                            evaluation_phase = match &request {
-                                smtp_proto::Request::Mail { .. } => Some(SmtpEvaluationPhase::Sender),
-                                smtp_proto::Request::Rcpt { .. } => Some(SmtpEvaluationPhase::Recipients),
-                                _ => None,
-                            };
-                            let bdat_params = match &request {
-                                smtp_proto::Request::Bdat { chunk_size, is_last } => Some((*chunk_size, *is_last)),
-                                _ => None,
-                            };
-                            
-                            let sender = match &request {
-                                smtp_proto::Request::Mail { from } => Some(from.address.to_string()),
-                                _ => None,
-                            };
-                            
-                            let recipient = match &request {
-                                smtp_proto::Request::Rcpt { to } => Some(to.address.to_string()),
-                                _ => None,
-                            };
-                            
-                            let result = current_state.transition(SessionTransition::Request(request));
-                            
-                            if let Some(sender_addr) = sender {
-                                session.current_sender = Some(sender_addr);
-                            }
-                            
-                            if let Some(rcpt_addr) = recipient {
-                                session.current_recipients.push(rcpt_addr);
-                            }
-                            
-                            if let Some((chunk_size, is_last)) = bdat_params {
-                                session.bdat_receiver = Some(BdatReceiver::new(chunk_size, is_last));
-                            }
-
-                            if session.apply_transition_result(result).is_err() {
-                                should_remove = true;
-                                break;
-                            }
-
-                            session.request_receiver = RequestReceiver::default();
-
-                            if is_quit {
-                                disposition.packet = PacketAction::Pass;
-                                should_remove = true;
-                            }
-
-                            if disposition.packet == PacketAction::QueueAndHalt && completes_buffered_unit {
-                                disposition.unit = UnitStatus::Complete;
-                            }
-                        }
-                        Err(smtp_proto::Error::NeedsMoreData { .. }) => break,
-                        Err(_) => {
-                            if matches!(current_state, SessionState::Data(_) | SessionState::Bdat(_)) {
-                                session.request_receiver = RequestReceiver::default();
-                                break;
-                            }
-                            should_remove = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if disposition.unit == UnitStatus::Complete && let Some(phase) = evaluation_phase {
-                if let Some(ref policies) = session.policies {
-                    let allowed = match phase {
-                        SmtpEvaluationPhase::Sender => {
-                            SmtpPolicyEvaluator::evaluate_sender(&session, &policies.client_to_server)
-                        }
-                        SmtpEvaluationPhase::Recipients => {
-                            SmtpPolicyEvaluator::evaluate_recipients(&session, &policies.client_to_server)
-                        }
-                        SmtpEvaluationPhase::Message => {
-                            SmtpPolicyEvaluator::evaluate_message(&session, &policies.client_to_server)
-                        }
-                    };
-
-                    if !allowed {
-                        tracing::debug!(phase = ?phase, session=?*session, "Denied SMTP session");
-                        session.queued_packets.clear();
-                        disposition.packet = PacketAction::Drop;
-
-                        if let (Some(client), Some(server)) = (&session.client, &session.server) {
-                            self.mark_session_terminated(session.key(), client, server);
-                        }
-
-                        let mut rst_packets = Vec::new();
-                        if let (Some(client_seq), Some(server), Some(server_seq), Some(client)) =
-                            (&session.client_seq, &session.server, &session.server_seq, &session.client)
-                        {
-                            if let Some(rst_to_server) = Self::build_rst_packet(client_seq, server_seq) {
-                                rst_packets.push(rst_to_server);
-                            }
-                            if let Some(rst_to_client) = Self::build_rst_packet(server_seq, client_seq) {
-                                rst_packets.push(rst_to_client);
-                            }
-                        }
-                        self.store_rst_packets(session.key(), rst_packets);
-                        should_remove = true;
-                    } else {
-                        tracing::debug!(phase = ?phase, session=?*session, "Allowed SMTP session");
-                    }
-                }
-            }
-
-            self.cleanup_session(should_remove, session);
-            return disposition;
-        }
-
-        let mut response_bytes = tcp.payload().iter();
-        match session.response_receiver.parse(&mut response_bytes) {
-            Ok(response) => {
-                tracing::debug!(response=%response, "Smtp Received received response");
-
-                session.server = Some(src.clone());
-                session.client = Some(dst.clone());
-                if session.server_seq.is_none() {
-                    session.server_seq = Some(snapshot.clone());
-                }
-                session.policies = Some(self.policy_retriever.retrieve(dst.ip, src.ip));
-                session.request_receiver = RequestReceiver::default();
-                if session.apply_transition(SessionTransition::Response(response)).is_err() {
-                    should_remove = true;
-                }
-                session.response_receiver.reset();
-            }
-            Err(smtp_proto::Error::NeedsMoreData { .. }) => {}
-            Err(_) => {
-                let mut request_bytes = tcp.payload().iter();
-                let current_state = session.state;
-                let ingest_result = {
-                    let receiver = &mut session.request_receiver;
-                    receiver.ingest(&mut request_bytes)
-                };
-                match ingest_result {
-                    Ok(request) => {
-                        tracing::debug!(request=?request, "Smtp Received received request");
-                        let result = current_state.transition(SessionTransition::Request(request));
-                        session.client = Some(src.clone());
-                        session.server = Some(dst.clone());
-                        if session.client_seq.is_none() {
-                            session.client_seq = Some(snapshot.clone());
-                        }
-                        session.policies = Some(self.policy_retriever.retrieve(src.ip, dst.ip));
-                        session.response_receiver = ResponseReceiver::default();
-                        if session.apply_transition_result(result).is_err() {
-                            should_remove = true;
-                        }
-                    }
-                    Err(smtp_proto::Error::NeedsMoreData { .. }) => {
-                        session.policies = Some(self.policy_retriever.retrieve(src.ip, dst.ip));
-                        session.client = Some(src);
-                        session.server = Some(dst);
-                        if session.client_seq.is_none() {
-                            session.client_seq = Some(snapshot);
-                        }
-                        session.response_receiver = ResponseReceiver::default();
-                        disposition.packet = PacketAction::QueueAndHalt;
-                    }
-                    Err(_) => {
-                        should_remove = true;
-                    }
-                }
-            }
-        }
-
-        self.cleanup_session(should_remove, session);
         disposition
     }
 }
@@ -1057,7 +1160,7 @@ mod tests {
     use std::collections::HashMap;
     use etherparse::PacketBuilder;
     use unordered_pair::UnorderedPair;
-    use crate::data_plane::tcp_session_tracker::TcpIdentifier;
+    use crate::conntrack::tcp_identity::TcpIdentifier;
     use crate::zones::{DefaultPolicy, DirectionalZonePairs, ResolvedZonePair, ZonePairId};
     use crate::policy::{Policy, PolicyId};
     use uuid::Uuid;
@@ -1183,7 +1286,7 @@ mod tests {
     }
 
     fn get_session_state<ZR: ZoneResolver>(tracker: &SmtpTracker<ZR>, id: &TcpIdentifier) -> Option<SessionState> {
-        tracker.sessions.get(id).map(|s| s.state)
+        tracker.sessions.get(id).map(|s| s.machine.inner.state)
     }
 
     fn send_client_packet(
@@ -1708,7 +1811,7 @@ mod tests {
         tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
 
         if let Some(session) = tracker.sessions.get(&id) {
-            assert_eq!(session.current_sender, Some("sender@example.com".to_string()));
+            assert_eq!(session.machine.inner.current_sender, Some("sender@example.com".to_string()));
         } else {
             panic!("Session not found");
         }
@@ -1722,9 +1825,9 @@ mod tests {
         tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
 
         if let Some(session) = tracker.sessions.get(&id) {
-            assert_eq!(session.current_recipients.len(), 2);
-            assert_eq!(session.current_recipients[0], "recipient1@example.com");
-            assert_eq!(session.current_recipients[1], "recipient2@example.com");
+            assert_eq!(session.machine.inner.current_recipients.len(), 2);
+            assert_eq!(session.machine.inner.current_recipients[0], "recipient1@example.com");
+            assert_eq!(session.machine.inner.current_recipients[1], "recipient2@example.com");
         } else {
             panic!("Session not found");
         }
@@ -1756,10 +1859,10 @@ mod tests {
         tracker.on_new_packet(sliced.transport.unwrap(), &id, client(), server());
 
         if let Some(session) = tracker.sessions.get(&id) {
-            assert_eq!(session.current_sender, None);
-            assert_eq!(session.current_recipients.len(), 0);
-            assert_eq!(session.current_message.len(), 0);
-            assert_eq!(session.state, SessionState::Ready);
+            assert_eq!(session.machine.inner.current_sender, None);
+            assert_eq!(session.machine.inner.current_recipients.len(), 0);
+            assert_eq!(session.machine.inner.current_message.len(), 0);
+            assert_eq!(session.machine.inner.state, SessionState::Ready);
         } else {
             panic!("Session not found");
         }
@@ -2041,7 +2144,7 @@ mod tests {
 
         // BUG: State should NOT regress to TcpEstabilished after replay
         if let Some(session) = tracker.sessions.get(&id) {
-            let final_state = session.state;
+            let final_state = session.machine.inner.state;
             assert!(
                 !matches!(final_state, SessionState::TcpEstabilished),
                 "State regressed to TcpEstabilished after replaying buffered packets. Final state: {:?}",

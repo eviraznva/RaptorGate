@@ -11,7 +11,7 @@ use ngfw::data_plane::ips::config::{
 
 use ngfw::data_plane::ips::ips::Ips;
 use ngfw::dpi::{AppProto, DpiContext};
-use ngfw::data_plane::packet_context::PacketContext;
+use ngfw::data_plane::packet_context::{CaptureDirection, PacketContext};
 
 const ITERS: usize = 500_000;
 const TARGET_NS: u128 = 1_000;
@@ -216,6 +216,7 @@ fn build_tcp_packet(payload: &[u8], dst_port: u16) -> PacketContext {
     PacketContext::from_raw_full(
         raw,
         Arc::<str>::from("eth1"),
+        CaptureDirection::Ingress,
         Vec::new(),
         SystemTime::now(),
         Some(DpiContext {
@@ -223,6 +224,10 @@ fn build_tcp_packet(payload: &[u8], dst_port: u16) -> PacketContext {
             ..Default::default()
         }),
         None,
+        None,
+        None,
+        None,
+        false,
     )
     .expect("packet context should parse")
 }

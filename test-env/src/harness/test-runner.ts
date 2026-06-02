@@ -305,9 +305,14 @@ class CommandBuilder {
 	}
 
 	async runDetached(): Promise<DetachedCommand> {
-		const handle = spawnSsh(this.host, this.command);
+		const handle = await spawnSsh(this.host, this.command);
 		// Give the server time to bind before the caller attempts to connect.
 		await new Promise((r) => setTimeout(r, 1000));
+		if (!handle.isActive) {
+			throw new Error(
+				`Detached command exited before readiness on ${this.host}: ${this.command}`,
+			);
+		}
 		return new DetachedCommand(this.host, this.command, handle);
 	}
 

@@ -1,4 +1,4 @@
-import { describe, test, beforeAll } from "bun:test";
+import { describe, test, beforeAll, beforeEach, afterEach } from "bun:test";
 import "../harness";
 import {
 	request,
@@ -8,11 +8,24 @@ import {
 	performCommand,
 } from "../harness";
 import { createDefaultSnapshotBundle } from "../harness/fixtures";
+import { sleep } from "bun";
+
+async function cleanupRuleListeners() {
+	await performCommand({
+		host: "h1",
+		command: "pkill -f '[n]cat -l 1234[56]' || true",
+	})
+		.discardError()
+		.run();
+	await sleep(200);
+}
 
 describe("Rule Tests", () => {
 	beforeAll(async () => {
 		await resetFirewallState(getClient(), getSnapshotClient());
 	});
+	beforeEach(cleanupRuleListeners);
+	afterEach(cleanupRuleListeners);
 
 	test("blocks dst_port 12345 and allows dst_port 12346", async () => {
 		const bundle = createDefaultSnapshotBundle({
@@ -44,14 +57,18 @@ describe("Rule Tests", () => {
 				createdBy: "rule-tests",
 				bundle,
 			},
-		}).run();
+		})
+			.expectResponse((response: any) => response?.accepted === true)
+			.run();
 
 		await new Promise((resolve) => setTimeout(resolve, 500));
 
 		const server12346 = await performCommand({
 			host: "h1",
-			command: "nc -l -p 12346",
+			command: "timeout 10 ncat -l 12346 >/dev/null",
 		}).runDetached();
+
+		await sleep(500);
 
 		try {
 			await performCommand({
@@ -66,8 +83,10 @@ describe("Rule Tests", () => {
 
 		const server12345 = await performCommand({
 			host: "h1",
-			command: "nc -l -p 12345",
+			command: "timeout 10 ncat -l 12345 >/dev/null",
 		}).runDetached();
+
+		await sleep(200);
 
 		try {
 			await performCommand({
@@ -79,5 +98,5 @@ describe("Rule Tests", () => {
 		} finally {
 			await server12345.kill();
 		}
-	}, { timeout: 10_000 });
+	}, { timeout: 20_000 });
 });

@@ -3,6 +3,10 @@ name = "ngfw"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+test-capture = []
+
 [dependencies]
 derive_more = {version =  "2.1.1", features = ["full"] }
 etherparse = "0.19.0"

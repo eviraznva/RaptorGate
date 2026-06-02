@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use etherparse::{PacketBuilder, SlicedPacket};
-use ngfw::data_plane::tcp_session_tracker::{EndpointIdentifier, TcpIdentifier};
+use ngfw::conntrack::tcp_identity::{EndpointIdentifier, TcpIdentifier};
 use ngfw::dpi::smtp::SmtpTracker;
 use ngfw::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use ngfw::policy::provider::DiskPolicyProvider;

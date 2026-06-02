@@ -161,6 +161,15 @@ impl InterfaceMonitor for NetworkInterfaceMonitor {
     }
 }
 
+#[cfg(any(test, feature = "test-capture"))]
+impl NetworkInterfaceMonitor {
+    pub fn from_static_interfaces(interfaces: HashMap<String, SystemInterface>) -> Self {
+        Self {
+            interfaces: Arc::new(DashMap::from_iter(interfaces.into_iter())),
+        }
+    }
+}
+
 impl NetworkInterfaceMonitor {
     fn handle_route_message(&self, message: RouteNetlinkMessage) {
         match message {

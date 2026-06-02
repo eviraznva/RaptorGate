@@ -10,7 +10,6 @@ use ngfw::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use ngfw::data_plane::ips::ips::Ips;
 use ngfw::data_plane::ips::provider::IpsConfigProvider;
 use ngfw::nat::{NatConfigProvider, NatEngine};
-use ngfw::data_plane::tcp_session_tracker::TcpSessionTracker;
 use ngfw::identity::IdentitySessionStore;
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::proto::config::{InterfaceStatus, Rule, Zone, ZoneInterface, ZonePair};
@@ -30,12 +29,14 @@ use ngfw::zones::provider::ZoneInterfaceProvider;
 use ngfw::zones::provider::ZonePairProvider;
 use ngfw::zones::provider::ZoneProvider;
 use serial_test::serial;
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 struct SharedServer {
     socket: String,
+    _data_dir: TempDir,
 }
 
 #[derive(Clone)]
@@ -115,11 +116,22 @@ static SHARED_SERVER: OnceLock<SharedServer> = OnceLock::new();
 
 fn shared_server() -> &'static SharedServer {
     SHARED_SERVER.get_or_init(|| {
-        unsafe { env::set_var("POLICIES_DIRECTORY", "/tmp") };
+        let data_dir = TempDir::new().expect("test_query_server data dir");
+        let data_path = data_dir.path().to_string_lossy().into_owned();
+        let pki_path = data_dir.path().join("pki");
+        std::fs::create_dir_all(&pki_path).expect("test_query_server pki dir");
+        let pki_path_str = pki_path.to_string_lossy().into_owned();
+        unsafe {
+            env::set_var("POLICIES_DIRECTORY", &data_path);
+            env::set_var("RAPTORGATE_PKI_DIR", &pki_path_str);
+        }
+        let socket_path = data_dir.path().join("query.sock");
+        let socket = socket_path.to_string_lossy().into_owned();
 
         // Channel lets us wait until the server is actually listening
         // before returning, without an arbitrary sleep.
         let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let socket_for_thread = socket.clone();
 
         std::thread::spawn(move || {
             // This runtime lives for the lifetime of the process —
@@ -182,8 +194,8 @@ fn shared_server() -> &'static SharedServer {
 
                     reg.register(Arc::new(TcpHandler::new(Arc::clone(&observers))));
                     reg.register(Arc::new(UdpHandler::new(Arc::clone(&observers))));
-                    reg.register(Arc::new(IcmpHandler::v4()));
-                    reg.register(Arc::new(IcmpHandler::v6()));
+                    reg.register(Arc::new(IcmpHandler::v4(Arc::clone(&observers))));
+                    reg.register(Arc::new(IcmpHandler::v6(Arc::clone(&observers))));
 
                     reg
                 };
@@ -193,9 +205,9 @@ fn shared_server() -> &'static SharedServer {
                 ));
 
                 let handler = QueryHandler {
-                    tcp_tracker: TcpSessionTracker::new(),
                     nat_engine: NatEngine::new(None, HashMap::new()),
                     nat_store,
+                    nat_kernel_sync: Arc::new(ngfw::nat::NatKernelSync::new(None)),
                     conntrack: conntrack_for_test,
                     policy_store: Arc::new(policy),
                     policy_engine,
@@ -212,28 +224,32 @@ fn shared_server() -> &'static SharedServer {
                     server_key_store,
                     pinning_detector: decision_engine.pinning_detector_arc(),
                     interface_monitor,
-                    interface_controller,
+                    interface_controller: Arc::clone(&interface_controller),
+                    physical_reconciler: Arc::new(ngfw::interfaces::PhysicalInterfaceReconciler::new(Arc::clone(&interface_controller))),
                     vlan_reconciler,
                     interface_sniffer,
                     metrics_collector: Arc::new(ngfw::metrics::MetricsCollector::new()),
                     reset_lock: Arc::new(Mutex::new(())),
                 };
 
-                let socket = "/tmp/test-query-shared.sock".to_string();
                 let shutdown = CancellationToken::new();
                 let identity_sessions = IdentitySessionStore::new_shared();
                 let server =
-                    QueryServer::new(handler, identity_sessions, &socket, shutdown.clone());
-
-                // Signal the socket path before we start blocking on serve()
-                tx.send(socket).expect("receiver dropped");
-
-                server.serve().await;
+                    QueryServer::new(handler, identity_sessions, &socket_for_thread, shutdown.clone());
+                let socket_for_signal = socket_for_thread.clone();
+                server
+                    .serve_with_after_bind(move || {
+                        tx.send(socket_for_signal).expect("receiver dropped");
+                    })
+                    .await;
             });
         });
 
         let socket = rx.recv().expect("server thread died before signalling");
-        SharedServer { socket }
+        SharedServer {
+            socket,
+            _data_dir: data_dir,
+        }
     })
 }
 
@@ -864,4 +880,3 @@ async fn push_active_config_snapshot_rejects_missing_default_zone() {
     assert!(!response.accepted);
     assert!(response.message.to_lowercase().contains("default"));
 }
-
