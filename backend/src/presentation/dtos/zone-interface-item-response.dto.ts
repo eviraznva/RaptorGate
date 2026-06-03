@@ -28,4 +28,10 @@ export class ZoneInterfaceItemResponseDto {
 
   @ApiProperty({ example: '2024-06-01T12:00:00Z' })
   createdAt: Date;
+
+  @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000', nullable: true })
+  parentInterfaceId: string | null;
+
+  @ApiProperty({ example: 'eth0', nullable: true })
+  parentInterfaceName: string | null;
 }

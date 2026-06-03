@@ -13,7 +13,6 @@ import type { ClientGrpc } from "@nestjs/microservices";
 import { firstValueFrom } from "rxjs";
 import type {
   IFirewallZoneQueryService,
-  UpdateZoneInterfacePropertiesInput,
 } from "../../application/ports/firewall-zone-query-service.interface.js";
 import { Zone } from "../../domain/entities/zone.entity.js";
 import {
@@ -167,12 +166,6 @@ export class GrpcFirewallZoneQueryService
     }
   }
 
-  async updatePhysicalInterfaceProperties(
-    _input: UpdateZoneInterfacePropertiesInput,
-  ): Promise<void> {
-    return;
-  }
-
   async getZonePairs(): Promise<ZonePair[]> {
     try {
       const response = await firstValueFrom(
@@ -208,36 +201,57 @@ export class GrpcFirewallZoneQueryService
   private toZoneInterfaceEntity(
     zoneInterface: GrpcZoneInterface,
   ): ZoneInterface {
+    const vlanId = this.getZoneInterfaceVlanId(zoneInterface);
+    const parentId = this.getZoneInterfaceParentId(zoneInterface);
+
     return ZoneInterface.create(
       zoneInterface.id,
       zoneInterface.zoneId,
-      this.getZoneInterfaceName(zoneInterface),
-      this.getZoneInterfaceVlanId(zoneInterface),
+      this.getZoneInterfaceName(zoneInterface, vlanId),
+      vlanId,
       this.toZoneInterfaceStatus(zoneInterface.status),
       [...zoneInterface.addresses],
       new Date(),
       zoneInterface.sniffed ?? false,
+      parentId,
     );
   }
 
-  private getZoneInterfaceName(zoneInterface: GrpcZoneInterface): string {
+  private getZoneInterfaceName(
+    zoneInterface: GrpcZoneInterface,
+    vlanId: number | null,
+  ): string {
     if (zoneInterface.kind?.$case === "physical") {
       return zoneInterface.kind.physical.interfaceName;
     }
     if (zoneInterface.kind?.$case === "vlan") {
-      return zoneInterface.kind.vlan.parentInterfaceId;
+      return `vlan.${vlanId ?? 0}`;
     }
 
-    // proto-loader returns oneof fields flat on message, not wrapped in kind.$case
     const flat = zoneInterface as Record<string, any>;
     if (flat.physical?.interfaceName) {
       return flat.physical.interfaceName;
     }
+    if (flat.vlan?.vlanId != null) {
+      return `vlan.${flat.vlan.vlanId}`;
+    }
+
+    return zoneInterface.id;
+  }
+
+  private getZoneInterfaceParentId(
+    zoneInterface: GrpcZoneInterface,
+  ): string | null {
+    if (zoneInterface.kind?.$case === "vlan") {
+      return zoneInterface.kind.vlan.parentInterfaceId;
+    }
+
+    const flat = zoneInterface as Record<string, any>;
     if (flat.vlan?.parentInterfaceId) {
       return flat.vlan.parentInterfaceId;
     }
 
-    return "";
+    return null;
   }
 
   private getZoneInterfaceVlanId(

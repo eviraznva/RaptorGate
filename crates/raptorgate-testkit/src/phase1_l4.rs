@@ -90,6 +90,9 @@ fn phase1_session_manager() -> (
         None,
         None,
         None,
+        None,
+        None,
+        None,
         release_tx,
     );
     (sm, release_rx)
@@ -173,6 +176,9 @@ async fn phase1_ordered_two_inputs_one_flow() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
         release_tx,
     );
     let entry = sample_udp_entry(2002);
@@ -252,6 +258,9 @@ async fn phase1_invalidate_via_session_context() {
         log.clone(),
         policy_engine,
         StubZoneResolver,
+        None,
+        None,
+        None,
         None,
         None,
         None,

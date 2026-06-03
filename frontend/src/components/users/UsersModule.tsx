@@ -29,19 +29,26 @@ import { StateError } from "./UsersStatesPanel";
 
 type DrawerMode = "create" | "edit" | null;
 
+const SUPER_ADMIN_DELETE_ERROR: ApiFailure = {
+  statusCode: 403,
+  message: "Super admin users cannot be deleted",
+  error: "Forbidden",
+};
+
+function isSuperAdmin(user: DashboardUser | null) {
+  return user?.roles.includes("super_admin") ?? false;
+}
+
 export default function UsersModule() {
   const dispatch = useAppDispatch();
   const usersState = useAppSelector((state) => state.usersManagement);
   const [responseError, setResponseError] = useState<ApiFailure>();
 
-  const { data: usersData } = useGetUsersQuery();
+  const { data: usersData, refetch: refetchUsers } = useGetUsersQuery();
 
-  const [createUser, { isError: isCreatingUserError }] =
-    useCreateUserMutation();
-  const [updateUser, { isError: isUpdateingUserError }] =
-    useUpdateUserMutation();
-  const [deleteUser, { isError: isDeletingUserError }] =
-    useDeleteUserMutation();
+  const [createUser] = useCreateUserMutation();
+  const [updateUser] = useUpdateUserMutation();
+  const [deleteUser] = useDeleteUserMutation();
 
   const [activeFilter, setActiveFilter] = useState<UsersFilter>("all");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(
@@ -69,33 +76,43 @@ export default function UsersModule() {
     [editingUserId, usersState.users],
   );
 
-  const handleCreateUser = async function (userData: CreateUserBody) {
-    try {
-      const response = await createUser(userData).unwrap();
+  const handleCreateUser = useCallback(
+    async function (userData: CreateUserBody) {
+      setResponseError(undefined);
 
-      if (response.statusCode === 201) {
-        const payload = response as ApiSuccess<{ user: DashboardUser }>;
-        return payload.data.user;
+      try {
+        const response = await createUser(userData).unwrap();
+        refetchUsers();
+
+        if (response.statusCode === 201) {
+          const payload = response as ApiSuccess<{ user: DashboardUser }>;
+          return payload.data.user;
+        }
+      } catch (error) {
+        setResponseError(error as ApiFailure);
       }
-    } catch (error) {
-      setResponseError(error as ApiFailure);
-    }
-  };
+    },
+    [createUser],
+  );
 
-  const handleUpdateUser = async function (
-    userData: Partial<CreateUserBody> & { id: string },
-  ) {
-    try {
-      const response = await updateUser(userData).unwrap();
+  const handleUpdateUser = useCallback(
+    async function (userData: Partial<CreateUserBody> & { id: string }) {
+      setResponseError(undefined);
 
-      if (response.statusCode === 200) {
-        const payload = response as ApiSuccess<{ user: DashboardUser }>;
-        return payload.data.user;
+      try {
+        const response = await updateUser(userData).unwrap();
+
+        if (response.statusCode === 200) {
+          refetchUsers();
+          const payload = response as ApiSuccess<{ user: DashboardUser }>;
+          return payload.data.user;
+        }
+      } catch (error) {
+        setResponseError(error as ApiFailure);
       }
-    } catch (error) {
-      setResponseError(error as ApiFailure);
-    }
-  };
+    },
+    [updateUser],
+  );
 
   const handleCreate = useCallback(() => {
     setEditingUserId(null);
@@ -108,9 +125,20 @@ export default function UsersModule() {
     setDrawerMode("edit");
   }, []);
 
-  const handleDelete = useCallback((id: string) => {
-    setDeleteUserId(id);
-  }, []);
+  const handleDelete = useCallback(
+    (id: string) => {
+      const user = usersState.users.find((item) => item.id === id) ?? null;
+
+      if (isSuperAdmin(user)) {
+        setResponseError(SUPER_ADMIN_DELETE_ERROR);
+        return;
+      }
+
+      setResponseError(undefined);
+      setDeleteUserId(id);
+    },
+    [usersState.users],
+  );
 
   const handleCloseDrawer = useCallback(() => {
     setDrawerMode(null);
@@ -141,7 +169,7 @@ export default function UsersModule() {
 
       setDrawerMode(null);
     },
-    [editingUserId, dispatch],
+    [editingUserId, dispatch, handleCreateUser, handleUpdateUser],
   );
 
   const handleCloseDeleteModal = useCallback(() => {
@@ -150,13 +178,27 @@ export default function UsersModule() {
 
   const handleConfirmDelete = useCallback(
     async (id: string) => {
-      await deleteUser(id);
+      const user = usersState.users.find((item) => item.id === id) ?? null;
 
-      if (!isDeletingUserError) dispatch(deleteUserReducer(id));
+      if (isSuperAdmin(user)) {
+        setResponseError(SUPER_ADMIN_DELETE_ERROR);
+        setDeleteUserId(null);
+        return;
+      }
 
-      setDeleteUserId(null);
+      setResponseError(undefined);
+
+      try {
+        await deleteUser(id).unwrap();
+        refetchUsers();
+        dispatch(deleteUserReducer(id));
+        setDeleteUserId(null);
+      } catch (error) {
+        setResponseError(error as ApiFailure);
+        setDeleteUserId(null);
+      }
     },
-    [deleteUser, isDeletingUserError, dispatch],
+    [deleteUser, dispatch, usersState.users],
   );
 
   return (
@@ -187,17 +229,10 @@ export default function UsersModule() {
                 <UsersDetailsPanel user={selectedUser} />
               </div>
 
-              {isCreatingUserError && (
+              {responseError && (
                 <StateError
-                  error={responseError?.error}
-                  message={responseError?.message}
-                />
-              )}
-
-              {isUpdateingUserError && (
-                <StateError
-                  error={responseError?.error}
-                  message={responseError?.message}
+                  error={responseError.error}
+                  message={responseError.message}
                 />
               )}
             </div>

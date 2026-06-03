@@ -21,7 +21,7 @@ export default function NatRules() {
   const dispatch = useAppDispatch();
   const natRulesState = useAppSelector((state) => state.natRules);
 
-  const { data } = useGetNatRulesQuery();
+  const { data, refetch: refetchNat } = useGetNatRulesQuery();
   const [createNatRule] = useCreateNatRuleMutation();
   const [updateNatRule] = useUpdateNatRuleMutation();
   const [deleteNatRule] = useDeleteNatRuleMutation();
@@ -54,6 +54,7 @@ export default function NatRules() {
       if (mode === "edit") {
         if (!id) return;
         const res = await updateNatRule({ id, body }).unwrap();
+        refetchNat();
         if (res.statusCode !== 200) return;
         const { data } = res as ApiSuccess<{ natRule: NatRule }>;
         dispatch(natRulesSliceReducers.editNatRule(data.natRule));
@@ -61,6 +62,7 @@ export default function NatRules() {
 
       if (mode === "create") {
         const res = await createNatRule(body).unwrap();
+        refetchNat();
         if (res.statusCode !== 201) return;
         const { data } = res as ApiSuccess<{ natRule: NatRule }>;
         dispatch(natRulesSliceReducers.addNatRule(data.natRule));
@@ -71,12 +73,16 @@ export default function NatRules() {
     [createNatRule, dispatch, updateNatRule],
   );
 
-  const handleDeleteClick = useCallback((id: string) => setConfirmDeleteId(id), []);
+  const handleDeleteClick = useCallback(
+    (id: string) => setConfirmDeleteId(id),
+    [],
+  );
   const handleDeleteCancel = useCallback(() => setConfirmDeleteId(null), []);
 
   const handleDeleteConfirm = useCallback(
     async (id: string) => {
       await deleteNatRule(id).unwrap();
+      refetchNat();
       dispatch(natRulesSliceReducers.deleteNatRule(id));
       setConfirmDeleteId(null);
     },

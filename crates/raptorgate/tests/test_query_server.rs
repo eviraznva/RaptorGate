@@ -207,6 +207,7 @@ fn shared_server() -> &'static SharedServer {
                 let handler = QueryHandler {
                     nat_engine: NatEngine::new(None, HashMap::new()),
                     nat_store,
+                    nat_kernel_sync: Arc::new(ngfw::nat::NatKernelSync::new(None)),
                     conntrack: conntrack_for_test,
                     policy_store: Arc::new(policy),
                     policy_engine,
@@ -223,7 +224,8 @@ fn shared_server() -> &'static SharedServer {
                     server_key_store,
                     pinning_detector: decision_engine.pinning_detector_arc(),
                     interface_monitor,
-                    interface_controller,
+                    interface_controller: Arc::clone(&interface_controller),
+                    physical_reconciler: Arc::new(ngfw::interfaces::PhysicalInterfaceReconciler::new(Arc::clone(&interface_controller))),
                     vlan_reconciler,
                     interface_sniffer,
                     metrics_collector: Arc::new(ngfw::metrics::MetricsCollector::new()),
@@ -878,4 +880,3 @@ async fn push_active_config_snapshot_rejects_missing_default_zone() {
     assert!(!response.accepted);
     assert!(response.message.to_lowercase().contains("default"));
 }
-

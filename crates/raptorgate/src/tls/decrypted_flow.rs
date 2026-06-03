@@ -2,6 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use etherparse::{PacketBuilder, SlicedPacket};
 use tonic::async_trait;
 
 use crate::data_plane::dns_inspection::dnssec::DnssecProvider;
@@ -10,8 +11,8 @@ use crate::dpi::{AppProto, DpiClassifier, DpiContext, InspectResult, IpsMatch};
 use crate::events;
 use crate::identity::IdentityContext;
 use crate::policy::engine::PolicyEngine;
-use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext, PolicyFlowFields};
-use crate::rule_tree::{ArrivalInfo, IpVer, Port, Protocol, Verdict};
+use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext};
+use crate::rule_tree::{ArrivalInfo, Verdict};
 use crate::tls::session_meta::{Direction, SessionMeta};
 use crate::zones::resolver::ZoneResolver;
 
@@ -56,16 +57,6 @@ impl DecryptedFlowContext {
         }
     }
 
-    fn policy_flow(&self) -> PolicyFlowFields {
-        PolicyFlowFields {
-            src_ip: self.src.ip(),
-            dst_ip: self.dst.ip(),
-            ip_ver: ip_version_for(self.src.ip()),
-            protocol: Protocol::Tcp,
-            src_port: Some(Port::from(self.src.port())),
-            dst_port: Some(Port::from(self.dst.port())),
-        }
-    }
 }
 
 pub enum DecryptedFlowOutcome {
@@ -198,21 +189,38 @@ impl DecryptedFlowStage for DecryptedPolicyStage {
             return DecryptedFlowOutcome::Continue;
         };
 
-        let flow = ctx.policy_flow();
-        let Some(pair) = self.zone_resolver.resolve(source_interface, flow.dst_ip) else {
+        let dst_ip = ctx.dst.ip();
+        let Some(pair) = self.zone_resolver.resolve(source_interface, dst_ip) else {
             tracing::warn!(
                 event = "policy.zone_pair.missing",
                 iface = %source_interface,
-                dst_ip = %flow.dst_ip,
+                dst_ip = %dst_ip,
                 "no matching zone pair for decrypted flow, allowing"
             );
+            return DecryptedFlowOutcome::Continue;
+        };
+
+        let mut raw = Vec::new();
+        let builder = match (ctx.src.ip(), ctx.dst.ip()) {
+            (IpAddr::V4(src), IpAddr::V4(dst)) => PacketBuilder::ethernet2([0; 6], [0; 6])
+                .ipv4(src.octets(), dst.octets(), 64)
+                .tcp(ctx.src.port(), ctx.dst.port(), 0, 64240),
+            (IpAddr::V6(src), IpAddr::V6(dst)) => PacketBuilder::ethernet2([0; 6], [0; 6])
+                .ipv6(src.octets(), dst.octets(), 64)
+                .tcp(ctx.src.port(), ctx.dst.port(), 0, 64240),
+            _ => return DecryptedFlowOutcome::Continue,
+        };
+        if builder.write(&mut raw, &ctx.payload).is_err() {
+            return DecryptedFlowOutcome::Continue;
+        }
+        let Ok(packet) = SlicedPacket::from_ethernet(&raw) else {
             return DecryptedFlowOutcome::Continue;
         };
 
         let arrival = ArrivalInfo::from_time(&ctx.arrival_time);
         let dns_ctx = dns_eval_context(self.dnssec.as_ref(), &ctx.dpi).await;
         let verdict = self.policy_engine.evaluate(&pair.id, PolicyEvalContext {
-            flow,
+            packet: &packet,
             arrival: &arrival,
             dns: dns_ctx.as_ref(),
             dpi: Some(&ctx.dpi),
@@ -244,13 +252,6 @@ fn endpoints_for_direction(meta: &SessionMeta, direction: Direction) -> (SocketA
     match direction {
         Direction::ClientToServer => (meta.peer, meta.server),
         Direction::ServerToClient => (meta.server, meta.peer),
-    }
-}
-
-fn ip_version_for(ip: IpAddr) -> IpVer {
-    match ip {
-        IpAddr::V4(_) => IpVer::V4,
-        IpAddr::V6(_) => IpVer::V6,
     }
 }
 

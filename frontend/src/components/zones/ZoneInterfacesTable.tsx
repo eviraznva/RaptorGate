@@ -2,7 +2,12 @@ import type { ZoneInterface } from "../../types/zones/ZoneInterface";
 
 type ZoneInterfacesTableProps = {
   zoneInterfaces: ZoneInterface[];
+  confirmDeleteId: string | null;
   onEdit: (zoneInterface: ZoneInterface) => void;
+  onCreateVlan: (zoneInterface: ZoneInterface) => void;
+  onDeleteClick: (id: string) => void;
+  onDeleteConfirm: (id: string) => void;
+  onDeleteCancel: () => void;
 };
 
 const TABLE_HEADERS = [
@@ -55,7 +60,12 @@ function EmptyState() {
 
 export default function ZoneInterfacesTable({
   zoneInterfaces,
+  confirmDeleteId,
   onEdit,
+  onCreateVlan,
+  onDeleteClick,
+  onDeleteConfirm,
+  onDeleteCancel,
 }: ZoneInterfacesTableProps) {
   return (
     <div className="bg-[#101010] border border-[#262626] overflow-x-auto">
@@ -95,8 +105,15 @@ export default function ZoneInterfacesTable({
                   {zoneInterface.interfaceName}
                 </div>
                 <div className="text-[#4a4a4a] text-[10px] mt-1">
-                  {zoneInterface.zoneId}
+                  {zoneInterface.parentInterfaceName
+                    ? `parent: ${zoneInterface.parentInterfaceName}`
+                    : shortId(zoneInterface.zoneId)}
                 </div>
+                {zoneInterface.parentInterfaceName && (
+                  <div className="text-[#4a4a4a] text-[10px] mt-0.5">
+                    {shortId(zoneInterface.zoneId)}
+                  </div>
+                )}
               </td>
               <td className="p-4">
                 <span className="inline-flex min-w-24 border border-[#06b6d4]/25 bg-[#06b6d4]/5 px-2 py-1 text-xs text-[#f5f5f5]">
@@ -146,13 +163,51 @@ export default function ZoneInterfacesTable({
                 </span>
               </td>
               <td className="p-4">
-                <button
-                  type="button"
-                  onClick={() => onEdit(zoneInterface)}
-                  className="px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] text-[#8a8a8a] border border-[#262626] hover:text-[#f5f5f5] hover:border-[#4a4a4a] transition-colors"
-                >
-                  Edit
-                </button>
+                {confirmDeleteId === zoneInterface.id ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onDeleteConfirm(zoneInterface.id)}
+                      className="px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] text-[#f43f5e] border border-[#f43f5e]/30 hover:text-white hover:bg-[#f43f5e] transition-colors font-bold"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onDeleteCancel}
+                      className="px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] text-[#8a8a8a] border border-[#262626] hover:text-[#f5f5f5] hover:border-[#4a4a4a] transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onEdit(zoneInterface)}
+                      className="px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] text-[#8a8a8a] border border-[#262626] hover:text-[#f5f5f5] hover:border-[#4a4a4a] transition-colors"
+                    >
+                      Edit
+                    </button>
+                    {zoneInterface.vlanId === null ? (
+                      <button
+                        type="button"
+                        onClick={() => onCreateVlan(zoneInterface)}
+                        className="px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] text-[#06b6d4] border border-[#06b6d4]/30 hover:text-black hover:bg-[#06b6d4] transition-colors"
+                      >
+                        +VLAN
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteClick(zoneInterface.id)}
+                        className="px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] text-[#f43f5e] border border-[#f43f5e]/30 hover:text-white hover:bg-[#f43f5e] transition-colors"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                )}
               </td>
             </tr>
           ))}

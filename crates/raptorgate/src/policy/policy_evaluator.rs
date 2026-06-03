@@ -19,63 +19,8 @@ pub struct DnsEvalContext {
 }
 
 #[derive(Clone, Copy)]
-pub struct PolicyFlowFields {
-    pub src_ip: IpAddr,
-    pub dst_ip: IpAddr,
-    pub ip_ver: IpVer,
-    pub protocol: Protocol,
-    pub src_port: Option<Port>,
-    pub dst_port: Option<Port>,
-}
-
-impl PolicyFlowFields {
-    pub fn from_packet(packet: &SlicedPacket<'_>) -> Option<Self> {
-        let (src_ip, dst_ip, ip_ver) = match &packet.net {
-            Some(NetSlice::Ipv4(ipv4)) => (
-                IpAddr::V4(ipv4.header().source_addr()),
-                IpAddr::V4(ipv4.header().destination_addr()),
-                IpVer::V4,
-            ),
-            Some(NetSlice::Ipv6(ipv6)) => (
-                IpAddr::V6(ipv6.header().source_addr()),
-                IpAddr::V6(ipv6.header().destination_addr()),
-                IpVer::V6,
-            ),
-            _ => return None,
-        };
-        let (protocol, src_port, dst_port) = match &packet.transport {
-            Some(TransportSlice::Tcp(tcp)) => (
-                Protocol::Tcp,
-                Some(Port::from(tcp.source_port())),
-                Some(Port::from(tcp.destination_port())),
-            ),
-            Some(TransportSlice::Udp(udp)) => (
-                Protocol::Udp,
-                Some(Port::from(udp.source_port())),
-                Some(Port::from(udp.destination_port())),
-            ),
-            Some(TransportSlice::Icmpv4(_)) | Some(TransportSlice::Icmpv6(_)) => (
-                Protocol::Icmp,
-                None,
-                None,
-            ),
-            _ => return None,
-        };
-
-        Some(Self {
-            src_ip,
-            dst_ip,
-            ip_ver,
-            protocol,
-            src_port,
-            dst_port,
-        })
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct PolicyEvalContext<'a> {
-    pub flow: PolicyFlowFields,
+pub struct PolicyEvalContext<'a, 'p> {
+    pub packet: &'a SlicedPacket<'p>,
     pub arrival: &'a ArrivalInfo,
     pub dns: Option<&'a DnsEvalContext>,
     pub dpi: Option<&'a DpiContext>,
@@ -96,14 +41,14 @@ impl PolicyEvaluator {
         }
     }
 
-    pub(crate) fn evaluate(&self, ctx: PolicyEvalContext<'_>) -> Verdict {
+    pub(crate) fn evaluate(&self, ctx: PolicyEvalContext<'_, '_>) -> Verdict {
         self.evaluate_if_matches(ctx)
             .unwrap_or_else(|| self.orphaned_verdict.clone())
     }
 
     pub(crate) fn evaluate_if_matches(
         &self,
-        ctx: PolicyEvalContext<'_>,
+        ctx: PolicyEvalContext<'_, '_>,
     ) -> Option<Verdict> {
         let mut walker = TreeWalker::new(&self.rules);
 
@@ -121,7 +66,7 @@ impl PolicyEvaluator {
         }
     }
 
-    fn matches_kind(kind: MatchKind, pattern: &Pattern, ctx: &PolicyEvalContext<'_>) -> bool {
+    fn matches_kind(kind: MatchKind, pattern: &Pattern, ctx: &PolicyEvalContext<'_, '_>) -> bool {
         if matches!(kind, MatchKind::IdentityGroup) {
             let groups = ctx
                 .identity
@@ -135,26 +80,59 @@ impl PolicyEvaluator {
         }
     }
 
-    fn extract(kind: MatchKind, ctx: &PolicyEvalContext<'_>) -> Option<FieldValue> {
+    fn extract(kind: MatchKind, ctx: &PolicyEvalContext<'_, '_>) -> Option<FieldValue> {
         match kind {
             MatchKind::SrcIp => {
-                Some(FieldValue::Ip(ctx.flow.src_ip.into()))
+                let ipv4 = ctx.packet.net.as_ref()?.ipv4_ref()?;
+                Some(FieldValue::Ip(
+                    IpAddr::V4(ipv4.header().source_addr()).into(),
+                ))
             }
             MatchKind::DstIp => {
-                Some(FieldValue::Ip(ctx.flow.dst_ip.into()))
+                let ipv4 = ctx.packet.net.as_ref()?.ipv4_ref()?;
+                Some(FieldValue::Ip(
+                    IpAddr::V4(ipv4.header().destination_addr()).into(),
+                ))
             }
             MatchKind::IpVer => {
-                Some(FieldValue::IpVer(ctx.flow.ip_ver))
+                let ver = match &ctx.packet.net {
+                    Some(NetSlice::Ipv4(_)) => IpVer::V4,
+                    Some(NetSlice::Ipv6(_)) => IpVer::V6,
+                    _ => return None,
+                };
+                Some(FieldValue::IpVer(ver))
             }
             MatchKind::Protocol => {
-                Some(FieldValue::Protocol(ctx.flow.protocol))
+                let proto = match &ctx.packet.transport {
+                    Some(TransportSlice::Tcp(_)) => Protocol::Tcp,
+                    Some(TransportSlice::Udp(_)) => Protocol::Udp,
+                    Some(TransportSlice::Icmpv4(_)) => Protocol::Icmp,
+                    _ => return None,
+                };
+                Some(FieldValue::Protocol(proto))
             }
             MatchKind::AppProto => {
                 let proto = ctx.dpi?.app_proto?;
                 Some(FieldValue::AppProto(proto))
             }
-            MatchKind::SrcPort => ctx.flow.src_port.map(FieldValue::Port),
-            MatchKind::DstPort => ctx.flow.dst_port.map(FieldValue::Port),
+            MatchKind::SrcPort => match &ctx.packet.transport {
+                Some(TransportSlice::Tcp(tcp)) => {
+                    Some(FieldValue::Port(Port::from(tcp.source_port())))
+                }
+                Some(TransportSlice::Udp(udp)) => {
+                    Some(FieldValue::Port(Port::from(udp.source_port())))
+                }
+                _ => None,
+            },
+            MatchKind::DstPort => match &ctx.packet.transport {
+                Some(TransportSlice::Tcp(tcp)) => {
+                    Some(FieldValue::Port(Port::from(tcp.destination_port())))
+                }
+                Some(TransportSlice::Udp(udp)) => {
+                    Some(FieldValue::Port(Port::from(udp.destination_port())))
+                }
+                _ => None,
+            },
             MatchKind::Hour => Some(FieldValue::Hour(ctx.arrival.hour)),
             MatchKind::DayOfWeek => Some(FieldValue::DayOfWeek(ctx.arrival.day_of_week)),
             MatchKind::DnssecStatus => {
@@ -328,28 +306,10 @@ mod tests {
         let sliced = SlicedPacket::from_ethernet(raw).unwrap();
         let evaluator = PolicyEvaluator::new(tree, Verdict::Drop);
         evaluator.evaluate(PolicyEvalContext {
-            flow: PolicyFlowFields::from_packet(&sliced).unwrap(),
+            packet: &sliced,
             arrival,
             dns: None,
             dpi,
-            identity: None,
-        })
-    }
-
-    fn eval_flow(tree: RuleTree, arrival: &ArrivalInfo) -> Verdict {
-        let evaluator = PolicyEvaluator::new(tree, Verdict::Drop);
-        evaluator.evaluate(PolicyEvalContext {
-            flow: PolicyFlowFields {
-                src_ip: "192.168.20.10".parse().unwrap(),
-                dst_ip: "142.250.186.4".parse().unwrap(),
-                ip_ver: IpVer::V4,
-                protocol: Protocol::Tcp,
-                src_port: Some(Port::from(53120)),
-                dst_port: Some(Port::from(443)),
-            },
-            arrival,
-            dns: None,
-            dpi: None,
             identity: None,
         })
     }
@@ -371,21 +331,6 @@ mod tests {
             eval(tree, &default_packet(), &default_arrival()),
             Verdict::Allow
         );
-    }
-
-    #[test]
-    fn evaluates_ports_from_policy_flow_fields_without_packet() {
-        let tree = RuleTree::new(
-            MatchBuilder::with_arm(
-                MatchKind::DstPort,
-                Pattern::Equal(FieldValue::Port(Port::from(443))),
-                ArmEnd::Verdict(Verdict::Allow),
-            )
-            .build()
-            .unwrap(),
-        );
-
-        assert_eq!(eval_flow(tree, &default_arrival()), Verdict::Allow);
     }
 
     // ── Equal: IP version ─────────────────────────────────────

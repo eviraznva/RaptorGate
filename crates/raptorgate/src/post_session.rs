@@ -11,12 +11,14 @@ use crate::interfaces::InterfaceMonitor;
 use crate::l4::release::{PacketDispositionEvent, PacketDispositionOutcome, ReleaseAction};
 use crate::nat::NatEngine;
 use crate::netlink::routing_table::RouteLookup;
+use crate::zones::provider::ZoneInterfaceProvider;
 
 pub fn apply_nat_postrouting<M, R>(
     packet: &mut PacketContext,
     engine: &NatEngine,
     routes: &R,
     interface_monitor: &M,
+    zone_interface_provider: &ZoneInterfaceProvider,
 ) where
     M: InterfaceMonitor,
     R: RouteLookup,
@@ -44,13 +46,16 @@ pub fn apply_nat_postrouting<M, R>(
         packet.ct_direction().unwrap_or(Direction::Original),
         &out_iface_sys.name,
     );
+    let out_zone = zone_interface_provider
+        .get_zone_interface_by_name(&out_iface_sys.name)
+        .map(|(_, zi)| zi.zone_id.to_string());
 
     let raw_mut = unsafe {
         let ptr = packet.borrow_raw().as_ptr() as *mut u8;
         std::slice::from_raw_parts_mut(ptr, packet.borrow_raw().len())
     };
 
-    let _ = engine.postrouting(raw_mut, &ct, info, &out_iface_sys.name, None);
+    let _ = engine.postrouting(raw_mut, &ct, info, &out_iface_sys.name, out_zone.as_deref());
 }
 
 pub struct PostSessionHandler<M, R> {
@@ -58,6 +63,7 @@ pub struct PostSessionHandler<M, R> {
     nat_engine: Arc<NatEngine>,
     routes: Arc<R>,
     interface_monitor: Arc<M>,
+    zone_interface_provider: Arc<ZoneInterfaceProvider>,
     tun: Option<Arc<TunForwarder>>,
     disposition_tx: broadcast::Sender<PacketDispositionEvent>,
 }
@@ -72,6 +78,7 @@ where
         nat_engine: Arc<NatEngine>,
         routes: Arc<R>,
         interface_monitor: Arc<M>,
+        zone_interface_provider: Arc<ZoneInterfaceProvider>,
         tun: Option<Arc<TunForwarder>>,
         disposition_tx: broadcast::Sender<PacketDispositionEvent>,
     ) -> Self {
@@ -80,6 +87,7 @@ where
             nat_engine,
             routes,
             interface_monitor,
+            zone_interface_provider,
             tun,
             disposition_tx,
         }
@@ -125,6 +133,7 @@ where
                         &self.nat_engine,
                         self.routes.as_ref(),
                         self.interface_monitor.as_ref(),
+                        self.zone_interface_provider.as_ref(),
                     );
                     let _ = self.disposition_tx.send(PacketDispositionEvent {
                         packet_id,

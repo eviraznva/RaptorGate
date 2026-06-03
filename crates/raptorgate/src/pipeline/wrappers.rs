@@ -33,7 +33,7 @@ use crate::data_plane::dns_inspection::tunneling_detector::DnsInspectionVerdict;
 use crate::dpi::AppProto;
 use crate::interfaces::InterfaceMonitor;
 use crate::netlink::routing_table::RouteLookup;
-use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext, PolicyFlowFields};
+use crate::policy::policy_evaluator::{DnsEvalContext, PolicyEvalContext};
 
 #[derive(Clone)]
 pub struct ValidationStage;
@@ -82,6 +82,7 @@ pub struct LocalOwnershipStage<Store: AppConfigStore> {
     pub config_provider: Arc<AppConfigProvider<Store>>,
     pub zone_interface_provider: Arc<ZoneInterfaceProvider>,
     pub local_ips: Arc<HashSet<IpAddr>>,
+    pub conntrack: Arc<Conntrack>,
 }
 
 impl<Store: AppConfigStore> Clone for LocalOwnershipStage<Store> {
@@ -90,6 +91,27 @@ impl<Store: AppConfigStore> Clone for LocalOwnershipStage<Store> {
             config_provider: Arc::clone(&self.config_provider),
             zone_interface_provider: Arc::clone(&self.zone_interface_provider),
             local_ips: Arc::clone(&self.local_ips),
+            conntrack: Arc::clone(&self.conntrack),
+        }
+    }
+}
+
+impl<Store: AppConfigStore> LocalOwnershipStage<Store> {
+    fn is_source_nat_reply(&self, ctx: &PacketContext) -> bool {
+        let Some(tuple) = crate::nat::packet::parse_flow_tuple_from_ethernet(ctx.borrow_raw()) else {
+            return false;
+        };
+
+        match self.conntrack.lookup(&tuple) {
+            crate::conntrack::table::LookupResult::Found { entry, direction } => {
+                direction == Direction::Reply
+                    && entry
+                        .nat
+                        .lock()
+                        .as_ref()
+                        .is_some_and(|transform| transform.has_src_manip())
+            }
+            crate::conntrack::table::LookupResult::NotFound => false,
         }
     }
 }
@@ -105,8 +127,16 @@ impl<Store: AppConfigStore> Stage for LocalOwnershipStage<Store> {
         };
 
         if self.local_ips.contains(&dst_ip) {
-            tracing::trace!(dst_ip = %dst_ip, iface = %ctx.borrow_src_interface(), "packet owned by local stack");
-            return StageOutcome::Halt;
+            if self.is_source_nat_reply(ctx) {
+                tracing::trace!(
+                    dst_ip = %dst_ip,
+                    iface = %ctx.borrow_src_interface(),
+                    "local-destined packet is a source-NAT reply; deferring to NAT prerouting"
+                );
+            } else {
+                tracing::trace!(dst_ip = %dst_ip, iface = %ctx.borrow_src_interface(), "packet owned by local stack");
+                return StageOutcome::Halt;
+            }
         }
 
         StageOutcome::Continue
@@ -171,9 +201,16 @@ fn packet_is_decrypted(ctx: &PacketContext) -> bool {
         .is_some_and(|dpi_ctx| dpi_ctx.decrypted)
 }
 
+fn zone_id_for_interface(provider: &ZoneInterfaceProvider, iface: &str) -> Option<String> {
+    provider
+        .get_zone_interface_by_name(iface)
+        .map(|(_, zi)| zi.zone_id.to_string())
+}
+
 #[derive(Clone)]
 pub struct NatPreroutingStage {
     pub engine: Arc<NatEngine>,
+    pub zone_interface_provider: Arc<ZoneInterfaceProvider>,
 }
 
 impl Stage for NatPreroutingStage {
@@ -185,6 +222,7 @@ impl Stage for NatPreroutingStage {
         let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
         let info = ctx.ct_info().unwrap_or(crate::conntrack::entry::CtInfo::Established);
         let iface = ctx.borrow_src_interface().to_string();
+        let zone = zone_id_for_interface(&self.zone_interface_provider, &iface);
 
         // Safety: NatEngine rewrites packet header fields in-place without
         // reallocating the buffer.
@@ -193,7 +231,7 @@ impl Stage for NatPreroutingStage {
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        let result = self.engine.prerouting(raw_mut, &ct, info, &iface, None);
+        let result = self.engine.prerouting(raw_mut, &ct, info, &iface, zone.as_deref());
         tracing::trace!(
             event = "nat.prerouting.completed",
             stage = "nat_prerouting",
@@ -211,6 +249,7 @@ pub struct NatPostroutingStage<M: InterfaceMonitor, Routes: RouteLookup> {
     pub engine: Arc<NatEngine>,
     pub routes: Arc<Routes>,
     pub interface_monitor: Arc<M>,
+    pub zone_interface_provider: Arc<ZoneInterfaceProvider>,
 }
 
 impl<M: InterfaceMonitor, Routes: RouteLookup> Clone for NatPostroutingStage<M, Routes> {
@@ -219,6 +258,7 @@ impl<M: InterfaceMonitor, Routes: RouteLookup> Clone for NatPostroutingStage<M, 
             engine: Arc::clone(&self.engine),
             routes: Arc::clone(&self.routes),
             interface_monitor: Arc::clone(&self.interface_monitor),
+            zone_interface_provider: Arc::clone(&self.zone_interface_provider),
         }
     }
 }
@@ -232,10 +272,11 @@ impl<M: InterfaceMonitor, Routes: RouteLookup> Stage for NatPostroutingStage<M, 
         let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
         let info = ctx.ct_info().unwrap_or(crate::conntrack::entry::CtInfo::Established);
 
-        let Some(flow) = PolicyFlowFields::from_packet(ctx.borrow_sliced_packet()) else {
-            return StageOutcome::Continue;
+        let dst_ip = match &ctx.borrow_sliced_packet().net {
+            Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
+            Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
+            _ => return StageOutcome::Continue,
         };
-        let dst_ip = flow.dst_ip;
 
         let Some(out_iface_idx) = self.routes.route_lookup(dst_ip) else {
             return StageOutcome::Continue;
@@ -249,13 +290,14 @@ impl<M: InterfaceMonitor, Routes: RouteLookup> Stage for NatPostroutingStage<M, 
             ctx.ct_direction().unwrap_or(Direction::Original),
             &out_iface_sys.name,
         );
+        let out_zone = zone_id_for_interface(&self.zone_interface_provider, &out_iface_sys.name);
 
         let raw_mut = unsafe {
             let ptr = ctx.borrow_raw().as_ptr() as *mut u8;
             std::slice::from_raw_parts_mut(ptr, ctx.borrow_raw().len())
         };
 
-        let result = self.engine.postrouting(raw_mut, &ct, info, &out_iface_sys.name, None);
+        let result = self.engine.postrouting(raw_mut, &ct, info, &out_iface_sys.name, out_zone.as_deref());
         tracing::trace!(
             event = "nat.postrouting.completed",
             stage = "nat_postrouting",
@@ -277,12 +319,8 @@ pub struct FtpAlgStage {
     pub helpers: Arc<crate::conntrack::helper::HelperRegistry>,
 }
 
-impl Stage for FtpAlgStage {
-    fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        ctx.ct().is_some() && matches!(ctx.borrow_dpi_ctx(), Some(dpi_ctx) if dpi_ctx.app_proto == Some(AppProto::Ftp) && !dpi_ctx.decrypted)
-    }
-
-    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+impl FtpAlgStage {
+    pub(crate) fn run(&self, ctx: &mut PacketContext) -> StageOutcome {
         let Some(ct) = ctx.ct().cloned() else { return StageOutcome::Continue; };
 
         let Some(dpi_ctx) = ctx.borrow_dpi_ctx().clone() else {
@@ -383,6 +421,16 @@ impl Stage for FtpAlgStage {
         }
 
         StageOutcome::Continue
+    }
+}
+
+impl Stage for FtpAlgStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        ctx.ct().is_some() && matches!(ctx.borrow_dpi_ctx(), Some(dpi_ctx) if dpi_ctx.app_proto == Some(AppProto::Ftp) && !dpi_ctx.decrypted)
+    }
+
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+        self.run(ctx)
     }
 }
 
@@ -752,10 +800,11 @@ where
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
         let arrival = ArrivalInfo::from_time(ctx.borrow_arrival_time());
 
-        let Some(flow) = PolicyFlowFields::from_packet(ctx.borrow_sliced_packet()) else {
-            return StageOutcome::Continue;
+        let dst_ip = match &ctx.borrow_sliced_packet().net {
+            Some(NetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().destination_addr()),
+            Some(NetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().destination_addr()),
+            _ => return StageOutcome::Continue,
         };
-        let dst_ip = flow.dst_ip;
 
         let pair = self.zone_resolver.resolve(ctx.borrow_src_interface(), dst_ip);
         
@@ -812,7 +861,7 @@ where
         });
 
         let verdict = self.policy_engine.evaluate(pair_id, PolicyEvalContext {
-            flow,
+            packet: ctx.borrow_sliced_packet(),
             arrival: &arrival,
             dns: dns_ctx.as_ref(),
             dpi: ctx.borrow_dpi_ctx().as_ref(),
@@ -881,7 +930,7 @@ where
     }
 }
 
-fn populate_ml_tcp_and_flow_stats(
+pub(crate) fn populate_ml_tcp_and_flow_stats(
     ctx: &mut PacketContext,
     flow_stats: &crate::ml::FlowStatsAggregator,
 ) {
@@ -987,18 +1036,8 @@ impl MlAlertStage {
         self.last_alert.insert(key, now);
         true
     }
-}
 
-impl Stage for MlAlertStage {
-    fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        self.detector.is_enabled()
-            && matches!(
-                &ctx.borrow_sliced_packet().transport,
-                Some(TransportSlice::Tcp(_) | TransportSlice::Udp(_))
-            )
-    }
-
-    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+    pub(crate) fn inspect(&self, ctx: &mut PacketContext) {
         let features = ctx.borrow_ml_feature_vector().to_f32_array();
 
         match self.detector.inspect_features(features) {
@@ -1017,7 +1056,20 @@ impl Stage for MlAlertStage {
                 );
             }
         }
+    }
+}
 
+impl Stage for MlAlertStage {
+    fn is_applicable(&self, ctx: &PacketContext) -> bool {
+        self.detector.is_enabled()
+            && matches!(
+                &ctx.borrow_sliced_packet().transport,
+                Some(TransportSlice::Tcp(_) | TransportSlice::Udp(_))
+            )
+    }
+
+    async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
+        self.inspect(ctx);
         StageOutcome::Continue
     }
 }
@@ -1716,6 +1768,10 @@ mod tests {
             config_provider,
             zone_interface_provider: provider,
             local_ips: Arc::new(HashSet::new()),
+            conntrack: Arc::new(Conntrack::new(
+                Arc::new(crate::conntrack::proto::ProtoRegistry::new()),
+                crate::conntrack::config::ConntrackConfig::default(),
+            )),
         };
         let mut ctx = tcp_context([192, 168, 20, 10], [142, 251, 152, 119], 443, "eth1");
         let tx = tokio::sync::mpsc::unbounded_channel().0;

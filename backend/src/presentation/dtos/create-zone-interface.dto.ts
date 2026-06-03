@@ -3,6 +3,7 @@ import {
   IsBoolean,
   IsInt,
   IsIP,
+  IsNotEmpty,
   IsOptional,
   Matches,
   Max,
@@ -10,27 +11,27 @@ import {
   ValidateIf,
 } from 'class-validator';
 
-export class EditZoneInterfaceDto {
+export class CreateZoneInterfaceDto {
   @ApiProperty({
-    example: '00000000-0000-0000-0000-000000000000',
-    required: false,
+    example: '123e4567-e89b-12d3-a456-426614174000',
   })
-  @IsOptional()
+  @IsNotEmpty()
   @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
-  zoneId?: string;
+  parentInterfaceId: string;
 
-  @ApiProperty({ example: 20, required: false, nullable: true })
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
+  @ApiProperty({ example: 20 })
+  @IsNotEmpty()
   @IsInt()
   @Min(1)
   @Max(4094)
-  vlanId?: number | null;
+  vlanId: number;
 
-  @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000', required: false, nullable: true })
-  @IsOptional()
+  @ApiProperty({
+    example: '00000000-0000-0000-0000-000000000000',
+  })
+  @IsNotEmpty()
   @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
-  parentInterfaceId?: string | null;
+  zoneId: string;
 
   @ApiProperty({ example: '192.168.20.1', required: false, nullable: true })
   @IsOptional()

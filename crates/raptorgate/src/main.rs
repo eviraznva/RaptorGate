@@ -38,7 +38,7 @@ use crate::data_plane::dns_inspection::provider::DnsInspectionConfigProvider;
 use crate::data_plane::interface_sniffer::InterfaceSniffer;
 use crate::data_plane::ips::ips::Ips;
 use crate::data_plane::ips::provider::IpsConfigProvider;
-use crate::nat::{NatConfigProvider, NatEngine};
+use crate::nat::{NatConfigProvider, NatEngine, NatKernelSync};
 use crate::data_plane::tun_forwarder::TunForwarder;
 use crate::dpi::DpiClassifier;
 use crate::identity::IdentitySessionStore;
@@ -268,6 +268,7 @@ async fn main() {
     let interface_controller = Arc::new(
         NetlinkInterfaceController::new().expect("Failed to initialize interface controller"),
     );
+    let physical_reconciler = Arc::new(crate::interfaces::PhysicalInterfaceReconciler::new(Arc::clone(&interface_controller)));
     
     let routing_table = match RoutingTable::new(&netlink_listener, netlink_cancel.clone()).await {
         Ok(table) => table,
@@ -578,6 +579,12 @@ async fn main() {
         None
     };
 
+    let nat_kernel_sync = Arc::new(NatKernelSync::new(None));
+    nat_kernel_sync.apply(
+        nat_engine.rules().as_deref(),
+        &nat_engine.interface_ips_snapshot(),
+    );
+
     if config.ssl_inspection_enabled {
         let tls_runtime_cancel = CancellationToken::new();
         decision_engine.spawn_maintenance_task(tls_runtime_cancel.clone());
@@ -613,6 +620,7 @@ async fn main() {
             conntrack: Arc::clone(&conntrack),
             nat_engine: Arc::clone(&nat_engine),
             nat_store: Arc::clone(&nat_store),
+            nat_kernel_sync: Arc::clone(&nat_kernel_sync),
             policy_store: Arc::clone(&policy_provider),
             policy_engine: Arc::clone(&policy_engine),
             zone_store: zones,
@@ -629,6 +637,7 @@ async fn main() {
             pinning_detector: decision_engine.pinning_detector_arc(),
             interface_monitor: Arc::clone(&interface_monitor),
             interface_controller: Arc::clone(&interface_controller),
+            physical_reconciler,
             vlan_reconciler,
             interface_sniffer: Arc::clone(&sniffer),
             metrics_collector: Arc::clone(&metrics_collector),

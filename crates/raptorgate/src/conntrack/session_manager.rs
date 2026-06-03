@@ -31,6 +31,8 @@ use crate::l4::{
     IcmpL4PipelineFactory, IcmpNoopPipeline, TcpL4PipelineFactory, TcpSessionPipeline, UdpL4PipelineFactory,
     UdpNoopPipeline,
 };
+use crate::pipeline::wrappers::{populate_ml_tcp_and_flow_stats, FtpAlgStage, MlAlertStage};
+use crate::pipeline::{Stage, StageOutcome};
 use crate::policy::engine::PolicyEngine;
 use crate::zones::resolver::ZoneResolver;
 
@@ -433,6 +435,9 @@ where
     dpi_classifier: Option<Arc<DpiClassifier>>,
     dns_inspection: Option<Arc<DnsInspection>>,
     ips: Option<Arc<Ips>>,
+    ml_alert: Option<MlAlertStage>,
+    ml_flow_stats: Option<Arc<crate::ml::FlowStatsAggregator>>,
+    ftp_alg: Option<FtpAlgStage>,
 }
 
 pub type SessionManagerDefault = SessionManager<
@@ -456,6 +461,9 @@ where
         dpi_classifier: Option<Arc<DpiClassifier>>,
         dns_inspection: Option<Arc<DnsInspection>>,
         ips: Option<Arc<Ips>>,
+        ml_alert: Option<MlAlertStage>,
+        ml_flow_stats: Option<Arc<crate::ml::FlowStatsAggregator>>,
+        ftp_alg: Option<FtpAlgStage>,
         release_tx: mpsc::UnboundedSender<ReleaseAction>,
     ) -> Arc<Self> {
         let sm = Arc::new_cyclic(|weak| Self {
@@ -475,6 +483,9 @@ where
             dpi_classifier,
             dns_inspection,
             ips,
+            ml_alert,
+            ml_flow_stats,
+            ftp_alg,
         });
 
         sm.ct.register_observer(Arc::new(SessionManagerObs::<ZR, Dns> {
@@ -496,6 +507,9 @@ where
         dpi_classifier: Option<Arc<DpiClassifier>>,
         dns_inspection: Option<Arc<DnsInspection>>,
         ips: Option<Arc<Ips>>,
+        ml_alert: Option<MlAlertStage>,
+        ml_flow_stats: Option<Arc<crate::ml::FlowStatsAggregator>>,
+        ftp_alg: Option<FtpAlgStage>,
         release_tx: mpsc::UnboundedSender<ReleaseAction>,
     ) -> Arc<Self> {
         let sm = Arc::new_cyclic(|weak| Self {
@@ -515,6 +529,9 @@ where
             dpi_classifier,
             dns_inspection,
             ips,
+            ml_alert,
+            ml_flow_stats,
+            ftp_alg,
         });
 
         sm.ct.register_observer(Arc::new(SessionManagerObs::<ZR, Dns> {
@@ -683,7 +700,28 @@ where
             tracing::debug!(event = "session.inspect.no_dns_inspection", classify = classify_kind, "no DNS inspection module");
         }
 
-        self.inspect_ips(packet)
+        if let Some(reason) = self.inspect_ips(packet) {
+            return Some(reason);
+        }
+
+        if let Some(ml_alert) = &self.ml_alert {
+            if ml_alert.is_applicable(packet) {
+                if let Some(flow_stats) = &self.ml_flow_stats {
+                    populate_ml_tcp_and_flow_stats(packet, flow_stats);
+                }
+                ml_alert.inspect(packet);
+            }
+        }
+
+        if let Some(ftp_alg) = &self.ftp_alg {
+            if ftp_alg.is_applicable(packet) {
+                if let StageOutcome::Halt = ftp_alg.run(packet) {
+                    return Some("ftp alg rewrite failed".to_string());
+                }
+            }
+        }
+
+        None
     }
 
     fn inspect_ips(&self, packet: &mut PacketContext) -> Option<String> {
@@ -1188,6 +1226,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
                 release_tx,
             )
         } else {
@@ -1198,6 +1239,9 @@ mod tests {
                 IcmpL4PipelineFactory::default(),
                 policy_engine,
                 StubZoneResolver,
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1305,6 +1349,9 @@ mod tests {
             Some(Arc::new(DpiClassifier::new())),
             Some(dns_inspection),
             None,
+            None,
+            None,
+            None,
             release_tx,
         );
 
@@ -1384,6 +1431,9 @@ mod tests {
             Some(Arc::new(DpiClassifier::new())),
             None,
             Some(ips),
+            None,
+            None,
+            None,
             release_tx,
         );
 
