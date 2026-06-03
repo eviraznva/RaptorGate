@@ -20,6 +20,10 @@ import {
   type IConfigSnapshotRepository,
 } from "../../domain/repositories/config-snapshot.repository.js";
 import {
+  DNS_INSPECTION_REPOSITORY_TOKEN,
+  type IDnsInspectionRepository,
+} from "../../domain/repositories/dns-inspection.repository.js";
+import {
   FIREWALL_CERTIFICATE_REPOSITORY_TOKEN,
   type IFirewallCertificateRepository,
 } from "../../domain/repositories/firewall-certificate.repository.js";
@@ -27,6 +31,10 @@ import {
   IDENTITY_CONFIG_REPOSITORY_TOKEN,
   type IIdentityConfigRepository,
 } from "../../domain/repositories/identity-config.repository.js";
+import {
+  IPS_CONFIG_REPOSITORY_TOKEN,
+  type IIpsConfigRepository,
+} from "../../domain/repositories/ips-config.repository.js";
 import {
   type INatRulesRepository,
   NAT_RULES_REPOSITORY_TOKEN,
@@ -58,7 +66,9 @@ import {
 } from "../../domain/value-objects/config-snapshot-payload.interface.js";
 import { Priority } from "../../domain/value-objects/priority.vo.js";
 import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
+import { DnsInspectionJsonMapper } from "../../infrastructure/persistence/mappers/dns-inspection-json.mapper.js";
 import { IdentityConfigJsonMapper } from "../../infrastructure/persistence/mappers/identity-config-json.mapper.js";
+import { IpsConfigJsonMapper } from "../../infrastructure/persistence/mappers/ips-config-json.mapper.js";
 import { IdentitySecretReferenceValidatorService } from "../services/identity-secret-reference-validator.service.js";
 import { ImportConfigDto } from "../dtos/import-config.dto";
 import { ImportConfigResponseDto } from "../dtos/import-config-response.dto";
@@ -88,6 +98,10 @@ export class ImportConfigUseCase {
     private readonly tokenService: ITokenService,
     @Inject(CONFIG_SNAPSHOT_PUSH_SERVICE_TOKEN)
     private readonly configSnapshotPushService: IConfigSnapshotPushService,
+    @Inject(IPS_CONFIG_REPOSITORY_TOKEN)
+    private readonly ipsConfigRepository: IIpsConfigRepository,
+    @Inject(DNS_INSPECTION_REPOSITORY_TOKEN)
+    private readonly dnsInspectionRepository: IDnsInspectionRepository,
     @Inject(ZONE_REPOSITORY_TOKEN)
     private readonly zoneRepository: IZoneRepository,
     @Inject(ZONE_INTERFACE_REPOSITORY_TOKEN)
@@ -249,6 +263,14 @@ export class ImportConfigUseCase {
     const importedIdentityConfig = IdentityConfigJsonMapper.toDomain(
       payload.bundle.identity_config ?? IdentityConfigJsonMapper.emptyRecord(),
     );
+    const importedDnsInspectionConfig = payload.bundle.dns_inspection_config
+      ? DnsInspectionJsonMapper.toDomain(
+          payload.bundle.dns_inspection_config as any,
+        )
+      : null;
+    const importedIpsConfig = payload.bundle.ips_config
+      ? IpsConfigJsonMapper.toDomain(payload.bundle.ips_config as any)
+      : null;
 
     const domainPayload: ConfigSnapshotPayload = {
       bundle: {
@@ -268,6 +290,8 @@ export class ImportConfigUseCase {
         identity_config: IdentityConfigJsonMapper.toPayload(
           importedIdentityConfig,
         ),
+        dns_inspection_config: importedDnsInspectionConfig,
+        ips_config: importedIpsConfig,
         users: { items: importedUsers },
       },
     };
@@ -292,6 +316,12 @@ export class ImportConfigUseCase {
       await this.firewallCertificateRepository.overwriteAll(importedCerts);
       await this.sslBypassRepository.overwriteAll(importedBypass);
       await this.identityConfigRepository.overwrite(importedIdentityConfig);
+      if (importedDnsInspectionConfig) {
+        await this.dnsInspectionRepository.save(importedDnsInspectionConfig);
+      }
+      if (importedIpsConfig) {
+        await this.ipsConfigRepository.save(importedIpsConfig);
+      }
 
       const currentActiveSnapshot = allConfigSnapshots.find((s) =>
         s.getIsActive(),
