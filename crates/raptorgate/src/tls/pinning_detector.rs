@@ -162,11 +162,6 @@ impl PinningDetector {
         removed
     }
 
-    pub fn reload_config(&self, config: PinningConfig) {
-        self.config.store(config.into());
-        tracing::info!("Pinning detection config reloaded");
-    }
-
     /// Liczba aktywnych failure'ów dla (source_ip, domain) w bieżącym oknie.
     /// Read-only accessor używany przez ML feature vector — nie mutuje stanu.
     pub fn failure_count_for(&self, source_ip: IpAddr, domain: &str) -> u32 {

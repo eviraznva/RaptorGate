@@ -3,6 +3,8 @@ import { DnsInspectionConfig } from "../entities/dns-inspection-config.entity.js
 import { FirewallCertificate } from "../entities/firewall-certificate.entity.js";
 import { FirewallRule } from "../entities/firewall-rule.entity.js";
 import { IdentityAuthenticationProfile } from "../entities/identity-authentication-profile.entity.js";
+import { IdentityAuthenticationSequence } from "../entities/identity-authentication-sequence.entity.js";
+import { IdentityGroup } from "../entities/identity-group.entity.js";
 import { IdentitySettings } from "../entities/identity-settings.entity.js";
 import { IpsConfig } from "../entities/ips-config.entity.js";
 import { IpsSignature } from "../entities/ips-signature.entity.js";
@@ -71,6 +73,8 @@ export interface IdentityConfigBundlePayload {
   radius_server_profiles: { items: RadiusServerProfile[] };
   ldap_server_profiles: { items: LdapServerProfile[] };
   authentication_profiles: { items: IdentityAuthenticationProfile[] };
+  authentication_sequences: { items: IdentityAuthenticationSequence[] };
+  identity_groups: { items: IdentityGroup[] };
   settings: IdentitySettings;
 }
 
@@ -79,6 +83,8 @@ export function emptyIdentityConfigPayload(): IdentityConfigBundlePayload {
     radius_server_profiles: { items: [] },
     ldap_server_profiles: { items: [] },
     authentication_profiles: { items: [] },
+    authentication_sequences: { items: [] },
+    identity_groups: { items: [] },
     settings: IdentitySettings.create(null, null, null, null),
   };
 }

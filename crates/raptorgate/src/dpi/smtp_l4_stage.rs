@@ -21,18 +21,19 @@ impl<ZR: ZoneResolver> SmtpL4Stage<ZR> {
     }
 }
 
-impl<ZR: ZoneResolver> L4Stage for SmtpL4Stage<ZR> {
+#[tonic::async_trait]
+impl<ZR: ZoneResolver + Send + Sync> L4Stage for SmtpL4Stage<ZR> {
     type Ctx = SessionContext;
 
     fn protocol(&self) -> AppProto {
         AppProto::Smtp
     }
 
-    fn on_session_open(&mut self, _ctx: &mut SessionContext) -> L4Outcome {
+    async fn on_session_open(&mut self, _ctx: &mut SessionContext) -> L4Outcome {
         L4Outcome::Continue
     }
 
-    fn on_bytes(
+    async fn on_bytes(
         &mut self,
         ctx: &mut SessionContext,
         packet_id: PacketId,
@@ -43,8 +44,7 @@ impl<ZR: ZoneResolver> L4Stage for SmtpL4Stage<ZR> {
         self.session.process_bytes(ctx, packet_id, dir, payload)
     }
 
-    fn on_session_close(&mut self, _ctx: &mut SessionContext, _reason: CloseReason) {
+    async fn on_session_close(&mut self, _ctx: &mut SessionContext, _reason: CloseReason) {
         self.session.on_session_close();
     }
 }
-

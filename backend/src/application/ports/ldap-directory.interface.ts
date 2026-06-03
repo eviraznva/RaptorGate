@@ -13,13 +13,19 @@ export interface LdapDirectoryOptions {
   host: string;
   port: number;
   tlsMode: 'disabled' | 'starttls' | 'ldaps';
+  verifyServerCertificate: boolean;
+  servername: string;
   bindDn: string;
   bindPassword: string;
   userBaseDn: string;
   userFilterAttribute: string;
+  userNameAttribute: string;
   groupBaseDn: string;
   groupMemberAttribute: string;
   groupNameAttribute: string;
+  includeGroups: string[];
+  connectTimeoutMs: number;
+  searchTimeoutMs: number;
   timeoutMs: number;
 }
 

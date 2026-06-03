@@ -2,6 +2,7 @@ import type { IdentityAuthenticationProvider, IdentityGroupSource } from '../../
 import type { IdentityAuthenticationProfile } from '../../domain/entities/identity-authentication-profile.entity.js';
 import type { LdapServerProfile } from '../../domain/entities/ldap-server-profile.entity.js';
 import type { RadiusServerProfile } from '../../domain/entities/radius-server-profile.entity.js';
+import type { RadiusAttributeResult } from '../ports/radius-authenticator.interface.js';
 
 export type AuthenticationFlow = 'portal' | 'admin';
 
@@ -36,6 +37,7 @@ export type AuthenticationEngineAcceptResult = {
   nasIp: string;
   calledStationId: string;
   profileId: string;
+  radiusAttributes?: RadiusAttributeResult;
 };
 
 export type AuthenticationEngineResult =

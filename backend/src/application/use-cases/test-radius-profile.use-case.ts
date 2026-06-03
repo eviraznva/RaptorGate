@@ -8,6 +8,7 @@ import {
 import type { IdentityProviderTestResponseDto } from '../dtos/identity-provider-test.dto.js';
 import {
   type IRadiusAuthenticator,
+  type RadiusAuthServerOptions,
   RADIUS_AUTHENTICATOR_TOKEN,
 } from '../ports/radius-authenticator.interface.js';
 import {
@@ -18,6 +19,7 @@ import {
   type ITokenService,
   TOKEN_SERVICE_TOKEN,
 } from '../ports/token-service.interface.js';
+import { radiusOptionsFromProfile } from '../services/authentication-provider-options.js';
 
 export interface TestRadiusProfileCommand {
   accessToken: string;
@@ -52,22 +54,24 @@ export class TestRadiusProfileUseCase {
       .find((item) => item.getId() === command.id);
     if (!profile) throw new IdentityProfileNotFoundException('radius', command.id);
 
-    const secret = await this.secretResolver.resolve(profile.getSharedSecretRef());
+    const servers: RadiusAuthServerOptions[] = [];
+    for (const endpoint of profile.getServers()) {
+      if (!endpoint.getIsActive()) continue;
+      const secret = await this.secretResolver.resolve(endpoint.getSharedSecretRef());
+      servers.push({
+        name: endpoint.getName(),
+        host: endpoint.getHost(),
+        port: endpoint.getPort(),
+        secret: secret.getValue(),
+        priority: endpoint.getPriority(),
+      });
+    }
     const startedAt = Date.now();
     const result = await this.radiusAuthenticator.authenticate({
       username: command.username,
       password: command.password,
       callingStationId: command.callingStationId,
-      server: {
-        host: profile.getHost(),
-        port: profile.getPort(),
-        secret: secret.getValue(),
-        timeoutMs: profile.getTimeoutMs(),
-        retries: profile.getRetries(),
-        nasIp: profile.getNasIp() ?? '127.0.0.1',
-        nasIdentifier: profile.getNasIdentifier() ?? 'raptorgate',
-        calledStationId: profile.getCalledStationId(),
-      },
+      profile: radiusOptionsFromProfile(profile, servers),
     });
     const latencyMs = Date.now() - startedAt;
 

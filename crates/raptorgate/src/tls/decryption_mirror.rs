@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::tls::inspection_relay::{Direction, InspectionMode, SessionMeta};
+use crate::tls::session_meta::{Direction, InspectionMode, SessionMeta};
 
 const FRAME_MAGIC: &[u8; 4] = b"RGDM";
 const FRAME_VERSION: u8 = 1;
@@ -62,18 +62,6 @@ pub struct DecryptionMirror {
 pub(crate) struct MirrorRecord {
     target: String,
     frame: MirrorFrame,
-}
-
-impl MirrorRecord {
-    #[cfg(test)]
-    pub(crate) fn target(&self) -> &str {
-        &self.target
-    }
-
-    #[cfg(test)]
-    pub(crate) fn frame(&self) -> &MirrorFrame {
-        &self.frame
-    }
 }
 
 impl DecryptionMirror {
@@ -318,7 +306,6 @@ fn direction_code(direction: Direction) -> u8 {
 fn mode_code(mode: InspectionMode) -> u8 {
     match mode {
         InspectionMode::Outbound => 1,
-        InspectionMode::Inbound => 2,
     }
 }
 
@@ -330,13 +317,16 @@ mod tests {
     use tokio::time::{sleep, timeout, Duration};
     use uuid::Uuid;
 
-    use crate::tls::inspection_relay::{Direction, InspectionMode, SessionMeta};
+    use crate::tls::session_meta::{Direction, InspectionMode, SessionMeta};
 
     fn test_meta() -> SessionMeta {
         SessionMeta {
+            session_id: Uuid::now_v7(),
             peer: "192.168.20.10:51111".parse::<SocketAddr>().unwrap(),
             server: "142.250.203.132:443".parse::<SocketAddr>().unwrap(),
             sni: Some("www.google.com".into()),
+            client_side_interface: Some("eth1".into()),
+            server_side_interface: Some("eth0".into()),
             mode: InspectionMode::Outbound,
         }
     }

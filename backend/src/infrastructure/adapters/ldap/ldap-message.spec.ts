@@ -1,6 +1,7 @@
 import {
   encodeBindRequest,
   encodeSearchRequest,
+  encodeStartTlsRequest,
   encodeUnbindRequest,
   LDAP_BIND_REQUEST_TAG,
   LDAP_BIND_RESPONSE_TAG,
@@ -161,6 +162,15 @@ describe('ldap-message', () => {
       // Ostatnie dwa bajty to UnbindRequest tag + dlugosc 0.
       expect(packet[packet.length - 2]).toBe(LDAP_UNBIND_REQUEST_TAG);
       expect(packet[packet.length - 1]).toBe(0);
+    });
+  });
+
+  describe('encodeStartTlsRequest', () => {
+    it('encodes LDAP StartTLS extended request', () => {
+      const packet = encodeStartTlsRequest(7);
+
+      expect(tryReadLdapFrame(packet)?.message.messageId).toBe(7);
+      expect(packet.toString('hex')).toContain(Buffer.from('1.3.6.1.4.1.1466.20037').toString('hex'));
     });
   });
 

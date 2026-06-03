@@ -288,6 +288,11 @@ message IdentityBundle {
   reserved "user_sessions";
 }
 
+message IdentityPolicyCatalog {
+  repeated UserGroup user_groups = 1;
+  repeated IdentityUser identity_users = 2;
+}
+
 // ── DNS Inspection ───────────────────────────────────────────────────────────
 
 enum DnsInspectionDnssecTransport {

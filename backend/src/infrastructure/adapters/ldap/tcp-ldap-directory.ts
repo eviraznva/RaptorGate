@@ -32,12 +32,6 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
     if (!directory.enabled) {
       return { kind: 'disabled' };
     }
-    if (directory.tlsMode !== 'disabled') {
-      return {
-        kind: 'error',
-        message: `LDAP tlsMode ${directory.tlsMode} is not supported by the TCP adapter`,
-      };
-    }
     if (!isSafeFilterValue(username)) {
       return {
         kind: 'error',
@@ -48,7 +42,10 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
     const client = new TcpLdapClient({
       host: directory.host,
       port: directory.port,
-      timeoutMs: directory.timeoutMs,
+      timeoutMs: directory.connectTimeoutMs,
+      tlsMode: directory.tlsMode,
+      verifyServerCertificate: directory.verifyServerCertificate,
+      servername: directory.servername,
     });
     try {
       await client.connect();
@@ -70,7 +67,7 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
         filterValue: username,
         attributes: ['1.1'],
         sizeLimit: 1,
-        timeLimitSeconds: Math.max(1, Math.floor(directory.timeoutMs / 1000)),
+        timeLimitSeconds: Math.max(1, Math.floor(directory.searchTimeoutMs / 1000)),
       });
       if (TcpLdapClient.isNoSuchObject(userSearch.result)) {
         return { kind: 'not-found' };
@@ -92,7 +89,7 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
         filterValue: username,
         attributes: [directory.groupNameAttribute],
         sizeLimit: 0,
-        timeLimitSeconds: Math.max(1, Math.floor(directory.timeoutMs / 1000)),
+        timeLimitSeconds: Math.max(1, Math.floor(directory.searchTimeoutMs / 1000)),
       });
       if (TcpLdapClient.isNoSuchObject(groupSearch.result)) {
         return { kind: 'ok', userDn, groups: [] };
@@ -138,6 +135,8 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
       host: this.config.get('IDENTITY_LDAP_HOST', { infer: true }),
       port: this.config.get('IDENTITY_LDAP_PORT', { infer: true }),
       tlsMode: 'disabled',
+      verifyServerCertificate: false,
+      servername: this.config.get('IDENTITY_LDAP_HOST', { infer: true }),
       bindDn: this.config.get('IDENTITY_LDAP_BIND_DN', { infer: true }),
       bindPassword: this.config.get('IDENTITY_LDAP_BIND_PASSWORD', {
         infer: true,
@@ -146,6 +145,10 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
         infer: true,
       }),
       userFilterAttribute: this.config.get(
+        'IDENTITY_LDAP_USER_FILTER_ATTRIBUTE',
+        { infer: true },
+      ),
+      userNameAttribute: this.config.get(
         'IDENTITY_LDAP_USER_FILTER_ATTRIBUTE',
         { infer: true },
       ),
@@ -159,6 +162,9 @@ export class TcpLdapDirectoryAdapter implements ILdapDirectory {
       groupNameAttribute: this.config.get('IDENTITY_LDAP_GROUP_NAME_ATTRIBUTE', {
         infer: true,
       }),
+      includeGroups: [],
+      connectTimeoutMs: this.config.get('IDENTITY_LDAP_TIMEOUT_MS', { infer: true }),
+      searchTimeoutMs: this.config.get('IDENTITY_LDAP_TIMEOUT_MS', { infer: true }),
       timeoutMs: this.config.get('IDENTITY_LDAP_TIMEOUT_MS', { infer: true }),
     };
   }

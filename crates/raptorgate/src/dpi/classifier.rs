@@ -65,6 +65,21 @@ impl DpiClassifier {
             return InspectResult::Skipped;
         };
 
+        self.inspect_payload_for_key(key, payload)
+    }
+
+    pub fn inspect_flow_payload(
+        &self,
+        src_ip: IpAddr,
+        src_port: u16,
+        dst_ip: IpAddr,
+        dst_port: u16,
+        payload: &[u8],
+    ) -> InspectResult {
+        self.inspect_payload_for_key(FlowKey::new(src_ip, src_port, dst_ip, dst_port), payload)
+    }
+
+    fn inspect_payload_for_key(&self, key: FlowKey, payload: &[u8]) -> InspectResult {
         if payload.is_empty() {
             return InspectResult::Skipped;
         }
@@ -572,6 +587,26 @@ mod tests {
             buf.extend_from_slice(rdata);
         }
         buf
+    }
+
+    #[test]
+    fn inspect_flow_payload_classifies_http_without_packet() {
+        let classifier = DpiClassifier::new();
+        let result = classifier.inspect_flow_payload(
+            "192.168.20.10".parse().unwrap(),
+            53120,
+            "142.250.186.4".parse().unwrap(),
+            443,
+            b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+        );
+
+        match result {
+            InspectResult::Done(ctx) => {
+                assert_eq!(ctx.app_proto, Some(AppProto::Http));
+                assert_eq!(ctx.http_host.as_deref(), Some("example.com"));
+            }
+            other => panic!("expected HTTP classification, got {other:?}"),
+        }
     }
 
     #[test]

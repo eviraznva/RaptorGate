@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, expect, it, jest } from 'bun:test';
 import { IdentityConfiguration } from '../../../domain/entities/identity-configuration.entity.js';
 import { Mutex } from '../json/file-mutex.js';
 import { FileStore } from '../json/file-store.js';
@@ -57,9 +57,18 @@ describe('JsonIdentityConfigRepository', () => {
         radius_server_profiles: { items: [] },
         ldap_server_profiles: { items: [] },
         authentication_profiles: { items: [] },
+        authentication_sequences: { items: [] },
+        identity_groups: { items: [] },
         settings: {
           portalAuthenticationProfileId: null,
           adminAuthenticationProfileId: null,
+          portalListener: {
+            enabled: false,
+            interfaceName: null,
+            zoneId: null,
+            bindAddress: null,
+            bindPort: 443,
+          },
           updatedAt: null,
           updatedBy: null,
         },

@@ -18,6 +18,7 @@ import {
   type ITokenService,
   TOKEN_SERVICE_TOKEN,
 } from '../ports/token-service.interface.js';
+import { ldapOptionsFromProfile } from '../services/authentication-provider-options.js';
 
 export interface TestLdapProfileCommand {
   accessToken: string;
@@ -54,20 +55,10 @@ export class TestLdapProfileUseCase {
       profile.getBindPasswordRef(),
     );
     const startedAt = Date.now();
-    const result = await this.ldapDirectory.resolveGroups(command.username, {
-      enabled: true,
-      host: profile.getHost(),
-      port: profile.getPort(),
-      tlsMode: profile.getTlsMode(),
-      bindDn: profile.getBindDn(),
-      bindPassword: bindPassword.getValue(),
-      userBaseDn: profile.getUserBaseDn(),
-      userFilterAttribute: profile.getUserFilterAttribute(),
-      groupBaseDn: profile.getGroupBaseDn(),
-      groupMemberAttribute: profile.getGroupMemberAttribute(),
-      groupNameAttribute: profile.getGroupNameAttribute(),
-      timeoutMs: profile.getTimeoutMs(),
-    });
+    const result = await this.ldapDirectory.resolveGroups(
+      command.username,
+      ldapOptionsFromProfile(profile, bindPassword.getValue()),
+    );
     const latencyMs = Date.now() - startedAt;
 
     if (result.kind === 'ok') {

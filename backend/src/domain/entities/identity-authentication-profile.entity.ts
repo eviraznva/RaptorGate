@@ -12,6 +12,16 @@ export interface AdminRoleMapping {
   role: AdminRoleMappingRole;
 }
 
+export interface IdentityAuthenticationAllowList {
+  usernames: string[];
+  groups: string[];
+  includeAllAuthenticated: boolean;
+}
+
+export interface IdentityAuthenticationProfileOptions {
+  allowList?: Partial<IdentityAuthenticationAllowList>;
+}
+
 export class IdentityAuthenticationProfile {
   private constructor(
     private readonly id: string,
@@ -27,6 +37,7 @@ export class IdentityAuthenticationProfile {
     private updatedAt: Date,
     private readonly createdBy: string,
     private readonly adminRoleMappings: AdminRoleMapping[],
+    private readonly allowList: IdentityAuthenticationAllowList,
   ) {}
 
   public static create(
@@ -43,6 +54,7 @@ export class IdentityAuthenticationProfile {
     updatedAt: Date,
     createdBy: string,
     adminRoleMappings: AdminRoleMapping[] = [],
+    options: IdentityAuthenticationProfileOptions = {},
   ): IdentityAuthenticationProfile {
     requireText(id, 'authentication profile id');
     requireText(name, 'authentication profile name');
@@ -85,6 +97,7 @@ export class IdentityAuthenticationProfile {
       updatedAt,
       createdBy,
       normalizeAdminRoleMappings(adminRoleMappings),
+      normalizeAllowList(options.allowList),
     );
   }
 
@@ -139,6 +152,14 @@ export class IdentityAuthenticationProfile {
   public getAdminRoleMappings(): AdminRoleMapping[] {
     return this.adminRoleMappings.map((mapping) => ({ ...mapping }));
   }
+
+  public getAllowList(): IdentityAuthenticationAllowList {
+    return {
+      usernames: [...this.allowList.usernames],
+      groups: [...this.allowList.groups],
+      includeAllAuthenticated: this.allowList.includeAllAuthenticated,
+    };
+  }
 }
 
 function requireText(value: string, field: string): void {
@@ -183,4 +204,26 @@ function requireRole(role: string): void {
   if (![Role.SuperAdmin, Role.Admin, Role.Operator, Role.Viewer].includes(role as Role)) {
     throw new IdentityConfigIsInvalidException('admin role mapping role is invalid');
   }
+}
+
+function normalizeAllowList(
+  allowList: Partial<IdentityAuthenticationAllowList> | undefined,
+): IdentityAuthenticationAllowList {
+  return {
+    usernames: normalizeStringList(allowList?.usernames ?? []),
+    groups: normalizeStringList(allowList?.groups ?? []),
+    includeAllAuthenticated: allowList?.includeAllAuthenticated ?? true,
+  };
+}
+
+function normalizeStringList(values: string[]): string[] {
+  const normalized: string[] = [];
+
+  for (const value of values) {
+    const item = value.trim();
+    requireText(item, 'authentication profile allow list value');
+    if (!normalized.includes(item)) normalized.push(item);
+  }
+
+  return normalized;
 }

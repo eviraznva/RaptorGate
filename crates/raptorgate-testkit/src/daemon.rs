@@ -36,6 +36,7 @@ use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::policy::{Policy, PolicyId};
 use ngfw::interfaces::NetworkInterfaceMonitor;
 use ngfw::proto::services::ConfigBundle;
+use ngfw::tls::l4_inspection::TlsL4InspectionConfig;
 use ngfw::tls::{EchTlsPolicy, PinningConfig, ServerKeyStore, TlsDecisionEngine};
 use ngfw::zones::provider::{ZoneInterfaceProvider, ZonePairProvider, ZoneProvider};
 use ngfw::zones::resolver::RoutingZoneResolver;
@@ -76,6 +77,7 @@ pub struct TestDeps {
     pub helpers: Arc<HelperRegistry>,
     pub smtp_tracker: Arc<SmtpTracker>,
     pub smtp_policy_retriever: Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>,
+    pub tls_l4_inspection: Option<Arc<TlsL4InspectionConfig>>,
 }
 
 impl DaemonDeps for TestDeps {
@@ -107,6 +109,7 @@ impl DaemonDeps for TestDeps {
             helpers: &self.helpers,
             smtp_tracker: &self.smtp_tracker,
             smtp_policy_retriever: &self.smtp_policy_retriever,
+            tls_l4_inspection: &self.tls_l4_inspection,
         }
     }
 }
@@ -470,6 +473,7 @@ impl TestDaemonBuilder {
             helpers,
             smtp_tracker,
             smtp_policy_retriever,
+            tls_l4_inspection: None,
         });
 
         let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();

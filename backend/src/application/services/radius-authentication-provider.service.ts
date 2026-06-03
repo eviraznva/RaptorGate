@@ -8,6 +8,7 @@ import type {
 import {
   RADIUS_AUTHENTICATOR_TOKEN,
   type IRadiusAuthenticator,
+  type RadiusAuthServerOptions,
 } from '../ports/radius-authenticator.interface.js';
 import {
   SECRET_RESOLVER_SERVICE_TOKEN,
@@ -43,13 +44,24 @@ export class RadiusAuthenticationProviderService implements AuthenticationProvid
       };
     }
 
-    const secret = await this.secretResolver.resolve(radiusProfile.getSharedSecretRef());
-    const server = radiusOptionsFromProfile(radiusProfile, secret.getValue());
+    const servers: RadiusAuthServerOptions[] = [];
+    for (const endpoint of radiusProfile.getServers()) {
+      if (!endpoint.getIsActive()) continue;
+      const secret = await this.secretResolver.resolve(endpoint.getSharedSecretRef());
+      servers.push({
+        name: endpoint.getName(),
+        host: endpoint.getHost(),
+        port: endpoint.getPort(),
+        secret: secret.getValue(),
+        priority: endpoint.getPriority(),
+      });
+    }
+    const radiusRequestProfile = radiusOptionsFromProfile(radiusProfile, servers);
     const result = await this.radiusAuthenticator.authenticate({
       username: request.username,
       password: request.password,
       callingStationId: request.sourceIp ?? '127.0.0.1',
-      server,
+      profile: radiusRequestProfile,
     });
 
     if (result.kind === 'reject') {
@@ -90,6 +102,7 @@ export class RadiusAuthenticationProviderService implements AuthenticationProvid
       profileId: profile.getId(),
       groupSource: groups.source,
       groupCount: groups.groups.length,
+      adminRole: result.attributes?.adminRole ?? null,
     });
 
     return {
@@ -100,9 +113,10 @@ export class RadiusAuthenticationProviderService implements AuthenticationProvid
       groupSource: groups.source,
       externalId: groups.externalId,
       sessionTtlSeconds: profile.getSessionTtlSeconds(),
-      nasIp: server.nasIp,
-      calledStationId: server.calledStationId ?? server.nasIdentifier,
+      nasIp: radiusRequestProfile.nasIp,
+      calledStationId: radiusRequestProfile.calledStationId ?? radiusRequestProfile.nasIdentifier,
       profileId: profile.getId(),
+      radiusAttributes: result.attributes,
     };
   }
 }

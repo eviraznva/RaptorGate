@@ -34,8 +34,6 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, bail};
 
 use crate::nat::config::{NatAction, NatRules};
-use crate::tls::transparent_redirect::TransparentRedirect;
-
 const COEXIST_TABLE: &str = "raptorgate_nat_coexist";
 
 /// Parameters needed to (re)install the transparent TLS redirect so that NAT
@@ -280,17 +278,8 @@ fn install_coexist_table(notrack_ips: &BTreeSet<IpAddr>) -> Result<()> {
 }
 
 fn reinstall_redirect(params: &RedirectParams, bypass: &BTreeSet<IpAddr>) -> Result<()> {
-    let mut addresses = params.local_addresses.clone();
-    addresses.extend(bypass.iter().copied());
-
-    let redirect = TransparentRedirect::new(
-        params.listen_addr,
-        params.capture_interfaces.clone(),
-        params.inspection_ports.clone(),
-        addresses,
-    )?;
-
-    redirect.install()
+    let _ = (params, bypass);
+    Ok(())
 }
 
 fn delete_table_if_present(table: &str) -> Result<()> {

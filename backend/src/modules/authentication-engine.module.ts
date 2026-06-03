@@ -13,7 +13,10 @@ import { USER_REPOSITORY_TOKEN } from '../domain/repositories/user.repository.js
 import { BcryptPasswordHasher } from '../infrastructure/adapters/bcrypt-password-hasher.js';
 import { TcpLdapAuthenticatorAdapter } from '../infrastructure/adapters/ldap/tcp-ldap-authenticator.js';
 import { TcpLdapDirectoryAdapter } from '../infrastructure/adapters/ldap/tcp-ldap-directory.js';
-import { UdpRadiusAuthenticator } from '../infrastructure/adapters/udp-radius-authenticator.js';
+import {
+  RADIUS_PACKET_SENDER_TOKEN,
+  UdpRadiusAuthenticator,
+} from '../infrastructure/adapters/udp-radius-authenticator.js';
 import { Mutex } from '../infrastructure/persistence/json/file-mutex.js';
 import { FileStore } from '../infrastructure/persistence/json/file-store.js';
 import { JsonUserRepository } from '../infrastructure/persistence/repositories/json-user.repository.js';
@@ -31,6 +34,7 @@ import { SecretModule } from './secret.module.js';
     LocalAuthenticationProviderService,
     FileStore,
     Mutex,
+    { provide: RADIUS_PACKET_SENDER_TOKEN, useValue: null },
     { provide: RADIUS_AUTHENTICATOR_TOKEN, useClass: UdpRadiusAuthenticator },
     { provide: LDAP_DIRECTORY_TOKEN, useClass: TcpLdapDirectoryAdapter },
     { provide: LDAP_AUTHENTICATOR_TOKEN, useClass: TcpLdapAuthenticatorAdapter },

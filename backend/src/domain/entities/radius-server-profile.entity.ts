@@ -1,5 +1,14 @@
 import { IdentityConfigIsInvalidException } from '../exceptions/identity-config-is-invalid.exception.js';
 import { SecretRef } from '../value-objects/secret-ref.vo.js';
+import { RadiusServerEndpoint } from './radius-server-endpoint.entity.js';
+
+export type RadiusAuthenticationProtocol = 'pap';
+
+export interface RadiusServerProfileOptions {
+  authenticationProtocol?: RadiusAuthenticationProtocol;
+  certificateProfileRef?: string | null;
+  outerIdentity?: string | null;
+}
 
 export class RadiusServerProfile {
   private constructor(
@@ -15,6 +24,10 @@ export class RadiusServerProfile {
     private nasIp: string | null,
     private nasIdentifier: string | null,
     private calledStationId: string | null,
+    private authenticationProtocol: RadiusAuthenticationProtocol,
+    private certificateProfileRef: string | null,
+    private outerIdentity: string | null,
+    private readonly servers: RadiusServerEndpoint[],
     private readonly createdAt: Date,
     private updatedAt: Date,
     private readonly createdBy: string,
@@ -36,6 +49,8 @@ export class RadiusServerProfile {
     createdAt: Date,
     updatedAt: Date,
     createdBy: string,
+    servers: RadiusServerEndpoint[] | null = null,
+    options: RadiusServerProfileOptions | null = null,
   ): RadiusServerProfile {
     requireText(id, 'radius profile id');
     requireText(name, 'radius profile name');
@@ -45,6 +60,22 @@ export class RadiusServerProfile {
     requirePositive(timeoutMs, 'radius timeoutMs');
     if (!Number.isInteger(retries) || retries < 0) {
       throw new IdentityConfigIsInvalidException('radius retries must be zero or greater');
+    }
+    const authenticationProtocol = requireAuthenticationProtocol(options?.authenticationProtocol ?? 'pap');
+    const endpointList = servers ?? [
+      RadiusServerEndpoint.create(
+        id,
+        name,
+        host,
+        port,
+        validatedSharedSecretRef.getValue(),
+        1,
+        isActive,
+      ),
+    ];
+    assertUnique(endpointList.map((endpoint) => String(endpoint.getPriority())), 'radius endpoint priority');
+    if (isActive && endpointList.every((endpoint) => !endpoint.getIsActive())) {
+      throw new IdentityConfigIsInvalidException('active radius profile requires at least one active endpoint');
     }
 
     return new RadiusServerProfile(
@@ -60,6 +91,10 @@ export class RadiusServerProfile {
       normalizeNullable(nasIp),
       normalizeNullable(nasIdentifier),
       normalizeNullable(calledStationId),
+      authenticationProtocol,
+      normalizeNullable(options?.certificateProfileRef ?? null),
+      normalizeNullable(options?.outerIdentity ?? null),
+      [...endpointList],
       createdAt,
       updatedAt,
       createdBy,
@@ -114,6 +149,22 @@ export class RadiusServerProfile {
     return this.calledStationId;
   }
 
+  public getAuthenticationProtocol(): RadiusAuthenticationProtocol {
+    return this.authenticationProtocol;
+  }
+
+  public getCertificateProfileRef(): string | null {
+    return this.certificateProfileRef;
+  }
+
+  public getOuterIdentity(): string | null {
+    return this.outerIdentity;
+  }
+
+  public getServers(): RadiusServerEndpoint[] {
+    return [...this.servers];
+  }
+
   public getCreatedAt(): Date {
     return this.createdAt;
   }
@@ -148,4 +199,23 @@ function requirePositive(value: number, field: string): void {
 function normalizeNullable(value: string | null): string | null {
   const normalized = value?.trim() ?? '';
   return normalized ? normalized : null;
+}
+
+function requireAuthenticationProtocol(value: string): RadiusAuthenticationProtocol {
+  if (value !== 'pap') {
+    throw new IdentityConfigIsInvalidException('radius authenticationProtocol is not supported');
+  }
+
+  return value;
+}
+
+function assertUnique(values: string[], field: string): void {
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    if (seen.has(value)) {
+      throw new IdentityConfigIsInvalidException(`duplicate ${field}: ${value}`);
+    }
+    seen.add(value);
+  }
 }

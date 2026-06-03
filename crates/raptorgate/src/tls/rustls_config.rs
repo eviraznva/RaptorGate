@@ -46,6 +46,7 @@ pub fn build_certified_key_from_pem(
 }
 
 /// Konfiguracja serwera TLS ze statycznym certyfikatem PEM dla trybu inbound
+#[cfg(test)]
 pub fn build_server_config_from_pem(
     cert_pem: &str,
     key_pem: &str,
@@ -53,6 +54,7 @@ pub fn build_server_config_from_pem(
     build_server_config_from_pem_with_alpn(cert_pem, key_pem, &default_alpn_protocols())
 }
 
+#[cfg(test)]
 pub fn build_server_config_from_pem_with_alpn(
     cert_pem: &str,
     key_pem: &str,
@@ -77,11 +79,6 @@ pub fn parse_private_key_pem(pem: &str) -> anyhow::Result<PrivateKeyDer<'static>
         .context("No private key found in PEM data")
 }
 
-/// Klient TLS do re-encryption w trybie inbound
-pub fn build_client_config_no_verify() -> anyhow::Result<Arc<ClientConfig>> {
-    build_client_config_no_verify_with_alpn(&default_alpn_protocols())
-}
-
 pub fn build_client_config_no_verify_with_alpn(
     alpn_protocols: &[Vec<u8>],
 ) -> anyhow::Result<Arc<ClientConfig>> {
@@ -98,6 +95,7 @@ pub fn build_client_config_no_verify_with_alpn(
 }
 
 /// Konfiguracja serwera TLS ze sfałszowanym certyfikatem dla outbound MITM
+#[cfg(test)]
 pub fn build_server_config_for_key(key: Arc<CertifiedKey>) -> anyhow::Result<Arc<ServerConfig>> {
     build_server_config_for_key_with_alpn(key, &default_alpn_protocols())
 }
@@ -224,6 +222,7 @@ impl ServerCertVerifier for RecordingVerifier {
 }
 
 // Klient TLS rejestrujący zaufanie certyfikatu serwera (do Forward Untrust CA).
+#[cfg(test)]
 pub fn build_client_config_recording() -> anyhow::Result<(Arc<ClientConfig>, Arc<AtomicBool>)> {
     build_client_config_recording_with_alpn(&default_alpn_protocols())
 }

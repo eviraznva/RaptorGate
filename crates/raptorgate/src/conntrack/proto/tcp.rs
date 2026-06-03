@@ -186,6 +186,7 @@ impl ProtocolHandler for TcpHandler {
         let tcp = extract_tcp(pkt)?;
         let flags = parse_flags(&tcp);
         let flag_bit = classify_flags(flags);
+        let payload_len = tcp.payload().len() as u32;
 
         if flag_bit != TcpFlagBit::Syn && !config.tcp.loose {
             return Err(NewStateError::InvalidFirst {
@@ -196,7 +197,13 @@ impl ProtocolHandler for TcpHandler {
 
         let initial_state = match flag_bit {
             TcpFlagBit::Syn => TcpConntrack::SynSent,
-            TcpFlagBit::Ack | TcpFlagBit::SynAck if config.tcp.loose => TcpConntrack::Established,
+            TcpFlagBit::Ack | TcpFlagBit::SynAck if config.tcp.loose && payload_len == 0 => {
+                TcpConntrack::Established
+            },
+            TcpFlagBit::Ack | TcpFlagBit::SynAck if config.tcp.loose => return Err(NewStateError::InvalidFirst {
+                proto: Protocol::Tcp,
+                reason: "first loose TCP packet has payload",
+            }),
 
             _ => return Err(NewStateError::InvalidFirst {
                 proto: Protocol::Tcp,
@@ -205,8 +212,6 @@ impl ProtocolHandler for TcpHandler {
         };
 
         let mut seen_orig = TcpDirState::default();
-
-        let payload_len = tcp.payload().len() as u32;
 
         let seq = tcp.sequence_number();
         let ack = tcp.acknowledgment_number();
@@ -272,7 +277,11 @@ impl ProtocolHandler for TcpHandler {
             return CtVerdict::Invalid;
         };
 
-        let transition = next_state(dir, flag_bit, state.state);
+        let mut transition = next_state(dir, flag_bit, state.state);
+        if config.tcp.loose && dir == Direction::Original && flag_bit == TcpFlagBit::Ack && state.state == TcpConntrack::SynSent {
+            infer_reply_from_original_ack(state, &tcp, flags);
+            transition = Transition::To(TcpConntrack::Established);
+        }
 
         let new_state = match transition {
             Transition::To(s) => s,
@@ -607,17 +616,69 @@ fn tcp_in_window(state: &mut TcpProtoState, tcp: &TcpSlice, flags: TcpFlags, dir
         update_sender_after_accept(&mut state.seen[sender_idx], end, ack, win);
 
         record_last(&mut state.seen[sender_idx], seq, ack, end, win_raw, scale, flags);
+        infer_reply_from_accepted_original_ack(state, tcp, flags, dir);
 
         WindowVerdict::InWindow
     } else if config.tcp.be_liberal {
         update_sender_after_accept(&mut state.seen[sender_idx], end, ack, win);
 
         record_last(&mut state.seen[sender_idx], seq, ack, end, win_raw, scale, flags);
+        infer_reply_from_accepted_original_ack(state, tcp, flags, dir);
 
         WindowVerdict::LiberalAccept
     } else {
         WindowVerdict::OutOfWindow
     }
+}
+
+fn infer_reply_from_accepted_original_ack(state: &mut TcpProtoState, tcp: &TcpSlice, flags: TcpFlags, dir: Direction) {
+    if dir == Direction::Original && should_infer_reply_from_original_ack(state) {
+        infer_reply_from_original_ack(state, tcp, flags);
+    }
+}
+
+fn should_infer_reply_from_original_ack(state: &TcpProtoState) -> bool {
+    let reply = &state.seen[Direction::Reply as usize];
+    reply.last_flags == 0 || reply.last_flags == TcpFlags::ACK.bits()
+}
+
+fn infer_reply_from_original_ack(state: &mut TcpProtoState, tcp: &TcpSlice, flags: TcpFlags) {
+    if !flags.contains(TcpFlags::ACK) {
+        return;
+    }
+
+    let ack = tcp.acknowledgment_number();
+    if ack == 0 {
+        return;
+    }
+
+    let seq = tcp.sequence_number();
+    let payload = tcp.payload().len() as u32;
+    let syn_fin = u32::from(flags.contains(TcpFlags::SYN)) + u32::from(flags.contains(TcpFlags::FIN));
+    let original_end = seq.wrapping_add(payload).wrapping_add(syn_fin);
+    let reply = &mut state.seen[Direction::Reply as usize];
+    let inferred_win = u32::from(u16::MAX);
+
+    if reply.td_end == 0 || seq_after(ack, reply.td_end) {
+        reply.td_end = ack;
+    }
+    if reply.td_maxwin == 0 {
+        reply.td_maxwin = inferred_win;
+    }
+
+    let maxend = ack.wrapping_add(reply.td_maxwin.max(1));
+    if reply.td_maxend == 0 || seq_after(maxend, reply.td_maxend) {
+        reply.td_maxend = maxend;
+    }
+
+    reply.last_seq = ack;
+    reply.last_ack = original_end;
+    reply.last_end = ack;
+    if reply.last_win == 0 {
+        reply.last_win = inferred_win;
+    }
+    reply.last_wscale = 0;
+    reply.last_flags = TcpFlags::ACK.bits();
 }
 
 fn tcp_sack(receiver: &mut TcpDirState, blocks: &[(u32, u32)]) {
@@ -658,6 +719,16 @@ fn update_sender_after_accept(s: &mut TcpDirState, end: u32, ack: u32, win: u32)
     }
 
     if win > s.td_maxwin { s.td_maxwin = win; }
+}
+
+pub(crate) fn record_generated_tcp_segment(state: &mut TcpProtoState, dir: Direction, seq: u32, ack: u32, payload_len: u32, win: u32) {
+    let end = seq.wrapping_add(payload_len);
+    let dir_idx = dir as usize;
+    let scale = state.seen[dir_idx].td_scale;
+    update_sender_after_accept(&mut state.seen[dir_idx], end, ack, win.max(1));
+    record_last(&mut state.seen[dir_idx], seq, ack, end, win, scale, TcpFlags::ACK);
+    state.last_dir = Some(dir);
+    state.last_index = TcpFlagBit::Ack;
 }
 
 fn record_last(s: &mut TcpDirState, seq: u32, ack: u32, end: u32, win: u32, scale: u8, flags: TcpFlags) {
@@ -1088,6 +1159,29 @@ mod tests {
     }
 
     #[test]
+    fn new_state_loose_rejects_ack_with_payload() {
+        let payload = b"HTTP/1.1 200 OK\r\n\r\n";
+        let b = PacketBuilder::ipv4(SERVER_IP, CLIENT_IP, 64)
+            .tcp(SERVER_PORT, CLIENT_PORT, 2000, 5840)
+            .psh()
+            .ack(1001);
+        let mut buf = Vec::with_capacity(b.size(payload.len()));
+
+        b.write(&mut buf, payload).unwrap();
+
+        let pkt = parse(&buf);
+
+        let h = TcpHandler::new(Arc::new(ObserverRegistry::default()));
+
+        let r = h.new_state(&pkt, Direction::Original, &cfg_loose());
+
+        assert!(matches!(
+            r,
+            Err(NewStateError::InvalidFirst { reason: "first loose TCP packet has payload", .. })
+        ));
+    }
+
+    #[test]
     fn new_state_loose_accepts_synack_as_established() {
         let buf = build_from_client(1000, 5840, |b| b.syn().ack(1));
 
@@ -1271,6 +1365,44 @@ mod tests {
         assert_eq!(v, CtVerdict::Invalid);
         // Stan nie zmienił się
         assert_eq!(extract_state(&entry).state, TcpConntrack::SynSent);
+    }
+
+    #[test]
+    fn ack_in_syn_sent_orig_loose_infers_reply_and_establishes() {
+        let h = TcpHandler::new(Arc::new(ObserverRegistry::default()));
+
+        let syn = syn_packet_seq(1000);
+        let syn_pkt = parse(&syn);
+        let NewStateOutcome::State(proto_state) = h.new_state(&syn_pkt, Direction::Original, &cfg_loose()).unwrap() else {
+            panic!("expected tcp state");
+        };
+        let entry = ConntrackEntry::new(
+            1,
+            FlowTuple::new(
+                IpAddr::V4(Ipv4Addr::from(CLIENT_IP)),
+                CLIENT_PORT,
+                IpAddr::V4(Ipv4Addr::from(SERVER_IP)),
+                SERVER_PORT,
+                Protocol::Tcp,
+            ),
+            proto_state,
+            Duration::from_secs(60),
+            0,
+        );
+        let mut cfg = cfg_loose();
+        cfg.tcp.be_liberal = false;
+
+        let ack = build_from_client(1001, 5840, |b| b.ack(2001));
+        let pkt = parse(&ack);
+
+        let v = h.update(&entry, &pkt, Direction::Original, Instant::now(), &cfg, PacketId(0));
+        let state = extract_state(&entry);
+
+        assert_eq!(v, CtVerdict::Accept);
+        assert_eq!(state.state, TcpConntrack::Established);
+        assert_eq!(state.seen[Direction::Reply as usize].last_seq, 2001);
+        assert_eq!(state.seen[Direction::Reply as usize].last_ack, 1001);
+        assert!(state.seen[Direction::Reply as usize].last_win > 0);
     }
 
     #[test]

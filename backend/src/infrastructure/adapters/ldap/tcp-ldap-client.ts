@@ -1,7 +1,9 @@
 import { connect, type Socket } from 'node:net';
+import { connect as tlsConnect, type ConnectionOptions, type TLSSocket } from 'node:tls';
 import {
   encodeBindRequest,
   encodeSearchRequest,
+  encodeStartTlsRequest,
   encodeUnbindRequest,
   LDAP_RESULT_NO_SUCH_OBJECT,
   LDAP_RESULT_SUCCESS,
@@ -29,6 +31,14 @@ export interface TcpLdapClientOptions {
   host: string;
   port: number;
   timeoutMs: number;
+  tlsMode?: 'disabled' | 'starttls' | 'ldaps';
+  verifyServerCertificate?: boolean;
+  servername?: string;
+}
+
+export interface TcpLdapClientFactories {
+  connectTcp?: (port: number, host: string) => Socket;
+  connectTls?: (options: ConnectionOptions) => TLSSocket;
 }
 
 interface PendingWaiter {
@@ -44,27 +54,50 @@ export class TcpLdapClient {
   private waiters: PendingWaiter[] = [];
   private fatalError: Error | null = null;
 
-  constructor(private readonly options: TcpLdapClientOptions) {}
+  constructor(
+    private readonly options: TcpLdapClientOptions,
+    private readonly factories: TcpLdapClientFactories = {},
+  ) {}
 
   async connect(): Promise<void> {
     if (this.socket) return;
 
-    await new Promise<void>((resolve, reject) => {
-      const socket = connect(this.options.port, this.options.host);
+    const tlsMode = this.options.tlsMode ?? 'disabled';
+    if (tlsMode === 'ldaps') {
+      const socket = this.factories.connectTls?.({
+        host: this.options.host,
+        port: this.options.port,
+        servername: this.options.servername ?? this.options.host,
+        rejectUnauthorized: this.options.verifyServerCertificate ?? false,
+      }) ?? tlsConnect({
+        host: this.options.host,
+        port: this.options.port,
+        servername: this.options.servername ?? this.options.host,
+        rejectUnauthorized: this.options.verifyServerCertificate ?? false,
+      });
+      await this.waitForSocket(socket, 'secureConnect');
+      this.attachSocket(socket);
+      return;
+    }
+
+    const socket = this.factories.connectTcp?.(this.options.port, this.options.host) ??
+      connect(this.options.port, this.options.host);
+    await this.waitForSocket(socket, 'connect');
+    this.attachSocket(socket);
+
+    if (tlsMode === 'starttls') {
+      await this.startTls();
+    }
+  }
+
+  private waitForSocket(socket: Socket, eventName: 'connect' | 'secureConnect'): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         socket.destroy(new Error('LDAP connect timeout'));
       }, this.options.timeoutMs);
 
-      socket.once('connect', () => {
+      socket.once(eventName, () => {
         clearTimeout(timer);
-        socket.setTimeout(this.options.timeoutMs);
-        this.socket = socket;
-        socket.on('data', (chunk) => this.onData(chunk));
-        socket.on('error', (err) => this.onFatal(err));
-        socket.on('close', () => this.onFatal(new Error('LDAP socket closed')));
-        socket.on('timeout', () =>
-          socket.destroy(new Error('LDAP socket timeout')),
-        );
         resolve();
       });
 
@@ -73,6 +106,52 @@ export class TcpLdapClient {
         reject(err);
       });
     });
+  }
+
+  private attachSocket(socket: Socket): void {
+    socket.setTimeout(this.options.timeoutMs);
+    this.socket = socket;
+    socket.on('data', (chunk) => this.onData(chunk));
+    socket.on('error', (err) => this.onFatal(err));
+    socket.on('close', () => this.onFatal(new Error('LDAP socket closed')));
+    socket.on('timeout', () =>
+      socket.destroy(new Error('LDAP socket timeout')),
+    );
+  }
+
+  private async startTls(): Promise<void> {
+    const messageId = this.takeMessageId();
+    const response = await this.sendAndAwait(encodeStartTlsRequest(messageId), (msg) => {
+      if (msg.kind !== 'extended-response') return false;
+      return msg.messageId === messageId;
+    });
+    if (response.kind !== 'extended-response') {
+      throw new Error('expected StartTLS extended-response');
+    }
+    if (!TcpLdapClient.isResultSuccess(response.result)) {
+      throw new Error(`LDAP StartTLS failed (code=${response.result.resultCode})`);
+    }
+
+    const plainSocket = this.socket;
+    if (!plainSocket) throw new Error('LDAP not connected');
+    plainSocket.removeAllListeners('data');
+    plainSocket.removeAllListeners('error');
+    plainSocket.removeAllListeners('close');
+    plainSocket.removeAllListeners('timeout');
+    this.socket = null;
+    this.inbound = Buffer.alloc(0);
+
+    const tlsSocket = this.factories.connectTls?.({
+      socket: plainSocket,
+      servername: this.options.servername ?? this.options.host,
+      rejectUnauthorized: this.options.verifyServerCertificate ?? false,
+    }) ?? tlsConnect({
+      socket: plainSocket,
+      servername: this.options.servername ?? this.options.host,
+      rejectUnauthorized: this.options.verifyServerCertificate ?? false,
+    });
+    await this.waitForSocket(tlsSocket, 'secureConnect');
+    this.attachSocket(tlsSocket);
   }
 
   async bind(bindDn: string, password: string): Promise<LdapResultBody> {

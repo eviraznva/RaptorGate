@@ -93,12 +93,53 @@ describe('RadiusAuthenticationProviderService', () => {
     expect(radiusAuthenticator.authenticate).toHaveBeenCalledWith(
       expect.objectContaining({
         callingStationId: '203.0.113.10',
-        server: expect.objectContaining({
-          host: '127.0.0.1',
-          secret: 'radiussecret',
+        profile: expect.objectContaining({
+          authenticationProtocol: 'pap',
+          servers: [
+            expect.objectContaining({
+              host: '127.0.0.1',
+              secret: 'radiussecret',
+              priority: 1,
+            }),
+          ],
         }),
       }),
     );
+  });
+
+  it('preserves typed radius attributes on accepted results', async () => {
+    const { provider } = service({
+      kind: 'accept',
+      groups: ['admins'],
+      attributes: {
+        userGroups: ['admins'],
+        adminRole: 'superuser',
+        accessDomain: null,
+        panoramaAdminRole: null,
+        panoramaAccessDomain: null,
+        userDomain: null,
+        rawDiagnostics: [],
+      },
+    });
+
+    const result = await provider.authenticate(
+      { username: 'user', password: 'pw', sourceIp: '203.0.113.10' },
+      {
+        kind: 'resolved',
+        flow: 'portal',
+        authenticationProfile: auth(),
+        radiusProfile: radius(),
+        ldapProfile: null,
+      },
+    );
+
+    expect(result).toMatchObject({
+      kind: 'accept',
+      radiusAttributes: {
+        adminRole: 'superuser',
+        userGroups: ['admins'],
+      },
+    });
   });
 
   it('preserves reject, timeout and error as distinct outcomes', async () => {
