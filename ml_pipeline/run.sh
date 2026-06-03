@@ -1,1 +1,1 @@
-docker compose --profile rocm run --rm pipeline
+docker compose --profile rocm run --rm pipeline --build

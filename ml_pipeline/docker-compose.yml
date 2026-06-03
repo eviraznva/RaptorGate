@@ -93,6 +93,7 @@ services:
 
   pipeline:
     profiles: ["rocm"]
+    image: raptorgate-ml-pipeline:patched
     build:
       context: .
       dockerfile: Dockerfile

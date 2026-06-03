@@ -55,6 +55,45 @@ if [[ "${AMP:-1}" == "0" ]]; then AMP_FLAG=(--no-amp); fi
 
 log() { printf '\n=== %s ===\n' "$*"; }
 
+# Patch torch's bundled HIP libraries so dlopen succeeds on hardened
+# kernels (CachyOS bore, Arch linux-hardened). The torch+rocm wheel ships
+# libamdhip64.so and libhiprtc.so with PT_GNU_STACK PF_X set; the kernel
+# refuses to enable executable stack for them at import time. Clearing
+# the flag is a no-op for these libraries (they don't use trampolines).
+# Idempotent: skipped entirely if no RWE .so is found.
+patch_torch_execstack() {
+  local torch_lib=""
+  for d in /usr/local/lib/python*/site-packages/torch/lib /opt/conda/lib/python*/site-packages/torch/lib; do
+    if [[ -d "$d" ]]; then torch_lib="$d"; break; fi
+  done
+  [[ -z "$torch_lib" ]] && return 0
+
+  local rwe_files=()
+  while IFS= read -r -d '' f; do
+    local flags
+    flags=$(readelf -lW "$f" 2>/dev/null | awk '/GNU_STACK/{getline; for(i=1;i<=NF;i++) if($i=="RWE"){print "RWE"; exit}}')
+    [[ "$flags" == "RWE" ]] && rwe_files+=("$f")
+  done < <(find "$torch_lib" -maxdepth 1 -type f -name '*.so*' -not -name '*.hsaco' -print0)
+
+  if [[ ${#rwe_files[@]} -eq 0 ]]; then
+    log "torch execstack: no RWE .so found, nothing to patch"
+    return 0
+  fi
+
+  if ! command -v patchelf >/dev/null 2>&1; then
+    log "torch execstack: installing patchelf"
+    apt-get update -qq && apt-get install -y -qq patchelf
+  fi
+
+  log "torch execstack: clearing PT_GNU_STACK PF_X on ${#rwe_files[@]} file(s)"
+  for f in "${rwe_files[@]}"; do
+    echo "  $f"
+    patchelf --clear-execstack "$f"
+  done
+}
+
+patch_torch_execstack
+
 if [[ "$SKIP_DOWNLOAD" != "1" ]]; then
   log "download dataset=$DATASET target=$RAW_DIR"
   raptorgate-ml download --dataset "$DATASET" --target "$RAW_DIR"
