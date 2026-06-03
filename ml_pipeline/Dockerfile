@@ -24,13 +24,22 @@
 #   The patchelf pass below clears that flag from every .so under
 #   torch/lib/ so dlopen succeeds.
 #
+#   GPU support matrix (default ARG values):
+#     ROCM_VERSION=6.2.0  +  TORCH_ROCM_INDEX=.../whl/rocm6.2
+#       - CDNA: gfx900, gfx906, gfx908, gfx90a, gfx942
+#       - RDNA 2: gfx1030
+#       - RDNA 3: gfx1100, gfx1101 (e.g. 7700 XT, 7800 XT)
+#       - RDNA 4: gfx1201 (e.g. 9070 XT, 9070) — needs ROCm 6.2+
+#   If a new GPU family lands, bump ROCM_VERSION and TORCH_ROCM_INDEX
+#   together and rebuild the image.
+#
 #   Host contract: only the kernel-mode driver is needed. The host must
 #   expose /dev/kfd and /dev/dri (handled by docker-compose.yml). The
 #   host does NOT need to install ROCm userland packages; the image is
 #   self-contained.
 
 ARG PYTHON_VERSION=3.10
-ARG ROCM_VERSION=6.0.2
+ARG ROCM_VERSION=6.2.0
 
 
 # --- CUDA target ------------------------------------------------------------
@@ -90,7 +99,7 @@ RUN apt-get update \
 
 WORKDIR /opt/raptorgate-ml
 
-ARG TORCH_ROCM_INDEX=https://download.pytorch.org/whl/rocm6.0
+ARG TORCH_ROCM_INDEX=https://download.pytorch.org/whl/rocm6.2
 RUN pip install --index-url "${TORCH_ROCM_INDEX}" \
         torch \
  && pip install --upgrade --no-deps pip \
