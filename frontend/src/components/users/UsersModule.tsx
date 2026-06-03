@@ -44,7 +44,7 @@ export default function UsersModule() {
   const usersState = useAppSelector((state) => state.usersManagement);
   const [responseError, setResponseError] = useState<ApiFailure>();
 
-  const { data: usersData } = useGetUsersQuery();
+  const { data: usersData, refetch: refetchUsers } = useGetUsersQuery();
 
   const [createUser] = useCreateUserMutation();
   const [updateUser] = useUpdateUserMutation();
@@ -82,6 +82,7 @@ export default function UsersModule() {
 
       try {
         const response = await createUser(userData).unwrap();
+        refetchUsers();
 
         if (response.statusCode === 201) {
           const payload = response as ApiSuccess<{ user: DashboardUser }>;
@@ -102,6 +103,7 @@ export default function UsersModule() {
         const response = await updateUser(userData).unwrap();
 
         if (response.statusCode === 200) {
+          refetchUsers();
           const payload = response as ApiSuccess<{ user: DashboardUser }>;
           return payload.data.user;
         }
@@ -188,6 +190,7 @@ export default function UsersModule() {
 
       try {
         await deleteUser(id).unwrap();
+        refetchUsers();
         dispatch(deleteUserReducer(id));
         setDeleteUserId(null);
       } catch (error) {

@@ -37,7 +37,7 @@ function PriorityBar({ priority }: { priority: number }) {
 export default function PolicyEngine() {
   const dispatch = useAppDispatch();
   const rulesState = useAppSelector((state) => state.rules);
-  const { data, isLoading } = useGetRulesQuery();
+  const { data, isLoading, refetch: refetchRules } = useGetRulesQuery();
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<Rule | null>(null);
@@ -84,6 +84,7 @@ export default function PolicyEngine() {
     async (id: string) => {
       const result = await doDeleteRule(id);
 
+      refetchRules();
       if (!("error" in result)) dispatch(deleteRule(id));
       setConfirmDeleteId(null);
     },
@@ -339,6 +340,7 @@ export default function PolicyEngine() {
         isOpen={isFormOpen}
         onClose={handleCloseForm}
         onSuccess={handleFormSuccess}
+        onRefetch={refetchRules}
       />
     </>
   );

@@ -20,13 +20,18 @@ type PortsInputProps = {
   className?: string;
 };
 
-function PortsInput({ ports, onChange, placeholder, className }: PortsInputProps) {
+function PortsInput({
+  ports,
+  onChange,
+  placeholder,
+  className,
+}: PortsInputProps) {
   const [raw, setRaw] = useState(() => ports.join(", "));
   const [prevPorts, setPrevPorts] = useState(ports);
 
   if (JSON.stringify(ports) !== JSON.stringify(prevPorts)) {
     setPrevPorts(ports);
-    
+
     const parsedRaw = parsePortList(raw);
     if (JSON.stringify(parsedRaw) !== JSON.stringify(ports)) {
       setRaw(ports.length > 0 ? ports.join(", ") : "");
@@ -36,7 +41,7 @@ function PortsInput({ ports, onChange, placeholder, className }: PortsInputProps
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setRaw(value);
-    
+
     const parsed = parsePortList(value);
     if (JSON.stringify(parsed) !== JSON.stringify(ports)) {
       onChange(parsed);
@@ -191,18 +196,6 @@ export default function SignaturesTab({
             />
 
             <label className="text-sm">
-              <div className="text-[#8a8a8a] mb-2">Signature ID</div>
-              <input
-                type="text"
-                value={selectedSignature.id}
-                onChange={(event) =>
-                  onUpdateSelectedSignature({ id: event.target.value })
-                }
-                className="w-full bg-[#0c0c0c] border border-[#262626] px-4 py-3 focus:outline-none focus:border-[#06b6d4]"
-              />
-            </label>
-
-            <label className="text-sm">
               <div className="text-[#8a8a8a] mb-2">Name</div>
               <input
                 type="text"
@@ -245,7 +238,8 @@ export default function SignaturesTab({
                   value={selectedSignature.matchType}
                   onChange={(event) =>
                     onUpdateSelectedSignature({
-                      matchType: event.target.value as IpsSignatureConfig["matchType"],
+                      matchType: event.target
+                        .value as IpsSignatureConfig["matchType"],
                     })
                   }
                   className="w-full bg-[#0c0c0c] border border-[#262626] px-4 py-3 focus:outline-none focus:border-[#06b6d4]"
@@ -264,7 +258,8 @@ export default function SignaturesTab({
                   value={selectedSignature.patternEncoding}
                   onChange={(event) =>
                     onUpdateSelectedSignature({
-                      patternEncoding: event.target.value as IpsSignatureConfig["patternEncoding"],
+                      patternEncoding: event.target
+                        .value as IpsSignatureConfig["patternEncoding"],
                     })
                   }
                   className="w-full bg-[#0c0c0c] border border-[#262626] px-4 py-3 focus:outline-none focus:border-[#06b6d4]"
@@ -293,7 +288,8 @@ export default function SignaturesTab({
                   value={selectedSignature.severity}
                   onChange={(event) =>
                     onUpdateSelectedSignature({
-                      severity: event.target.value as IpsSignatureConfig["severity"],
+                      severity: event.target
+                        .value as IpsSignatureConfig["severity"],
                     })
                   }
                   className="w-full bg-[#0c0c0c] border border-[#262626] px-4 py-3 focus:outline-none focus:border-[#06b6d4]"
@@ -312,7 +308,8 @@ export default function SignaturesTab({
                   value={selectedSignature.action}
                   onChange={(event) =>
                     onUpdateSelectedSignature({
-                      action: event.target.value as IpsSignatureConfig["action"],
+                      action: event.target
+                        .value as IpsSignatureConfig["action"],
                     })
                   }
                   className="w-full bg-[#0c0c0c] border border-[#262626] px-4 py-3 focus:outline-none focus:border-[#06b6d4]"
@@ -330,7 +327,8 @@ export default function SignaturesTab({
               <div className="text-sm text-[#8a8a8a] mb-2">App protocols</div>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                 {ipsAppProtocolOptions.map((protocol) => {
-                  const active = selectedSignature.appProtocols.includes(protocol);
+                  const active =
+                    selectedSignature.appProtocols.includes(protocol);
                   return (
                     <button
                       key={protocol}

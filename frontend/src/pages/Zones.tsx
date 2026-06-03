@@ -49,8 +49,9 @@ export default function Zones() {
   const zonePairsState = useAppSelector((state) => state.zonePairs);
   const zoneInterfacesState = useAppSelector((state) => state.zoneInterfaces);
 
-  const { data: zonesData } = useGetZonesQuery();
-  const { data: zonePairsData } = useGetZonePairsQuery();
+  const { data: zonesData, refetch: zonesRefetch } = useGetZonesQuery();
+  const { data: zonePairsData, refetch: zonePairsRefetch } =
+    useGetZonePairsQuery();
   const {
     data: zoneInterfacesData,
     isFetching: isFetchingZoneInterfaces,
@@ -120,9 +121,9 @@ export default function Zones() {
   const [creatingVlanParentId, setCreatingVlanParentId] = useState<
     string | null
   >(null);
-  const [confirmDeleteInterfaceId, setConfirmDeleteInterfaceId] = useState<string | null>(
-    null,
-  );
+  const [confirmDeleteInterfaceId, setConfirmDeleteInterfaceId] = useState<
+    string | null
+  >(null);
 
   // ── Zone handlers ──
   const handleCreateZone = async function (data: CreateZoneBody) {
@@ -130,6 +131,7 @@ export default function Zones() {
       const res = await createZone(data).unwrap();
       if (res.statusCode === 201) {
         const { data } = res as ApiSuccess<{ zone: Zone }>;
+        zonesRefetch();
         return data.zone;
       }
     } catch (error) {}
@@ -143,6 +145,7 @@ export default function Zones() {
       const res = await updateZone({ id, ...data }).unwrap();
       if (res.statusCode === 200) {
         const { data } = res as ApiSuccess<{ zone: Zone }>;
+        zonesRefetch();
         return data.zone;
       }
     } catch (error) {}
@@ -151,6 +154,7 @@ export default function Zones() {
   const handleDeleteZoneApi = async function (id: string) {
     try {
       const res = await deleteZone(id).unwrap();
+      zonesRefetch();
       return res;
     } catch (error) {}
   };
@@ -210,6 +214,7 @@ export default function Zones() {
       await handleDeleteZoneApi(id);
       if (!isDeletingZoneError) dispatch(zonesSliceReducers.deleteZone(id));
       setConfirmDeleteZoneId(null);
+      zonesRefetch();
     },
     [dispatch, isDeletingZoneError],
   );
@@ -220,6 +225,7 @@ export default function Zones() {
       const res = await createZonePair(data).unwrap();
       if (res.statusCode === 201) {
         const { data } = res as ApiSuccess<{ zonePair: ZonePair }>;
+        zonePairsRefetch();
         return data.zonePair;
       }
     } catch (error) {}
@@ -233,6 +239,7 @@ export default function Zones() {
       const res = await updateZonePair({ id, ...data }).unwrap();
       if (res.statusCode === 200) {
         const { data } = res as ApiSuccess<{ zonePair: ZonePair }>;
+        zonesRefetch();
         return data.zonePair;
       }
     } catch (error) {}
@@ -241,6 +248,7 @@ export default function Zones() {
   const handleDeleteZonePairApi = async function (id: string) {
     try {
       const res = await deleteZonePair(id).unwrap();
+      zonePairsRefetch();
       return res;
     } catch (error) {}
   };
@@ -335,6 +343,7 @@ export default function Zones() {
           );
           setIsZoneInterfaceFormOpen(false);
         }
+        refetchZoneInterfaces();
       } catch (error) {}
     },
     [dispatch, editZoneInterface],
@@ -352,6 +361,7 @@ export default function Zones() {
           setIsZoneInterfaceFormOpen(false);
           setCreatingVlanParentId(null);
         }
+        refetchZoneInterfaces();
       } catch (error) {}
     },
     [dispatch, createZoneInterface],
@@ -360,6 +370,7 @@ export default function Zones() {
   const handleDeleteZoneInterfaceApi = async function (id: string) {
     try {
       await deleteZoneInterface(id).unwrap();
+      refetchZoneInterfaces();
     } catch (error) {}
   };
 
@@ -379,6 +390,7 @@ export default function Zones() {
         dispatch(zoneInterfacesSliceReducers.deleteZoneInterface(id));
       }
       setConfirmDeleteInterfaceId(null);
+      refetchZoneInterfaces();
     },
     [dispatch, isDeletingZoneInterfaceError],
   );
@@ -427,7 +439,7 @@ export default function Zones() {
                     confirmDeleteId={confirmDeleteInterfaceId}
                     isRefreshing={isFetchingZoneInterfaces}
                     onRefresh={() => {
-                      void refetchZoneInterfaces();
+                      refetchZoneInterfaces();
                     }}
                     onEdit={handleEditZoneInterfaceClick}
                     onCreateVlan={handleCreateVlanClick}

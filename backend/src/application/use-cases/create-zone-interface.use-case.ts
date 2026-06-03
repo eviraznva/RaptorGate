@@ -18,11 +18,9 @@ import {
 } from "../../domain/repositories/zone-interface.repository.js";
 import type { CreateZoneInterfaceDto } from "../dtos/create-zone-interface.dto.js";
 import type { CreateZoneInterfaceResponseDto } from "../dtos/create-zone-interface-response.dto.js";
-import {
-  normalizeZoneInterfaceAddressesForConfig,
-} from "../services/zone-interface-config-normalizer.js";
 import type { ITokenService } from "../ports/token-service.interface.js";
 import { TOKEN_SERVICE_TOKEN } from "../ports/token-service.interface.js";
+import { normalizeZoneInterfaceAddressesForConfig } from "../services/zone-interface-config-normalizer.js";
 
 @Injectable()
 export class CreateZoneInterfaceUseCase {

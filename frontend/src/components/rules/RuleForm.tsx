@@ -19,6 +19,7 @@ interface RuleFormProps {
   rule: Rule | null;
   isOpen: boolean;
   onClose: () => void;
+  onRefetch: () => void;
   onSuccess: (rule: Rule, mode: "create" | "edit") => void;
 }
 
@@ -93,7 +94,13 @@ function validate(f: FormState): FormErrors {
   return e;
 }
 
-export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
+export function RuleForm({
+  rule,
+  isOpen,
+  onClose,
+  onSuccess,
+  onRefetch,
+}: RuleFormProps) {
   const zonePairs = useAppSelector((store) => store.zonePairs);
   const zones = useAppSelector((store) => store.zones);
   const disptach = useAppDispatch();
@@ -160,9 +167,7 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
     }
   }
 
-  function addSmtpMatcher(
-    category: keyof SmtpMatchers,
-  ) {
+  function addSmtpMatcher(category: keyof SmtpMatchers) {
     const newMatch: SmtpMatch = { regex: "", onMatch: "allow" };
     setForm((prev) => ({
       ...prev,
@@ -173,10 +178,7 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
     }));
   }
 
-  function removeSmtpMatcher(
-    category: keyof SmtpMatchers,
-    index: number,
-  ) {
+  function removeSmtpMatcher(category: keyof SmtpMatchers, index: number) {
     setForm((prev) => ({
       ...prev,
       smtpMatchers: {
@@ -197,7 +199,7 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
       smtpMatchers: {
         ...prev.smtpMatchers,
         [category]: prev.smtpMatchers[category].map((m, i) =>
-          i === index ? { ...m, [field]: value } : m
+          i === index ? { ...m, [field]: value } : m,
         ),
       },
     }));
@@ -234,6 +236,7 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
       if (isEditMode) {
         const result = await updateRule({ id: rule.id, ...body });
 
+        onRefetch();
         if ("error" in result) {
           const err = result.error as { data?: { message?: string } };
           setSubmitError(err?.data?.message ?? "Update failed");
@@ -245,6 +248,7 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
         onSuccess(payload.data, "edit");
       } else {
         const result = await createRule(body);
+        onRefetch();
 
         if ("error" in result) {
           const err = result.error as { data?: { message?: string } };
@@ -474,7 +478,12 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
                         placeholder="Regex pattern"
                         value={match.regex}
                         onChange={(e) =>
-                          updateSmtpMatcher(category, idx, "regex", e.target.value)
+                          updateSmtpMatcher(
+                            category,
+                            idx,
+                            "regex",
+                            e.target.value,
+                          )
                         }
                         className="input text-sm"
                       />
@@ -482,7 +491,12 @@ export function RuleForm({ rule, isOpen, onClose, onSuccess }: RuleFormProps) {
                         <select
                           value={match.onMatch}
                           onChange={(e) =>
-                            updateSmtpMatcher(category, idx, "onMatch", e.target.value)
+                            updateSmtpMatcher(
+                              category,
+                              idx,
+                              "onMatch",
+                              e.target.value,
+                            )
                           }
                           className="input text-sm w-20 shrink-0"
                         >
