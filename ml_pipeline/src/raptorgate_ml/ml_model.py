@@ -25,8 +25,11 @@ DEFAULT_ATTACK_LABELS: tuple[str, str] = ("BENIGN", "malicious")
 BENIGN_ATTACK_LABEL = "BENIGN"
 UNKNOWN_ATTACK_LABEL = "unknown"
 DEFAULT_ATTACK_CONFIDENCE_THRESHOLD = 0.5
+DEFAULT_ACCURACY_GATE = 0.8
+DEFAULT_EVAL_GATE_METRIC = "f1_malicious"
 INPUT_SIZE = len(FIELD_NAMES)
 LossName = Literal["weighted_ce", "focal"]
+DevicePreference = Literal["auto", "cuda", "rocm", "cpu"]
 
 
 @dataclass
@@ -47,6 +50,7 @@ class TrainConfig:
     focal_gamma: float = 2.0
     amp: bool = True
     attack_confidence_threshold: float = DEFAULT_ATTACK_CONFIDENCE_THRESHOLD
+    device: DevicePreference = "auto"
 
 
 @dataclass
@@ -57,6 +61,28 @@ class TrainResult:
     train_rows: int
     train_class_counts: dict[str, int]
     test_metrics: dict[str, object] | None
+
+
+@dataclass
+class EvalConfig:
+    model_path: Path
+    parquet_path: Path
+    batch_size: int = 65_536
+    device: DevicePreference = "auto"
+    accuracy_gate: float | None = None
+    gate_metric: str = DEFAULT_EVAL_GATE_METRIC
+    report_path: Path | None = None
+
+
+@dataclass
+class EvalResult:
+    parquet_path: Path
+    rows: int
+    metrics: dict[str, object]
+    gate_metric: str
+    gate_value: float
+    gate_threshold: float
+    passed: bool
 
 
 class ResidualBlock(nn.Module):
@@ -290,13 +316,13 @@ def _confusion_from_arrays(y_true: np.ndarray, y_pred: np.ndarray, label_count: 
 
 def _to_device(array: np.ndarray, device: torch.device, pin_memory: bool = True) -> torch.Tensor:
     tensor = torch.from_numpy(array)
-    if pin_memory and device.type == "cuda":
+    if pin_memory and _is_cuda_device(device):
         tensor = tensor.pin_memory()
-    return tensor.to(device, non_blocking=pin_memory and device.type == "cuda")
+    return tensor.to(device, non_blocking=pin_memory and _is_cuda_device(device))
 
 
 def _amp_enabled(config: TrainConfig, device: torch.device) -> bool:
-    return config.amp and device.type == "cuda"
+    return config.amp and _is_cuda_device(device)
 
 
 def _calibrate_thresholds(
@@ -349,7 +375,11 @@ def _evaluate_model(
     with torch.no_grad():
         for x, y in _iter_batches(path, batch_size, label_to_id):
             x_tensor = _to_device(x, device)
-            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp):
+            with torch.autocast(
+                device_type=_autocast_device_type(device),
+                dtype=torch.float16,
+                enabled=use_amp,
+            ):
                 logits = model(x_tensor)
             probs = torch.softmax(logits.float(), dim=1)
             y_parts.append(y.astype(np.int64, copy=False))
@@ -384,10 +414,28 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _cuda_device() -> torch.device:
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA GPU is required for training but torch.cuda.is_available() is false")
-    return torch.device("cuda")
+def _pick_device(preference: DevicePreference = "auto") -> torch.device:
+    if preference == "cpu":
+        return torch.device("cpu")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if preference in {"cuda", "rocm"}:
+        raise RuntimeError(
+            f"device '{preference}' was requested but torch.cuda.is_available() is false. "
+            "Install a CUDA- or ROCm-enabled PyTorch build, or pass --device auto/cpu."
+        )
+    raise RuntimeError(
+        "no GPU available. Training requires a CUDA (NVIDIA) or ROCm (AMD) PyTorch build; "
+        "install one via the [rocm] extra or the CUDA index URL, then retry."
+    )
+
+
+def _is_cuda_device(device: torch.device) -> bool:
+    return device.type == "cuda"
+
+
+def _autocast_device_type(device: torch.device) -> str:
+    return "cuda" if _is_cuda_device(device) else "cpu"
 
 
 def _criterion(config: TrainConfig, class_weights: torch.Tensor) -> nn.Module:
@@ -426,13 +474,16 @@ def train_model(
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
 
     torch.manual_seed(config.seed)
-    device = _cuda_device()
-    props = torch.cuda.get_device_properties(device)
-    logger(
-        "gpu "
-        f"name={torch.cuda.get_device_name(device)} "
-        f"memory_gb={props.total_memory / (1024 ** 3):.2f}"
-    )
+    device = _pick_device(config.device)
+    if _is_cuda_device(device):
+        props = torch.cuda.get_device_properties(device)
+        logger(
+            "gpu "
+            f"name={torch.cuda.get_device_name(device)} "
+            f"memory_gb={props.total_memory / (1024 ** 3):.2f}"
+        )
+    else:
+        logger(f"device={device} (no GPU)")
     logger(f"training train={config.train_path} out={config.out_path}")
     logger(
         "config "
@@ -482,7 +533,8 @@ def train_model(
         weight_decay=config.weight_decay,
     )
     use_amp = _amp_enabled(config, device)
-    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    scaler_device = "cuda" if _is_cuda_device(device) else "cpu"
+    scaler = torch.amp.GradScaler(scaler_device, enabled=use_amp)
 
     for epoch in range(1, config.epochs + 1):
         model.train()
@@ -497,7 +549,11 @@ def train_model(
             x_tensor = _to_device(x, device)
             y_tensor = _to_device(y, device)
             optimizer.zero_grad(set_to_none=True)
-            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp):
+            with torch.autocast(
+                device_type=_autocast_device_type(device),
+                dtype=torch.float16,
+                enabled=use_amp,
+            ):
                 logits = model(x_tensor)
                 loss = criterion(logits, y_tensor)
             scaler.scale(loss).backward()
@@ -607,3 +663,153 @@ def train_model(
         train_class_counts=train_class_counts,
         test_metrics=test_metrics,
     )
+
+
+def _load_onnx_session(model_path: Path) -> "onnxruntime.InferenceSession":
+    import onnxruntime as ort
+
+    available = ort.get_available_providers()
+    providers: list[str] = []
+    if "CUDAExecutionProvider" in available:
+        providers.append("CUDAExecutionProvider")
+    if "ROCMExecutionProvider" in available:
+        providers.append("ROCMExecutionProvider")
+    if "CPUExecutionProvider" in available:
+        providers.append("CPUExecutionProvider")
+    if not providers:
+        providers = ["CPUExecutionProvider"]
+    return ort.InferenceSession(str(model_path), providers=providers)
+
+
+def _onnx_predict_proba(
+    session: "onnxruntime.InferenceSession",
+    x: np.ndarray,
+) -> np.ndarray:
+    input_name = session.get_inputs()[0].name
+    outputs = session.run(None, {input_name: x.astype(np.float32, copy=False)})
+    logits = outputs[0]
+    shifted = logits - logits.max(axis=1, keepdims=True)
+    exp = np.exp(shifted)
+    return exp / exp.sum(axis=1, keepdims=True)
+
+
+def _gate_value(metrics: dict[str, object], metric: str) -> float:
+    binary = metrics.get("binary", {})
+    if metric == "f1_malicious":
+        return float(binary["f1"]["malicious"])
+    if metric == "accuracy":
+        return float(metrics["accuracy"])
+    if metric == "recall_malicious":
+        return float(binary["recall"]["malicious"])
+    if metric == "precision_malicious":
+        return float(binary["precision"]["malicious"])
+    raise ValueError(f"unsupported gate metric: {metric}")
+
+
+def evaluate_model(
+    config: EvalConfig,
+    log: Callable[[str], None] | None = None,
+) -> EvalResult:
+    logger = log or (lambda _: None)
+    metadata_path = config.model_path.with_suffix(config.model_path.suffix + ".json")
+    if not metadata_path.exists():
+        raise ValueError(
+            f"model metadata not found at {metadata_path}; cannot evaluate without normalization + labels"
+        )
+    metadata = json.loads(metadata_path.read_text())
+    attack_labels: list[str] = list(metadata["attack_labels"])
+    if "normalization" not in metadata or "mean" not in metadata["normalization"]:
+        raise ValueError(f"{metadata_path} is missing normalization; refusing to evaluate")
+    mean = np.asarray(metadata["normalization"]["mean"], dtype=np.float32)
+    std = np.asarray(metadata["normalization"]["std"], dtype=np.float32)
+    label_to_id = {label: i for i, label in enumerate(attack_labels)}
+    threshold = (
+        config.accuracy_gate if config.accuracy_gate is not None else DEFAULT_ACCURACY_GATE
+    )
+
+    logger(f"loading model={config.model_path}")
+    session = _load_onnx_session(config.model_path)
+    logger(f"providers={session.get_providers()}")
+
+    parquet = pq.ParquetFile(config.parquet_path)
+    columns = set(parquet.schema.names)
+    missing = [name for name in [*FIELD_NAMES, "label", "attack_label"] if name not in columns]
+    if missing:
+        raise ValueError(
+            f"{config.parquet_path} is missing required columns: {', '.join(missing)}"
+        )
+
+    y_parts: list[np.ndarray] = []
+    pred_parts: list[np.ndarray] = []
+    prob_parts: list[np.ndarray] = []
+    for batch in parquet.iter_batches(
+        batch_size=config.batch_size,
+        columns=[*FIELD_NAMES, "label", "attack_label"],
+    ):
+        cols = [
+            batch.column(batch.schema.get_field_index(name)).to_numpy(zero_copy_only=False)
+            for name in FIELD_NAMES
+        ]
+        x = np.column_stack(cols).astype(np.float32, copy=False)
+        raw_labels = np.array(
+            batch.column(batch.schema.get_field_index("label")).to_pylist(),
+            dtype=object,
+        )
+        raw_attack_labels = np.array(
+            batch.column(batch.schema.get_field_index("attack_label")).to_pylist(),
+            dtype=object,
+        )
+        y = _encode_labels(raw_labels, raw_attack_labels, label_to_id)
+        probs = _onnx_predict_proba(session, x)
+        pred = probs.argmax(axis=1).astype(np.int64)
+        y_parts.append(y)
+        pred_parts.append(pred)
+        prob_parts.append(probs[:, 1:].sum(axis=1).astype(np.float32))
+
+    if not y_parts:
+        raise ValueError(f"{config.parquet_path} contains no evaluation rows")
+
+    y_true = np.concatenate(y_parts)
+    pred = np.concatenate(pred_parts)
+    malicious_prob = np.concatenate(prob_parts)
+    matrix = _confusion_from_arrays(y_true, pred, len(attack_labels))
+    metrics = _metrics_from_confusion(matrix, attack_labels)
+    binary_y_true = (y_true != label_to_id[BENIGN_ATTACK_LABEL]).astype(np.int64)
+    binary_pred = (pred != label_to_id[BENIGN_ATTACK_LABEL]).astype(np.int64)
+    binary_metrics = _metrics_from_confusion(
+        _confusion_from_arrays(binary_y_true, binary_pred, 2),
+        list(BINARY_LABELS),
+    )
+    metrics["decision"] = "argmax"
+    metrics["binary"] = binary_metrics
+    metrics["calibration"] = _calibrate_thresholds(binary_y_true, malicious_prob)
+
+    gate_value = _gate_value(metrics, config.gate_metric)
+    passed = gate_value >= threshold
+    result = EvalResult(
+        parquet_path=config.parquet_path,
+        rows=int(matrix.sum()),
+        metrics=metrics,
+        gate_metric=config.gate_metric,
+        gate_value=gate_value,
+        gate_threshold=threshold,
+        passed=passed,
+    )
+    logger(
+        f"eval rows={result.rows} gate={config.gate_metric} "
+        f"value={gate_value:.4f} threshold={threshold:.4f} passed={passed}"
+    )
+    if config.report_path is not None:
+        config.report_path.parent.mkdir(parents=True, exist_ok=True)
+        report = {
+            "parquet": str(config.parquet_path),
+            "rows": result.rows,
+            "gate_metric": result.gate_metric,
+            "gate_value": result.gate_value,
+            "gate_threshold": result.gate_threshold,
+            "passed": result.passed,
+            "metrics": result.metrics,
+        }
+        config.report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        logger(f"wrote report={config.report_path}")
+    return result

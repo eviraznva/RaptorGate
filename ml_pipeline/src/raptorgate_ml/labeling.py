@@ -105,79 +105,143 @@ class FlowLabelIndex:
         self._timed_by_tuple: dict[FiveTuple, _TimedLabels] = {}
         self.stats = LabelIndexStats()
 
+    @staticmethod
+    def normalize_dataframe(df: pl.DataFrame) -> pl.DataFrame:
+        """Project a per-flow DataFrame down to the columns ``absorb`` expects.
+
+        Required output columns: ``src_ip``, ``dst_ip``, ``src_port``, ``dst_port``,
+        ``proto``, ``label`` (already normalized to ``benign``/``malicious``),
+        ``attack_label``. Optional: ``timestamp``, ``flow_duration_us``.
+        """
+        keep = [
+            c
+            for c in (
+                "src_ip",
+                "dst_ip",
+                "src_port",
+                "dst_port",
+                "proto",
+                "label",
+                "attack_label",
+                "timestamp",
+                "flow_duration_us",
+            )
+            if c in df.columns
+        ]
+        if "label" not in keep:
+            raise ValueError("DataFrame must contain a 'label' column")
+        return df.select(keep)
+
+    def absorb(self, df: pl.DataFrame) -> None:
+        """Ingest a normalized DataFrame into this index. Counts roll into stats."""
+        if df.is_empty():
+            return
+        for col in ("src_ip", "dst_ip", "src_port", "dst_port", "proto", "label"):
+            if col not in df.columns:
+                raise ValueError(f"normalized DataFrame missing {col!r}")
+
+        timed: dict[FiveTuple, list[_TimedLabel]] = {}
+        required = {"src_ip", "dst_ip", "src_port", "dst_port", "proto", "label"}
+        optional = [c for c in ("attack_label", "timestamp", "flow_duration_us") if c in df.columns]
+        selected = list(required | set(optional))
+        for row in df.select(selected).iter_rows(named=True):
+            self.stats = LabelIndexStats(
+                source_rows=self.stats.source_rows + 1,
+                indexed_rows=self.stats.indexed_rows,
+                null_labels=self.stats.null_labels,
+                invalid_rows=self.stats.invalid_rows,
+                timed_rows=self.stats.timed_rows,
+            )
+            label = _normalize_label(row["label"])
+            attack_label = row.get("attack_label")
+            if attack_label is None or attack_label == "":
+                attack_label = _attack_label(row["label"])
+            if label is None or attack_label is None:
+                self.stats = LabelIndexStats(
+                    source_rows=self.stats.source_rows,
+                    indexed_rows=self.stats.indexed_rows,
+                    null_labels=self.stats.null_labels + 1,
+                    invalid_rows=self.stats.invalid_rows,
+                    timed_rows=self.stats.timed_rows,
+                )
+                continue
+            try:
+                tup = FiveTuple(
+                    src_ip=str(row["src_ip"]),
+                    dst_ip=str(row["dst_ip"]),
+                    src_port=int(row["src_port"]),
+                    dst_port=int(row["dst_port"]),
+                    proto=int(row["proto"]),
+                )
+            except (TypeError, ValueError):
+                self.stats = LabelIndexStats(
+                    source_rows=self.stats.source_rows,
+                    indexed_rows=self.stats.indexed_rows,
+                    null_labels=self.stats.null_labels,
+                    invalid_rows=self.stats.invalid_rows + 1,
+                    timed_rows=self.stats.timed_rows,
+                )
+                continue
+            self._by_tuple[tup] = label
+            self._attack_by_tuple[tup] = str(attack_label)
+            self.stats = LabelIndexStats(
+                source_rows=self.stats.source_rows,
+                indexed_rows=self.stats.indexed_rows + 1,
+                null_labels=self.stats.null_labels,
+                invalid_rows=self.stats.invalid_rows,
+                timed_rows=self.stats.timed_rows,
+            )
+
+            start_ts = _epoch_seconds(row.get("timestamp"))
+            if start_ts is None:
+                continue
+            try:
+                duration_us = max(0, int(row.get("flow_duration_us") or 0))
+            except (TypeError, ValueError):
+                duration_us = 0
+            duration_secs = duration_us / 1_000_000.0
+            end_ts = start_ts + max(duration_secs, 1.0)
+            timed.setdefault(tup, []).append(
+                _TimedLabel(
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    label=label,
+                    attack_label=str(attack_label),
+                )
+            )
+            self.stats = LabelIndexStats(
+                source_rows=self.stats.source_rows,
+                indexed_rows=self.stats.indexed_rows,
+                null_labels=self.stats.null_labels,
+                invalid_rows=self.stats.invalid_rows,
+                timed_rows=self.stats.timed_rows + 1,
+            )
+
+        for tup, labels in timed.items():
+            ordered = sorted(labels, key=lambda item: item.start_ts)
+            self._timed_by_tuple[tup] = _TimedLabels(
+                starts=[item.start_ts for item in ordered],
+                labels=ordered,
+            )
+
     @classmethod
     def from_cicids_files(cls, paths: list[Path]) -> "FlowLabelIndex":
         idx = cls()
-        source_rows = 0
-        indexed_rows = 0
-        null_labels = 0
-        invalid_rows = 0
-        timed_rows = 0
-        timed: dict[FiveTuple, list[_TimedLabel]] = {}
-
         for path in paths:
             df = load_cicids_labels(path)
             if df.is_empty():
                 continue
-            needed = {"src_ip", "dst_ip", "src_port", "dst_port", "proto", "label"}
-            if not needed.issubset(df.columns):
-                invalid_rows += df.height
-                continue
-            selected = list(needed | {"timestamp", "flow_duration_us"}.intersection(df.columns))
-            for row in df.select(selected).iter_rows(named=True):
-                source_rows += 1
-                label = _normalize_label(row["label"])
-                attack_label = _attack_label(row["label"])
-                if label is None or attack_label is None:
-                    null_labels += 1
-                    continue
-                try:
-                    tup = FiveTuple(
-                        src_ip=str(row["src_ip"]),
-                        dst_ip=str(row["dst_ip"]),
-                        src_port=int(row["src_port"]),
-                        dst_port=int(row["dst_port"]),
-                        proto=int(row["proto"]),
-                    )
-                except (TypeError, ValueError):
-                    invalid_rows += 1
-                    continue
-                idx._by_tuple[tup] = label
-                idx._attack_by_tuple[tup] = attack_label
-                indexed_rows += 1
-
-                start_ts = _epoch_seconds(row.get("timestamp"))
-                if start_ts is None:
-                    continue
-                try:
-                    duration_us = max(0, int(row.get("flow_duration_us") or 0))
-                except (TypeError, ValueError):
-                    duration_us = 0
-                duration_secs = duration_us / 1_000_000.0
-                end_ts = start_ts + max(duration_secs, 1.0)
-                timed.setdefault(tup, []).append(
-                    _TimedLabel(
-                        start_ts=start_ts,
-                        end_ts=end_ts,
-                        label=label,
-                        attack_label=attack_label,
-                    )
+            if "label" not in df.columns:
+                idx.stats = LabelIndexStats(
+                    source_rows=idx.stats.source_rows + df.height,
+                    indexed_rows=idx.stats.indexed_rows,
+                    null_labels=idx.stats.null_labels,
+                    invalid_rows=idx.stats.invalid_rows + df.height,
+                    timed_rows=idx.stats.timed_rows,
                 )
-                timed_rows += 1
-
-        for tup, labels in timed.items():
-            ordered = sorted(labels, key=lambda item: item.start_ts)
-            idx._timed_by_tuple[tup] = _TimedLabels(
-                starts=[item.start_ts for item in ordered],
-                labels=ordered,
-            )
-        idx.stats = LabelIndexStats(
-            source_rows=source_rows,
-            indexed_rows=indexed_rows,
-            null_labels=null_labels,
-            invalid_rows=invalid_rows,
-            timed_rows=timed_rows,
-        )
+                continue
+            normalized = cls.normalize_dataframe(df)
+            idx.absorb(normalized)
         return idx
 
     @classmethod

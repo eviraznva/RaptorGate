@@ -67,7 +67,7 @@ def test_attack_label_scan_rejects_unknown_attack_labels(tmp_path: Path):
         _scan_attack_labels(train_path, batch_size=8)
 
 
-def test_train_cli_requires_cuda(tmp_path: Path):
+def test_train_cli_requires_gpu(tmp_path: Path):
     train_path = tmp_path / "train.parquet"
     _training_frame().write_parquet(train_path)
 
@@ -90,7 +90,7 @@ def test_train_cli_requires_cuda(tmp_path: Path):
         assert result.exit_code == 0, result.output
     else:
         assert result.exit_code != 0
-        assert "CUDA GPU is required" in result.output
+        assert "GPU" in result.output
 
 
 def test_train_schema_rejects_missing_feature_column(tmp_path: Path):

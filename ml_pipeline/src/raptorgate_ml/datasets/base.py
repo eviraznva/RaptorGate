@@ -1,3 +1,14 @@
+"""Shared downloader primitives and CIC label loader.
+
+The downloader is the same for every public dataset we ship: stream the bytes
+to a ``.part`` file, validate against the expected magic bytes on the first
+chunk, allow HTTP ``Range`` resume, and rotate through multiple URLs if one
+fails. Each plugin composes a list of :class:`DatasetFile` records that
+reference the same downloader.
+"""
+
+from __future__ import annotations
+
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,6 +17,17 @@ from typing import Literal
 import polars as pl
 import requests
 from tqdm import tqdm
+
+__all__ = [
+    "DatasetFile",
+    "DownloadKind",
+    "OFFICIAL_BASES",
+    "HF_PCAP_BASE",
+    "HF_TRAFFIC_LABELS_BASE",
+    "download_file",
+    "load_cicids_labels",
+]
+
 
 _MAX_RETRIES_PER_URL = 10
 _BACKOFF_CAP_SECS = 60.0
@@ -16,6 +38,7 @@ _TRANSIENT_EXCEPTIONS = (
     requests.exceptions.ConnectionError,
     requests.exceptions.Timeout,
 )
+
 
 DownloadKind = Literal["pcap", "zip", "parquet"]
 
@@ -39,17 +62,6 @@ HF_TRAFFIC_LABELS_BASE = (
     "https://huggingface.co/datasets/bvsam/cic-ids-2017/resolve/main/traffic_labels"
 )
 
-HF_TRAFFIC_LABEL_FILES: tuple[str, ...] = (
-    "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv.parquet",
-    "Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv.parquet",
-    "Friday-WorkingHours-Morning.pcap_ISCX.csv.parquet",
-    "Monday-WorkingHours.pcap_ISCX.csv.parquet",
-    "Thursday-WorkingHours-Afternoon-Infilteration.pcap_ISCX.csv.parquet",
-    "Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv.parquet",
-    "Tuesday-WorkingHours.pcap_ISCX.csv.parquet",
-    "Wednesday-workingHours.pcap_ISCX.csv.parquet",
-)
-
 PCAP_MAGIC_HEADERS: tuple[bytes, ...] = (
     b"\xd4\xc3\xb2\xa1",
     b"\xa1\xb2\xc3\xd4",
@@ -63,36 +75,6 @@ ZIP_MAGIC_HEADERS: tuple[bytes, ...] = (
     b"PK\x07\x08",
 )
 PARQUET_MAGIC = b"PAR1"
-
-
-def _pcap_urls(*remote_names: str) -> tuple[str, ...]:
-    urls: list[str] = []
-    for remote_name in remote_names:
-        urls.append(f"{HF_PCAP_BASE}/{remote_name}?download=true")
-        urls.extend(f"{base}/PCAPs/{remote_name}" for base in OFFICIAL_BASES)
-    return tuple(dict.fromkeys(urls))
-
-
-def _zip_urls(*remote_names: str) -> tuple[str, ...]:
-    urls: list[str] = []
-    for remote_name in remote_names:
-        urls.extend(f"{base}/{remote_name}" for base in OFFICIAL_BASES)
-        urls.extend(f"{base}/CSVs/{remote_name}" for base in OFFICIAL_BASES)
-    return tuple(dict.fromkeys(urls))
-
-
-CICIDS2017_FILES: tuple[DatasetFile, ...] = (
-    DatasetFile("Monday-WorkingHours.pcap", "pcap", _pcap_urls("Monday-WorkingHours.pcap")),
-    DatasetFile("Tuesday-WorkingHours.pcap", "pcap", _pcap_urls("Tuesday-WorkingHours.pcap")),
-    DatasetFile(
-        "Wednesday-WorkingHours.pcap",
-        "pcap",
-        _pcap_urls("Wednesday-WorkingHours.pcap", "Wednesday-workingHours.pcap"),
-    ),
-    DatasetFile("Thursday-WorkingHours.pcap", "pcap", _pcap_urls("Thursday-WorkingHours.pcap")),
-    DatasetFile("Friday-WorkingHours.pcap", "pcap", _pcap_urls("Friday-WorkingHours.pcap")),
-    DatasetFile("GeneratedLabelledFlows.zip", "zip", _zip_urls("GeneratedLabelledFlows.zip")),
-)
 
 
 def _looks_like_html(prefix: bytes) -> bool:
@@ -219,37 +201,6 @@ def download_file(urls: tuple[str, ...], target: Path, kind: DownloadKind) -> No
         f"failed to download {target.name}; tried {len(urls)} sources:\n"
         + "\n".join(errors)
     )
-
-
-def _download_generated_labelled_flows(target_dir: Path) -> Path:
-    zip_target = target_dir / "GeneratedLabelledFlows.zip"
-    try:
-        download_file(_zip_urls("GeneratedLabelledFlows.zip"), zip_target, "zip")
-        return zip_target
-    except RuntimeError:
-        parquet_dir = target_dir / "GeneratedLabelledFlows"
-        parquet_dir.mkdir(parents=True, exist_ok=True)
-        for name in HF_TRAFFIC_LABEL_FILES:
-            download_file(
-                (f"{HF_TRAFFIC_LABELS_BASE}/{name}?download=true",),
-                parquet_dir / name,
-                "parquet",
-            )
-        return parquet_dir
-
-
-def download_cicids2017(target_dir: Path, names: list[str] | None = None) -> list[Path]:
-    out: list[Path] = []
-    for df in CICIDS2017_FILES:
-        if names and df.name not in names:
-            continue
-        if df.name == "GeneratedLabelledFlows.zip":
-            out.append(_download_generated_labelled_flows(target_dir))
-            continue
-        dst = target_dir / df.name
-        download_file(df.urls, dst, df.kind)
-        out.append(dst)
-    return out
 
 
 def load_cicids_labels(csv_path: Path) -> pl.DataFrame:
