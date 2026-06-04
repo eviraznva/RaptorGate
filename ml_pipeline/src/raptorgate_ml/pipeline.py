@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import os
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from multiprocessing import get_context
 from pathlib import Path
 from typing import Sequence
 
@@ -290,21 +288,10 @@ def run_build(
     num_workers = _resolve_num_workers()
     ordered: list[tuple[Path, _PartResult]] = []
 
-    if jobs <= 1 or len(pcap_list) <= 1:
-        for p in pcap_list:
-            ordered.append(
-                (p, _build_one(str(p), label_table, attack_names, window_secs, num_workers))
-            )
-    else:
-        with ProcessPoolExecutor(max_workers=jobs, mp_context=get_context("spawn")) as pool:
-            futs = {
-                p: pool.submit(
-                    _build_one, str(p), label_table, attack_names, window_secs, num_workers
-                )
-                for p in pcap_list
-            }
-            for p in pcap_list:
-                ordered.append((p, futs[p].result()))
+    for p in pcap_list:
+        ordered.append(
+            (p, _build_one(str(p), label_table, attack_names, window_secs, num_workers))
+        )
 
     parts = [pr for _, pr in ordered]
     df = _combine(parts, attack_names, include_unmatched)

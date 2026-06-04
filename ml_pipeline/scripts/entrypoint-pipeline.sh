@@ -23,7 +23,7 @@
 #   LEARNING_RATE      training lr                          (default: 3e-4)
 #   LOSS               weighted_ce | focal                  (default: focal)
 #   FOCAL_GAMMA        focal loss gamma                     (default: 1.5)
-#   JOBS               build workers                        (default: 4)
+#   JOBS               build workers                        (default: 1)
 #   DEVICE             auto | cuda | rocm | cpu             (default: auto)
 #   AMP                1 | 0                                (default: 1)
 #   ACCURACY_GATE      evaluate gate                        (default: 0.8)
@@ -55,7 +55,7 @@ BATCH_SIZE="${BATCH_SIZE:-131072}"
 LEARNING_RATE="${LEARNING_RATE:-3e-4}"
 LOSS="${LOSS:-focal}"
 FOCAL_GAMMA="${FOCAL_GAMMA:-1.5}"
-JOBS="${JOBS:-4}"
+JOBS="${JOBS:-1}"
 DEVICE="${DEVICE:-auto}"
 AMP_FLAG=(--amp)
 if [[ "${AMP:-1}" == "0" ]]; then AMP_FLAG=(--no-amp); fi

@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import click
@@ -86,9 +85,7 @@ def build(
     if not pcap_paths:
         raise click.ClickException(f"no .pcap files under {pcap_dir}")
 
-    effective_jobs = jobs
-    if effective_jobs is None:
-        effective_jobs = min(2, len(pcap_paths), os.cpu_count() or 1)
+    effective_jobs = jobs if jobs is not None else 1
     if effective_jobs < 1:
         raise click.ClickException("--jobs must be at least 1")
 

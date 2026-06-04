@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::net::IpAddr;
 
-use etherparse::SlicedPacket;
-use memmap2::Mmap;
+use etherparse::{SlicedPacket, TransportSlice};
+use memmap2::{Advice, Mmap};
 use pcap_file::pcap::PcapParser;
 use pcap_file::pcapng::blocks::Block;
 use pcap_file::pcapng::PcapNgParser;
@@ -18,9 +18,27 @@ pub struct PacketRef {
     pub length: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct IndexedPacket {
+    pub ts: f64,
+    pub src_ip: IpAddr,
+    pub dst_ip: IpAddr,
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub ip_proto: u8,
+    pub ip_version: u8,
+    pub ttl: u8,
+    pub tcp_flags: Option<u8>,
+    pub tcp_window: Option<u16>,
+    pub frame_offset: u64,
+    pub frame_length: u32,
+    pub payload_offset: u32,
+    pub payload_length: u32,
+}
+
 #[derive(Debug, Default)]
 pub struct PcapIndex {
-    pub by_src: HashMap<IpAddr, Vec<PacketRef>>,
+    pub by_src: HashMap<IpAddr, Vec<IndexedPacket>>,
     pub record_count: u64,
     pub unparsable: u64,
     pub linktype: u32,
@@ -74,6 +92,7 @@ impl MappedPcap {
         let file = File::open(path.as_ref()).map_err(PcapError::PcapOpen)?;
         let mmap = unsafe { Mmap::map(&file) }.map_err(PcapError::Mmap)?;
         let linktype = linktype_of(&mmap)?;
+        let _ = hint_kernel(&mmap);
         Ok(Self { mmap, linktype })
     }
 
@@ -84,6 +103,12 @@ impl MappedPcap {
     pub fn linktype(&self) -> u32 {
         self.linktype
     }
+}
+
+fn hint_kernel(mmap: &Mmap) -> std::io::Result<()> {
+    let _ = mmap.advise(Advice::WillNeed);
+    let _ = mmap.advise(Advice::Sequential);
+    mmap.lock()
 }
 
 fn linktype_of(mmap: &[u8]) -> Result<u32> {
@@ -140,22 +165,16 @@ fn prepass_pcap(mmap: &[u8], linktype: u32) -> Result<PcapIndex> {
         linktype,
         ..PcapIndex::default()
     };
+    let mmap_base = mmap.as_ptr();
 
     loop {
         match parser.next_packet(src) {
             Ok((rem, pkt)) => {
                 let ts = pkt.timestamp.as_secs() as f64
                     + pkt.timestamp.subsec_micros() as f64 / 1_000_000.0;
-                let offset = (pkt.data.as_ptr() as usize)
-                    .saturating_sub(mmap.as_ptr() as usize) as u64;
-                let length = pkt.orig_len;
 
-                if let Some(src_ip) = src_ip_from_data(linktype, &pkt.data) {
-                    index.by_src.entry(src_ip).or_default().push(PacketRef {
-                        ts,
-                        offset,
-                        length,
-                    });
+                if let Some(indexed) = index_packet(linktype, mmap_base, &pkt.data, ts) {
+                    index.by_src.entry(indexed.src_ip).or_default().push(indexed);
                 } else {
                     index.unparsable += 1;
                 }
@@ -184,6 +203,7 @@ fn prepass_pcapng(mmap: &[u8], linktype: u32) -> Result<PcapIndex> {
         linktype,
         ..PcapIndex::default()
     };
+    let mmap_base = mmap.as_ptr();
 
     loop {
         match parser.next_block(src) {
@@ -192,30 +212,20 @@ fn prepass_pcapng(mmap: &[u8], linktype: u32) -> Result<PcapIndex> {
                     Block::EnhancedPacket(epb) => {
                         let ts = epb.timestamp.as_secs() as f64
                             + epb.timestamp.subsec_micros() as f64 / 1_000_000.0;
-                        let offset = (epb.data.as_ptr() as usize)
-                            .saturating_sub(mmap.as_ptr() as usize) as u64;
-                        let length = epb.original_len;
-                        if let Some(src_ip) = src_ip_from_data(linktype, &epb.data) {
-                            index.by_src.entry(src_ip).or_default().push(PacketRef {
-                                ts,
-                                offset,
-                                length,
-                            });
+                        if let Some(indexed) =
+                            index_packet(linktype, mmap_base, &epb.data, ts)
+                        {
+                            index.by_src.entry(indexed.src_ip).or_default().push(indexed);
                         } else {
                             index.unparsable += 1;
                         }
                         index.record_count += 1;
                     }
                     Block::SimplePacket(spb) => {
-                        let offset = (spb.data.as_ptr() as usize)
-                            .saturating_sub(mmap.as_ptr() as usize) as u64;
-                        let length = spb.original_len;
-                        if let Some(src_ip) = src_ip_from_data(linktype, &spb.data) {
-                            index.by_src.entry(src_ip).or_default().push(PacketRef {
-                                ts: 0.0,
-                                offset,
-                                length,
-                            });
+                        if let Some(indexed) =
+                            index_packet(linktype, mmap_base, &spb.data, 0.0)
+                        {
+                            index.by_src.entry(indexed.src_ip).or_default().push(indexed);
                         } else {
                             index.unparsable += 1;
                         }
@@ -253,6 +263,83 @@ pub fn src_ip_from_data(linktype: u32, data: &[u8]) -> Option<IpAddr> {
     }
 }
 
+fn index_packet(
+    linktype: u32,
+    mmap_base: *const u8,
+    data: &[u8],
+    ts: f64,
+) -> Option<IndexedPacket> {
+    let sliced = match linktype {
+        1 => SlicedPacket::from_ethernet(data).ok()?,
+        113 => SlicedPacket::from_linux_sll(data).ok()?,
+        101 | 12 | 228 | 229 => SlicedPacket::from_ip(data).ok()?,
+        _ => return None,
+    };
+    let net = sliced.net.as_ref()?;
+    let (ip_version, ip_proto, ttl, src_ip, dst_ip) = match net {
+        etherparse::NetSlice::Ipv4(v4) => {
+            let h = v4.header();
+            (4u8, h.protocol().0, h.ttl(), IpAddr::V4(h.source_addr()), IpAddr::V4(h.destination_addr()))
+        }
+        etherparse::NetSlice::Ipv6(v6) => {
+            let h = v6.header();
+            (6u8, h.next_header().0, h.hop_limit(), IpAddr::V6(h.source_addr()), IpAddr::V6(h.destination_addr()))
+        }
+        etherparse::NetSlice::Arp(_) => return None,
+    };
+
+    let (src_port, dst_port, tcp_flags, tcp_window, payload_offset, payload_length) =
+        match sliced.transport.as_ref() {
+            Some(TransportSlice::Tcp(t)) => {
+                let mut flags = 0u8;
+                if t.syn() { flags |= 0x02; }
+                if t.ack() { flags |= 0x10; }
+                if t.fin() { flags |= 0x01; }
+                if t.rst() { flags |= 0x04; }
+                if t.psh() { flags |= 0x08; }
+                if t.urg() { flags |= 0x20; }
+                if t.ece() { flags |= 0x40; }
+                if t.cwr() { flags |= 0x80; }
+                let payload = t.payload();
+                let po = if payload.is_empty() {
+                    0u32
+                } else {
+                    (payload.as_ptr() as usize).saturating_sub(mmap_base as usize) as u32
+                };
+                (t.source_port(), t.destination_port(), Some(flags), Some(t.window_size()), po, payload.len() as u32)
+            }
+            Some(TransportSlice::Udp(u)) => {
+                let payload = u.payload();
+                let po = if payload.is_empty() {
+                    0u32
+                } else {
+                    (payload.as_ptr() as usize).saturating_sub(mmap_base as usize) as u32
+                };
+                (u.source_port(), u.destination_port(), None, None, po, payload.len() as u32)
+            }
+            _ => (0u16, 0u16, None, None, 0u32, 0u32),
+        };
+
+    let frame_offset = (data.as_ptr() as usize).saturating_sub(mmap_base as usize) as u64;
+
+    Some(IndexedPacket {
+        ts,
+        src_ip,
+        dst_ip,
+        src_port,
+        dst_port,
+        ip_proto,
+        ip_version,
+        ttl,
+        tcp_flags,
+        tcp_window,
+        frame_offset,
+        frame_length: data.len() as u32,
+        payload_offset,
+        payload_length,
+    })
+}
+
 pub fn packet_bytes<'a>(mapped: &'a MappedPcap, r: &PacketRef) -> Option<&'a [u8]> {
     let start = r.offset as usize;
     let end = start.checked_add(r.length as usize)?;
@@ -260,6 +347,24 @@ pub fn packet_bytes<'a>(mapped: &'a MappedPcap, r: &PacketRef) -> Option<&'a [u8
         return None;
     }
     Some(&mapped.mmap()[start..end])
+}
+
+pub fn frame_bytes<'a>(mapped: &'a MappedPcap, p: &IndexedPacket) -> Option<&'a [u8]> {
+    let start = p.frame_offset as usize;
+    let end = start.checked_add(p.frame_length as usize)?;
+    if end > mapped.mmap().len() {
+        return None;
+    }
+    Some(&mapped.mmap()[start..end])
+}
+
+pub fn payload_bytes<'a>(mapped: &'a MappedPcap, p: &IndexedPacket) -> &'a [u8] {
+    let start = p.payload_offset as usize;
+    let end = start.saturating_add(p.payload_length as usize);
+    if end > mapped.mmap().len() || start > mapped.mmap().len() {
+        return &[];
+    }
+    &mapped.mmap()[start..end]
 }
 
 #[cfg(test)]
@@ -338,10 +443,13 @@ mod tests {
         assert_eq!(idx.by_src[&src2].len(), 1);
 
         for refs in idx.by_src.values() {
-            for r in refs {
-                let bytes = packet_bytes(&mapped, r).unwrap();
+            for p in refs {
+                let bytes = frame_bytes(&mapped, p).unwrap();
                 assert!(!bytes.is_empty());
-                assert!(crate::parse::parse_ethernet(r.ts, bytes).is_some());
+                assert!(crate::parse::parse_ethernet(p.ts, bytes).is_some());
+                let payload = payload_bytes(&mapped, p);
+                assert!(p.payload_offset as usize <= bytes.len());
+                assert!(p.payload_offset as usize + payload.len() <= bytes.len());
             }
         }
 

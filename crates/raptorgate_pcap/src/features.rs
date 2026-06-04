@@ -8,7 +8,7 @@ use rayon::prelude::*;
 
 use crate::error::{PcapError, Result};
 use crate::flow_id::flow_id_for;
-use crate::index::{packet_bytes, prepass, MappedPcap, PcapIndex};
+use crate::index::{frame_bytes, prepass, MappedPcap, PcapIndex};
 use crate::labels::{LabelIndex, LabelMatch, LABEL_MALICIOUS};
 use crate::output::FeatureOutput;
 use crate::parse::{is_syn, is_syn_ack};
@@ -110,57 +110,30 @@ fn extract_bucket(
         let Some(refs) = index.by_src.get(src_ip) else {
             continue;
         };
-        for r in refs {
-            let Some(frame) = packet_bytes(mapped, r) else {
+        for p in refs {
+            let Some(frame) = frame_bytes(mapped, p) else {
                 continue;
             };
             let Some(sliced) = parse_sliced(mapped.linktype(), frame) else {
                 continue;
             };
 
-            let src_ip_pkt = match sliced.net.as_ref() {
-                Some(etherparse::NetSlice::Ipv4(v4)) => std::net::IpAddr::V4(v4.header().source_addr()),
-                Some(etherparse::NetSlice::Ipv6(v6)) => std::net::IpAddr::V6(v6.header().source_addr()),
-                _ => continue,
-            };
-            let dst_ip_pkt = match sliced.net.as_ref() {
-                Some(etherparse::NetSlice::Ipv4(v4)) => std::net::IpAddr::V4(v4.header().destination_addr()),
-                Some(etherparse::NetSlice::Ipv6(v6)) => std::net::IpAddr::V6(v6.header().destination_addr()),
-                _ => continue,
-            };
-            let ip_proto = match sliced.net.as_ref() {
-                Some(etherparse::NetSlice::Ipv4(v4)) => v4.header().protocol().0,
-                Some(etherparse::NetSlice::Ipv6(v6)) => v6.header().next_header().0,
-                _ => continue,
-            };
-            let (src_port, dst_port, tcp_flags) = match sliced.transport.as_ref() {
-                Some(etherparse::TransportSlice::Tcp(t)) => {
-                    let mut flags = 0u8;
-                    if t.syn() { flags |= 0x02; }
-                    if t.ack() { flags |= 0x10; }
-                    if t.fin() { flags |= 0x01; }
-                    if t.rst() { flags |= 0x04; }
-                    if t.psh() { flags |= 0x08; }
-                    if t.urg() { flags |= 0x20; }
-                    if t.ece() { flags |= 0x40; }
-                    if t.cwr() { flags |= 0x80; }
-                    (t.source_port(), t.destination_port(), Some(flags))
-                }
-                Some(etherparse::TransportSlice::Udp(u)) => {
-                    (u.source_port(), u.destination_port(), None)
-                }
-                _ => (0, 0, None),
-            };
+            let src_ip_pkt = p.src_ip;
+            let dst_ip_pkt = p.dst_ip;
+            let ip_proto = p.ip_proto;
+            let src_port = p.src_port;
+            let dst_port = p.dst_port;
+            let tcp_flags = p.tcp_flags;
 
-            let snap = agg.snapshot(*src_ip, r.ts);
-            let iat = agg.iat_since_last(*src_ip, r.ts);
+            let snap = agg.snapshot(src_ip_pkt, p.ts);
+            let iat = agg.iat_since_last(src_ip_pkt, p.ts);
             let is_new_flow = tcp_flags.map(|f| is_syn(f) || is_syn_ack(f)).unwrap_or(false);
             let is_syn_flag = tcp_flags.map(is_syn).unwrap_or(false);
 
-            agg.observe_packet(src_ip_pkt, dst_ip_pkt, is_syn_flag, is_new_flow, r.ts);
+            agg.observe_packet(src_ip_pkt, dst_ip_pkt, is_syn_flag, is_new_flow, p.ts);
 
             let mut fv = MlFeatureVector::default();
-            let ts_system = UNIX_EPOCH + Duration::from_secs_f64(r.ts.max(0.0));
+            let ts_system = UNIX_EPOCH + Duration::from_secs_f64(p.ts.max(0.0));
             fv.init_from_packet(&sliced, ts_system);
             if let Some(etherparse::TransportSlice::Tcp(tcp)) = sliced.transport.as_ref() {
                 fv.set_from_tcp_slice(tcp);
@@ -170,7 +143,7 @@ fn extract_bucket(
                 fv.set_from_dpi(&ctx);
                 if ctx.dns_is_response == Some(true) {
                     let rcode = udp_payload_rcode(&sliced).unwrap_or(0);
-                    agg.observe_dns_response(src_ip_pkt, rcode, r.ts);
+                    agg.observe_dns_response(src_ip_pkt, rcode, p.ts);
                 }
             }
 
@@ -185,7 +158,7 @@ fn extract_bucket(
 
             let row = fv.to_f32_array();
             let flow_id = flow_id_for(ip_proto, src_ip_pkt, src_port, dst_ip_pkt, dst_port);
-            let m = label_index.match_for(flow_id, Some(r.ts));
+            let m = label_index.match_for(flow_id, Some(p.ts));
             push_row(&mut out, &row, &m, flow_id, &m);
         }
     }
