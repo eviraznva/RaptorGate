@@ -14,11 +14,11 @@ use pyo3::prelude::*;
 
 use ngfw::dpi::DpiClassifier;
 
-use crate::error::PcapError;
+use crate::error::{PcapError, Result};
 use crate::features::{build_features as build_features_rs, BuildOptions};
 use crate::index::MappedPcap;
 use crate::labels::PyLabelIndex;
-use crate::output::PyFeatureOutput;
+use crate::output::{FeatureOutput, PyFeatureOutput};
 
 const FEATURE_NAMES: &[&str] = &[
     "proto",
@@ -64,24 +64,31 @@ const FEATURE_NAMES: &[&str] = &[
 #[pyfunction]
 #[pyo3(signature = (pcap_path, label_index, window_secs=60.0, num_workers=None))]
 fn build_features_py(
+    py: Python<'_>,
     pcap_path: PathBuf,
     label_index: &PyLabelIndex,
     window_secs: f64,
     num_workers: Option<usize>,
 ) -> PyResult<PyFeatureOutput> {
-    let mapped = MappedPcap::open(&pcap_path).map_err(pyo3_error)?;
-    let classifier = Arc::new(DpiClassifier::new());
-    let out = build_features_rs(
-        &mapped,
-        &label_index.inner,
-        classifier,
-        BuildOptions {
-            window_secs,
-            num_workers,
-            ..Default::default()
-        },
-    )
-    .map_err(pyo3_error)?;
+    let owned_idx = label_index.inner.clone();
+    let opts = BuildOptions {
+        window_secs,
+        num_workers,
+        ..Default::default()
+    };
+    let out = py
+        .detach(|| -> Result<FeatureOutput> {
+            eprintln!("[raptorgate-pcap] py.detach: opening {}", pcap_path.display());
+            let mapped = MappedPcap::open(&pcap_path)?;
+            eprintln!("[raptorgate-pcap] py.detach: mmap ok linktype={}", mapped.linktype());
+            let classifier = Arc::new(DpiClassifier::new());
+            eprintln!("[raptorgate-pcap] py.detach: starting build_features_rs");
+            let r = build_features_rs(&mapped, &owned_idx, classifier, opts);
+            eprintln!("[raptorgate-pcap] py.detach: build_features_rs returned");
+            r
+        })
+        .map_err(pyo3_error)?;
+    eprintln!("[raptorgate-pcap] build_features_py: returning n_rows={}", out.n_rows);
     Ok(PyFeatureOutput::from(out))
 }
 

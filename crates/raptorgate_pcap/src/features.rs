@@ -38,7 +38,14 @@ pub fn build_features(
     classifier: Arc<DpiClassifier>,
     opts: BuildOptions,
 ) -> Result<FeatureOutput> {
+    eprintln!("[raptorgate-pcap] build_features: starting prepass");
     let index = prepass(mapped)?;
+    eprintln!(
+        "[raptorgate-pcap] build_features: prepass done record_count={} unparsable={} src_ips={}",
+        index.record_count,
+        index.unparsable,
+        index.by_src.len()
+    );
 
     let mut builder = rayon::ThreadPoolBuilder::new().thread_name(move |i| {
         format!("{}-{}", opts.thread_name, i)
@@ -52,12 +59,22 @@ pub fn build_features(
 
     let n_workers = pool.current_num_threads();
     let buckets = index.partition(n_workers);
+    eprintln!(
+        "[raptorgate-pcap] build_features: pool built n_workers={} buckets={}",
+        n_workers,
+        buckets.len()
+    );
     let mapped_ref: &MappedPcap = mapped;
 
     let per_bucket: Vec<FeatureOutput> = pool.install(|| {
-        buckets
+        eprintln!("[raptorgate-pcap] pool.install: dispatching {} buckets", buckets.len());
+        let v: Vec<FeatureOutput> = buckets
             .par_iter()
             .map(|bucket| {
+                eprintln!(
+                    "[raptorgate-pcap] extract_bucket: start bucket size={}",
+                    bucket.len()
+                );
                 extract_bucket(
                     mapped_ref,
                     &index,
@@ -67,10 +84,15 @@ pub fn build_features(
                     opts.window_secs,
                 )
             })
-            .collect()
+            .collect();
+        eprintln!("[raptorgate-pcap] pool.install: all buckets returned");
+        v
     });
+    eprintln!("[raptorgate-pcap] build_features: pool.install returned, merging");
 
-    Ok(merge_outputs(per_bucket))
+    let out = merge_outputs(per_bucket);
+    eprintln!("[raptorgate-pcap] build_features: merged n_rows={}", out.n_rows);
+    Ok(out)
 }
 
 fn extract_bucket(
@@ -183,6 +205,11 @@ fn push_row(out: &mut FeatureOutput, row: &[f32; FEATURE_DIM], _m: &LabelMatch, 
     out.matched.push(m.matched);
     out.flow_id.push(flow_id);
     out.n_rows += 1;
+    if out.n_rows % 1_000_000 == 0 {
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("raptorgate-pcap-worker");
+        eprintln!("[raptorgate-pcap] {thread_name}: processed {} rows", out.n_rows);
+    }
 }
 
 fn merge_outputs(parts: Vec<FeatureOutput>) -> FeatureOutput {

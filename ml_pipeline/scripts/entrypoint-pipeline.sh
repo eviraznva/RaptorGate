@@ -31,6 +31,13 @@
 set -euo pipefail
 
 DATASET="${DATASET:-cicids2017}"
+case "$DATASET" in
+  small)
+    RAW_DIR="${RAW_DIR:-/data/raw}/small"
+    MATCH_WINDOW="${MATCH_WINDOW:-10000}"
+    ;;
+esac
+MATCH_WINDOW="${MATCH_WINDOW:-60}"
 RAW_DIR="${RAW_DIR:-/data/raw}"
 LABELS_DIR="${LABELS_DIR:-$RAW_DIR/GeneratedLabelledFlows}"
 TRAIN_PARQUET="${TRAIN_PARQUET:-/data/train.parquet}"
@@ -116,12 +123,13 @@ if [[ "$SKIP_BUILD" != "1" ]]; then
   if [[ -f "$TRAIN_PARQUET" ]]; then
     log "build skipped (train.parquet exists at $TRAIN_PARQUET)"
   else
-    log "build pcap-dir=$RAW_DIR labels-dir=$LABELS_DIR"
+    log "build pcap-dir=$RAW_DIR labels-dir=$LABELS_DIR window=${MATCH_WINDOW}s"
     raptorgate-ml build \
       --pcap-dir "$RAW_DIR" \
       --labels-dir "$LABELS_DIR" \
       --out "$TRAIN_PARQUET" \
       --test-out "$TEST_PARQUET" \
+      --window "$MATCH_WINDOW" \
       --jobs "$JOBS"
   fi
 else

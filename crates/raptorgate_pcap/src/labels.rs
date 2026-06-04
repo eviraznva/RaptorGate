@@ -58,6 +58,7 @@ pub struct LabelRow<'a> {
     pub flow_duration_us: Option<u64>,
 }
 
+#[derive(Debug, Clone)]
 pub struct LabelIndex {
     by_flow_id: HashMap<u64, Entry>,
     attack_names: Vec<String>,
