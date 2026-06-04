@@ -1,5 +1,6 @@
 pub mod error;
 pub mod flow_id;
+pub mod parse;
 pub mod stats;
 
 use pyo3::prelude::*;
