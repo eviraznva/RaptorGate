@@ -5,6 +5,8 @@ use std::net::IpAddr;
 use etherparse::SlicedPacket;
 use memmap2::Mmap;
 use pcap_file::pcap::PcapParser;
+use pcap_file::pcapng::blocks::Block;
+use pcap_file::pcapng::PcapNgParser;
 use pcap_file::DataLink;
 
 use crate::error::{PcapError, Result};
@@ -41,6 +43,27 @@ impl PcapIndex {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PcapFormat {
+    Pcap,
+    PcapNg,
+}
+
+fn detect_format(mmap: &[u8]) -> Result<PcapFormat> {
+    if mmap.len() < 4 {
+        return Err(PcapError::PcapParse("file smaller than 4 bytes".into()));
+    }
+    let magic = u32::from_le_bytes([mmap[0], mmap[1], mmap[2], mmap[3]]);
+    match magic {
+        0xa1b2c3d4 | 0xd4c3b2a1 => Ok(PcapFormat::Pcap),
+        0x0a0d0d0a => Ok(PcapFormat::PcapNg),
+        _ => Err(PcapError::PcapParse(format!(
+            "PcapHeader: wrong magic number {:#x}",
+            magic
+        ))),
+    }
+}
+
 pub struct MappedPcap {
     mmap: Mmap,
     linktype: u32,
@@ -50,7 +73,7 @@ impl MappedPcap {
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let file = File::open(path.as_ref()).map_err(PcapError::PcapOpen)?;
         let mmap = unsafe { Mmap::map(&file) }.map_err(PcapError::Mmap)?;
-        let (linktype, _) = linktype_of(&mmap)?;
+        let linktype = linktype_of(&mmap)?;
         Ok(Self { mmap, linktype })
     }
 
@@ -63,10 +86,32 @@ impl MappedPcap {
     }
 }
 
-fn linktype_of(mmap: &[u8]) -> Result<(u32, &'_ [u8])> {
-    let (rest, parser) =
-        PcapParser::new(mmap).map_err(|e| PcapError::PcapParse(e.to_string()))?;
-    Ok((datalink_to_u32(parser.header().datalink), rest))
+fn linktype_of(mmap: &[u8]) -> Result<u32> {
+    match detect_format(mmap)? {
+        PcapFormat::Pcap => {
+            let (_, parser) =
+                PcapParser::new(mmap).map_err(|e| PcapError::PcapParse(e.to_string()))?;
+            Ok(datalink_to_u32(parser.header().datalink))
+        }
+        PcapFormat::PcapNg => {
+            let (mut src, mut parser) =
+                PcapNgParser::new(mmap).map_err(|e| PcapError::PcapParse(e.to_string()))?;
+            while parser.interfaces().is_empty() {
+                match parser.next_block(src) {
+                    Ok((rem, _)) => src = rem,
+                    Err(pcap_file::PcapError::IncompleteBuffer) => {
+                        return Err(PcapError::PcapParse(
+                            "pcapng: no interface description block found".into(),
+                        ));
+                    }
+                    Err(e) => return Err(PcapError::PcapParse(e.to_string())),
+                }
+            }
+            Ok(datalink_to_u32(
+                parser.interfaces()[0].linktype,
+            ))
+        }
+    }
 }
 
 fn datalink_to_u32(d: DataLink) -> u32 {
@@ -82,10 +127,17 @@ fn datalink_to_u32(d: DataLink) -> u32 {
 
 pub fn prepass(mapped: &MappedPcap) -> Result<PcapIndex> {
     let mmap = mapped.mmap();
+    match detect_format(mmap)? {
+        PcapFormat::Pcap => prepass_pcap(mmap, mapped.linktype()),
+        PcapFormat::PcapNg => prepass_pcapng(mmap, mapped.linktype()),
+    }
+}
+
+fn prepass_pcap(mmap: &[u8], linktype: u32) -> Result<PcapIndex> {
     let (mut src, parser) =
         PcapParser::new(mmap).map_err(|e| PcapError::PcapParse(e.to_string()))?;
     let mut index = PcapIndex {
-        linktype: datalink_to_u32(parser.header().datalink),
+        linktype,
         ..PcapIndex::default()
     };
 
@@ -98,7 +150,7 @@ pub fn prepass(mapped: &MappedPcap) -> Result<PcapIndex> {
                     .saturating_sub(mmap.as_ptr() as usize) as u64;
                 let length = pkt.orig_len;
 
-                if let Some(src_ip) = src_ip_from_data(mapped.linktype(), &pkt.data) {
+                if let Some(src_ip) = src_ip_from_data(linktype, &pkt.data) {
                     index.by_src.entry(src_ip).or_default().push(PacketRef {
                         ts,
                         offset,
@@ -109,6 +161,68 @@ pub fn prepass(mapped: &MappedPcap) -> Result<PcapIndex> {
                 }
                 index.record_count += 1;
 
+                if rem.is_empty() {
+                    break;
+                }
+                src = rem;
+            }
+            Err(pcap_file::PcapError::IncompleteBuffer) => break,
+            Err(_) => {
+                index.unparsable += 1;
+                break;
+            }
+        }
+    }
+
+    Ok(index)
+}
+
+fn prepass_pcapng(mmap: &[u8], linktype: u32) -> Result<PcapIndex> {
+    let (mut src, mut parser) =
+        PcapNgParser::new(mmap).map_err(|e| PcapError::PcapParse(e.to_string()))?;
+    let mut index = PcapIndex {
+        linktype,
+        ..PcapIndex::default()
+    };
+
+    loop {
+        match parser.next_block(src) {
+            Ok((rem, block)) => {
+                match block {
+                    Block::EnhancedPacket(epb) => {
+                        let ts = epb.timestamp.as_secs() as f64
+                            + epb.timestamp.subsec_micros() as f64 / 1_000_000.0;
+                        let offset = (epb.data.as_ptr() as usize)
+                            .saturating_sub(mmap.as_ptr() as usize) as u64;
+                        let length = epb.original_len;
+                        if let Some(src_ip) = src_ip_from_data(linktype, &epb.data) {
+                            index.by_src.entry(src_ip).or_default().push(PacketRef {
+                                ts,
+                                offset,
+                                length,
+                            });
+                        } else {
+                            index.unparsable += 1;
+                        }
+                        index.record_count += 1;
+                    }
+                    Block::SimplePacket(spb) => {
+                        let offset = (spb.data.as_ptr() as usize)
+                            .saturating_sub(mmap.as_ptr() as usize) as u64;
+                        let length = spb.original_len;
+                        if let Some(src_ip) = src_ip_from_data(linktype, &spb.data) {
+                            index.by_src.entry(src_ip).or_default().push(PacketRef {
+                                ts: 0.0,
+                                offset,
+                                length,
+                            });
+                        } else {
+                            index.unparsable += 1;
+                        }
+                        index.record_count += 1;
+                    }
+                    _ => {}
+                }
                 if rem.is_empty() {
                     break;
                 }

@@ -29,3 +29,20 @@ def _ensure_wheel_built() -> None:
 
 
 _ensure_wheel_built()
+
+
+def gpu_kernels_work() -> bool:
+    try:
+        import torch
+    except ImportError:
+        return False
+    if not torch.cuda.is_available():
+        return False
+    try:
+        a = torch.ones(2, 2, device="cuda")
+        b = torch.ones(2, 2, device="cuda")
+        c = a + b
+        torch.cuda.synchronize()
+        return bool((c == 2).all().item())
+    except RuntimeError:
+        return False

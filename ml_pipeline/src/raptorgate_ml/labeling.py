@@ -315,4 +315,9 @@ def build_arrow_table(paths: "list[Path]") -> "pyarrow.Table":
         frames.append(FlowLabelIndex.normalize_dataframe(df))
     if not frames:
         raise ValueError(f"no labeled rows in {paths!r}")
-    return _pl.concat(frames).to_arrow()
+    out = _pl.concat(frames)
+    if "timestamp" in out.columns and out.schema["timestamp"].is_temporal():
+        out = out.with_columns(
+            _pl.col("timestamp").dt.timestamp("us").cast(_pl.Float64) / 1_000_000.0
+        )
+    return out.to_arrow()

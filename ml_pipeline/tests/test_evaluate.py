@@ -57,7 +57,7 @@ def _build_constant_onnx(model_path: Path, num_labels: int) -> None:
             helper.make_tensor("bias", TensorProto.FLOAT, [num_labels], bias.tobytes(), raw=True),
         ],
     )
-    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)]), str(model_path))
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)], ir_version=8), str(model_path))
 
 
 def _training_frame(rows: int = 32) -> pl.DataFrame:

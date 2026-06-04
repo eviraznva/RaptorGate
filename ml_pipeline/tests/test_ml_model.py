@@ -6,6 +6,7 @@ import pytest
 import torch
 from click.testing import CliRunner
 
+from conftest import gpu_kernels_work
 from raptorgate_ml.cli import main
 from raptorgate_ml.feature_vector import FIELD_NAMES
 from raptorgate_ml.ml_model import (
@@ -86,11 +87,13 @@ def test_train_cli_requires_gpu(tmp_path: Path):
         ],
     )
 
-    if torch.cuda.is_available():
-        assert result.exit_code == 0, result.output
-    else:
+    if not torch.cuda.is_available():
         assert result.exit_code != 0
         assert "GPU" in result.output
+        return
+    if not gpu_kernels_work():
+        pytest.skip("torch+rocm wheel lacks HIP kernel for this GPU arch")
+    assert result.exit_code == 0, result.output
 
 
 def test_train_schema_rejects_missing_feature_column(tmp_path: Path):
@@ -101,7 +104,7 @@ def test_train_schema_rejects_missing_feature_column(tmp_path: Path):
         _validate_schema(train_path)
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA GPU is required")
+@pytest.mark.skipif(not torch.cuda.is_available() or not gpu_kernels_work(), reason="GPU with working HIP/CUDA kernels is required")
 def test_train_model_writes_onnx_and_metadata_on_cuda(tmp_path: Path):
     train_path = tmp_path / "train.parquet"
     test_path = tmp_path / "test.parquet"
