@@ -94,6 +94,17 @@ patch_torch_execstack() {
 
 patch_torch_execstack
 
+if [[ "${SKIP_TESTS:-0}" != "1" ]]; then
+  log "running python tests (python -m pytest tests/ -v)"
+  if ! (cd /opt/raptorgate-ml && python -m pytest tests/ -v) 2>&1 | tee /tmp/raptorgate-pytest.log; then
+    log "python tests FAILED; aborting (see /tmp/raptorgate-pytest.log)"
+    exit 1
+  fi
+  log "python tests passed"
+else
+  log "python tests skipped (SKIP_TESTS=1)"
+fi
+
 if [[ "$SKIP_DOWNLOAD" != "1" ]]; then
   log "download dataset=$DATASET target=$RAW_DIR"
   raptorgate-ml download --dataset "$DATASET" --target "$RAW_DIR"

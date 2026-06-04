@@ -1,7 +1,7 @@
 import bisect
 import hashlib
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -82,7 +82,7 @@ def _epoch_seconds(raw: object) -> float | None:
     if raw is None:
         return None
     if isinstance(raw, datetime):
-        return raw.replace(tzinfo=UTC).timestamp()
+        return raw.replace(tzinfo=timezone.utc).timestamp()
     try:
         return float(raw)
     except (TypeError, ValueError):

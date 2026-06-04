@@ -1,1 +1,11 @@
-docker compose --profile rocm run --rm pipeline --build
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Default to skipping the dataset download — the on-disk /data/raw/ is the
+# source of truth. Override by exporting SKIP_DOWNLOAD=0 (forces a fresh
+# download even when the data exists; failures surface during build/train).
+export SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-1}"
+
+cd "$(dirname "$0")"
+docker compose build pipeline &&
+docker compose --profile rocm run --rm pipeline

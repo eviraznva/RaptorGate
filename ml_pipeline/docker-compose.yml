@@ -50,8 +50,8 @@ services:
   cli-cuda:
     profiles: ["cuda"]
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: ml_pipeline/Dockerfile
       target: raptorgate-ml-cuda
     working_dir: /data
     volumes:
@@ -71,8 +71,8 @@ services:
   cli-rocm:
     profiles: ["rocm"]
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: ml_pipeline/Dockerfile
       target: raptorgate-ml-rocm
     working_dir: /data
     volumes:
@@ -95,8 +95,8 @@ services:
     profiles: ["rocm"]
     image: raptorgate-ml-pipeline:patched
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: ml_pipeline/Dockerfile
       target: raptorgate-ml-rocm
     working_dir: /data
     volumes:

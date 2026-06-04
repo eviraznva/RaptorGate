@@ -8,7 +8,7 @@ import warnings
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -619,7 +619,7 @@ def train_model(
     checksum = _sha256(config.out_path)
 
     metadata = {
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "artifact": str(config.out_path),
         "checksum_sha256": checksum,
         "architecture": "RaptorGateNet",

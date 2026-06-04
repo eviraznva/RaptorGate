@@ -39,7 +39,62 @@
 #   self-contained.
 
 ARG PYTHON_VERSION=3.10
-ARG ROCM_VERSION=6.2.0
+ARG ROCM_VERSION=6.2.4
+
+
+# --- Rust builder: tests + builds the raptorgate_pcap maturin wheel.
+# Mirrors docker/firewall/dockerfile (same Rust version, same apt deps,
+# same two-stage COPY, same nextest gate, same warm-build). The firewall
+# pins to bullseye; we use bookworm because Bullseye only ships Python 3.9
+# and maturin's abi3-py310 build needs Python 3.10+. The firewall
+# installs protoc; raptorgate_pcap's only Rust dep with a proto build is
+# ngfw, which uses protoc-bin-vendored — so no system protoc needed, but
+# the .proto source files still have to be on disk for ngfw's build.rs
+# (it reads ../../proto/* relative to crates/raptorgate/), so we mirror
+# the firewall's `COPY proto ./proto` step.
+FROM rust:1.93.1-slim-bookworm AS rust-builder
+
+ARG PYTHON_VERSION=3.10
+ENV PYTHON_VERSION=${PYTHON_VERSION}
+WORKDIR /usr/src/pcap
+
+RUN apt-get update
+RUN apt-get install -y --no-install-recommends \
+        pkg-config \
+        libpcap-dev \
+        build-essential \
+        ca-certificates \
+        curl \
+        unzip \
+        python3.11 \
+        python3.11-dev \
+        python3-pip \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -sf /usr/bin/python3.11 /usr/local/bin/python3 \
+ && ln -sf /usr/bin/python3.11 /usr/local/bin/python
+
+# Upgrade pip first; Debian's pip is too old for the `--break-system-packages` flag.
+RUN python3 -m pip install --no-cache-dir --break-system-packages --upgrade pip
+
+RUN python3 -m pip install --no-cache-dir --break-system-packages maturin pytest
+RUN cargo install --locked cargo-nextest
+
+# Two-stage COPY (firewall pattern): manifest layer is cached across source edits.
+COPY Cargo.toml Cargo.lock ./
+COPY proto ./proto
+COPY ./crates ./crates
+
+# Gate the image build on Rust tests. The firewall uses `-- --skip tls::` to
+# dodge a flaky TLS suite; raptorgate_pcap has no such suite.
+RUN cargo nextest run -p raptorgate-pcap --no-fail-fast
+
+# Build the wheel into a known path the runtime stages will COPY. Cleanup
+# is in the same RUN so /usr/src/pcap/target never lands in a layer — a
+# separate RUN would commit the full target/ tree (~5–10 GB) before the
+# wheel is copied out.
+WORKDIR /usr/src/pcap/crates/raptorgate_pcap
+RUN maturin build --release --out /opt/raptorgate-pcap/wheels \
+ && rm -rf /usr/src/pcap/target /root/.cargo/registry /root/.cargo/git
 
 
 # --- CUDA target ------------------------------------------------------------
@@ -65,9 +120,17 @@ ARG TORCH_CUDA_INDEX=https://download.pytorch.org/whl/cu124
 RUN pip install --extra-index-url "${TORCH_CUDA_INDEX}" \
         torch
 
-COPY pyproject.toml README.md ./
-COPY src ./src
-COPY scripts /opt/raptorgate-ml/scripts
+# raptorgate_pcap Rust extension (built in rust-builder).
+COPY --from=rust-builder /opt/raptorgate-pcap/wheels /opt/raptorgate-pcap/wheels
+RUN pip install /opt/raptorgate-pcap/wheels/raptorgate_pcap-*.whl
+
+# pytest is needed by entrypoint-pipeline.sh's test gate.
+RUN pip install --no-cache-dir pytest
+
+COPY ml_pipeline/pyproject.toml ml_pipeline/README.md ./
+COPY ml_pipeline/src ./src
+COPY ml_pipeline/tests ./tests
+COPY ml_pipeline/scripts /opt/raptorgate-ml/scripts
 RUN chmod +x /opt/raptorgate-ml/scripts/*.sh \
  && pip install --no-deps . \
  && pip install .
@@ -106,12 +169,23 @@ RUN pip install --index-url "${TORCH_ROCM_INDEX}" \
  && apt-get update \
  && apt-get install -y --no-install-recommends patchelf \
  && rm -rf /var/lib/apt/lists/* \
- && find /usr/local/lib/python*/site-packages/torch/lib -maxdepth 1 -type f -name '*.so*' \
-        -exec patchelf --clear-execstack {} +
+ && torch_lib=$(python -c 'import os, torch; print(os.path.join(os.path.dirname(torch.__file__), "lib"))' 2>/dev/null) \
+ && if [[ -n "$torch_lib" && -d "$torch_lib" ]]; then \
+      find "$torch_lib" -maxdepth 1 -type f -name '*.so*' -not -name '*.hsaco' \
+        -exec patchelf --clear-execstack {} +; \
+    fi
 
-COPY pyproject.toml README.md ./
-COPY src ./src
-COPY scripts /opt/raptorgate-ml/scripts
+# raptorgate_pcap Rust extension (built in rust-builder).
+COPY --from=rust-builder /opt/raptorgate-pcap/wheels /opt/raptorgate-pcap/wheels
+RUN pip install /opt/raptorgate-pcap/wheels/raptorgate_pcap-*.whl
+
+# pytest is needed by entrypoint-pipeline.sh's test gate.
+RUN pip install --no-cache-dir pytest
+
+COPY ml_pipeline/pyproject.toml ml_pipeline/README.md ./
+COPY ml_pipeline/src ./src
+COPY ml_pipeline/tests ./tests
+COPY ml_pipeline/scripts /opt/raptorgate-ml/scripts
 RUN chmod +x /opt/raptorgate-ml/scripts/*.sh \
  && pip install --no-deps . \
  && pip install .
