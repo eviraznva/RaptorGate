@@ -17,6 +17,9 @@ pub enum PcapError {
 
     #[error("invalid label tuple at row {row}")]
     InvalidLabelTuple { row: usize },
+
+    #[error("rayon thread pool: {0}")]
+    ThreadPool(#[source] rayon::ThreadPoolBuildError),
 }
 
 impl From<PcapError> for PyErr {
