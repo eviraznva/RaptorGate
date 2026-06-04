@@ -10,7 +10,7 @@ from raptorgate_ml.datasets import (
     get_dataset,
 )
 from raptorgate_ml.feature_vector import FIELD_NAMES
-from raptorgate_ml.labeling import FlowLabelIndex, discover_label_files, label_distribution
+from raptorgate_ml.labeling import discover_label_files, label_distribution
 from raptorgate_ml.ml_model import (
     DEFAULT_ACCURACY_GATE,
     DEFAULT_EVAL_GATE_METRIC,
@@ -96,21 +96,27 @@ def build(
     if pcap_dir is not None and effective_test_out is None:
         effective_test_out = out_path.with_name("test.parquet")
 
+    from raptorgate_ml.labeling import build_arrow_table
+    from raptorgate_pcap import LabelIndex as RustLabelIndex
+
     label_files = discover_label_files(labels_dir)
     if not label_files:
         raise click.ClickException(f"no label CSV/Parquet files under {labels_dir}")
-    idx = FlowLabelIndex.from_cicids_files(label_files)
+    table = build_arrow_table(label_files)
+    idx = RustLabelIndex()
+    idx.absorb_arrow(table)
     click.echo(f"label index: {len(idx)} flows from {len(label_files)} files")
     click.echo(
         "label stats: "
-        f"source_rows={idx.stats.source_rows} indexed_rows={idx.stats.indexed_rows} "
-        f"timed_rows={idx.stats.timed_rows} null_labels={idx.stats.null_labels} "
-        f"invalid_rows={idx.stats.invalid_rows}"
+        f"source_rows={idx.source_rows} indexed_rows={idx.indexed_rows} "
+        f"timed_rows={idx.timed_rows} null_labels={idx.null_labels} "
+        f"invalid_rows={idx.invalid_rows}"
     )
 
     result = run_build(
         pcap_paths,
         idx,
+        table,
         out_path,
         window_secs=window,
         test_out_path=effective_test_out,

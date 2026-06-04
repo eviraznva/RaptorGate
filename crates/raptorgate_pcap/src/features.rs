@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 use etherparse::SlicedPacket;
 use ngfw::dpi::{DpiClassifier, InspectResult};
@@ -146,6 +146,10 @@ fn extract_bucket(
 
             if let InspectResult::Done(ctx) = classifier.inspect_packet(&sliced) {
                 fv.set_from_dpi(&ctx);
+                if ctx.dns_is_response == Some(true) {
+                    let rcode = udp_payload_rcode(&sliced).unwrap_or(0);
+                    agg.observe_dns_response(src_ip_pkt, rcode, r.ts);
+                }
             }
 
             let iat_dur = Duration::from_secs_f64(iat);
@@ -204,6 +208,17 @@ fn parse_sliced<'a>(linktype: u32, frame: &'a [u8]) -> Option<SlicedPacket<'a>> 
     }
 }
 
-pub fn f64_to_system_time(ts: f64) -> SystemTime {
-    UNIX_EPOCH + Duration::from_secs_f64(ts.max(0.0))
+// `DpiContext::dns_rcode` is not populated by the data plane's
+// `dns_to_dpi_context`. Re-parse the DNS header locally so the
+// FlowStatsAggregator sees the real rcode.
+fn udp_payload_rcode(sliced: &SlicedPacket<'_>) -> Option<u16> {
+    let udp = match sliced.transport.as_ref()? {
+        etherparse::TransportSlice::Udp(u) => u,
+        _ => return None,
+    };
+    let payload = udp.payload();
+    if payload.len() < 4 {
+        return None;
+    }
+    Some((payload[3] & 0x0f) as u16)
 }

@@ -299,3 +299,20 @@ def label_distribution(df: pl.DataFrame) -> dict[str, int]:
         return {}
     counts = df.group_by("label").len().sort("label")
     return {row["label"]: int(row["len"]) for row in counts.iter_rows(named=True)}
+
+
+def build_arrow_table(paths: "list[Path]") -> "pyarrow.Table":
+    """Load CICIDS-format label files and concatenate them into a single
+    pyarrow.Table with the column shape that raptorgate_pcap.LabelIndex
+    .absorb_arrow expects."""
+    import polars as _pl
+    from raptorgate_ml.datasets import load_cicids_labels
+    frames: list[_pl.DataFrame] = []
+    for path in paths:
+        df = load_cicids_labels(path)
+        if df.is_empty() or "label" not in df.columns:
+            continue
+        frames.append(FlowLabelIndex.normalize_dataframe(df))
+    if not frames:
+        raise ValueError(f"no labeled rows in {paths!r}")
+    return _pl.concat(frames).to_arrow()

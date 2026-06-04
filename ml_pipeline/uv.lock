@@ -1083,6 +1083,7 @@ dependencies = [
     { name = "onnxscript" },
     { name = "polars" },
     { name = "pyarrow" },
+    { name = "raptorgate-pcap" },
     { name = "requests" },
     { name = "scapy" },
     { name = "torch" },
@@ -1109,6 +1110,7 @@ requires-dist = [
     { name = "onnxscript", specifier = ">=0.4" },
     { name = "polars", specifier = ">=1.0" },
     { name = "pyarrow", specifier = ">=16" },
+    { name = "raptorgate-pcap", editable = "../crates/raptorgate_pcap" },
     { name = "requests", specifier = ">=2.31" },
     { name = "scapy", specifier = ">=2.5" },
     { name = "torch", specifier = ">=2.4" },
@@ -1122,6 +1124,11 @@ dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.5" },
 ]
+
+[[package]]
+name = "raptorgate-pcap"
+version = "0.1.0"
+source = { editable = "../crates/raptorgate_pcap" }
 
 [[package]]
 name = "requests"

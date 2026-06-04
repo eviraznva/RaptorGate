@@ -18,7 +18,7 @@ import torch
 from torch import nn
 from torch.export import Dim
 
-from raptorgate_ml.feature_vector import FIELD_NAMES
+from raptorgate_ml.feature_names import FIELD_NAMES
 
 BINARY_LABELS: tuple[str, str] = ("benign", "malicious")
 DEFAULT_ATTACK_LABELS: tuple[str, str] = ("BENIGN", "malicious")

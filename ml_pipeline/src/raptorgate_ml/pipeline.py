@@ -1,26 +1,21 @@
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from __future__ import annotations
+
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from multiprocessing import get_context
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from typing import Sequence
 
 import numpy as np
 import polars as pl
+import pyarrow as pa
 
-from raptorgate_ml import dpi as dpi_mod
-from raptorgate_ml.feature_vector import FIELD_NAMES, MlFeatureVector
-from raptorgate_ml.flow_stats import FlowStatsAggregator
-from raptorgate_ml.labeling import FiveTuple, FlowLabelIndex, flow_id_for, label_distribution
-from raptorgate_ml.pcap_reader import (
-    ack_bit,
-    fin_bit,
-    has,
-    is_syn,
-    iter_packets,
-    psh_bit,
-    rst_bit,
-    syn_bit,
-)
+from raptorgate_ml.feature_names import FIELD_NAMES
+
+BENIGN = "benign"
+MALICIOUS = "malicious"
+RAYON_THREADS_ENV = "RAPTORGATE_PCAP_RAYON_THREADS"
 
 
 @dataclass
@@ -37,143 +32,127 @@ class BuildResult:
     test_out_path: Path | None = None
 
 
+def _schema() -> dict:
+    return (
+        {c: pl.Float32 for c in FIELD_NAMES}
+        | {
+            "label": pl.String,
+            "attack_label": pl.String,
+            "label_matched": pl.Boolean,
+            "flow_id": pl.UInt64,
+            "source_file": pl.String,
+        }
+    )
+
+
+def _empty_training_frame() -> pl.DataFrame:
+    return pl.DataFrame(schema=_schema())
+
+
 @dataclass
 class _PartResult:
-    train_path: Path
-    train_rows: int
-    train_class_counts: dict[str, int]
-    train_label_match_counts: dict[str, int]
-    train_attack_counts: dict[str, int]
-    test_path: Path | None = None
-    test_rows: int | None = None
-    test_class_counts: dict[str, int] | None = None
-    test_label_match_counts: dict[str, int] | None = None
-    test_attack_counts: dict[str, int] | None = None
+    features: np.ndarray
+    label: np.ndarray
+    attack_idx: np.ndarray
+    matched: np.ndarray
+    flow_id: np.ndarray
+    source_file: str
+    n_rows: int
 
 
-_TRAINING_SCHEMA = (
-    {c: pl.Float32 for c in FIELD_NAMES}
-    | {
-        "label": pl.String,
-        "attack_label": pl.String,
-        "label_matched": pl.Boolean,
-        "flow_id": pl.UInt64,
-        "source_file": pl.String,
-    }
-)
+def _build_one(
+    pcap_path: str,
+    table: pa.Table,
+    attack_names: list[str],
+    window_secs: float,
+    num_workers: int | None,
+) -> _PartResult:
+    from pathlib import Path as _P
+    from raptorgate_pcap import LabelIndex, build_features_py as _bf
 
-
-def _pkt_to_features(
-    pkt,
-    agg: FlowStatsAggregator,
-    seen_flows: set,
-) -> MlFeatureVector:
-    fv = MlFeatureVector()
-    fv.init_from_packet(
-        ip_version=pkt.ip_version,
-        ip_proto=pkt.ip_proto,
-        ttl=pkt.ttl,
-        src_port=pkt.src_port,
-        dst_port=pkt.dst_port,
-        payload_len=pkt.payload_len,
-        arrival_ts=pkt.ts,
+    idx = LabelIndex()
+    idx.absorb_arrow(table)
+    out = _bf(_P(pcap_path), idx, window_secs=window_secs, num_workers=num_workers)
+    n = out.n_rows
+    features = np.asarray(out.features, dtype=np.float32).reshape(n, 38)
+    return _PartResult(
+        features=features,
+        label=np.frombuffer(out.label, dtype=np.uint8).copy(),
+        attack_idx=np.asarray(out.attack_idx, dtype=np.int32),
+        matched=np.asarray(out.matched, dtype=bool),
+        flow_id=np.asarray(out.flow_id, dtype=np.uint64),
+        source_file=_P(pcap_path).name,
+        n_rows=n,
     )
 
-    if pkt.tcp_flags is not None:
-        fv.set_from_tcp(
-            syn=has(pkt.tcp_flags, syn_bit()),
-            ack=has(pkt.tcp_flags, ack_bit()),
-            fin=has(pkt.tcp_flags, fin_bit()),
-            rst=has(pkt.tcp_flags, rst_bit()),
-            psh=has(pkt.tcp_flags, psh_bit()),
-            window=pkt.tcp_window or 0,
-        )
 
-    ctx = dpi_mod.inspect(
-        pkt.payload,
-        pkt.src_port,
-        pkt.dst_port,
-        udp=(pkt.ip_proto == 17),
-    )
-    fv.set_from_dpi(ctx)
-
-    flow_key = (pkt.src_ip, pkt.dst_ip, pkt.src_port, pkt.dst_port, pkt.ip_proto)
-    is_new_flow = flow_key not in seen_flows
-    if is_new_flow:
-        seen_flows.add(flow_key)
-
-    iat_seconds = agg.iat_since_last(pkt.src_ip, pkt.ts)
-    agg.observe_packet(
-        src=pkt.src_ip,
-        dst=pkt.dst_ip,
-        is_syn=is_syn(pkt.tcp_flags),
-        is_new_flow=is_new_flow,
-        now=pkt.ts,
-    )
-    if ctx.app_proto == 3 and ctx.dns_answer_count >= 0 and pkt.payload_len > 0:
-        agg.observe_dns_response(pkt.src_ip, ctx.dns_rcode, pkt.ts)
-
-    snap = agg.snapshot(pkt.src_ip, pkt.ts)
-    fv.set_flow_snapshot(snap, iat_seconds)
-    return fv
-
-
-def build_training_rows(
-    pcap_paths: list[Path],
-    label_index: FlowLabelIndex,
-    window_secs: float = 60.0,
-    include_unmatched: bool = False,
+def _combine(
+    parts: Sequence[_PartResult],
+    attack_names: list[str],
+    include_unmatched: bool,
 ) -> pl.DataFrame:
-    agg = FlowStatsAggregator(window_secs=window_secs)
-    seen_flows: set = set()
+    if not parts:
+        return _empty_training_frame()
 
-    feature_rows: list[np.ndarray] = []
-    labels: list[str] = []
-    attack_labels: list[str] = []
-    label_matched: list[bool] = []
-    flow_ids: list[int] = []
-    source_files: list[str] = []
+    feats: list[np.ndarray] = []
+    labels: list[np.ndarray] = []
+    attack_idx_parts: list[np.ndarray] = []
+    matched_parts: list[np.ndarray] = []
+    flow_ids: list[np.ndarray] = []
+    sources: list[np.ndarray] = []
 
-    for pcap in pcap_paths:
-        for pkt in iter_packets(pcap):
-            fv = _pkt_to_features(pkt, agg, seen_flows)
-            tup = FiveTuple(
-                src_ip=pkt.src_ip,
-                dst_ip=pkt.dst_ip,
-                src_port=pkt.src_port,
-                dst_port=pkt.dst_port,
-                proto=pkt.ip_proto,
-            )
-            match = label_index.match_for(tup, pkt.ts)
-            if not include_unmatched and not match.matched:
-                continue
-            feature_rows.append(fv.to_array())
-            labels.append(match.label)
-            attack_labels.append(match.attack_label)
-            label_matched.append(match.matched)
-            flow_ids.append(flow_id_for(tup))
-            source_files.append(pcap.name)
+    for p in parts:
+        mask = np.ones(p.n_rows, dtype=bool) if include_unmatched else p.matched
+        if not mask.any():
+            continue
+        feats.append(p.features[mask])
+        labels.append(p.label[mask])
+        attack_idx_parts.append(p.attack_idx[mask])
+        matched_parts.append(p.matched[mask])
+        flow_ids.append(p.flow_id[mask])
+        sources.append(np.full(int(mask.sum()), p.source_file, dtype=object))
 
-    if not feature_rows:
-        return pl.DataFrame(schema=_TRAINING_SCHEMA)
+    if not feats:
+        return _empty_training_frame()
 
-    mat = np.stack(feature_rows, axis=0)
-    data = {name: mat[:, i].astype(np.float32) for i, name in enumerate(FIELD_NAMES)}
-    data["label"] = labels
-    data["attack_label"] = attack_labels
-    data["label_matched"] = label_matched
-    data["flow_id"] = np.array(flow_ids, dtype=np.uint64)
-    data["source_file"] = source_files
-    return pl.DataFrame(data)
+    feat = np.concatenate(feats, axis=0)
+    lbl = np.concatenate(labels)
+    aidx = np.concatenate(attack_idx_parts)
+    mtc = np.concatenate(matched_parts)
+    fid = np.concatenate(flow_ids)
+    src = np.concatenate(sources)
+    attack_label = np.array(
+        [attack_names[i] if 0 <= i < len(attack_names) else "unmatched" for i in aidx],
+        dtype=object,
+    )
+    label_str = np.where(lbl == 1, MALICIOUS, BENIGN).astype(object)
+
+    data: dict[str, object] = {
+        name: feat[:, i].astype(np.float32, copy=False) for i, name in enumerate(FIELD_NAMES)
+    }
+    data.update(
+        {
+            "label": label_str,
+            "attack_label": attack_label,
+            "label_matched": mtc,
+            "flow_id": fid,
+            "source_file": src,
+        }
+    )
+    return pl.DataFrame(data, schema=_schema())
 
 
-def write_parquet(df: pl.DataFrame, out_path: Path) -> None:
+def _write_parquet(df: pl.DataFrame, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(out_path, compression="zstd")
 
 
-def _empty_training_frame() -> pl.DataFrame:
-    return pl.DataFrame(schema=_TRAINING_SCHEMA)
+def _resolve_num_workers() -> int | None:
+    raw = os.environ.get(RAYON_THREADS_ENV)
+    if not raw or not raw.isdigit():
+        return None
+    n = int(raw)
+    return n if n > 0 else None
 
 
 def _split_train_test(
@@ -275,121 +254,19 @@ def _bool_distribution(df: pl.DataFrame, column: str) -> dict[str, int]:
     return {str(row[column]).lower(): int(row["len"]) for row in counts.iter_rows(named=True)}
 
 
-def _value_distribution(df: pl.DataFrame, column: str) -> dict[str, int]:
+def _distribution(df: pl.DataFrame, column: str) -> dict[str, int]:
     if column not in df.columns or df.is_empty():
         return {}
     counts = df.group_by(column).len().sort(column)
     return {str(row[column]): int(row["len"]) for row in counts.iter_rows(named=True)}
 
 
-def _merge_parquet_parts(part_paths: list[Path], out_path: Path) -> None:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    if not part_paths:
-        write_parquet(_empty_training_frame(), out_path)
-        return
-    pl.scan_parquet([str(path) for path in part_paths]).sink_parquet(
-        out_path,
-        compression="zstd",
-    )
-
-
-def _build_part(
-    pcap: Path,
-    label_index: FlowLabelIndex,
-    out_dir: Path,
-    part_index: int,
-    window_secs: float,
-    test_ratio: float | None,
-    seed: int,
-    include_unmatched: bool,
-) -> _PartResult:
-    df = build_training_rows(
-        [pcap],
-        label_index,
-        window_secs=window_secs,
-        include_unmatched=include_unmatched,
-    )
-
-    if test_ratio is None:
-        train_path = out_dir / f"part-{part_index:04d}-train.parquet"
-        write_parquet(df, train_path)
-        return _PartResult(
-            train_path=train_path,
-            train_rows=df.height,
-            train_class_counts=label_distribution(df),
-            train_label_match_counts=_bool_distribution(df, "label_matched"),
-            train_attack_counts=_value_distribution(df, "attack_label"),
-        )
-
-    train_df, test_df = _split_train_test(df, test_ratio, seed)
-    train_path = out_dir / f"part-{part_index:04d}-train.parquet"
-    test_path = out_dir / f"part-{part_index:04d}-test.parquet"
-    write_parquet(train_df, train_path)
-    write_parquet(test_df, test_path)
-    return _PartResult(
-        train_path=train_path,
-        train_rows=train_df.height,
-        train_class_counts=label_distribution(train_df),
-        train_label_match_counts=_bool_distribution(train_df, "label_matched"),
-        train_attack_counts=_value_distribution(train_df, "attack_label"),
-        test_path=test_path,
-        test_rows=test_df.height,
-        test_class_counts=label_distribution(test_df),
-        test_label_match_counts=_bool_distribution(test_df, "label_matched"),
-        test_attack_counts=_value_distribution(test_df, "attack_label"),
-    )
-
-
-def _build_parts(
-    pcap_paths: list[Path],
-    label_index: FlowLabelIndex,
-    out_dir: Path,
-    window_secs: float,
-    test_ratio: float | None,
-    seed: int,
-    jobs: int,
-    include_unmatched: bool,
-) -> list[_PartResult]:
-    if jobs <= 1 or len(pcap_paths) <= 1:
-        return [
-            _build_part(
-                pcap,
-                label_index,
-                out_dir,
-                part_index,
-                window_secs,
-                test_ratio,
-                seed,
-                include_unmatched,
-            )
-            for part_index, pcap in enumerate(pcap_paths)
-        ]
-
-    results: list[_PartResult] = []
-    with ProcessPoolExecutor(max_workers=jobs, mp_context=get_context("spawn")) as pool:
-        futures = [
-            pool.submit(
-                _build_part,
-                pcap,
-                label_index,
-                out_dir,
-                part_index,
-                window_secs,
-                test_ratio,
-                seed,
-                include_unmatched,
-            )
-            for part_index, pcap in enumerate(pcap_paths)
-        ]
-        for future in as_completed(futures):
-            results.append(future.result())
-    return sorted(results, key=lambda result: result.train_path.name)
-
-
 def run_build(
-    pcap_paths: list[Path],
-    label_index: FlowLabelIndex,
+    pcap_paths: Sequence[Path],
+    label_index,  # raptorgate_pcap.LabelIndex
+    label_table: pa.Table,  # pyarrow.Table
     out_path: Path,
+    *,
     window_secs: float = 60.0,
     test_out_path: Path | None = None,
     test_ratio: float = 0.2,
@@ -397,51 +274,63 @@ def run_build(
     jobs: int = 1,
     include_unmatched: bool = False,
 ) -> BuildResult:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with TemporaryDirectory(prefix="raptorgate-ml-build-", dir=out_path.parent) as tmp:
-        part_results = _build_parts(
-            pcap_paths,
-            label_index,
-            Path(tmp),
-            window_secs,
-            test_ratio if test_out_path is not None else None,
-            seed,
-            jobs,
-            include_unmatched,
-        )
-        _merge_parquet_parts([result.train_path for result in part_results], out_path)
-
-        test_rows = None
-        test_class_counts = None
-        test_label_match_counts = None
-        test_attack_counts = None
+    pcap_list = [Path(p) for p in pcap_paths]
+    if not pcap_list:
+        _write_parquet(_empty_training_frame(), out_path)
         if test_out_path is not None:
-            _merge_parquet_parts(
-                [result.test_path for result in part_results if result.test_path is not None],
-                test_out_path,
-            )
-            test_rows = sum(result.test_rows or 0 for result in part_results)
-            test_class_counts = _merge_counts(
-                [result.test_class_counts or {} for result in part_results]
-            )
-            test_label_match_counts = _merge_counts(
-                [result.test_label_match_counts or {} for result in part_results]
-            )
-            test_attack_counts = _merge_counts(
-                [result.test_attack_counts or {} for result in part_results]
-            )
+            _write_parquet(_empty_training_frame(), test_out_path)
+        return BuildResult(
+            rows=0,
+            class_counts={},
+            out_path=out_path,
+            test_out_path=test_out_path,
+        )
 
+    attack_names: list[str] = list(label_index.attack_names)
+    num_workers = _resolve_num_workers()
+    ordered: list[tuple[Path, _PartResult]] = []
+
+    if jobs <= 1 or len(pcap_list) <= 1:
+        for p in pcap_list:
+            ordered.append(
+                (p, _build_one(str(p), label_table, attack_names, window_secs, num_workers))
+            )
+    else:
+        with ProcessPoolExecutor(max_workers=jobs, mp_context=get_context("spawn")) as pool:
+            futs = {
+                p: pool.submit(
+                    _build_one, str(p), label_table, attack_names, window_secs, num_workers
+                )
+                for p in pcap_list
+            }
+            for p in pcap_list:
+                ordered.append((p, futs[p].result()))
+
+    parts = [pr for _, pr in ordered]
+    df = _combine(parts, attack_names, include_unmatched)
+
+    if test_out_path is not None:
+        train_df, test_df = _split_train_test(df, test_ratio, seed)
+        _write_parquet(train_df, out_path)
+        _write_parquet(test_df, test_out_path)
+        return BuildResult(
+            rows=train_df.height,
+            class_counts=_distribution(train_df, "label"),
+            out_path=out_path,
+            label_match_counts=_bool_distribution(train_df, "label_matched"),
+            attack_counts=_distribution(train_df, "attack_label"),
+            test_rows=test_df.height,
+            test_class_counts=_distribution(test_df, "label"),
+            test_label_match_counts=_bool_distribution(test_df, "label_matched"),
+            test_attack_counts=_distribution(test_df, "attack_label"),
+            test_out_path=test_out_path,
+        )
+
+    _write_parquet(df, out_path)
     return BuildResult(
-        rows=sum(result.train_rows for result in part_results),
-        class_counts=_merge_counts([result.train_class_counts for result in part_results]),
+        rows=df.height,
+        class_counts=_distribution(df, "label"),
         out_path=out_path,
-        label_match_counts=_merge_counts(
-            [result.train_label_match_counts for result in part_results]
-        ),
-        attack_counts=_merge_counts([result.train_attack_counts for result in part_results]),
-        test_rows=test_rows,
-        test_class_counts=test_class_counts,
-        test_label_match_counts=test_label_match_counts,
-        test_attack_counts=test_attack_counts,
-        test_out_path=test_out_path,
+        label_match_counts=_bool_distribution(df, "label_matched"),
+        attack_counts=_distribution(df, "attack_label"),
     )

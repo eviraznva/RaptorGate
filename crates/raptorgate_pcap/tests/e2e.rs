@@ -135,3 +135,143 @@ fn build_features_matches_label_for_known_flow() {
 
     std::fs::remove_file(&path).ok();
 }
+
+fn dns_response_frame(
+    src: [u8; 4],
+    dst: [u8; 4],
+    sport: u16,
+    dport: u16,
+    rcode: u16,
+) -> Vec<u8> {
+    let mut dns = Vec::new();
+    dns.extend_from_slice(&0x1234u16.to_be_bytes());
+    let rcode_byte = (rcode & 0x0f) as u8;
+    let byte0 = 0x81u8;
+    let byte1 = 0x80u8 | rcode_byte;
+    dns.extend_from_slice(&[byte0, byte1]);
+    dns.extend_from_slice(&1u16.to_be_bytes());
+    dns.extend_from_slice(&0u16.to_be_bytes());
+    dns.extend_from_slice(&0u16.to_be_bytes());
+    dns.extend_from_slice(&0u16.to_be_bytes());
+    dns.extend_from_slice(b"\x07example\x03com\x00");
+    dns.extend_from_slice(&1u16.to_be_bytes());
+    dns.extend_from_slice(&1u16.to_be_bytes());
+
+    let builder = PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [6, 7, 8, 9, 10, 11])
+        .ipv4(src, dst, 64)
+        .udp(sport, dport);
+    let size = builder.size(dns.len());
+    let mut out = Vec::with_capacity(size);
+    builder.write(&mut out, &dns).unwrap();
+    out
+}
+
+const NXDOMAIN_RATIO_IDX: usize = 36;
+
+fn nxdomain_row(row: &[f32]) -> f32 {
+    row[NXDOMAIN_RATIO_IDX]
+}
+
+#[test]
+fn dns_rcode_populates_nxdomain_ratio() {
+    let frames = vec![
+        (
+            1,
+            0,
+            dns_response_frame([10, 0, 0, 1], [10, 0, 0, 2], 53, 33333, 3),
+        ),
+        (
+            2,
+            0,
+            dns_response_frame([10, 0, 0, 1], [10, 0, 0, 2], 53, 33334, 3),
+        ),
+    ];
+    let path = write_pcap(&frames);
+
+    let mapped = MappedPcap::open(&path).unwrap();
+    let labels = LabelIndex::new();
+    let classifier = Arc::new(DpiClassifier::new());
+
+    let out = build_features(
+        &mapped,
+        &labels,
+        classifier,
+        BuildOptions {
+            num_workers: Some(1),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(out.n_rows, 2);
+    let r0 = nxdomain_row(&out.features[0..38]);
+    let r1 = nxdomain_row(&out.features[38..76]);
+    assert!(
+        r0 < r1,
+        "expected nxdomain_ratio to accumulate after a NXDOMAIN response; got {r0} then {r1}"
+    );
+    assert!(r1 > 0.0);
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn split_http_request_reassembles_into_http() {
+    let full = b"GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: test\r\n\r\n";
+    let split_at = "GET / HTTP/1.1\r\n".len();
+    let part1 = &full[..split_at];
+    let part2 = &full[split_at..];
+
+    let frames = vec![
+        (
+            1,
+            0,
+            http_get_request_frame_split([10, 0, 0, 1], [10, 0, 0, 2], 12345, 80, part1),
+        ),
+        (
+            2,
+            0,
+            http_get_request_frame_split([10, 0, 0, 1], [10, 0, 0, 2], 12345, 80, part2),
+        ),
+    ];
+    let path = write_pcap(&frames);
+
+    let mapped = MappedPcap::open(&path).unwrap();
+    let labels = LabelIndex::new();
+    let classifier = Arc::new(DpiClassifier::new());
+
+    let out = build_features(
+        &mapped,
+        &labels,
+        classifier,
+        BuildOptions {
+            num_workers: Some(1),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(out.n_rows, 2);
+    let row0_host_entropy = out.features[21];
+    let row1_host_entropy = out.features[21 + 38];
+    assert_eq!(row0_host_entropy, 0.0, "row 0 expected no Host (partial request)");
+    assert!(row1_host_entropy > 0.0, "row 1 expected Host entropy > 0");
+
+    std::fs::remove_file(&path).ok();
+}
+
+fn http_get_request_frame_split(
+    src: [u8; 4],
+    dst: [u8; 4],
+    sport: u16,
+    dport: u16,
+    payload: &[u8],
+) -> Vec<u8> {
+    let builder = PacketBuilder::ethernet2([1, 2, 3, 4, 5, 6], [6, 7, 8, 9, 10, 11])
+        .ipv4(src, dst, 64)
+        .tcp(sport, dport, 1000, 0);
+    let size = builder.size(payload.len());
+    let mut out = Vec::with_capacity(size);
+    builder.write(&mut out, payload).unwrap();
+    out
+}
