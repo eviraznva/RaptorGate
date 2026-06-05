@@ -88,7 +88,8 @@ services:
     tty: true
     devices:
       - /dev/kfd
-      - /dev/dri:/dev/dri
+      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri/renderD128:/dev/dri/renderD128
     group_add:
       - video
       # - render
@@ -111,7 +112,8 @@ services:
     tty: true
     devices:
       - /dev/kfd
-      - /dev/dri:/dev/dri
+      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri/renderD128:/dev/dri/renderD128
     group_add:
       - video
       # - render
