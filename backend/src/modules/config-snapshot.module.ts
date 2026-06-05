@@ -14,9 +14,11 @@ import { IdentityConfigMutationService } from "../application/services/identity-
 import { IdentitySecretReferenceValidatorService } from "../application/services/identity-secret-reference-validator.service.js";
 import { ApplyConfigSnapshotUseCase } from "../application/use-cases/apply-config-snapshot.use-case.js";
 import { CreateAuthenticationProfileUseCase } from "../application/use-cases/create-authentication-profile.use-case.js";
+import { CreateSslBypassDomainUseCase } from "../application/use-cases/create-ssl-bypass-domain.use-case.js";
 import { CreateLdapProfileUseCase } from "../application/use-cases/create-ldap-profile.use-case.js";
 import { CreateRadiusProfileUseCase } from "../application/use-cases/create-radius-profile.use-case.js";
 import { DeleteAuthenticationProfileUseCase } from "../application/use-cases/delete-authentication-profile.use-case.js";
+import { DeleteSslBypassDomainUseCase } from "../application/use-cases/delete-ssl-bypass-domain.use-case.js";
 import { DeleteLdapProfileUseCase } from "../application/use-cases/delete-ldap-profile.use-case.js";
 import { DeleteRadiusProfileUseCase } from "../application/use-cases/delete-radius-profile.use-case.js";
 import { ExportConfigUseCase } from "../application/use-cases/export-config.use-case.js";
@@ -25,6 +27,7 @@ import { GetConfigDiffUseCase } from "../application/use-cases/get-config-diff.u
 import { GetConfigHistoryUseCase } from "../application/use-cases/get-config-history.use-case.js";
 import { GetDecryptionMirrorConfigUseCase } from "../application/use-cases/get-decryption-mirror-config.use-case.js";
 import { GetIdentityConfigUseCase } from "../application/use-cases/get-identity-config.use-case.js";
+import { GetSslBypassDomainsUseCase } from "../application/use-cases/get-ssl-bypass-domains.use-case.js";
 import { ImportConfigUseCase } from "../application/use-cases/import-config.use-case.js";
 import { RollbackConfigUseCase } from "../application/use-cases/rollback-config.use-case.js";
 import { TestLdapProfileUseCase } from "../application/use-cases/test-ldap-profile.use-case.js";
@@ -86,6 +89,7 @@ import { JsonZonePairRepository } from "../infrastructure/persistence/repositori
 import { ConfigController } from "../presentation/controllers/config.controller.js";
 import { DecryptionMirrorController } from "../presentation/controllers/decryption-mirror.controller.js";
 import { IdentityConfigController } from "../presentation/controllers/identity-config.controller.js";
+import { SslBypassController } from "../presentation/controllers/ssl-bypass.controller.js";
 import { Env } from "../shared/config/env.validation.js";
 import { IdentityConfigStoreModule } from "./identity-config-store.module.js";
 import { SecretModule } from "./secret.module.js";
@@ -224,19 +228,23 @@ import { SecretModule } from "./secret.module.js";
     ConfigController,
     DecryptionMirrorController,
     IdentityConfigController,
+    SslBypassController,
   ],
   providers: [
     ApplyConfigSnapshotUseCase,
     CreateAuthenticationProfileUseCase,
+    CreateSslBypassDomainUseCase,
     CreateLdapProfileUseCase,
     CreateRadiusProfileUseCase,
     DeleteAuthenticationProfileUseCase,
+    DeleteSslBypassDomainUseCase,
     DeleteLdapProfileUseCase,
     DeleteRadiusProfileUseCase,
     GetConfigDiffUseCase,
     GetConfigHistoryUseCase,
     GetDecryptionMirrorConfigUseCase,
     GetIdentityConfigUseCase,
+    GetSslBypassDomainsUseCase,
     RollbackConfigUseCase,
     ExportConfigUseCase,
     ImportConfigUseCase,

@@ -9,7 +9,7 @@ import PortalPage from "./pages/PortalPage.tsx";
 import ResetPasswordPage from "./pages/ResetPasswordPage.tsx";
 import Dashboard from "./pages/Dashboard.tsx";
 import Dns from "./pages/Dns.tsx";
-import SslDecryptionMirror from "./pages/SslDecryptionMirror.tsx";
+import TlsInspection from "./pages/TlsInspection.tsx";
 import Ips from "./pages/Ips.tsx";
 import ConnectionTracking from "./pages/ConnectionTracking.tsx";
 import PolicyEngine from "./pages/PolicyEngine.tsx";
@@ -64,8 +64,8 @@ const router = createBrowserRouter([
             element: <Dns />,
           },
           {
-            path: "ssl-decryption-mirror",
-            element: <SslDecryptionMirror />,
+            path: "tls-inspection",
+            element: <TlsInspection />,
           },
           {
             path: "ips",
