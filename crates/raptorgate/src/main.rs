@@ -302,7 +302,7 @@ async fn main() {
         Arc::clone(&interface_monitor),
     ));
 
-    let smtp_policy_retriever = Arc::new(crate::dpi::smtp_policy_retriever::SmtpPolicyRetriever::new(
+    let smtp_policy_retriever = Arc::new(crate::dpi::smtp::smtp_policy_retriever::SmtpPolicyRetriever::new(
         Arc::clone(&zone_resolver),
         Arc::clone(&policy_provider),
     ));

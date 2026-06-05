@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::data_plane::packet_context::PacketId;
 use crate::conntrack::tuple::Direction;
-use crate::dpi::smtp_l4_session::SmtpSession;
-use crate::dpi::smtp_policy_retriever::SmtpPolicyRetriever;
+use crate::dpi::smtp::smtp_l4_session::SmtpSession;
+use crate::dpi::smtp::smtp_policy_retriever::SmtpPolicyRetriever;
 use crate::dpi::AppProto;
 use crate::l4::context::SessionContext;
 use crate::l4::stage::{CloseReason, L4Outcome, L4Stage};

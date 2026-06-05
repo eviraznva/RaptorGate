@@ -21,7 +21,7 @@ use ngfw::data_plane::ips::config::IpsConfig;
 use ngfw::data_plane::ips::ips::Ips;
 use ngfw::SingleDiskStore;
 use ngfw::dpi::smtp::SmtpTracker;
-use ngfw::dpi::smtp_policy_retriever::SmtpPolicyRetriever;
+use ngfw::dpi::smtp::smtp_policy_retriever::SmtpPolicyRetriever;
 use ngfw::dpi::DpiClassifier;
 use ngfw::identity::IdentitySessionStore;
 use ngfw::ip_defrag::{DefragConfig, IpDefragEngine};

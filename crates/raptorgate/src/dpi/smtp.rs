@@ -9,11 +9,14 @@ use crate::conntrack::observer::{CtObserver, DestroyReason};
 use crate::conntrack::entry::ConntrackEntry;
 use crate::conntrack::tcp_identity::{EndpointIdentifier, TcpIdentifier};
 use crate::data_plane::packet_context::PacketId;
-use crate::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
+use self::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
 use crate::interfaces::NetworkInterfaceMonitor;
 use crate::policy::{SmtpMatch, SmtpMatchAction, SmtpPolicy};
 use crate::zones::resolver::{RoutingZoneResolver, ZoneResolver};
+
+pub mod smtp_l4_session;
+pub mod smtp_policy_retriever;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TcpSeqSnapshot {

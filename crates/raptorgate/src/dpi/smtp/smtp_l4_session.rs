@@ -7,7 +7,7 @@ use crate::conntrack::tcp_identity::EndpointIdentifier;
 use crate::conntrack::tuple::Direction;
 use crate::data_plane::packet_context::PacketId;
 use crate::dpi::smtp::{BdatState, BufferingDisposition, DataState, PacketAction, SessionState, SessionTransition, TerminatedSmtpSession, UnitStatus};
-use crate::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
+use super::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use crate::dpi::AppProto;
 use crate::l4::context::SessionContext;
 use crate::l4::stage::{L4Outcome, TerminateReason};

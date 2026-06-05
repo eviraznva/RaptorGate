@@ -5,7 +5,7 @@ use std::sync::Arc;
 use etherparse::{PacketBuilder, SlicedPacket};
 use ngfw::conntrack::tcp_identity::{EndpointIdentifier, TcpIdentifier};
 use ngfw::dpi::smtp::SmtpTracker;
-use ngfw::dpi::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
+use ngfw::dpi::smtp::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::policy::{Policy, PolicyId, SmtpPolicy, SmtpMatch, SmtpMatchAction};
 use ngfw::rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};

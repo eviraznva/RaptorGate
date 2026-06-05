@@ -21,7 +21,7 @@ use crate::data_plane::packet_context::CaptureDirection;
 use crate::data_plane::ips::ips::Ips;
 use crate::disk_store::SingleDiskStore;
 use crate::dpi::smtp::SmtpTracker;
-use crate::dpi::smtp_policy_retriever::SmtpPolicyRetriever;
+use crate::dpi::smtp::smtp_policy_retriever::SmtpPolicyRetriever;
 use crate::dpi::DpiClassifier;
 use crate::identity::IdentitySessionStore;
 use crate::interfaces::{InterfaceMonitor, NetworkInterfaceMonitor};
