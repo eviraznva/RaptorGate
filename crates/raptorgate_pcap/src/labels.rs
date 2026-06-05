@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -20,6 +21,8 @@ pub struct LabelMatch {
     pub attack_idx: u32,
     pub matched: bool,
 }
+
+static MATCH_TRACE: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone)]
 struct TimeWindow {
@@ -103,6 +106,10 @@ impl LabelIndex {
         &self.attack_names
     }
 
+    pub fn has_timed(&self) -> bool {
+        self.has_timed
+    }
+
     pub fn unmatched(&self) -> LabelMatch {
         LabelMatch {
             label_code: LABEL_BENIGN,
@@ -113,6 +120,25 @@ impl LabelIndex {
 
     pub fn match_for(&self, flow_id: u64, ts: Option<f64>) -> LabelMatch {
         let entry = self.by_flow_id.get(&flow_id);
+        if std::env::var("RG_MATCH_DEBUG").is_ok() {
+            let n = MATCH_TRACE.fetch_add(1, Ordering::Relaxed);
+            if n < 5 {
+                eprintln!(
+                    "[match_for] call[{n}] flow_id={flow_id:#x} ts={ts:?} has_timed={} entry_present={} windows={}",
+                    self.has_timed,
+                    entry.is_some(),
+                    entry.map(|e| e.windows.len()).unwrap_or(0),
+                );
+                if let Some(e) = entry {
+                    for (i, w) in e.windows.iter().take(3).enumerate() {
+                        eprintln!(
+                            "[match_for]   window[{i}] start_ts={} end_ts={} label_code={} attack_idx={}",
+                            w.start_ts, w.end_ts, w.label_code, w.attack_idx
+                        );
+                    }
+                }
+            }
+        }
         if let (Some(t), true) = (ts, self.has_timed) {
             let Some(entry) = entry else {
                 return self.unmatched();

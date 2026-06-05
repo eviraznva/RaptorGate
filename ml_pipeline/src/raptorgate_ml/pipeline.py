@@ -15,6 +15,13 @@ BENIGN = "benign"
 MALICIOUS = "malicious"
 RAYON_THREADS_ENV = "RAPTORGATE_PCAP_RAYON_THREADS"
 
+_PIPE_DEBUG = os.environ.get("RAPTORGATE_PIPELINE_DEBUG") == "1"
+
+
+def _dbg(msg: str) -> None:
+    if _PIPE_DEBUG:
+        print(f"[rg-ml-pipe] {msg}", flush=True)
+
 
 @dataclass
 class BuildResult:
@@ -44,6 +51,7 @@ def _schema() -> dict:
 
 
 def _empty_training_frame() -> pl.DataFrame:
+    _dbg("_empty_training_frame: returning schema-only frame (no rows survived filter)")
     return pl.DataFrame(schema=_schema())
 
 
@@ -68,17 +76,54 @@ def _build_one(
     from pathlib import Path as _P
     from raptorgate_pcap import LabelIndex, build_features_py as _bf
 
+    _dbg(
+        f"_build_one: enter pcap={pcap_path!r} table_rows={table.num_rows} "
+        f"attack_names={len(attack_names)} window_secs={window_secs} num_workers={num_workers}"
+    )
     idx = LabelIndex()
     idx.absorb_arrow(table)
+    _dbg(
+        f"_build_one: idx after absorb_arrow len={len(idx)} "
+        f"source_rows={idx.source_rows} indexed_rows={idx.indexed_rows} "
+        f"timed_rows={idx.timed_rows} null_labels={idx.null_labels} "
+        f"invalid_rows={idx.invalid_rows}"
+    )
     out = _bf(_P(pcap_path), idx, window_secs=window_secs, num_workers=num_workers)
     n = out.n_rows
-    features = np.asarray(out.features, dtype=np.float32).reshape(n, 38)
+    _dbg(f"_build_one: build_features_py returned n_rows={n}")
+
+    features = np.frombuffer(out.features_bytes, dtype=np.float32).reshape(n, 38).copy()
+    label_arr = np.frombuffer(out.label, dtype=np.uint8).copy()
+    attack_idx_arr = np.frombuffer(out.attack_idx_bytes, dtype=np.int32).copy()
+    flow_id_arr = np.frombuffer(out.flow_id_bytes, dtype=np.uint64).copy()
+
+    matched_raw = out.matched
+    matched_list_type = type(matched_raw).__name__
+    matched_py = np.asarray(matched_raw, dtype=bool)
+    matched_sum = int(matched_py.sum()) if matched_py.size else 0
+    matched_head = matched_py[:8].tolist() if matched_py.size else []
+    matched_tail = matched_py[-8:].tolist() if matched_py.size else []
+    attack_idx_pos = int((attack_idx_arr > 0).sum())
+    label_ones = int(label_arr.sum())
+    _dbg(
+        f"_build_one: features shape={features.shape} "
+        f"label sum(label==1)={label_ones}/{n} "
+        f"attack_idx>0 count={attack_idx_pos}/{n} "
+        f"matched raw_type={matched_list_type} len={len(matched_raw)} "
+        f"np.asarray(dtype=bool).sum={matched_sum} head={matched_head} tail={matched_tail}"
+    )
+    if matched_sum == 0 and n > 0:
+        _dbg(
+            "_build_one: WARNING every row has matched=False from Rust side; "
+            "filtering in _combine will drop everything"
+        )
+
     return _PartResult(
         features=features,
-        label=np.frombuffer(out.label, dtype=np.uint8).copy(),
-        attack_idx=np.asarray(out.attack_idx, dtype=np.int32),
-        matched=np.asarray(out.matched, dtype=bool),
-        flow_id=np.asarray(out.flow_id, dtype=np.uint64),
+        label=label_arr,
+        attack_idx=attack_idx_arr,
+        matched=matched_py,
+        flow_id=flow_id_arr,
         source_file=_P(pcap_path).name,
         n_rows=n,
     )
@@ -89,6 +134,10 @@ def _combine(
     attack_names: list[str],
     include_unmatched: bool,
 ) -> pl.DataFrame:
+    _dbg(
+        f"_combine: enter parts={len(parts)} include_unmatched={include_unmatched} "
+        f"attack_names={len(attack_names)}"
+    )
     if not parts:
         return _empty_training_frame()
 
@@ -99,8 +148,15 @@ def _combine(
     flow_ids: list[np.ndarray] = []
     sources: list[np.ndarray] = []
 
-    for p in parts:
+    for i, p in enumerate(parts):
         mask = np.ones(p.n_rows, dtype=bool) if include_unmatched else p.matched
+        mask_sum = int(mask.sum()) if mask.size else 0
+        mask_dtype = str(mask.dtype)
+        _dbg(
+            f"_combine: part[{i}] src={p.source_file!r} n_rows={p.n_rows} "
+            f"mask dtype={mask_dtype} sum={mask_sum} "
+            f"matched.sum={int(p.matched.sum())} matched.dtype={p.matched.dtype}"
+        )
         if not mask.any():
             continue
         feats.append(p.features[mask])
@@ -111,7 +167,10 @@ def _combine(
         sources.append(np.full(int(mask.sum()), p.source_file, dtype=object))
 
     if not feats:
+        _dbg("_combine: no part contributed any row after mask; returning empty frame")
         return _empty_training_frame()
+
+    _dbg(f"_combine: {len(feats)} part(s) contributed rows, concatenating")
 
     feat = np.concatenate(feats, axis=0)
     lbl = np.concatenate(labels)
@@ -137,12 +196,16 @@ def _combine(
             "source_file": src,
         }
     )
-    return pl.DataFrame(data, schema=_schema())
+    df = pl.DataFrame(data, schema=_schema())
+    _dbg(f"_combine: built polars DataFrame height={df.height} width={df.width}")
+    return df
 
 
 def _write_parquet(df: pl.DataFrame, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    _dbg(f"_write_parquet: writing height={df.height} width={df.width} path={out_path}")
     df.write_parquet(out_path, compression="zstd")
+    _dbg(f"_write_parquet: wrote {out_path}")
 
 
 def _resolve_num_workers() -> int | None:
@@ -158,7 +221,12 @@ def _split_train_test(
     test_ratio: float,
     seed: int,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
+    _dbg(
+        f"_split_train_test: enter height={df.height} test_ratio={test_ratio} seed={seed} "
+        f"cols={df.columns}"
+    )
     if df.is_empty():
+        _dbg("_split_train_test: empty input, returning (empty, empty)")
         return df, df
 
     split_col = "flow_id" if "flow_id" in df.columns else None
@@ -187,7 +255,12 @@ def _split_train_test(
         mask = np.isin(row_values, test_values)
 
     test_mask = pl.Series(mask)
-    return df.filter(~test_mask), df.filter(test_mask)
+    train_df = df.filter(~test_mask)
+    test_df = df.filter(test_mask)
+    _dbg(
+        f"_split_train_test: split done train_height={train_df.height} test_height={test_df.height}"
+    )
+    return train_df, test_df
 
 
 def _split_train_test_by_stratum(
@@ -197,6 +270,10 @@ def _split_train_test_by_stratum(
     split_col: str,
     stratum_col: str,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
+    _dbg(
+        f"_split_train_test_by_stratum: enter height={df.height} split_col={split_col} "
+        f"stratum_col={stratum_col} test_ratio={test_ratio}"
+    )
     flow_strata = df.group_by(split_col).agg(pl.col(stratum_col).first())
     row_values = df[split_col].to_numpy(allow_copy=True).astype(np.uint64, copy=False)
     test_parts: list[np.ndarray] = []
@@ -223,7 +300,13 @@ def _split_train_test_by_stratum(
 
     test_values = np.concatenate(test_parts)
     test_mask = pl.Series(np.isin(row_values, test_values))
-    return df.filter(~test_mask), df.filter(test_mask)
+    train_df = df.filter(~test_mask)
+    test_df = df.filter(test_mask)
+    _dbg(
+        f"_split_train_test_by_stratum: split done train_height={train_df.height} "
+        f"test_height={test_df.height}"
+    )
+    return train_df, test_df
 
 
 def _split_scores(values: np.ndarray, seed: int) -> np.ndarray:
@@ -273,6 +356,12 @@ def run_build(
     include_unmatched: bool = False,
 ) -> BuildResult:
     pcap_list = [Path(p) for p in pcap_paths]
+    _dbg(
+        f"run_build: enter pcaps={len(pcap_list)} window_secs={window_secs} "
+        f"include_unmatched={include_unmatched} test_out_path={test_out_path} "
+        f"label_table_rows={label_table.num_rows} label_index_len={len(label_index)} "
+        f"label_index_timed_rows={label_index.timed_rows} label_index_indexed_rows={label_index.indexed_rows}"
+    )
     if not pcap_list:
         _write_parquet(_empty_training_frame(), out_path)
         if test_out_path is not None:
@@ -285,16 +374,19 @@ def run_build(
         )
 
     attack_names: list[str] = list(label_index.attack_names)
+    _dbg(f"run_build: outer label_index.attack_names count={len(attack_names)} first={attack_names[:3]}")
     num_workers = _resolve_num_workers()
     ordered: list[tuple[Path, _PartResult]] = []
 
-    for p in pcap_list:
+    for i, p in enumerate(pcap_list):
+        _dbg(f"run_build: processing pcap[{i}]={p}")
         ordered.append(
             (p, _build_one(str(p), label_table, attack_names, window_secs, num_workers))
         )
 
     parts = [pr for _, pr in ordered]
     df = _combine(parts, attack_names, include_unmatched)
+    _dbg(f"run_build: combined df height={df.height} width={df.width}")
 
     if test_out_path is not None:
         train_df, test_df = _split_train_test(df, test_ratio, seed)

@@ -45,6 +45,10 @@ x-pipeline-env: &pipeline-env
   DEVICE: ${DEVICE:-auto}
   AMP: ${AMP:-1}
   ACCURACY_GATE: ${ACCURACY_GATE:-0.8}
+  RAPTORGATE_PIPELINE_DEBUG: 1
+  RG_LIB_DEBUG: ${RG_LIB_DEBUG:-0}
+  RG_FEATURES_DEBUG: ${RG_FEATURES_DEBUG:-0}
+  RG_MATCH_DEBUG: ${RG_MATCH_DEBUG:-0}
 
 services:
   cli-cuda:

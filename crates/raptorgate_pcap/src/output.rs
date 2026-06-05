@@ -1,4 +1,7 @@
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
+
+use bytemuck::cast_slice;
 
 #[derive(Debug, Default, Clone)]
 pub struct FeatureOutput {
@@ -36,8 +39,8 @@ impl PyFeatureOutput {
     }
 
     #[getter]
-    fn features(&self) -> Vec<f32> {
-        self.inner.features.clone()
+    fn features_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, cast_slice(&self.inner.features))
     }
 
     #[getter]
@@ -46,8 +49,8 @@ impl PyFeatureOutput {
     }
 
     #[getter]
-    fn attack_idx(&self) -> Vec<i32> {
-        self.inner.attack_idx.clone()
+    fn attack_idx_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, cast_slice(&self.inner.attack_idx))
     }
 
     #[getter]
@@ -56,8 +59,8 @@ impl PyFeatureOutput {
     }
 
     #[getter]
-    fn flow_id(&self) -> Vec<u64> {
-        self.inner.flow_id.clone()
+    fn flow_id_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, cast_slice(&self.inner.flow_id))
     }
 }
 

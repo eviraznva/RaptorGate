@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -15,6 +16,8 @@ use crate::parse::{is_syn, is_syn_ack};
 use crate::stats::FlowStatsAggregator;
 
 const FEATURE_DIM: usize = 38;
+
+static FEATURES_SAMPLE: AtomicUsize = AtomicUsize::new(0);
 
 pub struct BuildOptions {
     pub window_secs: f64,
@@ -159,6 +162,16 @@ fn extract_bucket(
             let row = fv.to_f32_array();
             let flow_id = flow_id_for(ip_proto, src_ip_pkt, src_port, dst_ip_pkt, dst_port);
             let m = label_index.match_for(flow_id, Some(p.ts));
+            if std::env::var("RG_FEATURES_DEBUG").is_ok() {
+                let n = FEATURES_SAMPLE.fetch_add(1, Ordering::Relaxed);
+                if n < 5 {
+                    eprintln!(
+                        "[features.rs] sample n={} flow_id={:#x} ts={} match.matched={} attack_idx={} label_code={} src={} dst={} sp={} dp={} proto={}",
+                        n, flow_id, p.ts, m.matched, m.attack_idx, m.label_code,
+                        src_ip_pkt, dst_ip_pkt, src_port, dst_port, ip_proto
+                    );
+                }
+            }
             push_row(&mut out, &row, &m, flow_id, &m);
         }
     }

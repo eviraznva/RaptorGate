@@ -6,6 +6,7 @@ use etherparse::{SlicedPacket, TransportSlice};
 use memmap2::{Advice, Mmap};
 use pcap_file::pcap::PcapParser;
 use pcap_file::pcapng::blocks::Block;
+use pcap_file::pcapng::blocks::interface_description::InterfaceDescriptionOption;
 use pcap_file::pcapng::PcapNgParser;
 use pcap_file::DataLink;
 
@@ -197,11 +198,11 @@ fn prepass_pcap(mmap: &[u8], linktype: u32) -> Result<PcapIndex> {
 }
 
 fn prepass_pcapng(mmap: &[u8], linktype: u32) -> Result<PcapIndex> {
-    let (mut src, mut parser) =
-        PcapNgParser::new(mmap).map_err(|e| PcapError::PcapParse(e.to_string()))?;
+    let (mut src, mut parser) = PcapNgParser::new(mmap)
+        .map_err(|e| PcapError::PcapParse(e.to_string()))?;
     let mut index = PcapIndex {
         linktype,
-        ..PcapIndex::default()
+        ..Default::default()
     };
     let mmap_base = mmap.as_ptr();
 
@@ -210,8 +211,21 @@ fn prepass_pcapng(mmap: &[u8], linktype: u32) -> Result<PcapIndex> {
             Ok((rem, block)) => {
                 match block {
                     Block::EnhancedPacket(epb) => {
-                        let ts = epb.timestamp.as_secs() as f64
-                            + epb.timestamp.subsec_micros() as f64 / 1_000_000.0;
+                        let res = parser
+                            .packet_interface(&epb)
+                            .and_then(|idb| {
+                                idb.options.iter().find_map(|opt| {
+                                    if let InterfaceDescriptionOption::IfTsResol(r) = opt {
+                                        Some(*r)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .unwrap_or(6);
+                        let (mult, denom) = pcapng_ts_scale(res);
+                        let ts = (epb.timestamp.as_secs() as f64 * mult)
+                            + (epb.timestamp.subsec_nanos() as f64 * mult / denom);
                         if let Some(indexed) =
                             index_packet(linktype, mmap_base, &epb.data, ts)
                         {
@@ -247,6 +261,16 @@ fn prepass_pcapng(mmap: &[u8], linktype: u32) -> Result<PcapIndex> {
     }
 
     Ok(index)
+}
+
+fn pcapng_ts_scale(res: u8) -> (f64, f64) {
+    match res {
+        6 => (1_000.0, 1_000_000_000.0),
+        9 => (1.0, 1_000_000_000.0),
+        3 => (1_000_000.0, 1_000_000_000.0),
+        0..=6 => (10f64.powi((6 - res) as i32), 1_000_000_000.0),
+        _ => (1.0, 1_000_000_000.0),
+    }
 }
 
 pub fn src_ip_from_data(linktype: u32, data: &[u8]) -> Option<IpAddr> {

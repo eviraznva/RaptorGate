@@ -71,6 +71,17 @@ fn build_features_py(
     num_workers: Option<usize>,
 ) -> PyResult<PyFeatureOutput> {
     let owned_idx = label_index.inner.clone();
+    if std::env::var("RG_LIB_DEBUG").is_ok() {
+        eprintln!(
+            "[lib.rs] build_features_py: cloned label_index len={} has_timed={} timed_rows={} indexed_rows={} source_rows={} pcap={}",
+            owned_idx.len(),
+            owned_idx.has_timed(),
+            owned_idx.stats.timed_rows,
+            owned_idx.stats.indexed_rows,
+            owned_idx.stats.source_rows,
+            pcap_path.display()
+        );
+    }
     let opts = BuildOptions {
         window_secs,
         num_workers,
