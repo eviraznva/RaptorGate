@@ -1,0 +1,663 @@
+{
+  "id": "2236b0ef-7d10-4df5-86b8-98342094c006",
+  "versionNumber": 1,
+  "snapshotType": "manual_import",
+  "checksum": "ed829da07ce075cb33b50deed1ef44c504736b3ab474d10f9dd46557e56c43e0",
+  "isActive": true,
+  "payloadJson": {
+    "bundle": {
+      "rules": {
+        "items": [
+          {
+            "id": "43fe2148-344c-4568-be01-eb6e0f2ad570",
+            "name": "Allow h1<>h2",
+            "zonePairId": "33333333-3333-4333-8333-333333333333",
+            "isActive": true,
+            "content": "match ip_ver {\n    =v4: match protocol {\n        |(=icmp =tcp =udp): verdict allow\n    }\n    = v6: verdict drop\n}",
+            "priority": 1,
+            "createdBy": "00000000-0000-4000-8000-000000000001",
+            "createdAt": "2026-06-03T13:46:10.910Z",
+            "updatedAt": "2026-06-03T13:46:10.910Z",
+            "description": null,
+            "smtpMatchers": {
+              "sender": [],
+              "recipient": [],
+              "message": []
+            }
+          },
+          {
+            "id": "916f2166-4bfc-43f2-ae38-6960a3bdcbc8",
+            "name": "Allow h2<>h1",
+            "zonePairId": "44444444-4444-4444-8444-444444444444",
+            "isActive": true,
+            "content": "match ip_ver {\n    =v4: match protocol {\n        |(=icmp =tcp =udp): verdict allow\n    }\n    = v6: verdict drop\n}",
+            "priority": 1,
+            "createdBy": "00000000-0000-4000-8000-000000000001",
+            "createdAt": "2026-06-03T13:46:23.841Z",
+            "updatedAt": "2026-06-03T13:46:23.841Z",
+            "description": null,
+            "smtpMatchers": {
+              "sender": [],
+              "recipient": [],
+              "message": []
+            }
+          }
+        ]
+      },
+      "zones": {
+        "items": [
+          {
+            "id": "00000000-0000-0000-0000-000000000000",
+            "name": "Default Zone",
+            "description": "The default zone for all devices",
+            "isActive": true,
+            "createdAt": "2026-03-19T18:36:30.123Z",
+            "createdBy": "44af15b3-f097-4936-9628-fa2ee33c8d9a"
+          },
+          {
+            "id": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4",
+            "name": "Bedroom",
+            "description": "The bedroom of the house",
+            "isActive": true,
+            "createdAt": "2026-03-19T18:36:47.226Z",
+            "createdBy": "9f4f8d25-cdab-48cb-9b95-8dd103d4c5a3"
+          },
+          {
+            "id": "a0db06f9-5063-4035-aadd-845248db19e4",
+            "name": "Office",
+            "description": "The office of the company",
+            "isActive": true,
+            "createdAt": "2026-03-19T18:37:00.315Z",
+            "createdBy": "22967a37-c3f5-4239-8a18-316cc2b8dea4"
+          },
+          {
+            "id": "7276db7e-eb41-4dc6-9b88-12f854e104f2",
+            "name": "LAN",
+            "description": "Internal network",
+            "isActive": true,
+            "createdAt": "2026-03-23T11:34:56.532Z",
+            "createdBy": "079e43f5-d300-4aa2-80d0-2d1408139e12"
+          },
+          {
+            "id": "050eca33-2b53-4470-9f11-d369e0e7abbc",
+            "name": "WAN",
+            "description": "Internet",
+            "isActive": true,
+            "createdAt": "2026-03-23T11:35:03.586Z",
+            "createdBy": "7f04c429-d22e-4429-9d6f-2d92bdaf7074"
+          },
+          {
+            "id": "11111111-1111-4111-8111-111111111111",
+            "name": "clients",
+            "description": "h1 client network",
+            "isActive": true,
+            "createdAt": "2026-04-27T00:00:00.000Z",
+            "createdBy": "af8ba173-cc1c-4f82-af6d-1e5ec019003b"
+          },
+          {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "name": "servers",
+            "description": "h2 protected services network",
+            "isActive": true,
+            "createdAt": "2026-04-27T00:00:00.000Z",
+            "createdBy": "98b8bc96-f621-4bdf-a62a-ff93190ff73f"
+          }
+        ]
+      },
+      "zone_interfaces": {
+        "items": [
+          {
+            "id": "55555555-5555-4555-8555-555555555555",
+            "zoneId": "11111111-1111-4111-8111-111111111111",
+            "interfaceName": "eth1",
+            "vlanId": null,
+            "status": "active",
+            "addresses": [
+              "192.168.10.254/24"
+            ],
+            "sniffed": true,
+            "parentInterfaceId": null,
+            "createdAt": "2026-04-27T00:00:00.000Z"
+          },
+          {
+            "id": "66666666-6666-4666-8666-666666666666",
+            "zoneId": "22222222-2222-4222-8222-222222222222",
+            "interfaceName": "eth2",
+            "vlanId": null,
+            "status": "active",
+            "addresses": [
+              "192.168.20.254/24"
+            ],
+            "sniffed": true,
+            "parentInterfaceId": null,
+            "createdAt": "2026-04-27T00:00:00.000Z"
+          }
+        ]
+      },
+      "zone_pairs": {
+        "items": [
+          {
+            "id": "dcb9f221-cc1b-4432-a40d-9890b8a74dd2",
+            "srcZoneId": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4",
+            "dstZoneID": "a0db06f9-5063-4035-aadd-845248db19e4",
+            "defaultPolicy": "ALLOW",
+            "createdAt": "2026-03-20T20:17:17.850Z",
+            "createdBy": "00000000-0000-4000-8000-000000000001"
+          },
+          {
+            "id": "024ddcb1-79ee-43be-a782-5682d1d850d5",
+            "srcZoneId": "a0db06f9-5063-4035-aadd-845248db19e4",
+            "dstZoneID": "c2bd07b0-ac5e-44a5-a2f0-af19bb72fde4",
+            "defaultPolicy": "ALLOW",
+            "createdAt": "2026-03-20T20:17:44.357Z",
+            "createdBy": "00000000-0000-4000-8000-000000000001"
+          },
+          {
+            "id": "5704ce12-9b25-47c7-a1e4-1dd03ba56aec",
+            "srcZoneId": "050eca33-2b53-4470-9f11-d369e0e7abbc",
+            "dstZoneID": "7276db7e-eb41-4dc6-9b88-12f854e104f2",
+            "defaultPolicy": "ALLOW",
+            "createdAt": "2026-03-23T11:36:15.675Z",
+            "createdBy": "00000000-0000-4000-8000-000000000001"
+          },
+          {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "srcZoneId": "11111111-1111-4111-8111-111111111111",
+            "dstZoneID": "22222222-2222-4222-8222-222222222222",
+            "defaultPolicy": "DROP",
+            "createdAt": "2026-04-27T00:00:00.000Z",
+            "createdBy": "00000000-0000-4000-8000-000000000001"
+          },
+          {
+            "id": "44444444-4444-4444-8444-444444444444",
+            "srcZoneId": "22222222-2222-4222-8222-222222222222",
+            "dstZoneID": "11111111-1111-4111-8111-111111111111",
+            "defaultPolicy": "ALLOW",
+            "createdAt": "2026-04-27T00:00:00.000Z",
+            "createdBy": "00000000-0000-4000-8000-000000000001"
+          }
+        ]
+      },
+      "nat_rules": {
+        "items": []
+      },
+      "dns_blacklist": {
+        "items": []
+      },
+      "ssl_bypass_list": {
+        "items": []
+      },
+      "ips_signatures": {
+        "items": []
+      },
+      "ml_model": null,
+      "firewall_certificates": {
+        "items": []
+      },
+      "tls_inspection_policy": {
+        "block_ech_no_sni": true,
+        "block_all_ech": false,
+        "strip_ech_dns": true,
+        "log_ech_attempts": true,
+        "known_pinned_domains": [],
+        "decryption_mirror": {
+          "enabled": false,
+          "target_host": "",
+          "target_port": 0,
+          "include_client_to_server": true,
+          "include_server_to_client": true,
+          "forwarded_only": true,
+          "max_session_bytes": 16777216
+        }
+      },
+      "identity_config": {
+        "radius_server_profiles": {
+          "items": [
+            {
+              "id": "default-radius",
+              "name": "Default RADIUS",
+              "description": "Seeded from environment",
+              "isActive": true,
+              "host": "192.168.20.30",
+              "port": 1812,
+              "sharedSecretRef": "secret://identity/radius/default",
+              "timeoutMs": 3000,
+              "retries": 1,
+              "nasIp": "192.168.20.254",
+              "nasIdentifier": "raptorgate-backend",
+              "calledStationId": null,
+              "createdAt": "2026-06-03T13:34:37.622Z",
+              "updatedAt": "2026-06-03T13:34:37.622Z",
+              "createdBy": "system"
+            }
+          ]
+        },
+        "ldap_server_profiles": {
+          "items": [
+            {
+              "id": "default-ldap",
+              "name": "Default LDAP",
+              "description": "Seeded from environment",
+              "isActive": true,
+              "host": "192.168.20.40",
+              "port": 389,
+              "tlsMode": "disabled",
+              "bindDn": "cn=admin,dc=raptorgate,dc=local",
+              "bindPasswordRef": "secret://identity/ldap/default",
+              "userBaseDn": "ou=users,dc=raptorgate,dc=local",
+              "userFilterAttribute": "uid",
+              "groupBaseDn": "ou=groups,dc=raptorgate,dc=local",
+              "groupMemberAttribute": "memberUid",
+              "groupNameAttribute": "cn",
+              "timeoutMs": 3000,
+              "cacheTtlSeconds": 300,
+              "createdAt": "2026-06-03T13:34:37.622Z",
+              "updatedAt": "2026-06-03T13:34:37.622Z",
+              "createdBy": "system"
+            }
+          ]
+        },
+        "authentication_profiles": {
+          "items": [
+            {
+              "id": "default-portal-radius",
+              "name": "Default portal RADIUS",
+              "description": "Seeded from environment",
+              "isActive": true,
+              "provider": "radius",
+              "radiusProfileId": "default-radius",
+              "ldapProfileId": "default-ldap",
+              "groupSource": "ldap",
+              "sessionTtlSeconds": 1800,
+              "adminRoleMappings": [],
+              "createdAt": "2026-06-03T13:34:37.622Z",
+              "updatedAt": "2026-06-03T13:34:37.622Z",
+              "createdBy": "system"
+            }
+          ]
+        },
+        "settings": {
+          "portalAuthenticationProfileId": "default-portal-radius",
+          "adminAuthenticationProfileId": null,
+          "portalListener": {
+            "enabled": false,
+            "interfaceName": null,
+            "zoneId": null,
+            "bindAddress": null,
+            "bindPort": 443
+          },
+          "updatedAt": "2026-06-03T13:34:37.622Z",
+          "updatedBy": "system"
+        }
+      },
+      "dns_inspection_config": {
+        "general": {
+          "enabled": false
+        },
+        "blocklist": {
+          "enabled": false,
+          "domains": [
+            "example.com"
+          ]
+        },
+        "dnsTunneling": {
+          "enabled": false,
+          "maxLabelLength": 40,
+          "entropyThreshold": 3.5,
+          "windowSeconds": 60,
+          "maxQueriesPerDomain": 100,
+          "maxUniqueSubdomains": 20,
+          "ignoreDomains": [],
+          "alertThreshold": 0.6,
+          "blockThreshold": 0.85
+        },
+        "dnssec": {
+          "enabled": false,
+          "maxLookupsPerPacket": 1,
+          "defaultOnResolverFailure": "allow",
+          "resolver": {
+            "primary": {
+              "address": "127.0.0.1",
+              "port": 53
+            },
+            "secondary": {
+              "address": "127.0.0.1",
+              "port": 53
+            },
+            "transport": "udpWithTcpFallback",
+            "timeoutMs": 2000,
+            "retries": 1
+          },
+          "cache": {
+            "enabled": true,
+            "maxEntries": 4096,
+            "ttlSeconds": {
+              "secure": 300,
+              "insecure": 300,
+              "bogus": 60,
+              "failure": 15
+            }
+          }
+        }
+      },
+      "ips_config": {
+        "general": {
+          "enabled": true
+        },
+        "detection": {
+          "enabled": true,
+          "maxPayloadBytes": 8192,
+          "maxMatchesPerPacket": 10
+        },
+        "signatures": [
+          {
+            "id": "4e70a03c-1fef-4aa0-96a1-8a40ebf97801",
+            "name": "CVE-2024-4577 full PHP CGI probe bytes",
+            "isActive": true,
+            "category": "rce",
+            "pattern": "504f5354202f7068702d6367692f7068702d6367692e6578653f256164642b616c6c6f775f75726c5f696e636c756465253364312b256164642b6175746f5f70726570656e645f66696c652533647068703a2f2f696e707574",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_CRITICAL",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [
+              "IPS_APP_PROTOCOL_HTTP"
+            ],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "78a5a57e-a8e2-479a-a411-566e56012537",
+            "name": "CVE-2024-4577 PHP md5 body bytes",
+            "isActive": true,
+            "category": "rce",
+            "pattern": "3c3f706870206563686f206d643528313233343536293b3f3e",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_CRITICAL",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "55e9d882-b1f5-43a9-bd66-57f07cfd3e66",
+            "name": "Phishing fake webmail request bytes",
+            "isActive": true,
+            "category": "other",
+            "pattern": "474554202f6d616e6167656d656e742e617370783f676f6f643d61646d696e406d616c776172652d747261666669632d616e616c797369732e6e657420485454502f312e310d0a486f73743a20656d61696c2e70726f6365647572652e62657374",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_HIGH",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [
+              "IPS_APP_PROTOCOL_HTTP"
+            ],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "ab490c5b-d2c7-4f46-b791-e7e12ecba6ef",
+            "name": "Phishing DNS domain wire bytes",
+            "isActive": true,
+            "category": "other",
+            "pattern": "05656d61696c0970726f63656475726504626573740000010001",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_MEDIUM",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "42dd41c8-5fb9-4428-97cf-f05202dd2a0e",
+            "name": "Qakbot initial UM.php request bytes",
+            "isActive": true,
+            "category": "other",
+            "pattern": "474554202f554d2e7068703f6174753d3220485454502f312e310d0a486f73743a20636f6c756d6269616868632e636f6d0d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52657175",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_CRITICAL",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [
+              "IPS_APP_PROTOCOL_HTTP"
+            ],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "62b22b2c-f327-4b7b-8e57-01335d3a5abf",
+            "name": "Qakbot r1.zip download request bytes",
+            "isActive": true,
+            "category": "other",
+            "pattern": "474554202f554d2e7068703f653d72312e7a697020485454502f312e310d0a486f73743a20636f6c756d6269616868632e636f6d0d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_CRITICAL",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [
+              "IPS_APP_PROTOCOL_HTTP"
+            ],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "85704339-5b62-49a4-9993-cd91d65d5c4d",
+            "name": "Qakbot ZIP response header bytes",
+            "isActive": true,
+            "category": "other",
+            "pattern": "485454502f312e3120323030204f4b0d0a446174653a205475652c2032382046656220323032332030313a31313a343920474d540d0a5365727665723a204170616368650d0a436f6e74656e742d4465736372697074696f6e3a2046696c6520",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_HIGH",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [
+              "IPS_APP_PROTOCOL_HTTP"
+            ],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "430d5a84-4215-4070-a121-188cfd3df8f4",
+            "name": "DNS remoteshell Windows prompt bytes",
+            "isActive": true,
+            "category": "other",
+            "pattern": "4d6963726f736f66742057696e646f7773205850205b56657273696f6e20352e312e323630305d0d0a28432920436f7079726967687420313938352d32303031204d6963726f736f667420436f72702e0d0a0d0a433a5c3e",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_HIGH",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "f373a38d-4f79-47fb-bfc3-f6d52f9a6610",
+            "name": "DNS remoteshell ls command error bytes",
+            "isActive": true,
+            "category": "other",
+            "pattern": "6c73202d6c610d0a276c7327206973206e6f74207265636f676e697a656420617320616e20696e7465726e616c206f722065787465726e616c20636f6d6d616e642c0d0a6f70657261626c652070726f6772616d206f72206261746368206669",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_MEDIUM",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "1a103716-524f-414e-87ba-00a89e6f5afd",
+            "name": "Slammer worm payload bytes",
+            "isActive": true,
+            "category": "shellcode",
+            "pattern": "040101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_CRITICAL",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "7a4ea9d9-2577-4db5-96a1-12fd4dd7a2f1",
+            "name": "Wireshark test Slashdot request bytes",
+            "isActive": true,
+            "category": "other",
+            "pattern": "474554202f20485454502f312e310d0a486f73743a20736c617368646f742e6f72670d0a557365722d4167656e743a204d6f7a696c6c612f352e3020284d6163696e746f73683b20553b20496e74656c204d6163204f5320582031302e363b20",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_LOW",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [
+              "IPS_APP_PROTOCOL_HTTP"
+            ],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "49a920f3-c611-4c08-8f7e-e270045ce2cb",
+            "name": "SmallFlows Google complete search bytes",
+            "isActive": true,
+            "category": "other",
+            "pattern": "474554202f636f6d706c6574652f7365617263683f636c69656e743d6368726f6d6526686c3d656e2d555326713d637220485454502f312e310d0a486f73743a20636c69656e7473312e676f6f676c652e63610d0a436f6e6e656374696f6e3a",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_LOW",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [
+              "IPS_APP_PROTOCOL_HTTP"
+            ],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          },
+          {
+            "id": "ad7ee1b3-252e-4f5f-9db9-702dd2ed1321",
+            "name": "PROTOS malformed HTTP Bugbear response bytes",
+            "isActive": true,
+            "category": "other",
+            "pattern": "485454502f312e3120323030204f4b0d0a5365727665723a20427567626561722f3032300d0a446174653a204d6f6e6461792c2030332d4a616e2d30322031323a31323a313220474d540d0a566172793a202a0d0a436f6e6e656374696f6e3a",
+            "matchType": "IPS_MATCH_TYPE_LITERAL",
+            "patternEncoding": "IPS_PATTERN_ENCODING_HEX",
+            "caseInsensitive": false,
+            "severity": "SEVERITY_MEDIUM",
+            "action": "IPS_ACTION_BLOCK",
+            "appProtocols": [
+              "IPS_APP_PROTOCOL_HTTP"
+            ],
+            "srcPorts": [],
+            "dstPorts": [
+              18090
+            ],
+            "createdAt": "2026-06-03T13:16:56.000Z",
+            "updatedAt": "2026-06-03T13:16:56.000Z"
+          }
+        ]
+      },
+      "users": {
+        "items": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "username": "admin",
+            "passwordHash": "$2b$12$IvZ.EXRyRNI9y7iQFoV.8emVe9hYXwK8lF.lkj.aPLmnFVUaD5KjW",
+            "refreshToken": "781b155f-c049-463a-b443-47b2183324d3",
+            "refreshTokenExpiry": "2026-06-03T14:44:05.165Z",
+            "recoveryToken": "$2b$12$EBKZ.2QHgdezJcSes0418OLzPquOobeA9KwG7YbTdZLMfmtnBnCZG",
+            "isFirstLogin": false,
+            "showRecoveryToken": false,
+            "createdAt": "2026-03-18T21:30:42.644Z",
+            "updatedAt": "2026-05-07T16:33:43.796Z"
+          },
+          {
+            "id": "d57e7252-90af-4c8f-9b3e-8ca453657c66",
+            "username": "Tymoteusz",
+            "passwordHash": "$2b$12$YZRiqcL.O9hki155aEGbUeMP3zKAFlJFtAfpTjLZnhCHaj38nR6fq",
+            "refreshToken": "178412d8-3473-4276-8353-ee19549a64f0",
+            "refreshTokenExpiry": "2026-04-23T10:10:16.035Z",
+            "recoveryToken": "$2b$12$0/P6tBzYxgasnWeWNpjWA.nXOhBn3lXVzYJisp3f9wZJSQ84X6KUm",
+            "isFirstLogin": false,
+            "showRecoveryToken": false,
+            "createdAt": "2026-04-20T14:16:42.967Z",
+            "updatedAt": "2026-04-20T14:34:21.829Z"
+          },
+          {
+            "id": "4b13a9ed-a230-4409-b19b-8b86933849cf",
+            "username": "Marek",
+            "passwordHash": "$2b$12$wD8mOiyqoANwjFZ5av9hlug.z3JPIqxHyh.pVKSUnBVS04rBZEAJO",
+            "refreshToken": null,
+            "refreshTokenExpiry": null,
+            "recoveryToken": null,
+            "isFirstLogin": true,
+            "showRecoveryToken": true,
+            "createdAt": "2026-04-20T14:22:08.006Z",
+            "updatedAt": "2026-04-20T14:22:08.006Z"
+          }
+        ]
+      }
+    }
+  },
+  "createdAt": "2026-06-03T13:46:51.876Z",
+  "createdBy": "00000000-0000-4000-8000-000000000001",
+  "changeSummary": "Applied current running config"
+}

@@ -180,8 +180,8 @@ pub type DataPipeline<D> = Chain<
                                                                     Chain<
                                                                         SmtpStage,
                                                                         Chain<
-                                                                            ExecutionStage,
                                                                             ConntrackConfirmStage,
+                                                                            ExecutionStage,
                                                                         >,
                                                                     >,
                                                                 >,
@@ -373,11 +373,11 @@ fn build_pipeline<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>>(deps: &Arc<
                                                                                 tracker: Arc::clone(s.smtp_tracker),
                                                                             },
                                                                             tail: Chain {
-                                                                                head: ExecutionStage {
-                                                                                    tx: exec_tx.clone(),
-                                                                                },
-                                                                                tail: ConntrackConfirmStage {
+                                                                                head: ConntrackConfirmStage {
                                                                                     ct: Arc::clone(s.conntrack),
+                                                                                },
+                                                                                tail: ExecutionStage {
+                                                                                    tx: exec_tx.clone(),
                                                                                 },
                                                                             },
                                                                         },

@@ -88,6 +88,39 @@ distribute_raptorgate_ca() {
   rm -f "$ca_file"
 }
 
+install_ips_test_pcaps() {
+  local h1_state
+  local h2_state
+
+  h1_state="$(vagrant_machine_state h1)"
+  h2_state="$(vagrant_machine_state h2)"
+
+  if [ "$h1_state" = "running" ]; then
+    if ! ls ../test-pcaps/generated/*.pcap >/dev/null 2>&1; then
+      echo "No prepared pcaps in test-pcaps/generated; run 'python3 test-pcaps/prepare_pcaps.py' first; skipping h1 install"
+    else
+      echo "Installing prepared IPS test pcaps on h1"
+      vagrant ssh h1 -c "sudo rm -rf /opt/raptorgate-test-pcaps && sudo install -d -m 0755 /opt/raptorgate-test-pcaps"
+      vagrant upload ../test-pcaps/replay_generated_pcaps.py /tmp/replay_generated_pcaps.py h1 >/dev/null
+      vagrant ssh h1 -c "rm -rf /tmp/rg-generated && mkdir -p /tmp/rg-generated"
+      vagrant upload ../test-pcaps/generated /tmp/rg-generated-up h1 >/dev/null
+      vagrant ssh h1 -c "sudo install -m 0755 /tmp/replay_generated_pcaps.py /usr/local/bin/replay-ips-test-pcaps && sudo rm -rf /opt/raptorgate-test-pcaps/generated && sudo mkdir -p /opt/raptorgate-test-pcaps/generated && sudo cp /tmp/rg-generated-up/*.pcap /opt/raptorgate-test-pcaps/generated/"
+    fi
+  else
+    echo "h1 is $h1_state; skipping IPS test PCAP install"
+  fi
+
+  if [ "$h2_state" = "running" ]; then
+    echo "Installing IPS payload watcher on h2"
+    vagrant ssh h2 -c "sudo install -d -m 0755 /opt/raptorgate-test-pcaps"
+    vagrant upload ../test-pcaps/h2_payload_watch.py /tmp/h2_payload_watch.py h2 >/dev/null
+    vagrant upload ../test-pcaps/config-import-in-frontend.json /tmp/config-import-in-frontend.json h2 >/dev/null
+    vagrant ssh h2 -c "sudo install -m 0755 /tmp/h2_payload_watch.py /usr/local/bin/watch-ips-test-payloads && sudo install -m 0644 /tmp/config-import-in-frontend.json /opt/raptorgate-test-pcaps/config-import-in-frontend.json"
+  else
+    echo "h2 is $h2_state; skipping IPS payload watcher install"
+  fi
+}
+
 # Parse flags
 if [[ "$1" == "--no-backend" || "$1" == "-n" ]]; then
   export NO_BACKEND=1
@@ -184,3 +217,4 @@ else
 fi
 vagrant up --provision
 distribute_raptorgate_ca
+install_ips_test_pcaps
