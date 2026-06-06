@@ -1,4 +1,5 @@
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -112,6 +113,38 @@ struct TlsWorkerParams {
     source_ip: IpAddr,
     sni: Option<String>,
     client_alpn_protocols: Vec<Vec<u8>>,
+}
+
+struct DecryptionFailureContext {
+    config: Arc<TlsL4InspectionConfig>,
+    source_ip: IpAddr,
+    server_addr: SocketAddr,
+    domain: String,
+}
+
+impl DecryptionFailureContext {
+    fn report(&self, reason: PinningReason) {
+        let report = self.config.decision_engine.report_decryption_failure(
+            self.source_ip,
+            Some(self.server_addr.ip()),
+            self.server_addr.port(),
+            &self.domain,
+            reason.clone(),
+        );
+        events::emit(Event::new(EventKind::PinningFailureDetected {
+            peer: SocketAddr::new(self.source_ip, 0),
+            dst: self.server_addr,
+            sni: self.domain.clone(),
+            tls_version: None,
+        }));
+        if report.activated_exclusion {
+            events::emit(Event::new(EventKind::PinningAutoBypassActivated {
+                source_ip: self.source_ip,
+                domain: self.domain.clone(),
+                reason: reason.to_string(),
+            }));
+        }
+    }
 }
 
 impl TlsL4InspectionService {
@@ -407,6 +440,7 @@ async fn run_tls_worker(
         .with_context(|| format!("failed to connect to TLS upstream {}", params.server_addr))?;
 
     let inbound = params.config.decision_engine.server_key_store().get_entry_active(params.server_addr);
+    let outbound_mitm = inbound.is_none();
     let domain = params.sni.clone().unwrap_or_else(|| params.server_addr.ip().to_string());
 
     let (client_tls, server_tls, negotiated_alpn) = if let Some(inbound) = inbound {
@@ -459,26 +493,13 @@ async fn run_tls_worker(
             Ok(client_tls) => client_tls,
             Err(error) => {
                 let reason = decryption_failure_reason_from_accept_error(&error);
-                let report = params.config.decision_engine.report_decryption_failure(
-                    params.source_ip,
-                    Some(params.server_addr.ip()),
-                    params.server_addr.port(),
-                    &domain,
-                    reason.clone(),
-                );
-                events::emit(Event::new(EventKind::PinningFailureDetected {
-                    peer: SocketAddr::new(params.source_ip, 0),
-                    dst: params.server_addr,
-                    sni: domain.clone(),
-                    tls_version: None,
-                }));
-                if report.activated_exclusion {
-                    events::emit(Event::new(EventKind::PinningAutoBypassActivated {
-                        source_ip: params.source_ip,
-                        domain: domain.clone(),
-                        reason: reason.to_string(),
-                    }));
+                DecryptionFailureContext {
+                    config: Arc::clone(&params.config),
+                    source_ip: params.source_ip,
+                    server_addr: params.server_addr,
+                    domain: domain.clone(),
                 }
+                .report(reason);
                 return Err(error);
             }
         };
@@ -490,12 +511,25 @@ async fn run_tls_worker(
     let (server_read, server_write) = tokio::io::split(server_tls);
     let up_events = events_tx.clone();
     let down_events = events_tx.clone();
+    let plaintext_seen = Arc::new(AtomicBool::new(false));
+    let failure_context = if outbound_mitm {
+        Some(DecryptionFailureContext {
+            config: Arc::clone(&params.config),
+            source_ip: params.source_ip,
+            server_addr: params.server_addr,
+            domain,
+        })
+    } else {
+        None
+    };
+    let up_plaintext_seen = Arc::clone(&plaintext_seen);
+    let down_plaintext_seen = Arc::clone(&plaintext_seen);
 
     let c2s = tokio::spawn(async move {
-        relay_one_direction(client_read, server_write, Direction::Original, up_events).await;
+        relay_one_direction(client_read, server_write, Direction::Original, up_events, up_plaintext_seen, failure_context).await;
     });
     let s2c = tokio::spawn(async move {
-        relay_one_direction(server_read, client_write, Direction::Reply, down_events).await;
+        relay_one_direction(server_read, client_write, Direction::Reply, down_events, down_plaintext_seen, None).await;
     });
 
     let _ = tokio::join!(c2s, s2c);
@@ -551,6 +585,8 @@ async fn relay_one_direction<R, W>(
     mut writer: W,
     dir: Direction,
     events_tx: mpsc::UnboundedSender<TlsWorkerEvent>,
+    plaintext_seen: Arc<AtomicBool>,
+    failure_context: Option<DecryptionFailureContext>,
 )
 where
     R: AsyncRead + Unpin,
@@ -560,15 +596,26 @@ where
     loop {
         let n = match reader.read(&mut buf).await {
             Ok(0) => {
+                if !plaintext_seen.load(Ordering::Acquire) {
+                    if let Some(context) = &failure_context {
+                        context.report(PinningReason::SuspectedPinnedCertificate);
+                    }
+                }
                 let _ = writer.shutdown().await;
                 return;
             }
             Ok(n) => n,
             Err(_) => {
+                if !plaintext_seen.load(Ordering::Acquire) {
+                    if let Some(context) = &failure_context {
+                        context.report(PinningReason::ConnectionClosedNoData);
+                    }
+                }
                 let _ = writer.shutdown().await;
                 return;
             }
         };
+        plaintext_seen.store(true, Ordering::Release);
 
         let (decision_tx, decision_rx) = oneshot::channel();
         if events_tx
@@ -685,7 +732,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::net::TcpListener;
-    use tokio_rustls::TlsAcceptor;
+    use tokio_rustls::{TlsAcceptor, TlsConnector};
 
     struct StubZoneResolver;
 
@@ -771,6 +818,40 @@ mod tests {
 
     fn test_service_with_block_decision() -> TlsL4InspectionService {
         TlsL4InspectionService::new(Arc::new(TlsL4InspectionConfig::test_block_all()))
+    }
+
+    fn spawn_l4_client_bridge(
+        mut handle: crate::l4::L4TcpEndpointHandle,
+        wire: tokio::io::DuplexStream,
+    ) -> tokio::task::JoinHandle<()> {
+        let (mut wire_read, mut wire_write) = tokio::io::split(wire);
+        let inbound_handle = handle.clone();
+        let client_to_firewall = tokio::spawn(async move {
+            let mut buf = [0u8; RELAY_BUF_SIZE];
+            loop {
+                match wire_read.read(&mut buf).await {
+                    Ok(0) => return,
+                    Ok(n) => {
+                        if inbound_handle.admit(Direction::Original, buf[..n].to_vec()).await.is_err() {
+                            return;
+                        }
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+        let firewall_to_client = tokio::spawn(async move {
+            while let Some(item) = handle.next_emitted().await {
+                if wire_write.write_all(&item.payload).await.is_err() {
+                    return;
+                }
+            }
+        });
+
+        tokio::spawn(async move {
+            let _ = client_to_firewall.await;
+            firewall_to_client.abort();
+        })
     }
 
     #[tokio::test]
@@ -891,6 +972,173 @@ mod tests {
         assert_eq!(detail.last_source_ip, source_ip);
 
         upstream.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn worker_records_decryption_failure_on_client_close_after_tls_without_plaintext() {
+        let key = KeyPair::generate().unwrap();
+        let mut cert_params = CertificateParams::default();
+        cert_params.is_ca = IsCa::NoCa;
+        cert_params
+            .distinguished_name
+            .push(DnType::CommonName, "pinned.example");
+        cert_params.subject_alt_names = vec![SanType::DnsName(
+            "pinned.example".to_string().try_into().unwrap(),
+        )];
+        let cert = cert_params.self_signed(&key).unwrap();
+        let upstream_config = rustls_config::build_server_config_from_pem(&cert.pem(), &key.serialize_pem()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = listener.local_addr().unwrap();
+
+        let upstream = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let acceptor = TlsAcceptor::from(upstream_config);
+            let mut tls = acceptor.accept(stream).await.unwrap();
+            let mut out = Vec::new();
+            let _ = tls.read_to_end(&mut out).await.unwrap();
+        });
+
+        let mut config = TlsL4InspectionConfig::test_with_bypass_domains(&[]);
+        let pki_dir = std::env::temp_dir()
+            .join(uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string());
+        std::fs::create_dir_all(&pki_dir).unwrap();
+        let decision_engine = Arc::new(TlsDecisionEngine::new(
+            &[],
+            Arc::new(ServerKeyStore::new(pki_dir.to_str().unwrap())),
+            EchTlsPolicy::default(),
+            PinningConfig {
+                failure_threshold: 1,
+                ..PinningConfig::default()
+            },
+        ));
+        config.decision_engine = Arc::clone(&decision_engine);
+        let config = Arc::new(config);
+        let (endpoint, handle) = L4TcpEndpoint::new();
+        let (client_io, wire_io) = tokio::io::duplex(RELAY_BUF_SIZE);
+        let bridge = spawn_l4_client_bridge(handle, wire_io);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+        let source_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+
+        let worker = tokio::spawn(run_tls_worker(
+            TlsWorkerParams {
+                config,
+                endpoint,
+                server_addr: upstream_addr,
+                source_ip,
+                sni: Some("pinned.example".to_string()),
+                client_alpn_protocols: Vec::new(),
+            },
+            events_tx,
+        ));
+        let client_config = rustls_config::build_client_config_no_verify_with_alpn(&[]).unwrap();
+        let connector = TlsConnector::from(client_config);
+        let server_name: rustls::pki_types::ServerName<'_> = "pinned.example".try_into().unwrap();
+        let mut client_tls = connector.connect(server_name, client_io).await.unwrap();
+        client_tls.shutdown().await.unwrap();
+        drop(client_tls);
+
+        bridge.await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), worker).await.unwrap().unwrap();
+
+        assert!(result.is_ok());
+        let detail = decision_engine
+            .pinning_detector_arc()
+            .decryption_exclusion_detail("pinned.example", Some(upstream_addr.ip()), upstream_addr.port())
+            .unwrap();
+        assert!(matches!(detail.reason, PinningReason::SuspectedPinnedCertificate));
+        assert_eq!(detail.failure_count, 1);
+        assert_eq!(detail.last_source_ip, source_ip);
+
+        upstream.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn worker_does_not_record_decryption_failure_after_server_plaintext() {
+        let key = KeyPair::generate().unwrap();
+        let mut cert_params = CertificateParams::default();
+        cert_params.is_ca = IsCa::NoCa;
+        cert_params
+            .distinguished_name
+            .push(DnType::CommonName, "server-first.example");
+        cert_params.subject_alt_names = vec![SanType::DnsName(
+            "server-first.example".to_string().try_into().unwrap(),
+        )];
+        let cert = cert_params.self_signed(&key).unwrap();
+        let upstream_config = rustls_config::build_server_config_from_pem(&cert.pem(), &key.serialize_pem()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = listener.local_addr().unwrap();
+        let greeting = b"server greeting".to_vec();
+        let upstream_greeting = greeting.clone();
+
+        let upstream = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let acceptor = TlsAcceptor::from(upstream_config);
+            let mut tls = acceptor.accept(stream).await.unwrap();
+            tls.write_all(&upstream_greeting).await.unwrap();
+            let mut out = Vec::new();
+            let _ = tls.read_to_end(&mut out).await.unwrap();
+        });
+
+        let mut config = TlsL4InspectionConfig::test_with_bypass_domains(&[]);
+        let pki_dir = std::env::temp_dir()
+            .join(uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string());
+        std::fs::create_dir_all(&pki_dir).unwrap();
+        let decision_engine = Arc::new(TlsDecisionEngine::new(
+            &[],
+            Arc::new(ServerKeyStore::new(pki_dir.to_str().unwrap())),
+            EchTlsPolicy::default(),
+            PinningConfig {
+                failure_threshold: 1,
+                ..PinningConfig::default()
+            },
+        ));
+        config.decision_engine = Arc::clone(&decision_engine);
+        let config = Arc::new(config);
+        let (endpoint, handle) = L4TcpEndpoint::new();
+        let (client_io, wire_io) = tokio::io::duplex(RELAY_BUF_SIZE);
+        let bridge = spawn_l4_client_bridge(handle, wire_io);
+        let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+        let events = tokio::spawn(async move {
+            while let Some(event) = events_rx.recv().await {
+                if let TlsWorkerEvent::Plaintext { payload, decision_tx, .. } = event {
+                    let _ = decision_tx.send(PlaintextDecision::Forward(payload));
+                }
+            }
+        });
+        let source_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+
+        let worker = tokio::spawn(run_tls_worker(
+            TlsWorkerParams {
+                config,
+                endpoint,
+                server_addr: upstream_addr,
+                source_ip,
+                sni: Some("server-first.example".to_string()),
+                client_alpn_protocols: Vec::new(),
+            },
+            events_tx,
+        ));
+        let client_config = rustls_config::build_client_config_no_verify_with_alpn(&[]).unwrap();
+        let connector = TlsConnector::from(client_config);
+        let server_name: rustls::pki_types::ServerName<'_> = "server-first.example".try_into().unwrap();
+        let mut client_tls = connector.connect(server_name, client_io).await.unwrap();
+        let mut received = vec![0u8; greeting.len()];
+        client_tls.read_exact(&mut received).await.unwrap();
+        assert_eq!(received, greeting);
+        client_tls.shutdown().await.unwrap();
+        drop(client_tls);
+
+        bridge.await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), worker).await.unwrap().unwrap();
+
+        assert!(result.is_ok());
+        assert!(decision_engine
+            .pinning_detector_arc()
+            .decryption_exclusion_detail("server-first.example", Some(upstream_addr.ip()), upstream_addr.port())
+            .is_none());
+
+        upstream.await.unwrap();
+        events.await.unwrap();
     }
 
     #[test]

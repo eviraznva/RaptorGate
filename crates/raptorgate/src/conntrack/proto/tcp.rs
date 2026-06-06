@@ -597,17 +597,19 @@ fn tcp_in_window(state: &mut TcpProtoState, tcp: &TcpSlice, flags: TcpFlags, dir
 
     let sender = &state.seen[sender_idx];
     let receiver = &state.seen[receiver_idx];
+    let inferred_receiver_end = infer_unseen_reply_end(state, tcp, flags, dir, config);
+    let receiver_end = inferred_receiver_end.unwrap_or(receiver.td_end);
 
     let cond1 = seq_after_eq(end, sender.td_end.wrapping_sub(receiver.td_maxwin.max(1)));
 
     let cond2 = seq_before_eq(seq, sender.td_maxend.wrapping_add(1));
 
     let cond3 = if flags.contains(TcpFlags::ACK) {
-        seq_before_eq(ack, receiver.td_end)
+        seq_before_eq(ack, receiver_end)
     } else { true };
 
     let cond4 = if flags.contains(TcpFlags::ACK) {
-        seq_after_eq(ack, receiver.td_end.wrapping_sub(MAXACKWINDOW))
+        seq_after_eq(ack, receiver_end.wrapping_sub(MAXACKWINDOW))
     } else { true };
 
     let in_window = cond1 && cond2 && cond3 && cond4;
@@ -616,19 +618,47 @@ fn tcp_in_window(state: &mut TcpProtoState, tcp: &TcpSlice, flags: TcpFlags, dir
         update_sender_after_accept(&mut state.seen[sender_idx], end, ack, win);
 
         record_last(&mut state.seen[sender_idx], seq, ack, end, win_raw, scale, flags);
-        infer_reply_from_accepted_original_ack(state, tcp, flags, dir);
+        if inferred_receiver_end.is_some() {
+            infer_reply_from_original_ack(state, tcp, flags);
+        } else {
+            infer_reply_from_accepted_original_ack(state, tcp, flags, dir);
+        }
 
         WindowVerdict::InWindow
     } else if config.tcp.be_liberal {
         update_sender_after_accept(&mut state.seen[sender_idx], end, ack, win);
 
         record_last(&mut state.seen[sender_idx], seq, ack, end, win_raw, scale, flags);
-        infer_reply_from_accepted_original_ack(state, tcp, flags, dir);
+        if inferred_receiver_end.is_some() {
+            infer_reply_from_original_ack(state, tcp, flags);
+        } else {
+            infer_reply_from_accepted_original_ack(state, tcp, flags, dir);
+        }
 
         WindowVerdict::LiberalAccept
     } else {
         WindowVerdict::OutOfWindow
     }
+}
+
+fn infer_unseen_reply_end(state: &TcpProtoState, tcp: &TcpSlice, flags: TcpFlags, dir: Direction, config: &ConntrackConfig) -> Option<u32> {
+    if !config.tcp.loose || dir != Direction::Original || state.state != TcpConntrack::Established || !flags.contains(TcpFlags::ACK) {
+        return None;
+    }
+    if flags.intersects(TcpFlags::SYN | TcpFlags::RST) {
+        return None;
+    }
+
+    let ack = tcp.acknowledgment_number();
+    let reply = &state.seen[Direction::Reply as usize];
+    if ack == 0 || reply.td_end == 0 || !seq_after(ack, reply.td_end) {
+        return None;
+    }
+    if !seq_before_eq(ack, reply.td_end.wrapping_add(MAXACKWINDOW)) {
+        return None;
+    }
+
+    Some(ack)
 }
 
 fn infer_reply_from_accepted_original_ack(state: &mut TcpProtoState, tcp: &TcpSlice, flags: TcpFlags, dir: Direction) {
@@ -1403,6 +1433,56 @@ mod tests {
         assert_eq!(state.seen[Direction::Reply as usize].last_seq, 2001);
         assert_eq!(state.seen[Direction::Reply as usize].last_ack, 1001);
         assert!(state.seen[Direction::Reply as usize].last_win > 0);
+    }
+
+    #[test]
+    fn original_ack_in_loose_mode_advances_unseen_reply_bytes() {
+        let h = TcpHandler::new(Arc::new(ObserverRegistry::default()));
+        let mut cfg = cfg_loose();
+        cfg.tcp.be_liberal = false;
+
+        let syn = syn_packet_seq(1000);
+        let syn_pkt = parse(&syn);
+        let NewStateOutcome::State(proto_state) = h.new_state(&syn_pkt, Direction::Original, &cfg).unwrap() else {
+            panic!("expected tcp state");
+        };
+        let entry = ConntrackEntry::new(
+            1,
+            FlowTuple::new(
+                IpAddr::V4(Ipv4Addr::from(CLIENT_IP)),
+                CLIENT_PORT,
+                IpAddr::V4(Ipv4Addr::from(SERVER_IP)),
+                SERVER_PORT,
+                Protocol::Tcp,
+            ),
+            proto_state,
+            Duration::from_secs(60),
+            0,
+        );
+
+        let synack = build_from_server(2000, 5840, |b| b.syn().ack(1001));
+        let synack_pkt = parse(&synack);
+        assert_eq!(h.update(&entry, &synack_pkt, Direction::Reply, Instant::now(), &cfg, PacketId(0)), CtVerdict::Accept);
+
+        let ack = build_from_client(1001, 5840, |b| b.ack(2001));
+        let ack_pkt = parse(&ack);
+        assert_eq!(h.update(&entry, &ack_pkt, Direction::Original, Instant::now(), &cfg, PacketId(0)), CtVerdict::Accept);
+
+        let client_hello_payload = vec![0x16; 517];
+        let client_hello_builder = PacketBuilder::ipv4(CLIENT_IP, SERVER_IP, 64).tcp(CLIENT_PORT, SERVER_PORT, 1001, 5840).ack(2001);
+        let mut client_hello = Vec::with_capacity(client_hello_builder.size(client_hello_payload.len()));
+        client_hello_builder.write(&mut client_hello, &client_hello_payload).unwrap();
+        let client_hello_pkt = parse(&client_hello);
+        assert_eq!(h.update(&entry, &client_hello_pkt, Direction::Original, Instant::now(), &cfg, PacketId(0)), CtVerdict::Accept);
+
+        let finished_payload = vec![0x17; 80];
+        let finished_builder = PacketBuilder::ipv4(CLIENT_IP, SERVER_IP, 64).tcp(CLIENT_PORT, SERVER_PORT, 1518, 5840).ack(3001);
+        let mut finished = Vec::with_capacity(finished_builder.size(finished_payload.len()));
+        finished_builder.write(&mut finished, &finished_payload).unwrap();
+        let finished_pkt = parse(&finished);
+
+        assert_eq!(h.update(&entry, &finished_pkt, Direction::Original, Instant::now(), &cfg, PacketId(0)), CtVerdict::Accept);
+        assert_eq!(extract_state(&entry).seen[Direction::Reply as usize].td_end, 3001);
     }
 
     #[test]
