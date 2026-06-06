@@ -14,7 +14,6 @@ pub enum DecryptionFailureReason {
     SuspectedPinnedCertificate,
     ClientCertificateRequired,
     UnsupportedTlsMode,
-    UpstreamCertificateFailure,
 }
 
 pub type PinningReason = DecryptionFailureReason;
@@ -28,7 +27,6 @@ impl std::fmt::Display for DecryptionFailureReason {
             Self::SuspectedPinnedCertificate => write!(f, "suspected_pinned_certificate"),
             Self::ClientCertificateRequired => write!(f, "client_certificate_required"),
             Self::UnsupportedTlsMode => write!(f, "unsupported_tls_mode"),
-            Self::UpstreamCertificateFailure => write!(f, "upstream_certificate_failure"),
         }
     }
 }
@@ -78,8 +76,6 @@ pub struct PinningConfig {
     pub max_entries: usize,
 }
 
-pub type DecryptionFailureCacheConfig = PinningConfig;
-
 impl Default for PinningConfig {
     fn default() -> Self {
         Self {
@@ -105,8 +101,6 @@ pub struct PinningStats {
     pub tracked_failures: usize,
 }
 
-pub type DecryptionExclusionStats = PinningStats;
-
 #[derive(Debug, Clone)]
 pub struct DecryptionExclusionDetail {
     pub domain: String,
@@ -122,8 +116,6 @@ pub struct PinningDetector {
     bypassed: DashMap<DecryptionExclusionKey, LocalExclusionEntry>,
     config: ArcSwap<PinningConfig>,
 }
-
-pub type DecryptionExclusionCache = PinningDetector;
 
 impl PinningDetector {
     pub fn new(config: PinningConfig) -> Self {
@@ -199,27 +191,6 @@ impl PinningDetector {
         }
     }
 
-    pub fn record_failure(&self, source_ip: IpAddr, domain: &str, reason: PinningReason) -> bool {
-        self.record_decryption_failure(source_ip, None, 443, domain, reason)
-            .activated_exclusion
-    }
-
-    pub fn is_decryption_excluded(
-        &self,
-        _source_ip: IpAddr,
-        server_ip: Option<IpAddr>,
-        server_port: u16,
-        domain: &str,
-    ) -> bool {
-        let config = self.config.load();
-        if !config.enabled {
-            return false;
-        }
-
-        self.active_entry(domain, server_ip, server_port, config.bypass_ttl)
-            .is_some()
-    }
-
     pub fn is_target_decryption_excluded(
         &self,
         server_ip: Option<IpAddr>,
@@ -233,10 +204,6 @@ impl PinningDetector {
 
         self.active_entry(domain, server_ip, server_port, config.bypass_ttl)
             .is_some()
-    }
-
-    pub fn is_bypassed(&self, source_ip: IpAddr, domain: &str) -> bool {
-        self.is_decryption_excluded(source_ip, None, 443, domain)
     }
 
     pub fn reload_config(&self, config: PinningConfig) {
@@ -417,6 +384,15 @@ mod tests {
         IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10))
     }
 
+    fn record_failure(det: &PinningDetector, source_ip: IpAddr, domain: &str, reason: PinningReason) -> bool {
+        det.record_decryption_failure(source_ip, None, 443, domain, reason)
+            .activated_exclusion
+    }
+
+    fn is_bypassed(det: &PinningDetector, domain: &str) -> bool {
+        det.is_target_decryption_excluded(None, 443, domain)
+    }
+
     #[test]
     fn local_decryption_exclusion_cache_is_not_source_ip_scoped() {
         let det = PinningDetector::new(cfg(1, 60, 3600));
@@ -430,8 +406,8 @@ mod tests {
         );
 
         assert!(report.activated_exclusion);
-        assert!(det.is_decryption_excluded(other_ip(), Some(server_ip()), 443, "pinned.example"));
-        assert!(det.is_decryption_excluded(localhost(), Some(server_ip()), 443, "PINNED.EXAMPLE"));
+        assert!(det.is_target_decryption_excluded(Some(server_ip()), 443, "pinned.example"));
+        assert!(det.is_target_decryption_excluded(Some(server_ip()), 443, "PINNED.EXAMPLE"));
     }
 
     #[test]
@@ -450,64 +426,63 @@ mod tests {
 
         assert_eq!(report.action, DecryptionFailureAction::Block);
         assert!(!report.activated_exclusion);
-        assert!(!det.is_decryption_excluded(other_ip(), Some(server_ip()), 443, "pinned.example"));
+        assert!(!det.is_target_decryption_excluded(Some(server_ip()), 443, "pinned.example"));
     }
 
     #[test]
     fn below_threshold_no_bypass() {
         let det = PinningDetector::new(cfg(3, 60, 3600));
-        assert!(!det.record_failure(localhost(), "example.com", reason()));
-        assert!(!det.record_failure(localhost(), "example.com", reason()));
-        assert!(!det.is_bypassed(localhost(), "example.com"));
+        assert!(!record_failure(&det, localhost(), "example.com", reason()));
+        assert!(!record_failure(&det, localhost(), "example.com", reason()));
+        assert!(!is_bypassed(&det, "example.com"));
     }
 
     #[test]
     fn threshold_reached_activates_bypass() {
         let det = PinningDetector::new(cfg(3, 60, 3600));
-        det.record_failure(localhost(), "example.com", reason());
-        det.record_failure(localhost(), "example.com", reason());
-        assert!(det.record_failure(localhost(), "example.com", reason()));
-        assert!(det.is_bypassed(localhost(), "example.com"));
+        record_failure(&det, localhost(), "example.com", reason());
+        record_failure(&det, localhost(), "example.com", reason());
+        assert!(record_failure(&det, localhost(), "example.com", reason()));
+        assert!(is_bypassed(&det, "example.com"));
     }
 
     #[test]
     fn different_source_ip_shares_local_exclusion() {
         let det = PinningDetector::new(cfg(2, 60, 3600));
-        det.record_failure(localhost(), "example.com", reason());
-        det.record_failure(other_ip(), "example.com", reason());
-        assert!(det.is_bypassed(localhost(), "example.com"));
-        assert!(det.is_bypassed(other_ip(), "example.com"));
+        record_failure(&det, localhost(), "example.com", reason());
+        record_failure(&det, other_ip(), "example.com", reason());
+        assert!(is_bypassed(&det, "example.com"));
     }
 
     #[test]
     fn different_domains_independent() {
         let det = PinningDetector::new(cfg(2, 60, 3600));
-        det.record_failure(localhost(), "a.com", reason());
-        det.record_failure(localhost(), "b.com", reason());
-        assert!(!det.is_bypassed(localhost(), "a.com"));
-        assert!(!det.is_bypassed(localhost(), "b.com"));
+        record_failure(&det, localhost(), "a.com", reason());
+        record_failure(&det, localhost(), "b.com", reason());
+        assert!(!is_bypassed(&det, "a.com"));
+        assert!(!is_bypassed(&det, "b.com"));
     }
 
     #[test]
     fn case_insensitive_domain() {
         let det = PinningDetector::new(cfg(2, 60, 3600));
-        det.record_failure(localhost(), "Example.COM", reason());
-        assert!(det.record_failure(localhost(), "example.com", reason()));
-        assert!(det.is_bypassed(localhost(), "EXAMPLE.com"));
+        record_failure(&det, localhost(), "Example.COM", reason());
+        assert!(record_failure(&det, localhost(), "example.com", reason()));
+        assert!(is_bypassed(&det, "EXAMPLE.com"));
     }
 
     #[test]
     fn bypass_expires_after_ttl() {
         let det = PinningDetector::new(cfg(1, 60, 0));
-        assert!(det.record_failure(localhost(), "example.com", reason()));
-        assert!(!det.is_bypassed(localhost(), "example.com"));
+        assert!(record_failure(&det, localhost(), "example.com", reason()));
+        assert!(!is_bypassed(&det, "example.com"));
     }
 
     #[test]
     fn cleanup_removes_expired() {
         let det = PinningDetector::new(cfg(1, 60, 0));
-        det.record_failure(localhost(), "a.com", reason());
-        det.record_failure(localhost(), "b.com", reason());
+        record_failure(&det, localhost(), "a.com", reason());
+        record_failure(&det, localhost(), "b.com", reason());
         let removed = det.cleanup_expired();
         assert_eq!(removed, 2);
         assert_eq!(det.stats().active_bypasses, 0);
@@ -518,15 +493,15 @@ mod tests {
         let mut c = cfg(1, 60, 3600);
         c.enabled = false;
         let det = PinningDetector::new(c);
-        assert!(!det.record_failure(localhost(), "example.com", reason()));
-        assert!(!det.is_bypassed(localhost(), "example.com"));
+        assert!(!record_failure(&det, localhost(), "example.com", reason()));
+        assert!(!is_bypassed(&det, "example.com"));
     }
 
     #[test]
     fn stats_reflect_state() {
         let det = PinningDetector::new(cfg(3, 60, 3600));
-        det.record_failure(localhost(), "a.com", reason());
-        det.record_failure(other_ip(), "b.com", reason());
+        record_failure(&det, localhost(), "a.com", reason());
+        record_failure(&det, other_ip(), "b.com", reason());
         let s = det.stats();
         assert_eq!(s.tracked_failures, 2);
         assert_eq!(s.active_bypasses, 0);
@@ -535,7 +510,8 @@ mod tests {
     #[test]
     fn bypass_detail_returns_info() {
         let det = PinningDetector::new(cfg(1, 60, 3600));
-        det.record_failure(
+        record_failure(
+            &det,
             localhost(),
             "pin.com",
             PinningReason::TlsAlert {
@@ -550,9 +526,9 @@ mod tests {
     #[test]
     fn activation_clears_failure_window() {
         let det = PinningDetector::new(cfg(2, 60, 3600));
-        det.record_failure(localhost(), "x.com", reason());
-        det.record_failure(localhost(), "x.com", reason());
-        assert!(det.is_bypassed(localhost(), "x.com"));
+        record_failure(&det, localhost(), "x.com", reason());
+        record_failure(&det, localhost(), "x.com", reason());
+        assert!(is_bypassed(&det, "x.com"));
         assert_eq!(det.stats().tracked_failures, 0);
     }
 

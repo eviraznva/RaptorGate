@@ -124,10 +124,6 @@ impl TlsDecisionEngine {
         tracing::info!("ECH TLS policy reloaded");
     }
 
-    pub fn reload_known_pinned_domains(&self, domains: &[String]) {
-        self.reload_decryption_exclusions(domains);
-    }
-
     pub fn reload_decryption_exclusions(&self, domains: &[String]) {
         let trie = DomainTrie::from_domains(domains);
         self.decryption_exclusions_trie.store(Arc::new(trie));
@@ -149,16 +145,6 @@ impl TlsDecisionEngine {
     ) -> DecryptionFailureReport {
         self.pinning_detector
             .record_decryption_failure(source_ip, server_ip, server_port, domain, reason)
-    }
-
-    pub fn report_pinning_failure(
-        &self,
-        source_ip: IpAddr,
-        domain: &str,
-        reason: PinningReason,
-    ) -> bool {
-        self.report_decryption_failure(source_ip, None, 443, domain, reason)
-            .activated_exclusion
     }
 
     pub fn server_key_store(&self) -> &Arc<ServerKeyStore> {
@@ -332,16 +318,6 @@ mod tests {
     }
 
     #[test]
-    fn known_pinned_domains_bypass() {
-        let e = engine(&[]);
-        e.reload_known_pinned_domains(&["*.apple.com".into()]);
-        assert_eq!(
-            e.decide(Some("api.apple.com"), false, None, 443, None),
-            TlsAction::Bypass
-        );
-    }
-
-    #[test]
     fn configured_decryption_exclusions_bypass() {
         let e = engine(&[]);
         e.reload_decryption_exclusions(&["*.apple.com".into()]);
@@ -389,8 +365,8 @@ mod tests {
             TlsAction::Intercept
         );
 
-        e.report_pinning_failure(src, "pinned.app", PinningReason::TcpReset);
-        e.report_pinning_failure(src, "pinned.app", PinningReason::TcpReset);
+        e.report_decryption_failure(src, None, 443, "pinned.app", PinningReason::TcpReset);
+        e.report_decryption_failure(src, None, 443, "pinned.app", PinningReason::TcpReset);
 
         assert_eq!(
             e.decide(Some("pinned.app"), false, None, 443, Some(src)),
