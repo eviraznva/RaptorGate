@@ -22,7 +22,7 @@ function shouldPublishAlert(event: FirewallEvent): boolean {
     event.decision === 'alert' ||
     event.decision === 'block' ||
     event.decision === 'error' ||
-    event.event_type === 'pinning_auto_bypass_activated'
+    event.event_type === 'tls_decryption_exclusion_activated'
   );
 }
 

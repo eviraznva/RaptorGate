@@ -22,6 +22,10 @@ service FirewallQueryService {
 
   rpc GetPinningStats  (GetPinningStatsRequest)  returns (GetPinningStatsResponse);
   rpc GetPinningBypass (GetPinningBypassRequest) returns (GetPinningBypassResponse);
+  rpc GetLocalDecryptionExclusionStats (GetLocalDecryptionExclusionStatsRequest) returns (GetLocalDecryptionExclusionStatsResponse);
+  rpc GetLocalDecryptionExclusion (GetLocalDecryptionExclusionRequest) returns (GetLocalDecryptionExclusionResponse);
+  rpc ListLocalDecryptionExclusions (ListLocalDecryptionExclusionsRequest) returns (ListLocalDecryptionExclusionsResponse);
+  rpc ClearLocalDecryptionExclusions (ClearLocalDecryptionExclusionsRequest) returns (ClearLocalDecryptionExclusionsResponse);
 
   rpc SetInterfaceState (SetInterfaceStateRequest) returns (SetInterfaceStateResponse);
 }
@@ -129,6 +133,45 @@ message GetPinningBypassResponse {
   bool found = 1;
   string reason = 2;
   uint32 failure_count = 3;
+}
+
+message GetLocalDecryptionExclusionStatsRequest {}
+
+message GetLocalDecryptionExclusionStatsResponse {
+  uint64 active_exclusions = 1;
+  uint64 tracked_failures = 2;
+}
+
+message GetLocalDecryptionExclusionRequest {
+  string domain = 1;
+  string server_ip = 2;
+  uint32 server_port = 3;
+}
+
+message LocalDecryptionExclusion {
+  string domain = 1;
+  string server_ip = 2;
+  uint32 server_port = 3;
+  string reason = 4;
+  uint32 failure_count = 5;
+  string last_source_ip = 6;
+}
+
+message GetLocalDecryptionExclusionResponse {
+  bool found = 1;
+  LocalDecryptionExclusion exclusion = 2;
+}
+
+message ListLocalDecryptionExclusionsRequest {}
+
+message ListLocalDecryptionExclusionsResponse {
+  repeated LocalDecryptionExclusion exclusions = 1;
+}
+
+message ClearLocalDecryptionExclusionsRequest {}
+
+message ClearLocalDecryptionExclusionsResponse {
+  uint64 removed = 1;
 }
 
 message SetInterfaceStateRequest {

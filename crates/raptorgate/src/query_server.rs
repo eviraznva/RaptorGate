@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::exit;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
@@ -40,16 +40,21 @@ use crate::proto::services::firewall_config_snapshot_service_server::{
 use crate::proto::services::firewall_metrics_service_server::FirewallMetricsServiceServer;
 use crate::proto::services::identity_session_service_server::IdentitySessionServiceServer;
 use crate::proto::services::{
+    ClearLocalDecryptionExclusionsRequest, ClearLocalDecryptionExclusionsResponse,
+    GetLocalDecryptionExclusionRequest, GetLocalDecryptionExclusionResponse,
+    GetLocalDecryptionExclusionStatsRequest, GetLocalDecryptionExclusionStatsResponse,
     GetNatBindingsRequest, GetNatBindingsResponse,
     GetPinningBypassRequest, GetPinningBypassResponse, GetPinningStatsRequest,
     GetPinningStatsResponse, GetPoliciesRequest, GetPoliciesResponse, GetPolicyRequest,
     GetPolicyResponse, GetZonePairRequest, GetZonePairResponse, GetZonePairsRequest, GetZonePairsResponse,
     GetZoneRequest, GetZoneResponse, GetZonesRequest, GetZonesResponse,
     FactoryResetRequest, FactoryResetResponse, GetSystemTimeRequest, GetSystemTimeResponse,
+    ListLocalDecryptionExclusionsRequest, ListLocalDecryptionExclusionsResponse,
+    LocalDecryptionExclusion,
     PushActiveConfigSnapshotRequest, PushActiveConfigSnapshotResponse, SetInterfaceStateRequest,
     SetInterfaceStateResponse,
 };
-use crate::tls::pinning_detector::PinningDetector;
+use crate::tls::pinning_detector::{DecryptionExclusionDetail, DecryptionFailureAction, PinningConfig, PinningDetector};
 use crate::tls::cert_storage::clear_ca_files;
 use crate::tls::{EchTlsPolicy, ServerKeyStore, TlsDecisionEngine};
 use crate::tls::decryption_mirror::{DecryptionMirror, DecryptionMirrorConfig};
@@ -167,7 +172,7 @@ where
     pub decision_engine: Arc<TlsDecisionEngine>,
     pub decryption_mirror: Arc<DecryptionMirror>,
     pub server_key_store: Arc<ServerKeyStore>,
-    /// Detektor pinningu — wspoldzielony z TlsDecisionEngine do obserwacji stanu.
+    /// Cache lokalnych wykluczen deszyfrowania TLS wspoldzielony z TlsDecisionEngine.
     pub pinning_detector: Arc<PinningDetector>,
     pub interface_monitor: Arc<Monitor>,
     pub interface_controller: Arc<Controller>,
@@ -272,6 +277,57 @@ fn decryption_mirror_config_from_proto(
         forwarded_only: config.forwarded_only,
         max_session_bytes,
     })
+}
+
+fn decryption_failure_cache_config_from_proto(
+    config: Option<&crate::proto::config::DecryptionFailureCacheConfig>,
+) -> PinningConfig {
+    let Some(config) = config else {
+        return PinningConfig::default();
+    };
+    let defaults = PinningConfig::default();
+    let action = match config.action() {
+        crate::proto::config::DecryptionFailureAction::Block => {
+            DecryptionFailureAction::Block
+        }
+        _ => DecryptionFailureAction::CacheAndBypass,
+    };
+
+    PinningConfig {
+        enabled: config.enabled,
+        failure_threshold: if config.failure_threshold == 0 {
+            defaults.failure_threshold
+        } else {
+            config.failure_threshold
+        },
+        failure_window: Duration::from_secs(if config.failure_window_sec == 0 {
+            defaults.failure_window.as_secs()
+        } else {
+            config.failure_window_sec as u64
+        }),
+        bypass_ttl: Duration::from_secs(if config.local_exclusion_ttl_sec == 0 {
+            defaults.bypass_ttl.as_secs()
+        } else {
+            config.local_exclusion_ttl_sec as u64
+        }),
+        action,
+        max_entries: if config.max_entries == 0 {
+            defaults.max_entries
+        } else {
+            config.max_entries as usize
+        },
+    }
+}
+
+fn map_decryption_exclusion_detail(detail: DecryptionExclusionDetail) -> LocalDecryptionExclusion {
+    LocalDecryptionExclusion {
+        domain: detail.domain,
+        server_ip: detail.server_ip.map(|ip| ip.to_string()).unwrap_or_default(),
+        server_port: detail.server_port as u32,
+        reason: detail.reason.to_string(),
+        failure_count: detail.failure_count,
+        last_source_ip: detail.last_source_ip.to_string(),
+    }
 }
 
 #[tonic::async_trait]
@@ -512,6 +568,73 @@ where
         Ok(Response::new(response))
     }
 
+    async fn get_local_decryption_exclusion_stats(
+        &self,
+        _request: Request<GetLocalDecryptionExclusionStatsRequest>,
+    ) -> Result<Response<GetLocalDecryptionExclusionStatsResponse>, Status> {
+        let stats = self.pinning_detector.stats();
+        Ok(Response::new(GetLocalDecryptionExclusionStatsResponse {
+            active_exclusions: stats.active_bypasses as u64,
+            tracked_failures: stats.tracked_failures as u64,
+        }))
+    }
+
+    async fn get_local_decryption_exclusion(
+        &self,
+        request: Request<GetLocalDecryptionExclusionRequest>,
+    ) -> Result<Response<GetLocalDecryptionExclusionResponse>, Status> {
+        let req = request.into_inner();
+        if req.domain.trim().is_empty() {
+            return Err(Status::invalid_argument("domain is required"));
+        }
+        let server_ip = if req.server_ip.trim().is_empty() {
+            None
+        } else {
+            Some(IpAddr::from_str(&req.server_ip).map_err(|e| {
+                Status::invalid_argument(format!("invalid server_ip '{}': {e}", req.server_ip))
+            })?)
+        };
+        if req.server_port > u16::MAX as u32 {
+            return Err(Status::invalid_argument(format!("server_port must be in range 0..{}", u16::MAX)));
+        }
+        let server_port = if req.server_port == 0 { 443 } else { req.server_port as u16 };
+
+        let response = match self.pinning_detector.decryption_exclusion_detail(&req.domain, server_ip, server_port) {
+            Some(detail) => GetLocalDecryptionExclusionResponse {
+                found: true,
+                exclusion: Some(map_decryption_exclusion_detail(detail)),
+            },
+            None => GetLocalDecryptionExclusionResponse {
+                found: false,
+                exclusion: None,
+            },
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn list_local_decryption_exclusions(
+        &self,
+        _request: Request<ListLocalDecryptionExclusionsRequest>,
+    ) -> Result<Response<ListLocalDecryptionExclusionsResponse>, Status> {
+        let exclusions = self.pinning_detector
+            .list_decryption_exclusions()
+            .into_iter()
+            .map(map_decryption_exclusion_detail)
+            .collect();
+        Ok(Response::new(ListLocalDecryptionExclusionsResponse { exclusions }))
+    }
+
+    async fn clear_local_decryption_exclusions(
+        &self,
+        _request: Request<ClearLocalDecryptionExclusionsRequest>,
+    ) -> Result<Response<ClearLocalDecryptionExclusionsResponse>, Status> {
+        let removed = self.pinning_detector.clear_decryption_exclusions();
+        Ok(Response::new(ClearLocalDecryptionExclusionsResponse {
+            removed: removed as u64,
+        }))
+    }
+
     async fn set_interface_state(
         &self,
         request: Request<SetInterfaceStateRequest>,
@@ -744,8 +867,16 @@ where
                 block_ech_no_sni: policy.block_ech_no_sni,
                 block_all_ech: policy.block_all_ech,
             });
+            let mut decryption_exclusions = policy.decryption_exclusions.clone();
+            for domain in &policy.known_pinned_domains {
+                if !decryption_exclusions.iter().any(|existing| existing == domain) {
+                    decryption_exclusions.push(domain.clone());
+                }
+            }
             self.decision_engine
-                .reload_known_pinned_domains(&policy.known_pinned_domains);
+                .reload_decryption_exclusions(&decryption_exclusions);
+            self.decision_engine
+                .reload_decryption_failure_cache_config(decryption_failure_cache_config_from_proto(policy.decryption_failure_cache.as_ref()));
             let mirror_config = match decryption_mirror_config_from_proto(policy.decryption_mirror.as_ref()) {
                 Ok(config) => config,
                 Err(e) => {
@@ -769,6 +900,10 @@ where
                 }));
             }
         } else {
+            let empty_domains: Vec<String> = Vec::new();
+            self.decision_engine.reload_decryption_exclusions(&empty_domains);
+            self.decision_engine
+                .reload_decryption_failure_cache_config(PinningConfig::default());
             self.decryption_mirror.reload_config(DecryptionMirrorConfig::default());
         }
 
@@ -980,7 +1115,9 @@ where
         let empty_domains: Vec<String> = Vec::new();
         self.decision_engine.reload_bypass(&empty_domains);
         self.decision_engine
-            .reload_known_pinned_domains(&empty_domains);
+            .reload_decryption_exclusions(&empty_domains);
+        self.decision_engine
+            .reload_decryption_failure_cache_config(PinningConfig::default());
         self.decision_engine.reload_ech_policy(EchTlsPolicy::default());
 
         self.apply_nat_rules(&[]).await?;

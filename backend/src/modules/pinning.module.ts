@@ -6,11 +6,11 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
 import { PINNING_OBSERVABILITY_SERVICE_TOKEN } from '../application/ports/pinning-observability-service.interface.js';
 import { TOKEN_SERVICE_TOKEN } from '../application/ports/token-service.interface.js';
 import {
-  GrpcPinningObservabilityService,
+  GrpcDecryptionExclusionObservabilityService,
   PINNING_OBSERVABILITY_GRPC_CLIENT_TOKEN,
 } from '../infrastructure/adapters/grpc-pinning-observability.service.js';
 import { TokenService } from '../infrastructure/adapters/jwt-token.service.js';
-import { PinningController } from '../presentation/controllers/pinning.controller.js';
+import { DecryptionExclusionsController } from '../presentation/controllers/pinning.controller.js';
 import { Env } from '../shared/config/env.validation.js';
 
 @Module({
@@ -52,7 +52,7 @@ import { Env } from '../shared/config/env.validation.js';
       },
     ]),
   ],
-  controllers: [PinningController],
+  controllers: [DecryptionExclusionsController],
   providers: [
     {
       provide: TOKEN_SERVICE_TOKEN,
@@ -60,7 +60,7 @@ import { Env } from '../shared/config/env.validation.js';
     },
     {
       provide: PINNING_OBSERVABILITY_SERVICE_TOKEN,
-      useClass: GrpcPinningObservabilityService,
+      useClass: GrpcDecryptionExclusionObservabilityService,
     },
     JwtService,
   ],

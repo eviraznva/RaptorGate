@@ -51,10 +51,10 @@ describe('mapFirewallEventToRealtimeAlert', () => {
     });
   });
 
-  it('maps pinning auto-bypass to alert despite bypass decision', () => {
+  it('maps TLS decryption exclusion activation to alert despite bypass decision', () => {
     const alert = mapFirewallEventToRealtimeAlert({
       timestamp: '2026-04-29T10:00:00.000Z',
-      event_type: 'pinning_auto_bypass_activated',
+      event_type: 'tls_decryption_exclusion_activated',
       source: 'TLS',
       decision: 'bypass',
       domain: 'api.example.com',

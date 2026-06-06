@@ -27,6 +27,7 @@ import SessionsReducer from "../features/sessionsSlice";
 import { identityConfigApi } from "../services/identityConfig";
 import { identitySessionsApi } from "../services/identitySessions";
 import { secretsApi } from "../services/secrets";
+import { decryptionExclusionsApi } from "../services/decryptionExclusions";
 import { decryptionMirrorApi } from "../services/decryptionMirror";
 import { sslBypassApi } from "../services/sslBypass";
 
@@ -56,6 +57,7 @@ export const store = configureStore({
     [identityConfigApi.reducerPath]: identityConfigApi.reducer,
     [identitySessionsApi.reducerPath]: identitySessionsApi.reducer,
     [secretsApi.reducerPath]: secretsApi.reducer,
+    [decryptionExclusionsApi.reducerPath]: decryptionExclusionsApi.reducer,
     [decryptionMirrorApi.reducerPath]: decryptionMirrorApi.reducer,
     [sslBypassApi.reducerPath]: sslBypassApi.reducer,
     [rulesApi.reducerPath]: rulesApi.reducer,
@@ -75,6 +77,7 @@ export const store = configureStore({
       identityConfigApi.middleware,
       identitySessionsApi.middleware,
       secretsApi.middleware,
+      decryptionExclusionsApi.middleware,
       decryptionMirrorApi.middleware,
       sslBypassApi.middleware,
       zonesApi.middleware,

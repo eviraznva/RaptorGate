@@ -12,6 +12,7 @@ import {
 	DEFAULT_APP_CONFIG,
 	DEFAULT_POLICIES,
 } from "../harness/fixtures";
+import { DecryptionFailureAction } from "../generated/config/config_models";
 
 function buildTlsInspectionSnapshot(
 	decryptionMirror?: {
@@ -38,6 +39,16 @@ function buildTlsInspectionSnapshot(
 			stripEchDns: false,
 			logEchAttempts: false,
 			knownPinnedDomains: [],
+			decryptionExclusions: [],
+			decryptionFailureCache: {
+				version: 1,
+				enabled: true,
+				failureThreshold: 3,
+				failureWindowSec: 60,
+				localExclusionTtlSec: 86400,
+				maxEntries: 4096,
+				action: DecryptionFailureAction.DECRYPTION_FAILURE_ACTION_CACHE_AND_BYPASS,
+			},
 			decryptionMirror,
 		},
 		rules: [

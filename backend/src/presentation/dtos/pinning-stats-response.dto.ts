@@ -1,14 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-export class PinningStatsResponseDto {
+export class DecryptionExclusionStatsResponseDto {
   @ApiProperty({
-    description: 'Number of currently active pinning auto-bypass entries',
+    description: 'Number of currently active local TLS decryption exclusions',
     example: 3,
   })
-  activeBypasses: number;
+  activeExclusions: number;
 
   @ApiProperty({
-    description: 'Number of (source_ip, domain) pairs with recent failures',
+    description: 'Number of target failure windows currently tracked',
     example: 12,
   })
   trackedFailures: number;

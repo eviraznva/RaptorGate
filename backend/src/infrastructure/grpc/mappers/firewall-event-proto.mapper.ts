@@ -218,7 +218,7 @@ function mapPinningFailureDetected(
 ): FirewallEvent {
   return {
     timestamp: toIsoTimestamp(event),
-    event_type: 'pinning_failure_detected',
+    event_type: 'tls_decryption_failure_detected',
     source: 'TLS',
     decision: 'alert',
     src_ip: undefinedIfEmpty(e.peerIp),
@@ -236,7 +236,7 @@ function mapPinningAutoBypassActivated(
 ): FirewallEvent {
   return {
     timestamp: toIsoTimestamp(event),
-    event_type: 'pinning_auto_bypass_activated',
+    event_type: 'tls_decryption_exclusion_activated',
     source: 'TLS',
     decision: 'bypass',
     src_ip: undefinedIfEmpty(e.sourceIp),

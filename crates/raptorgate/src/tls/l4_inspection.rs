@@ -12,6 +12,7 @@ use crate::conntrack::tuple::Direction;
 use crate::data_plane::packet_context::PacketId;
 use crate::dpi::parsers::tls::{parse_tls_client_hello, TlsParseResult};
 use crate::dpi::{AppProto, DpiClassifier, DpiContext, TlsAction};
+use crate::events::{self, Event, EventKind};
 use crate::identity::{resolve_identity, IdentitySessionStore};
 use crate::l4::context::SessionContext;
 use crate::l4::http::HttpL4Stage;
@@ -457,12 +458,27 @@ async fn run_tls_worker(
         .await {
             Ok(client_tls) => client_tls,
             Err(error) => {
-                let reason = pinning_reason_from_accept_error(&error);
-                params.config.decision_engine.report_pinning_failure(
+                let reason = decryption_failure_reason_from_accept_error(&error);
+                let report = params.config.decision_engine.report_decryption_failure(
                     params.source_ip,
+                    Some(params.server_addr.ip()),
+                    params.server_addr.port(),
                     &domain,
-                    reason,
+                    reason.clone(),
                 );
+                events::emit(Event::new(EventKind::PinningFailureDetected {
+                    peer: SocketAddr::new(params.source_ip, 0),
+                    dst: params.server_addr,
+                    sni: domain.clone(),
+                    tls_version: None,
+                }));
+                if report.activated_exclusion {
+                    events::emit(Event::new(EventKind::PinningAutoBypassActivated {
+                        source_ip: params.source_ip,
+                        domain: domain.clone(),
+                        reason: reason.to_string(),
+                    }));
+                }
                 return Err(error);
             }
         };
@@ -487,7 +503,7 @@ async fn run_tls_worker(
     Ok(())
 }
 
-fn pinning_reason_from_accept_error(error: &anyhow::Error) -> PinningReason {
+fn decryption_failure_reason_from_accept_error(error: &anyhow::Error) -> PinningReason {
     for cause in error.chain() {
         if let Some(io_error) = cause.downcast_ref::<std::io::Error>() {
             match io_error.kind() {
@@ -498,12 +514,12 @@ fn pinning_reason_from_accept_error(error: &anyhow::Error) -> PinningReason {
                 _ => {}
             }
             if let Some(rustls_error) = io_error.get_ref().and_then(|source| source.downcast_ref::<rustls::Error>())
-                && let Some(reason) = pinning_reason_from_rustls_error(rustls_error) {
+                && let Some(reason) = decryption_failure_reason_from_rustls_error(rustls_error) {
                 return reason;
             }
         }
         if let Some(rustls_error) = cause.downcast_ref::<rustls::Error>()
-            && let Some(reason) = pinning_reason_from_rustls_error(rustls_error) {
+            && let Some(reason) = decryption_failure_reason_from_rustls_error(rustls_error) {
             return reason;
         }
     }
@@ -512,10 +528,19 @@ fn pinning_reason_from_accept_error(error: &anyhow::Error) -> PinningReason {
     }
 }
 
-fn pinning_reason_from_rustls_error(error: &rustls::Error) -> Option<PinningReason> {
+fn decryption_failure_reason_from_rustls_error(error: &rustls::Error) -> Option<PinningReason> {
     match error {
-        rustls::Error::AlertReceived(alert) => Some(PinningReason::TlsAlert {
-            alert_description: format!("{alert:?}"),
+        rustls::Error::AlertReceived(alert) => Some(match alert {
+            rustls::AlertDescription::BadCertificate
+            | rustls::AlertDescription::CertificateUnknown
+            | rustls::AlertDescription::BadCertificateHashValue => PinningReason::SuspectedPinnedCertificate,
+            rustls::AlertDescription::CertificateRequired => PinningReason::ClientCertificateRequired,
+            rustls::AlertDescription::ProtocolVersion
+            | rustls::AlertDescription::InsufficientSecurity
+            | rustls::AlertDescription::HandshakeFailure => PinningReason::UnsupportedTlsMode,
+            _ => PinningReason::TlsAlert {
+                alert_description: format!("{alert:?}"),
+            },
         }),
         _ => None,
     }
@@ -802,7 +827,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worker_records_pinning_failure_on_client_close_before_tls() {
+    async fn worker_records_decryption_failure_on_client_close_before_tls() {
         let key = KeyPair::generate().unwrap();
         let mut cert_params = CertificateParams::default();
         cert_params.is_ca = IsCa::NoCa;
@@ -857,12 +882,13 @@ mod tests {
         ).await;
 
         assert!(result.is_err());
-        let (reason, count) = decision_engine
+        let detail = decision_engine
             .pinning_detector_arc()
-            .bypass_detail(source_ip, "pinned.example")
+            .decryption_exclusion_detail("pinned.example", Some(upstream_addr.ip()), upstream_addr.port())
             .unwrap();
-        assert!(matches!(reason, PinningReason::ConnectionClosedNoData));
-        assert_eq!(count, 1);
+        assert!(matches!(detail.reason, PinningReason::ConnectionClosedNoData));
+        assert_eq!(detail.failure_count, 1);
+        assert_eq!(detail.last_source_ip, source_ip);
 
         upstream.await.unwrap();
     }
@@ -871,14 +897,24 @@ mod tests {
     fn pinning_reason_classifies_tcp_reset() {
         let error = anyhow::Error::new(std::io::Error::new(ErrorKind::ConnectionReset, "client reset"));
 
-        assert!(matches!(pinning_reason_from_accept_error(&error), PinningReason::TcpReset));
+        assert!(matches!(decryption_failure_reason_from_accept_error(&error), PinningReason::TcpReset));
+    }
+
+    #[test]
+    fn decryption_failure_reason_classifies_bad_certificate_as_suspected_pinning() {
+        let error = anyhow::Error::new(rustls::Error::AlertReceived(rustls::AlertDescription::BadCertificate));
+
+        assert!(matches!(
+            decryption_failure_reason_from_accept_error(&error),
+            PinningReason::SuspectedPinnedCertificate
+        ));
     }
 
     #[test]
     fn pinning_reason_classifies_closed_without_data() {
         let error = anyhow::Error::new(std::io::Error::new(ErrorKind::UnexpectedEof, "client closed"));
 
-        assert!(matches!(pinning_reason_from_accept_error(&error), PinningReason::ConnectionClosedNoData));
+        assert!(matches!(decryption_failure_reason_from_accept_error(&error), PinningReason::ConnectionClosedNoData));
     }
 }
 

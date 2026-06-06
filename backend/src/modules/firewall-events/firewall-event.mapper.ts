@@ -232,7 +232,7 @@ export function mapEventToDocument(event: Event): FirewallEventDocument | null {
     case 'pinningFailureDetected': {
       const e = item.pinningFailureDetected;
       return {
-        ...base('TLS', 'alert', 'pinning_failure_detected'),
+        ...base('TLS', 'alert', 'tls_decryption_failure_detected'),
         src_ip: e.peerIp,
         src_port: e.peerPort,
         dst_ip: e.dstIp,
@@ -244,7 +244,7 @@ export function mapEventToDocument(event: Event): FirewallEventDocument | null {
     case 'pinningAutoBypassActivated': {
       const e = item.pinningAutoBypassActivated;
       return {
-        ...base('TLS', 'bypass', 'pinning_auto_bypass_activated'),
+        ...base('TLS', 'bypass', 'tls_decryption_exclusion_activated'),
         src_ip: undefinedIfEmpty(e.sourceIp),
         domain: undefinedIfEmpty(e.domain),
         reason: undefinedIfEmpty(e.reason),

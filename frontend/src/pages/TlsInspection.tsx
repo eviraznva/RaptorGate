@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@iconify/react";
 import {
+  useClearDecryptionExclusionsMutation,
+  useGetDecryptionExclusionStatsQuery,
+  useListDecryptionExclusionsQuery,
+} from "../services/decryptionExclusions";
+import {
   useGetDecryptionMirrorConfigQuery,
   useUpdateDecryptionMirrorConfigMutation,
 } from "../services/decryptionMirror";
@@ -16,16 +21,21 @@ import {
   type DecryptionMirrorPayload,
 } from "../types/ssl/DecryptionMirror";
 import type { SslBypassDomainsPayload } from "../types/ssl/SslBypass";
+import type {
+  DecryptionExclusionListPayload,
+  DecryptionExclusionStatsPayload,
+} from "../types/ssl/DecryptionExclusion";
 import {
   normalizeBypassDomainInput,
   validateBypassDomainInput,
 } from "../components/tlsInspection/validation";
 
-type TlsInspectionTab = "mirror" | "bypass";
+type TlsInspectionTab = "mirror" | "bypass" | "exclusions";
 
 const tabs: { key: TlsInspectionTab; label: string }[] = [
   { key: "mirror", label: "Mirror" },
   { key: "bypass", label: "Bypass domains" },
+  { key: "exclusions", label: "Local exclusions" },
 ];
 
 function cloneConfig(config: DecryptionMirrorConfig): DecryptionMirrorConfig {
@@ -68,8 +78,20 @@ export default function TlsInspection() {
   );
   const [mirrorRequestError, setMirrorRequestError] = useState<string | null>(null);
   const [bypassRequestError, setBypassRequestError] = useState<string | null>(null);
+  const [exclusionRequestError, setExclusionRequestError] = useState<string | null>(null);
   const [newBypassDomain, setNewBypassDomain] = useState("");
 
+  const {
+    data: exclusionStatsData,
+    isError: isExclusionStatsError,
+  } = useGetDecryptionExclusionStatsQuery();
+  const {
+    data: exclusionListData,
+    isLoading: isExclusionListLoading,
+    isError: isExclusionListError,
+  } = useListDecryptionExclusionsQuery();
+  const [clearDecryptionExclusions, { isLoading: isClearingExclusions }] =
+    useClearDecryptionExclusionsMutation();
   const {
     data: mirrorData,
     isLoading: isMirrorLoading,
@@ -120,6 +142,24 @@ export default function TlsInspection() {
       .bypassDomains;
   }, [bypassData]);
 
+  const exclusionStats = useMemo(() => {
+    if (!exclusionStatsData) {
+      return { activeExclusions: 0, trackedFailures: 0 };
+    }
+
+    return (exclusionStatsData as ApiSuccess<DecryptionExclusionStatsPayload>)
+      .data;
+  }, [exclusionStatsData]);
+
+  const decryptionExclusions = useMemo(() => {
+    if (!exclusionListData) {
+      return [];
+    }
+
+    return (exclusionListData as ApiSuccess<DecryptionExclusionListPayload>)
+      .data.exclusions;
+  }, [exclusionListData]);
+
   const mirrorErrors = useMemo(() => validateMirrorConfig(draft), [draft]);
   const bypassInputErrors = useMemo(() => {
     if (newBypassDomain.trim().length === 0) {
@@ -148,6 +188,10 @@ export default function TlsInspection() {
       next.unshift("TLS bypass domains: failed to load list from backend.");
     }
 
+    if (isExclusionStatsError || isExclusionListError) {
+      next.unshift("TLS local exclusions: failed to load state from backend.");
+    }
+
     if (mirrorRequestError) {
       next.unshift(`TLS mirror: ${mirrorRequestError}`);
     }
@@ -156,12 +200,19 @@ export default function TlsInspection() {
       next.unshift(`TLS bypass domains: ${bypassRequestError}`);
     }
 
+    if (exclusionRequestError) {
+      next.unshift(`TLS local exclusions: ${exclusionRequestError}`);
+    }
+
     return next;
   }, [
     activeTab,
     bypassInputErrors,
     bypassRequestError,
+    exclusionRequestError,
     isBypassError,
+    isExclusionListError,
+    isExclusionStatsError,
     isMirrorError,
     mirrorErrors,
     mirrorRequestError,
@@ -221,6 +272,15 @@ export default function TlsInspection() {
     }
   };
 
+  const handleClearExclusions = async () => {
+    try {
+      setExclusionRequestError(null);
+      await clearDecryptionExclusions().unwrap();
+    } catch (error) {
+      setExclusionRequestError(requestMessage(error));
+    }
+  };
+
   const canCreateBypass =
     newBypassDomain.trim().length > 0 &&
     bypassInputErrors.length === 0 &&
@@ -248,6 +308,9 @@ export default function TlsInspection() {
               <span className="text-[#4a4a4a]">|</span>
               <span className="text-[#8a8a8a]">Bypass domains:</span>
               <span className="text-[#06b6d4]">{bypassDomains.length}</span>
+              <span className="text-[#4a4a4a]">|</span>
+              <span className="text-[#8a8a8a]">Local exclusions:</span>
+              <span className="text-[#06b6d4]">{exclusionStats.activeExclusions}</span>
               <span className="text-[#4a4a4a]">|</span>
               <span className="text-[#8a8a8a]">Mirror draft changes:</span>
               <span className={hasMirrorChanges ? "text-[#06b6d4]" : "text-[#4a4a4a]"}>
@@ -479,6 +542,80 @@ export default function TlsInspection() {
                 </div>
               </div>
             )}
+
+            {activeTab === "exclusions" && (
+              <div className="p-6">
+                <div className="mb-6 grid gap-3 sm:grid-cols-3">
+                  <div className="border border-[#262626] bg-[#101010] px-4 py-3">
+                    <div className="text-xs uppercase text-[#8a8a8a]">Active</div>
+                    <div className="mt-2 text-2xl font-semibold text-[#06b6d4]">
+                      {exclusionStats.activeExclusions}
+                    </div>
+                  </div>
+                  <div className="border border-[#262626] bg-[#101010] px-4 py-3">
+                    <div className="text-xs uppercase text-[#8a8a8a]">Tracked failures</div>
+                    <div className="mt-2 text-2xl font-semibold text-[#f5f5f5]">
+                      {exclusionStats.trackedFailures}
+                    </div>
+                  </div>
+                  <div className="flex items-end justify-start sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={handleClearExclusions}
+                      disabled={isClearingExclusions || decryptionExclusions.length === 0}
+                      className="inline-flex min-w-32 items-center justify-center gap-2 border border-[#333] px-4 py-2 text-sm text-[#fda4af] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Icon icon="lucide:trash-2" width={16} height={16} />
+                      {isClearingExclusions ? "Clearing" : "Clear"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto border border-[#262626]">
+                  <table className="w-full min-w-[860px] text-left text-sm">
+                    <thead className="bg-[#101010] text-xs uppercase text-[#8a8a8a]">
+                      <tr>
+                        <th className="px-4 py-3 font-medium">Domain</th>
+                        <th className="px-4 py-3 font-medium">Server</th>
+                        <th className="px-4 py-3 font-medium">Reason</th>
+                        <th className="px-4 py-3 font-medium">Failures</th>
+                        <th className="px-4 py-3 font-medium">Last source</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {decryptionExclusions.map((entry) => (
+                        <tr
+                          key={`${entry.domain}-${entry.serverIp}-${entry.serverPort}`}
+                          className="border-t border-[#262626]"
+                        >
+                          <td className="px-4 py-3 text-[#f5f5f5]">{entry.domain}</td>
+                          <td className="px-4 py-3 text-[#8a8a8a]">
+                            {entry.serverIp || "*"}:{entry.serverPort}
+                          </td>
+                          <td className="px-4 py-3 text-[#8a8a8a]">{entry.reason}</td>
+                          <td className="px-4 py-3 text-[#f5f5f5]">{entry.failureCount}</td>
+                          <td className="px-4 py-3 text-[#8a8a8a]">{entry.lastSourceIp}</td>
+                        </tr>
+                      ))}
+                      {!isExclusionListLoading && decryptionExclusions.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-8 text-center text-[#6a6a6a]">
+                            No local exclusions.
+                          </td>
+                        </tr>
+                      )}
+                      {isExclusionListLoading && (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-8 text-center text-[#6a6a6a]">
+                            Loading local exclusions.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
 
           {uiErrors.length > 0 && (
@@ -492,7 +629,7 @@ export default function TlsInspection() {
           <div className="text-center text-xs text-[#4a4a4a]">
             TLS inspection module
             <span className="text-[#06b6d4] mx-3">|</span>
-            Mirror and bypass controls
+            Mirror, bypass, and local exclusion controls
             <span className="text-[#06b6d4] mx-3">|</span>
             RaptorGate UI
           </div>

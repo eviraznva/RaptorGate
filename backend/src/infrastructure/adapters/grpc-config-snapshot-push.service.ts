@@ -34,6 +34,8 @@ import {
   Severity,
 } from "../grpc/generated/common/common.js";
 import {
+  DecryptionFailureAction,
+  type DecryptionFailureCacheConfig,
   type DecryptionMirrorConfig,
   DnsInspectionDnssecFailureAction,
   DnsInspectionDnssecTransport,
@@ -608,9 +610,36 @@ export class GrpcConfigSnapshotPushService
       stripEchDns: policy?.strip_ech_dns ?? true,
       logEchAttempts: policy?.log_ech_attempts ?? true,
       knownPinnedDomains: [...(policy?.known_pinned_domains ?? [])],
+      decryptionExclusions: [
+        ...(policy?.decryption_exclusions ?? policy?.known_pinned_domains ?? []),
+      ],
       decryptionMirror: this.toDecryptionMirrorConfig(
         policy?.decryption_mirror,
       ),
+      decryptionFailureCache: this.toDecryptionFailureCacheConfig(
+        policy?.decryption_failure_cache,
+      ),
+    };
+  }
+
+  private toDecryptionFailureCacheConfig(
+    config:
+      | NonNullable<
+          ConfigSnapshotPayload["bundle"]["tls_inspection_policy"]
+        >["decryption_failure_cache"]
+      | undefined,
+  ): DecryptionFailureCacheConfig {
+    return {
+      version: config?.version ?? 1,
+      enabled: config?.enabled ?? true,
+      failureThreshold: config?.failure_threshold ?? 3,
+      failureWindowSec: config?.failure_window_sec ?? 60,
+      localExclusionTtlSec: config?.local_exclusion_ttl_sec ?? 86400,
+      maxEntries: config?.max_entries ?? 4096,
+      action:
+        config?.action === "block"
+          ? DecryptionFailureAction.DECRYPTION_FAILURE_ACTION_BLOCK
+          : DecryptionFailureAction.DECRYPTION_FAILURE_ACTION_CACHE_AND_BYPASS,
     };
   }
 

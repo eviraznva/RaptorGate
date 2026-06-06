@@ -73,7 +73,7 @@ export function isFirewallAlert(event: FirewallEvent): boolean {
     event.decision === "alert" ||
     event.decision === "block" ||
     event.decision === "error" ||
-    event.event_type === "pinning_auto_bypass_activated"
+    event.event_type === "tls_decryption_exclusion_activated"
   );
 }
 
@@ -107,8 +107,8 @@ export function inferAlertKind(event: FirewallEvent): string {
   if (event.source === "ML") return "ML";
   if (event.source === "IPS") return "IPS";
 
-  if (event.event_type.includes("pinning")) {
-    return "TLS PINNING";
+  if (event.event_type.includes("tls_decryption")) {
+    return "TLS DECRYPTION";
   }
 
   if (event.source === "TLS") return "TLS";

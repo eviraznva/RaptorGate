@@ -25,6 +25,8 @@ export interface TlsInspectionPolicyPayload {
   log_ech_attempts: boolean;
   known_pinned_domains: string[];
   decryption_mirror: DecryptionMirrorConfigPayload;
+  decryption_exclusions: string[];
+  decryption_failure_cache: DecryptionFailureCacheConfigPayload;
 }
 
 export interface DecryptionMirrorConfigPayload {
@@ -37,6 +39,18 @@ export interface DecryptionMirrorConfigPayload {
   max_session_bytes: number;
 }
 
+export type DecryptionFailureActionPayload = "cache_and_bypass" | "block";
+
+export interface DecryptionFailureCacheConfigPayload {
+  version: number;
+  enabled: boolean;
+  failure_threshold: number;
+  failure_window_sec: number;
+  local_exclusion_ttl_sec: number;
+  max_entries: number;
+  action: DecryptionFailureActionPayload;
+}
+
 export const DEFAULT_TLS_INSPECTION_POLICY: Readonly<TlsInspectionPolicyPayload> =
   {
     block_ech_no_sni: true,
@@ -44,6 +58,7 @@ export const DEFAULT_TLS_INSPECTION_POLICY: Readonly<TlsInspectionPolicyPayload>
     strip_ech_dns: true,
     log_ech_attempts: true,
     known_pinned_domains: [],
+    decryption_exclusions: [],
     decryption_mirror: {
       enabled: false,
       target_host: "",
@@ -53,18 +68,35 @@ export const DEFAULT_TLS_INSPECTION_POLICY: Readonly<TlsInspectionPolicyPayload>
       forwarded_only: true,
       max_session_bytes: 16 * 1024 * 1024,
     },
+    decryption_failure_cache: {
+      version: 1,
+      enabled: true,
+      failure_threshold: 3,
+      failure_window_sec: 60,
+      local_exclusion_ttl_sec: 86400,
+      max_entries: 4096,
+      action: "cache_and_bypass",
+    },
   };
 
 export function normalizeTlsInspectionPolicy(
   policy?: Partial<TlsInspectionPolicyPayload> | null,
 ): TlsInspectionPolicyPayload {
+  const decryptionExclusions = [
+    ...(policy?.decryption_exclusions ?? policy?.known_pinned_domains ?? []),
+  ];
   return {
     ...DEFAULT_TLS_INSPECTION_POLICY,
     ...(policy ?? {}),
     known_pinned_domains: [...(policy?.known_pinned_domains ?? [])],
+    decryption_exclusions: decryptionExclusions,
     decryption_mirror: {
       ...DEFAULT_TLS_INSPECTION_POLICY.decryption_mirror,
       ...(policy?.decryption_mirror ?? {}),
+    },
+    decryption_failure_cache: {
+      ...DEFAULT_TLS_INSPECTION_POLICY.decryption_failure_cache,
+      ...(policy?.decryption_failure_cache ?? {}),
     },
   };
 }

@@ -17,9 +17,11 @@ use ngfw::proto::services::firewall_config_snapshot_service_client::FirewallConf
 use ngfw::proto::services::firewall_query_service_client::FirewallQueryServiceClient;
 use ngfw::proto::services::{
     ActiveConfigSnapshot, ConfigBundle, FactoryResetRequest,
-    GetLiveZoneInterfacesRequest, GetPinningBypassRequest,
+    GetLiveZoneInterfacesRequest, GetLocalDecryptionExclusionRequest,
+    GetLocalDecryptionExclusionStatsRequest, GetPinningBypassRequest,
     GetPinningStatsRequest, GetPoliciesRequest, GetZoneInterfaceRequest,
-    GetZoneInterfacesRequest, GetZonePairsRequest, GetZonesRequest, PushActiveConfigSnapshotRequest,
+    GetZoneInterfacesRequest, GetZonePairsRequest, GetZonesRequest,
+    ListLocalDecryptionExclusionsRequest, PushActiveConfigSnapshotRequest,
 };
 use ngfw::query_server::{QueryHandler, QueryServer};
 use ngfw::tls::pinning_detector::PinningConfig;
@@ -830,6 +832,43 @@ async fn get_pinning_stats_returns_ok() {
     // Shared server startuje ze swiezym detektorem — zerowe liczniki sa oczekiwane.
     assert_eq!(resp.active_bypasses, 0);
     assert_eq!(resp.tracked_failures, 0);
+}
+
+#[tokio::test]
+#[serial(pinning)]
+async fn get_local_decryption_exclusion_stats_and_list_return_ok() {
+    let mut client = connect(&shared_server().socket).await;
+    let stats = client
+        .get_local_decryption_exclusion_stats(GetLocalDecryptionExclusionStatsRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(stats.active_exclusions, 0);
+    assert_eq!(stats.tracked_failures, 0);
+
+    let list = client
+        .list_local_decryption_exclusions(ListLocalDecryptionExclusionsRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(list.exclusions.is_empty());
+}
+
+#[tokio::test]
+#[serial(pinning)]
+async fn get_local_decryption_exclusion_missing_returns_not_found() {
+    let mut client = connect(&shared_server().socket).await;
+    let resp = client
+        .get_local_decryption_exclusion(GetLocalDecryptionExclusionRequest {
+            domain: "definitely-not-excluded.example".into(),
+            server_ip: "203.0.113.10".into(),
+            server_port: 443,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!resp.found);
+    assert!(resp.exclusion.is_none());
 }
 
 #[tokio::test]

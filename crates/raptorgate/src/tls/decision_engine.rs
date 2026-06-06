@@ -7,10 +7,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::dpi::TlsAction;
 use crate::tls::domain_trie::DomainTrie;
-use crate::tls::pinning_detector::{PinningConfig, PinningDetector, PinningReason};
+use crate::tls::pinning_detector::{DecryptionFailureReport, PinningConfig, PinningDetector, PinningReason};
 use crate::tls::server_key_store::ServerKeyStore;
-
-// Wspolny detektor pinningu — ten sam Arc trafia do runtime'u TLS i query_server.
 
 #[derive(Debug, Clone)]
 pub struct EchTlsPolicy {
@@ -30,7 +28,7 @@ impl Default for EchTlsPolicy {
 // Jedno źródło prawdy dla decyzji inspekcji TLS w runtime proxy.
 pub struct TlsDecisionEngine {
     bypass_trie: ArcSwap<DomainTrie>,
-    known_pinned_trie: ArcSwap<DomainTrie>,
+    decryption_exclusions_trie: ArcSwap<DomainTrie>,
     server_key_store: Arc<ServerKeyStore>,
     ech_policy: ArcSwap<EchTlsPolicy>,
     pinning_detector: Arc<PinningDetector>,
@@ -46,7 +44,7 @@ impl TlsDecisionEngine {
         let trie = DomainTrie::from_domains(bypass_domains);
         Self {
             bypass_trie: ArcSwap::new(Arc::new(trie)),
-            known_pinned_trie: ArcSwap::new(Arc::new(DomainTrie::new())),
+            decryption_exclusions_trie: ArcSwap::new(Arc::new(DomainTrie::new())),
             server_key_store,
             ech_policy: ArcSwap::new(Arc::new(ech_policy)),
             pinning_detector: Arc::new(PinningDetector::new(pinning_config)),
@@ -64,7 +62,7 @@ impl TlsDecisionEngine {
         ech_detected: bool,
         dst_ip: Option<IpAddr>,
         dst_port: u16,
-        source_ip: Option<IpAddr>,
+        _source_ip: Option<IpAddr>,
     ) -> TlsAction {
         if let Some(ip) = dst_ip {
             let addr = SocketAddr::new(ip, dst_port);
@@ -81,13 +79,10 @@ impl TlsDecisionEngine {
             if trie.contains(domain) {
                 return TlsAction::Bypass;
             }
-            if self.known_pinned_trie.load().contains(domain) {
+            if self.decryption_exclusions_trie.load().contains(domain) {
                 return TlsAction::Bypass;
             }
-        }
-
-        if let (Some(src), Some(domain)) = (source_ip, sni) {
-            if self.pinning_detector.is_bypassed(src, domain) {
+            if self.pinning_detector.is_target_decryption_excluded(dst_ip, dst_port, domain) {
                 return TlsAction::Bypass;
             }
         }
@@ -130,9 +125,30 @@ impl TlsDecisionEngine {
     }
 
     pub fn reload_known_pinned_domains(&self, domains: &[String]) {
+        self.reload_decryption_exclusions(domains);
+    }
+
+    pub fn reload_decryption_exclusions(&self, domains: &[String]) {
         let trie = DomainTrie::from_domains(domains);
-        self.known_pinned_trie.store(Arc::new(trie));
-        tracing::info!(count = domains.len(), "TLS known pinned domains reloaded");
+        self.decryption_exclusions_trie.store(Arc::new(trie));
+        tracing::info!(count = domains.len(), "TLS decryption exclusions reloaded");
+    }
+
+    pub fn reload_decryption_failure_cache_config(&self, config: PinningConfig) {
+        self.pinning_detector.reload_config(config);
+        tracing::info!("TLS decryption failure cache config reloaded");
+    }
+
+    pub fn report_decryption_failure(
+        &self,
+        source_ip: IpAddr,
+        server_ip: Option<IpAddr>,
+        server_port: u16,
+        domain: &str,
+        reason: PinningReason,
+    ) -> DecryptionFailureReport {
+        self.pinning_detector
+            .record_decryption_failure(source_ip, server_ip, server_port, domain, reason)
     }
 
     pub fn report_pinning_failure(
@@ -141,8 +157,8 @@ impl TlsDecisionEngine {
         domain: &str,
         reason: PinningReason,
     ) -> bool {
-        self.pinning_detector
-            .record_failure(source_ip, domain, reason)
+        self.report_decryption_failure(source_ip, None, 443, domain, reason)
+            .activated_exclusion
     }
 
     pub fn server_key_store(&self) -> &Arc<ServerKeyStore> {
@@ -159,7 +175,7 @@ impl TlsDecisionEngine {
                     _ = tick.tick() => {
                         let removed = engine.pinning_detector.cleanup_expired();
                         if removed > 0 {
-                            tracing::debug!(removed, "Expired pinning bypass entries removed");
+                            tracing::debug!(removed, "Expired TLS decryption exclusion entries removed");
                         }
                     }
                 }
@@ -326,7 +342,38 @@ mod tests {
     }
 
     #[test]
-    fn pinning_auto_bypass_after_threshold() {
+    fn configured_decryption_exclusions_bypass() {
+        let e = engine(&[]);
+        e.reload_decryption_exclusions(&["*.apple.com".into()]);
+        assert_eq!(
+            e.decide(Some("api.apple.com"), false, None, 443, None),
+            TlsAction::Bypass
+        );
+    }
+
+    #[test]
+    fn local_decryption_exclusion_cache_bypasses_without_source_ip() {
+        let cfg = PinningConfig {
+            enabled: true,
+            failure_threshold: 1,
+            ..PinningConfig::default()
+        };
+        let ds: Vec<String> = Vec::new();
+        let store = Arc::new(ServerKeyStore::new("/tmp/test-pki-decryption-exclusion"));
+        let e = TlsDecisionEngine::new(&ds, store, EchTlsPolicy::default(), cfg);
+
+        let src = std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
+        let dst = std::net::IpAddr::V4(std::net::Ipv4Addr::new(203, 0, 113, 10));
+        e.report_decryption_failure(src, Some(dst), 443, "pinned.app", PinningReason::TcpReset);
+
+        assert_eq!(
+            e.decide(Some("pinned.app"), false, Some(dst), 443, None),
+            TlsAction::Bypass
+        );
+    }
+
+    #[test]
+    fn decryption_failure_cache_bypasses_after_threshold() {
         let cfg = PinningConfig {
             enabled: true,
             failure_threshold: 2,
@@ -351,7 +398,7 @@ mod tests {
         );
         assert_eq!(
             e.decide(Some("pinned.app"), false, None, 443, None),
-            TlsAction::Intercept
+            TlsAction::Bypass
         );
     }
 
