@@ -1,3 +1,5 @@
+use ssh_parser::SshVersion;
+
 use crate::dpi::context::DpiContext;
 use crate::dpi::AppProto;
 
@@ -56,6 +58,7 @@ pub fn ssh_to_dpi_context(result: &SshParseResult) -> DpiContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dpi::ssh::SshVersionOwned;
 
     #[test]
     fn openssh_banner() {
@@ -140,5 +143,27 @@ mod tests {
         assert_eq!(ctx.app_proto, Some(AppProto::Ssh));
         assert_eq!(ctx.ssh_proto_version.as_deref(), Some("2.0"));
         assert_eq!(ctx.ssh_software.as_deref(), Some("OpenSSH_8.9p1"));
+    }
+
+    #[test]
+    fn ssh_version_owned_copies_borrowed_fields() {
+        let input = b"SSH-2.0-OpenSSH_9.0 fancy build\r\n";
+        let (_, (_banners, borrowed)) = ssh_parser::parse_ssh_identification(input).unwrap();
+        let owned: SshVersionOwned = borrowed.into();
+        assert_eq!(owned.proto, b"2.0");
+        assert_eq!(owned.software, b"OpenSSH_9.0");
+        assert_eq!(owned.comments.as_deref(), Some(b"fancy build".as_ref()));
+        drop(input);
+        assert_eq!(owned.proto, b"2.0");
+    }
+
+    #[test]
+    fn ssh_version_owned_without_comments() {
+        let input = b"SSH-2.0-dropbear_2022.83\r\n";
+        let (_, (_banners, borrowed)) = ssh_parser::parse_ssh_identification(input).unwrap();
+        let owned: SshVersionOwned = borrowed.into();
+        assert_eq!(owned.proto, b"2.0");
+        assert_eq!(owned.software, b"dropbear_2022.83");
+        assert_eq!(owned.comments, None);
     }
 }
