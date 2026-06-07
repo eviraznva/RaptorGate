@@ -1,0 +1,26 @@
+[package]
+name = "raptorgate-pcap"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "raptorgate_pcap"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+ngfw = { path = "../raptorgate" }
+pyo3 = { version = "0.28", features = ["abi3-py310"] }
+numpy = "0.28"
+rayon = "1.10"
+dashmap = "6"
+etherparse = "0.19"
+pcap-file = "2"
+memmap2 = "0.9"
+blake2 = "0.10"
+thiserror = "2"
+byteorder_slice = "1"
+bytemuck = "1"

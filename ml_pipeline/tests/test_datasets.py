@@ -113,7 +113,6 @@ def test_download_file_replaces_invalid_existing_file(tmp_path: Path, monkeypatc
 
 def test_download_cicids2017_falls_back_to_parquet_labels(tmp_path: Path, monkeypatch):
     downloaded: list[tuple[tuple[str, ...], Path, str]] = []
-    original = datasets.download_file
 
     def fake_download(urls: tuple[str, ...], target: Path, kind: str) -> None:
         downloaded.append((urls, target, kind))
@@ -126,6 +125,9 @@ def test_download_cicids2017_falls_back_to_parquet_labels(tmp_path: Path, monkey
         target.write_bytes(payload)
 
     monkeypatch.setattr(datasets, "download_file", fake_download)
+    monkeypatch.setattr(
+        "raptorgate_ml.datasets.cicids2017.download_file", fake_download
+    )
 
     paths = datasets.download_cicids2017(tmp_path, ["GeneratedLabelledFlows.zip"])
 
@@ -134,8 +136,6 @@ def test_download_cicids2017_falls_back_to_parquet_labels(tmp_path: Path, monkey
     parquet_targets = [target for _, target, kind in downloaded if kind == "parquet"]
     assert len(parquet_targets) == len(datasets.HF_TRAFFIC_LABEL_FILES)
     assert all(target.suffix == ".parquet" for target in parquet_targets)
-
-    monkeypatch.setattr(datasets, "download_file", original)
 
 
 def test_parquet_labels_are_discovered_and_indexed(tmp_path: Path):

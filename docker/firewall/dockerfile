@@ -23,8 +23,8 @@ COPY proto ./proto
 COPY ./crates ./crates
 COPY ./backend/data/json-db ./backend/data/json-db
 
-RUN cargo nextest run -- --skip tls::
-RUN cargo build
+RUN cargo nextest run --workspace --exclude raptorgate-pcap -- --skip tls::
+RUN cargo build --workspace --exclude raptorgate-pcap
 
 RUN mkdir -p /build/output && \
     cp target/debug/${PROJECT_NAME} /build/output/${PROJECT_NAME}

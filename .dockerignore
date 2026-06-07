@@ -7,3 +7,10 @@ target/
 **/dist/
 vagrant/.vagrant/
 vagrant/.router_sync/
+test-env/
+api.json
+.agents/
+.claude/
+.cursor/
+.idea/
+docs/

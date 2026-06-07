@@ -1,13 +1,22 @@
-import os
 from pathlib import Path
 
 import click
 import polars as pl
 
-from raptorgate_ml.datasets import download_cicids2017
+from raptorgate_ml.datasets import (
+    DatasetSpec,
+    available_datasets,
+    get_dataset,
+)
 from raptorgate_ml.feature_vector import FIELD_NAMES
-from raptorgate_ml.labeling import FlowLabelIndex, discover_label_files, label_distribution
-from raptorgate_ml.ml_model import TrainConfig, train_model
+from raptorgate_ml.labeling import discover_label_files, label_distribution
+from raptorgate_ml.ml_model import (
+    DEFAULT_ACCURACY_GATE,
+    DEFAULT_EVAL_GATE_METRIC,
+    TrainConfig,
+    evaluate_model,
+    train_model,
+)
 from raptorgate_ml.pipeline import run_build
 
 
@@ -24,16 +33,23 @@ def main() -> None:
     """RaptorGate ML training data pipeline."""
 
 
+@main.command(name="datasets")
+def datasets() -> None:
+    """List registered datasets."""
+    for spec in available_datasets():
+        click.echo(f"{spec.name}\t{spec.description}")
+
+
 @main.command()
-@click.option("--dataset", type=click.Choice(["cicids2017"]), default="cicids2017")
+@click.option("--dataset", "dataset_name", type=click.Choice([s.name for s in available_datasets()]))
 @click.option("--target", type=click.Path(path_type=Path), required=True)
 @click.option("--file", "files", multiple=True, help="Subset of dataset file names to fetch.")
-def download(dataset: str, target: Path, files: tuple[str, ...]) -> None:
+def download(dataset_name: str | None, target: Path, files: tuple[str, ...]) -> None:
     """Download a public PCAP dataset."""
-    if dataset == "cicids2017":
-        paths = download_cicids2017(target, list(files) if files else None)
-        for p in paths:
-            click.echo(f"ok {p}")
+    spec: DatasetSpec = get_dataset(dataset_name) if dataset_name else available_datasets()[0]
+    paths = spec.download(target, list(files) if files else None)
+    for p in paths:
+        click.echo(f"ok {p}")
 
 
 @main.command()
@@ -69,9 +85,7 @@ def build(
     if not pcap_paths:
         raise click.ClickException(f"no .pcap files under {pcap_dir}")
 
-    effective_jobs = jobs
-    if effective_jobs is None:
-        effective_jobs = min(2, len(pcap_paths), os.cpu_count() or 1)
+    effective_jobs = jobs if jobs is not None else 1
     if effective_jobs < 1:
         raise click.ClickException("--jobs must be at least 1")
 
@@ -79,21 +93,27 @@ def build(
     if pcap_dir is not None and effective_test_out is None:
         effective_test_out = out_path.with_name("test.parquet")
 
+    from raptorgate_ml.labeling import build_arrow_table
+    from raptorgate_pcap import LabelIndex as RustLabelIndex
+
     label_files = discover_label_files(labels_dir)
     if not label_files:
         raise click.ClickException(f"no label CSV/Parquet files under {labels_dir}")
-    idx = FlowLabelIndex.from_cicids_files(label_files)
+    table = build_arrow_table(label_files)
+    idx = RustLabelIndex()
+    idx.absorb_arrow(table)
     click.echo(f"label index: {len(idx)} flows from {len(label_files)} files")
     click.echo(
         "label stats: "
-        f"source_rows={idx.stats.source_rows} indexed_rows={idx.stats.indexed_rows} "
-        f"timed_rows={idx.stats.timed_rows} null_labels={idx.stats.null_labels} "
-        f"invalid_rows={idx.stats.invalid_rows}"
+        f"source_rows={idx.source_rows} indexed_rows={idx.indexed_rows} "
+        f"timed_rows={idx.timed_rows} null_labels={idx.null_labels} "
+        f"invalid_rows={idx.invalid_rows}"
     )
 
     result = run_build(
         pcap_paths,
         idx,
+        table,
         out_path,
         window_secs=window,
         test_out_path=effective_test_out,
@@ -130,6 +150,13 @@ def build(
 @click.option("--focal-gamma", type=float, default=2.0)
 @click.option("--amp/--no-amp", default=True)
 @click.option("--attack-confidence-threshold", type=click.FloatRange(0.0, 1.0), default=0.5)
+@click.option(
+    "--device",
+    "device",
+    type=click.Choice(["auto", "cuda", "rocm", "cpu"]),
+    default="auto",
+    help="Training device. 'auto' picks CUDA/ROCm if available.",
+)
 def train(
     train_path: Path,
     test_path: Path | None,
@@ -147,6 +174,7 @@ def train(
     focal_gamma: float,
     amp: bool,
     attack_confidence_threshold: float,
+    device: str,
 ) -> None:
     """Train an ONNX traffic classifier from feature Parquet."""
     if epochs < 1:
@@ -183,6 +211,7 @@ def train(
                 focal_gamma=focal_gamma,
                 amp=amp,
                 attack_confidence_threshold=attack_confidence_threshold,
+                device=device,
             ),
             log=click.echo,
         )
@@ -202,6 +231,83 @@ def stats(parquet_path: Path) -> None:
     click.echo(f"class balance: {label_distribution(df)}")
     desc = df.select([c for c in FIELD_NAMES if c in df.columns]).describe()
     click.echo(str(desc))
+
+
+@main.command()
+@click.option("--model", "model_path", type=click.Path(path_type=Path, exists=True), required=True)
+@click.option("--parquet", "parquet_path", type=click.Path(path_type=Path, exists=True), required=True)
+@click.option("--batch-size", type=int, default=65_536)
+@click.option(
+    "--device",
+    "device",
+    type=click.Choice(["auto", "cuda", "rocm", "cpu"]),
+    default="auto",
+)
+@click.option(
+    "--gate",
+    "gate",
+    type=click.FloatRange(0.0, 1.0),
+    default=None,
+    help=f"Override the default accuracy gate ({DEFAULT_ACCURACY_GATE} on {DEFAULT_EVAL_GATE_METRIC}).",
+)
+@click.option(
+    "--gate-metric",
+    "gate_metric",
+    type=click.Choice(["f1_malicious", "accuracy", "recall_malicious", "precision_malicious"]),
+    default=DEFAULT_EVAL_GATE_METRIC,
+)
+@click.option(
+    "--report",
+    "report_path",
+    type=click.Path(path_type=Path),
+    help="Optional path to write the full metrics JSON report.",
+)
+def evaluate(
+    model_path: Path,
+    parquet_path: Path,
+    batch_size: int,
+    device: str,
+    gate: float | None,
+    gate_metric: str,
+    report_path: Path | None,
+) -> None:
+    """Evaluate a trained ONNX model on a held-out Parquet. Exits non-zero below the gate."""
+    from raptorgate_ml.ml_model import EvalConfig, evaluate_model
+
+    if batch_size < 1:
+        raise click.ClickException("--batch-size must be at least 1")
+
+    try:
+        result = evaluate_model(
+            EvalConfig(
+                model_path=model_path,
+                parquet_path=parquet_path,
+                batch_size=batch_size,
+                device=device,
+                accuracy_gate=gate,
+                gate_metric=gate_metric,
+                report_path=report_path,
+            ),
+            log=click.echo,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    binary = result.metrics["binary"]
+    click.echo(f"rows={result.rows}")
+    click.echo(
+        f"accuracy={result.metrics['accuracy']:.4f} "
+        f"f1_malicious={binary['f1']['malicious']:.4f} "
+        f"precision_malicious={binary['precision']['malicious']:.4f} "
+        f"recall_malicious={binary['recall']['malicious']:.4f}"
+    )
+    click.echo(
+        f"gate={result.gate_metric} value={result.gate_value:.4f} "
+        f"threshold={result.gate_threshold:.4f} passed={result.passed}"
+    )
+    if not result.passed:
+        ctx = click.get_current_context()
+        ctx.exit(1)
 
 
 if __name__ == "__main__":

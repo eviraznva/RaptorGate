@@ -2,7 +2,7 @@
 name = "raptorgate-ml"
 version = "0.1.0"
 description = "RaptorGate ML training data pipeline: PCAP -> 38-feature vector -> Parquet."
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "scapy>=2.5",
     "polars>=1.0",
@@ -14,6 +14,13 @@ dependencies = [
     "torch>=2.4",
     "onnx>=1.16",
     "onnxscript>=0.4",
+    "onnxruntime>=1.18",
+    "raptorgate-pcap",
+]
+
+[project.optional-dependencies]
+rocm = [
+    "torch>=2.4",
 ]
 
 [project.scripts]
@@ -34,8 +41,11 @@ packages = ["src/raptorgate_ml"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py310"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.uv.sources]
+raptorgate-pcap = { path = "../crates/raptorgate_pcap", editable = true }

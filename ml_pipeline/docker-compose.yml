@@ -1,0 +1,122 @@
+# docker-compose.yml — dev-only helpers for running the ML pipeline in
+# containers with GPU access. Production training should run directly on
+# the host (or in a scheduler-managed environment); this file just makes
+# local iteration painless.
+#
+# Services (profiles in brackets):
+#   cli-cuda  [cuda]   bare CLI container, NVIDIA GPU
+#   cli-rocm  [rocm]   bare CLI container, AMD GPU
+#   pipeline  [rocm]   full download → build → train → evaluate chain
+#
+# Pipeline is idempotent and env-driven. Examples:
+#   docker compose --profile rocm run --rm pipeline
+#   EPOCHS=50 docker compose --profile rocm run --rm pipeline
+#   DATASET=cicids2018 docker compose --profile rocm run --rm pipeline
+#   SKIP_DOWNLOAD=1 SKIP_BUILD=1 docker compose --profile rocm run --rm pipeline
+#   docker compose --profile rocm run --rm cli-rocm bash   # drop into shell
+#
+# Volumes:
+#   HOST_DATA_DIR (default ./data) is bind-mounted at /data inside the
+#   container. On the host you may keep the in-repo `data/` symlinks (see
+#   scripts/setup-data-symlinks.sh) or pass any path you like.
+
+name: raptorgate-ml
+
+x-pipeline-env: &pipeline-env
+  DATASET: ${DATASET:-cicids2017}
+  RAW_DIR: ${RAW_DIR:-/data/raw}
+  LABELS_DIR: ${LABELS_DIR:-/data/raw/GeneratedLabelledFlows}
+  TRAIN_PARQUET: ${TRAIN_PARQUET:-/data/train.parquet}
+  TEST_PARQUET: ${TEST_PARQUET:-/data/test.parquet}
+  MODEL_PATH: ${MODEL_PATH:-/data/model.onnx}
+  METADATA_PATH: ${METADATA_PATH:-/data/model.onnx.json}
+  EVAL_PARQUET: ${EVAL_PARQUET:-/data/test.parquet}
+  EVAL_REPORT: ${EVAL_REPORT:-/data/eval.json}
+  SKIP_DOWNLOAD: ${SKIP_DOWNLOAD:-0}
+  SKIP_BUILD: ${SKIP_BUILD:-0}
+  SKIP_TRAIN: ${SKIP_TRAIN:-0}
+  SKIP_EVALUATE: ${SKIP_EVALUATE:-0}
+  EPOCHS: ${EPOCHS:-35}
+  BATCH_SIZE: ${BATCH_SIZE:-131072}
+  LEARNING_RATE: ${LEARNING_RATE:-3e-4}
+  LOSS: ${LOSS:-focal}
+  FOCAL_GAMMA: ${FOCAL_GAMMA:-1.5}
+  JOBS: ${JOBS:-4}
+  DEVICE: ${DEVICE:-auto}
+  AMP: ${AMP:-1}
+  ACCURACY_GATE: ${ACCURACY_GATE:-0.8}
+  RAPTORGATE_PIPELINE_DEBUG: 1
+  RG_LIB_DEBUG: ${RG_LIB_DEBUG:-0}
+  RG_FEATURES_DEBUG: ${RG_FEATURES_DEBUG:-0}
+  RG_MATCH_DEBUG: ${RG_MATCH_DEBUG:-0}
+
+services:
+  cli-cuda:
+    profiles: ["cuda"]
+    build:
+      context: ..
+      dockerfile: ml_pipeline/Dockerfile
+      target: raptorgate-ml-cuda
+    working_dir: /data
+    volumes:
+      - ${HOST_DATA_DIR:-./data}:/data
+    environment:
+      PYTHONUNBUFFERED: "1"
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  cli-rocm:
+    profiles: ["rocm"]
+    build:
+      context: ..
+      dockerfile: ml_pipeline/Dockerfile
+      target: raptorgate-ml-rocm
+    working_dir: /data
+    volumes:
+      - ${HOST_DATA_DIR:-./data}:/data
+    environment:
+      PYTHONUNBUFFERED: "1"
+      <<: *pipeline-env
+    stdin_open: true
+    tty: true
+    devices:
+      - /dev/kfd
+      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    group_add:
+      - video
+      # - render
+    security_opt:
+      - seccomp=unconfined
+
+  pipeline:
+    profiles: ["rocm"]
+    image: raptorgate-ml-pipeline:patched
+    build:
+      context: ..
+      dockerfile: ml_pipeline/Dockerfile
+      target: raptorgate-ml-rocm
+    working_dir: /data
+    volumes:
+      - ${HOST_DATA_DIR:-./data}:/data
+    environment:
+      <<: *pipeline-env
+    stdin_open: true
+    tty: true
+    devices:
+      - /dev/kfd
+      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    group_add:
+      - video
+      # - render
+    security_opt:
+      - seccomp=unconfined
+    entrypoint: ["/opt/raptorgate-ml/scripts/entrypoint-pipeline.sh"]
