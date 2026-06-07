@@ -83,7 +83,7 @@ impl Default for PinningConfig {
             failure_threshold: 3,
             failure_window: Duration::from_secs(60),
             bypass_ttl: Duration::from_secs(86400),
-            action: DecryptionFailureAction::CacheAndBypass,
+            action: DecryptionFailureAction::Block,
             max_entries: 4096,
         }
     }
@@ -129,7 +129,7 @@ impl PinningDetector {
     pub fn record_decryption_failure(
         &self,
         source_ip: IpAddr,
-        server_ip: Option<IpAddr>,
+        _server_ip: Option<IpAddr>,
         server_port: u16,
         domain: &str,
         reason: DecryptionFailureReason,
@@ -143,7 +143,7 @@ impl PinningDetector {
             };
         }
 
-        let key = DecryptionExclusionKey::new(domain, server_ip, server_port);
+        let key = DecryptionExclusionKey::new(domain, None, server_port);
         let now = Instant::now();
         let cutoff = now - config.failure_window;
 
@@ -364,6 +364,7 @@ mod tests {
             failure_threshold: threshold,
             failure_window: Duration::from_secs(window_secs),
             bypass_ttl: Duration::from_secs(ttl_secs),
+            action: DecryptionFailureAction::CacheAndBypass,
             ..PinningConfig::default()
         }
     }
@@ -394,6 +395,11 @@ mod tests {
     }
 
     #[test]
+    fn default_action_blocks_decryption_failures() {
+        assert_eq!(PinningConfig::default().action, DecryptionFailureAction::Block);
+    }
+
+    #[test]
     fn local_decryption_exclusion_cache_is_not_source_ip_scoped() {
         let det = PinningDetector::new(cfg(1, 60, 3600));
 
@@ -408,6 +414,51 @@ mod tests {
         assert!(report.activated_exclusion);
         assert!(det.is_target_decryption_excluded(Some(server_ip()), 443, "pinned.example"));
         assert!(det.is_target_decryption_excluded(Some(server_ip()), 443, "PINNED.EXAMPLE"));
+    }
+
+    #[test]
+    fn local_decryption_exclusion_cache_is_not_server_ip_scoped_for_same_domain() {
+        let det = PinningDetector::new(cfg(1, 60, 3600));
+        let first_server_ip = IpAddr::V4(Ipv4Addr::new(142, 251, 155, 119));
+        let second_server_ip = IpAddr::V4(Ipv4Addr::new(142, 251, 153, 119));
+
+        let report = det.record_decryption_failure(
+            localhost(),
+            Some(first_server_ip),
+            443,
+            "www.google.com",
+            PinningReason::TcpReset,
+        );
+
+        assert!(report.activated_exclusion);
+        assert!(det.is_target_decryption_excluded(Some(second_server_ip), 443, "www.google.com"));
+        assert_eq!(det.list_decryption_exclusions().len(), 1);
+    }
+
+    #[test]
+    fn failure_threshold_counts_same_domain_across_server_ips() {
+        let det = PinningDetector::new(cfg(2, 60, 3600));
+        let first_server_ip = IpAddr::V4(Ipv4Addr::new(142, 251, 155, 119));
+        let second_server_ip = IpAddr::V4(Ipv4Addr::new(142, 251, 153, 119));
+
+        let first = det.record_decryption_failure(
+            localhost(),
+            Some(first_server_ip),
+            443,
+            "www.google.com",
+            PinningReason::TcpReset,
+        );
+        let second = det.record_decryption_failure(
+            localhost(),
+            Some(second_server_ip),
+            443,
+            "www.google.com",
+            PinningReason::TcpReset,
+        );
+
+        assert!(!first.activated_exclusion);
+        assert!(second.activated_exclusion);
+        assert!(det.is_target_decryption_excluded(Some(second_server_ip), 443, "www.google.com"));
     }
 
     #[test]

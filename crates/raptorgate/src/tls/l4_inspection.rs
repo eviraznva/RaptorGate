@@ -940,6 +940,7 @@ mod tests {
             EchTlsPolicy::default(),
             PinningConfig {
                 failure_threshold: 1,
+                action: crate::tls::pinning_detector::DecryptionFailureAction::CacheAndBypass,
                 ..PinningConfig::default()
             },
         ));
@@ -1008,6 +1009,7 @@ mod tests {
             EchTlsPolicy::default(),
             PinningConfig {
                 failure_threshold: 1,
+                action: crate::tls::pinning_detector::DecryptionFailureAction::CacheAndBypass,
                 ..PinningConfig::default()
             },
         ));

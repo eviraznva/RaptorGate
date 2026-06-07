@@ -332,6 +332,7 @@ mod tests {
         let cfg = PinningConfig {
             enabled: true,
             failure_threshold: 1,
+            action: crate::tls::pinning_detector::DecryptionFailureAction::CacheAndBypass,
             ..PinningConfig::default()
         };
         let ds: Vec<String> = Vec::new();
@@ -353,6 +354,7 @@ mod tests {
         let cfg = PinningConfig {
             enabled: true,
             failure_threshold: 2,
+            action: crate::tls::pinning_detector::DecryptionFailureAction::CacheAndBypass,
             ..PinningConfig::default()
         };
         let ds: Vec<String> = Vec::new();

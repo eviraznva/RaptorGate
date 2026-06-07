@@ -6,6 +6,10 @@ import {
   useListDecryptionExclusionsQuery,
 } from "../services/decryptionExclusions";
 import {
+  useGetDecryptionFailurePolicyQuery,
+  useUpdateDecryptionFailurePolicyMutation,
+} from "../services/decryptionFailurePolicy";
+import {
   useGetDecryptionMirrorConfigQuery,
   useUpdateDecryptionMirrorConfigMutation,
 } from "../services/decryptionMirror";
@@ -21,6 +25,12 @@ import {
   type DecryptionMirrorPayload,
 } from "../types/ssl/DecryptionMirror";
 import type { SslBypassDomainsPayload } from "../types/ssl/SslBypass";
+import {
+  defaultDecryptionFailurePolicy,
+  type DecryptionFailurePolicy,
+  type DecryptionFailurePolicyAction,
+  type DecryptionFailurePolicyPayload,
+} from "../types/ssl/DecryptionFailurePolicy";
 import type {
   DecryptionExclusionListPayload,
   DecryptionExclusionStatsPayload,
@@ -28,11 +38,13 @@ import type {
 import {
   normalizeBypassDomainInput,
   validateBypassDomainInput,
+  validateDecryptionFailurePolicy,
 } from "../components/tlsInspection/validation";
 
-type TlsInspectionTab = "mirror" | "bypass" | "exclusions";
+type TlsInspectionTab = "policy" | "mirror" | "bypass" | "exclusions";
 
 const tabs: { key: TlsInspectionTab; label: string }[] = [
+  { key: "policy", label: "Policy" },
   { key: "mirror", label: "Mirror" },
   { key: "bypass", label: "Bypass domains" },
   { key: "exclusions", label: "Local exclusions" },
@@ -40,6 +52,10 @@ const tabs: { key: TlsInspectionTab; label: string }[] = [
 
 function cloneConfig(config: DecryptionMirrorConfig): DecryptionMirrorConfig {
   return JSON.parse(JSON.stringify(config)) as DecryptionMirrorConfig;
+}
+
+function clonePolicy(policy: DecryptionFailurePolicy): DecryptionFailurePolicy {
+  return JSON.parse(JSON.stringify(policy)) as DecryptionFailurePolicy;
 }
 
 function validateMirrorConfig(config: DecryptionMirrorConfig): string[] {
@@ -69,18 +85,32 @@ function requestMessage(error: unknown): string {
 }
 
 export default function TlsInspection() {
-  const [activeTab, setActiveTab] = useState<TlsInspectionTab>("mirror");
+  const [activeTab, setActiveTab] = useState<TlsInspectionTab>("policy");
+  const [policyDraft, setPolicyDraft] = useState<DecryptionFailurePolicy>(
+    clonePolicy(defaultDecryptionFailurePolicy),
+  );
+  const [policyApplied, setPolicyApplied] = useState<DecryptionFailurePolicy>(
+    clonePolicy(defaultDecryptionFailurePolicy),
+  );
   const [draft, setDraft] = useState<DecryptionMirrorConfig>(
     cloneConfig(defaultDecryptionMirrorConfig),
   );
   const [applied, setApplied] = useState<DecryptionMirrorConfig>(
     cloneConfig(defaultDecryptionMirrorConfig),
   );
+  const [policyRequestError, setPolicyRequestError] = useState<string | null>(null);
   const [mirrorRequestError, setMirrorRequestError] = useState<string | null>(null);
   const [bypassRequestError, setBypassRequestError] = useState<string | null>(null);
   const [exclusionRequestError, setExclusionRequestError] = useState<string | null>(null);
   const [newBypassDomain, setNewBypassDomain] = useState("");
 
+  const {
+    data: policyData,
+    isLoading: isPolicyLoading,
+    isError: isPolicyError,
+  } = useGetDecryptionFailurePolicyQuery();
+  const [updateDecryptionFailurePolicy, { isLoading: isSavingPolicy }] =
+    useUpdateDecryptionFailurePolicyMutation();
   const {
     data: exclusionStatsData,
     isError: isExclusionStatsError,
@@ -108,6 +138,30 @@ export default function TlsInspection() {
     useCreateSslBypassDomainMutation();
   const [deleteBypassDomain, { isLoading: isDeletingBypass }] =
     useDeleteSslBypassDomainMutation();
+
+  useEffect(() => {
+    if (!policyData) {
+      return;
+    }
+
+    const payload = (policyData as ApiSuccess<DecryptionFailurePolicyPayload>).data
+      .decryptionFailurePolicy;
+
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) {
+        return;
+      }
+
+      setPolicyRequestError(null);
+      setPolicyDraft(clonePolicy(payload));
+      setPolicyApplied(clonePolicy(payload));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [policyData]);
 
   useEffect(() => {
     if (!mirrorData) {
@@ -160,6 +214,10 @@ export default function TlsInspection() {
       .data.exclusions;
   }, [exclusionListData]);
 
+  const policyErrors = useMemo(
+    () => validateDecryptionFailurePolicy(policyDraft),
+    [policyDraft],
+  );
   const mirrorErrors = useMemo(() => validateMirrorConfig(draft), [draft]);
   const bypassInputErrors = useMemo(() => {
     if (newBypassDomain.trim().length === 0) {
@@ -174,6 +232,14 @@ export default function TlsInspection() {
 
     if (activeTab === "mirror") {
       next.push(...mirrorErrors);
+    }
+
+    if (activeTab === "policy") {
+      next.push(...policyErrors);
+    }
+
+    if (isPolicyError) {
+      next.unshift("TLS failure policy: failed to load config from backend.");
     }
 
     if (activeTab === "bypass") {
@@ -196,6 +262,10 @@ export default function TlsInspection() {
       next.unshift(`TLS mirror: ${mirrorRequestError}`);
     }
 
+    if (policyRequestError) {
+      next.unshift(`TLS failure policy: ${policyRequestError}`);
+    }
+
     if (bypassRequestError) {
       next.unshift(`TLS bypass domains: ${bypassRequestError}`);
     }
@@ -214,20 +284,48 @@ export default function TlsInspection() {
     isExclusionListError,
     isExclusionStatsError,
     isMirrorError,
+    isPolicyError,
     mirrorErrors,
     mirrorRequestError,
+    policyErrors,
+    policyRequestError,
   ]);
 
+  const hasPolicyChanges = useMemo(
+    () => JSON.stringify(policyDraft) !== JSON.stringify(policyApplied),
+    [policyDraft, policyApplied],
+  );
   const hasMirrorChanges = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(applied),
     [draft, applied],
   );
+
+  const updatePolicyDraft = (partial: Partial<DecryptionFailurePolicy>) => {
+    setPolicyDraft((current) => ({
+      ...current,
+      ...partial,
+    }));
+  };
 
   const updateDraft = (partial: Partial<DecryptionMirrorConfig>) => {
     setDraft((current) => ({
       ...current,
       ...partial,
     }));
+  };
+
+  const handleApplyPolicy = async () => {
+    try {
+      setPolicyRequestError(null);
+      const response = await updateDecryptionFailurePolicy(policyDraft).unwrap();
+      const payload = (response as ApiSuccess<DecryptionFailurePolicyPayload>).data
+        .decryptionFailurePolicy;
+
+      setPolicyDraft(clonePolicy(payload));
+      setPolicyApplied(clonePolicy(payload));
+    } catch (error) {
+      setPolicyRequestError(requestMessage(error));
+    }
   };
 
   const handleApplyMirror = async () => {
@@ -301,6 +399,11 @@ export default function TlsInspection() {
 
           <div className="bg-[#161616] border border-[#262626] p-4 mb-6">
             <div className="flex flex-wrap items-center gap-3 text-xs">
+              <span className="text-[#8a8a8a] uppercase tracking-widest">Failure action</span>
+              <span className={policyDraft.action === "block" ? "text-[#f43f5e]" : "text-[#f97316]"}>
+                ● {policyDraft.action === "block" ? "BLOCK" : "CACHE + BYPASS"}
+              </span>
+              <span className="text-[#4a4a4a]">|</span>
               <span className="text-[#8a8a8a] uppercase tracking-widest">Mirror</span>
               <span className={draft.enabled ? "text-[#10b981]" : "text-[#f43f5e]"}>
                 ● {draft.enabled ? "ENABLED" : "DISABLED"}
@@ -315,6 +418,11 @@ export default function TlsInspection() {
               <span className="text-[#8a8a8a]">Mirror draft changes:</span>
               <span className={hasMirrorChanges ? "text-[#06b6d4]" : "text-[#4a4a4a]"}>
                 {hasMirrorChanges ? "YES" : "NO"}
+              </span>
+              <span className="text-[#4a4a4a]">|</span>
+              <span className="text-[#8a8a8a]">Policy draft changes:</span>
+              <span className={hasPolicyChanges ? "text-[#06b6d4]" : "text-[#4a4a4a]"}>
+                {hasPolicyChanges ? "YES" : "NO"}
               </span>
             </div>
           </div>
@@ -336,6 +444,141 @@ export default function TlsInspection() {
                 </button>
               ))}
             </div>
+
+            {activeTab === "policy" && (
+              <div>
+                <div className="flex flex-col gap-4 border-b border-[#262626] p-6 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h1 className="text-2xl font-semibold tracking-normal">
+                      Decryption Failure Policy
+                    </h1>
+                    <div className="mt-2 flex items-center gap-3 text-sm text-[#8a8a8a]">
+                      <span className={policyDraft.enabled ? "text-[#22c55e]" : "text-[#f97316]"}>
+                        {policyDraft.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                      <span className="text-[#333]">|</span>
+                      <span className={policyDraft.action === "block" ? "text-[#f43f5e]" : "text-[#f97316]"}>
+                        {policyDraft.action === "block" ? "Block" : "Cache + bypass"}
+                      </span>
+                      <span className="text-[#333]">|</span>
+                      <span>{policyDraft.failureThreshold}/{policyDraft.failureWindowSec}s</span>
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-3 text-sm text-[#d4d4d4]">
+                    <input
+                      type="checkbox"
+                      checked={policyDraft.enabled}
+                      onChange={(event) => updatePolicyDraft({ enabled: event.target.checked })}
+                      className="h-5 w-5 accent-[#06b6d4]"
+                    />
+                    Detection enabled
+                  </label>
+                </div>
+
+                <div className="grid gap-6 p-6 md:grid-cols-2">
+                  <div className="flex flex-col gap-2 text-sm md:col-span-2">
+                    <span className="text-[#8a8a8a]">Action</span>
+                    <div className="inline-flex w-full overflow-hidden border border-[#333] bg-[#0f0f0f] sm:w-auto">
+                      {(["block", "cacheAndBypass"] as DecryptionFailurePolicyAction[]).map((action) => (
+                        <button
+                          key={action}
+                          type="button"
+                          onClick={() => updatePolicyDraft({ action })}
+                          className={`inline-flex min-w-36 flex-1 items-center justify-center gap-2 px-4 py-2 text-sm transition sm:flex-none ${
+                            policyDraft.action === action
+                              ? "bg-[#06b6d4] text-[#061216]"
+                              : "text-[#d4d4d4] hover:text-white"
+                          }`}
+                        >
+                          <Icon icon={action === "block" ? "lucide:shield-x" : "lucide:shield-alert"} width={16} height={16} />
+                          {action === "block" ? "Block" : "Cache + bypass"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <label className="flex flex-col gap-2 text-sm">
+                    <span className="text-[#8a8a8a]">Failure threshold</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={1000}
+                      value={policyDraft.failureThreshold}
+                      onChange={(event) =>
+                        updatePolicyDraft({ failureThreshold: Number(event.target.value) })
+                      }
+                      className="border border-[#333] bg-[#0f0f0f] px-3 py-2 text-[#f5f5f5] outline-none focus:border-[#06b6d4]"
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-2 text-sm">
+                    <span className="text-[#8a8a8a]">Failure window seconds</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={policyDraft.failureWindowSec}
+                      onChange={(event) =>
+                        updatePolicyDraft({ failureWindowSec: Number(event.target.value) })
+                      }
+                      className="border border-[#333] bg-[#0f0f0f] px-3 py-2 text-[#f5f5f5] outline-none focus:border-[#06b6d4]"
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-2 text-sm">
+                    <span className="text-[#8a8a8a]">Local exclusion TTL seconds</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={policyDraft.localExclusionTtlSec}
+                      onChange={(event) =>
+                        updatePolicyDraft({ localExclusionTtlSec: Number(event.target.value) })
+                      }
+                      className="border border-[#333] bg-[#0f0f0f] px-3 py-2 text-[#f5f5f5] outline-none focus:border-[#06b6d4]"
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-2 text-sm">
+                    <span className="text-[#8a8a8a]">Max entries</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={policyDraft.maxEntries}
+                      onChange={(event) =>
+                        updatePolicyDraft({ maxEntries: Number(event.target.value) })
+                      }
+                      className="border border-[#333] bg-[#0f0f0f] px-3 py-2 text-[#f5f5f5] outline-none focus:border-[#06b6d4]"
+                    />
+                  </label>
+                </div>
+
+                <div className="flex flex-col gap-3 border-t border-[#262626] p-6 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setPolicyDraft(clonePolicy(policyApplied))}
+                    disabled={!hasPolicyChanges || isSavingPolicy}
+                    className="inline-flex items-center justify-center gap-2 border border-[#333] px-4 py-2 text-sm text-[#d4d4d4] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Icon icon="lucide:rotate-ccw" width={16} height={16} />
+                    Reset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleApplyPolicy}
+                    disabled={
+                      !hasPolicyChanges ||
+                      policyErrors.length > 0 ||
+                      isPolicyLoading ||
+                      isSavingPolicy
+                    }
+                    className="inline-flex items-center justify-center gap-2 bg-[#06b6d4] px-4 py-2 text-sm font-medium text-[#061216] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Icon icon="lucide:save" width={16} height={16} />
+                    {isSavingPolicy ? "Saving" : "Save"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {activeTab === "mirror" && (
               <div>
@@ -629,7 +872,7 @@ export default function TlsInspection() {
           <div className="text-center text-xs text-[#4a4a4a]">
             TLS inspection module
             <span className="text-[#06b6d4] mx-3">|</span>
-            Mirror, bypass, and local exclusion controls
+            Policy, mirror, bypass, and local exclusion controls
             <span className="text-[#06b6d4] mx-3">|</span>
             RaptorGate UI
           </div>

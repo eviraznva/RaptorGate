@@ -75,21 +75,18 @@ export const DEFAULT_TLS_INSPECTION_POLICY: Readonly<TlsInspectionPolicyPayload>
       failure_window_sec: 60,
       local_exclusion_ttl_sec: 86400,
       max_entries: 4096,
-      action: "cache_and_bypass",
+      action: "block",
     },
   };
 
 export function normalizeTlsInspectionPolicy(
   policy?: Partial<TlsInspectionPolicyPayload> | null,
 ): TlsInspectionPolicyPayload {
-  const decryptionExclusions = [
-    ...(policy?.decryption_exclusions ?? policy?.known_pinned_domains ?? []),
-  ];
   return {
     ...DEFAULT_TLS_INSPECTION_POLICY,
     ...(policy ?? {}),
     known_pinned_domains: [...(policy?.known_pinned_domains ?? [])],
-    decryption_exclusions: decryptionExclusions,
+    decryption_exclusions: [...(policy?.decryption_exclusions ?? [])],
     decryption_mirror: {
       ...DEFAULT_TLS_INSPECTION_POLICY.decryption_mirror,
       ...(policy?.decryption_mirror ?? {}),

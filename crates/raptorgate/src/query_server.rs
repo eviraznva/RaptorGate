@@ -287,10 +287,10 @@ fn decryption_failure_cache_config_from_proto(
     };
     let defaults = PinningConfig::default();
     let action = match config.action() {
-        crate::proto::config::DecryptionFailureAction::Block => {
-            DecryptionFailureAction::Block
+        crate::proto::config::DecryptionFailureAction::CacheAndBypass => {
+            DecryptionFailureAction::CacheAndBypass
         }
-        _ => DecryptionFailureAction::CacheAndBypass,
+        _ => DecryptionFailureAction::Block,
     };
 
     PinningConfig {
@@ -867,14 +867,8 @@ where
                 block_ech_no_sni: policy.block_ech_no_sni,
                 block_all_ech: policy.block_all_ech,
             });
-            let mut decryption_exclusions = policy.decryption_exclusions.clone();
-            for domain in &policy.known_pinned_domains {
-                if !decryption_exclusions.iter().any(|existing| existing == domain) {
-                    decryption_exclusions.push(domain.clone());
-                }
-            }
             self.decision_engine
-                .reload_decryption_exclusions(&decryption_exclusions);
+                .reload_decryption_exclusions(&policy.decryption_exclusions);
             self.decision_engine
                 .reload_decryption_failure_cache_config(decryption_failure_cache_config_from_proto(policy.decryption_failure_cache.as_ref()));
             let mirror_config = match decryption_mirror_config_from_proto(policy.decryption_mirror.as_ref()) {
@@ -1342,5 +1336,61 @@ fn cleanup_socket(socket_path: &str) {
         && e.kind() != std::io::ErrorKind::NotFound
     {
         tracing::warn!(socket = socket_path, error = %e, "failed to remove query socket");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::config::{
+        DecryptionFailureAction as ProtoDecryptionFailureAction,
+        DecryptionFailureCacheConfig,
+    };
+    use crate::tls::pinning_detector::DecryptionFailureAction as RuntimeDecryptionFailureAction;
+
+    #[test]
+    fn decryption_failure_cache_defaults_to_block_when_proto_is_missing() {
+        let config = decryption_failure_cache_config_from_proto(None);
+
+        assert_eq!(config.action, RuntimeDecryptionFailureAction::Block);
+        assert_eq!(config.failure_threshold, PinningConfig::default().failure_threshold);
+    }
+
+    #[test]
+    fn decryption_failure_cache_treats_unspecified_action_as_block() {
+        let proto = DecryptionFailureCacheConfig {
+            version: 1,
+            enabled: true,
+            failure_threshold: 2,
+            failure_window_sec: 30,
+            local_exclusion_ttl_sec: 600,
+            max_entries: 128,
+            action: ProtoDecryptionFailureAction::Unspecified as i32,
+        };
+
+        let config = decryption_failure_cache_config_from_proto(Some(&proto));
+
+        assert_eq!(config.action, RuntimeDecryptionFailureAction::Block);
+        assert_eq!(config.failure_threshold, 2);
+        assert_eq!(config.failure_window.as_secs(), 30);
+        assert_eq!(config.bypass_ttl.as_secs(), 600);
+        assert_eq!(config.max_entries, 128);
+    }
+
+    #[test]
+    fn decryption_failure_cache_maps_explicit_cache_and_bypass() {
+        let proto = DecryptionFailureCacheConfig {
+            version: 1,
+            enabled: true,
+            failure_threshold: 2,
+            failure_window_sec: 30,
+            local_exclusion_ttl_sec: 600,
+            max_entries: 128,
+            action: ProtoDecryptionFailureAction::CacheAndBypass as i32,
+        };
+
+        let config = decryption_failure_cache_config_from_proto(Some(&proto));
+
+        assert_eq!(config.action, RuntimeDecryptionFailureAction::CacheAndBypass);
     }
 }

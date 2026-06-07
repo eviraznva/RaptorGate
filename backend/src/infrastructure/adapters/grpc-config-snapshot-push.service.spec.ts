@@ -11,7 +11,10 @@ import { ConfigurationSnapshot } from "../../domain/entities/configuration-snaps
 import { Checksum } from "../../domain/value-objects/checksum.vo.js";
 import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
 import { NatProtocol } from "../grpc/generated/common/common.js";
-import { SmtpMatchAction as GrpcSmtpMatchAction } from "../grpc/generated/config/config_models.js";
+import {
+  DecryptionFailureAction,
+  SmtpMatchAction as GrpcSmtpMatchAction,
+} from "../grpc/generated/config/config_models.js";
 import { GrpcConfigSnapshotPushService } from "./grpc-config-snapshot-push.service.js";
 
 function methodObject(methods: Record<string, unknown>) {
@@ -285,6 +288,80 @@ describe("GrpcConfigSnapshotPushService", () => {
     expect(request.snapshot.bundle.zoneInterfaces[0].addresses).toEqual([
       "192.168.20.254/24",
     ]);
+  });
+
+  it("keeps legacy pinned domains separate from decryption exclusions and defaults failures to block", async () => {
+    let request: any;
+    const client = {
+      getService: () => ({
+        pushActiveConfigSnapshot: (value: any) => {
+          request = value;
+          return of({ accepted: true, appliedSnapshotId: value.snapshot.id });
+        },
+      }),
+    } as any;
+    const service = new GrpcConfigSnapshotPushService(client);
+    service.onModuleInit();
+    const snapshot = ConfigurationSnapshot.create(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      1,
+      SnapshotType.create("auto_save"),
+      Checksum.create("0".repeat(64)),
+      true,
+      {
+        bundle: {
+          rules: { items: [] },
+          zones: { items: [] },
+          zone_interfaces: { items: [] },
+          zone_pairs: { items: [] },
+          nat_rules: { items: [] },
+          dns_blacklist: { items: [] },
+          ssl_bypass_list: { items: [] },
+          ips_signatures: { items: [] },
+          ml_model: null,
+          firewall_certificates: { items: [] },
+          tls_inspection_policy: {
+            block_ech_no_sni: true,
+            block_all_ech: false,
+            strip_ech_dns: true,
+            log_ech_attempts: true,
+            known_pinned_domains: ["bank.example"],
+            decryption_exclusions: [],
+            decryption_mirror: {
+              enabled: false,
+              target_host: "",
+              target_port: 0,
+              include_client_to_server: true,
+              include_server_to_client: true,
+              forwarded_only: true,
+              max_session_bytes: 16777216,
+            },
+            decryption_failure_cache: {
+              version: 1,
+              enabled: true,
+              failure_threshold: 3,
+              failure_window_sec: 60,
+              local_exclusion_ttl_sec: 86400,
+              max_entries: 4096,
+              action: "block",
+            },
+          },
+        },
+      },
+      "test",
+      new Date("2026-05-09T00:00:00.000Z"),
+      "tester",
+    );
+
+    await service.pushActiveConfigSnapshot(snapshot, "apply");
+
+    expect(request.snapshot.bundle.tlsInspectionPolicy).toMatchObject({
+      knownPinnedDomains: ["bank.example"],
+      decryptionExclusions: [],
+      decryptionFailureCache: {
+        action: DecryptionFailureAction.DECRYPTION_FAILURE_ACTION_BLOCK,
+      },
+    });
   });
 
   it("serializes smtp matchers into the gRPC payload", async () => {

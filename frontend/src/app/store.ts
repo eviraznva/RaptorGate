@@ -28,6 +28,7 @@ import { identityConfigApi } from "../services/identityConfig";
 import { identitySessionsApi } from "../services/identitySessions";
 import { secretsApi } from "../services/secrets";
 import { decryptionExclusionsApi } from "../services/decryptionExclusions";
+import { decryptionFailurePolicyApi } from "../services/decryptionFailurePolicy";
 import { decryptionMirrorApi } from "../services/decryptionMirror";
 import { sslBypassApi } from "../services/sslBypass";
 
@@ -58,6 +59,7 @@ export const store = configureStore({
     [identitySessionsApi.reducerPath]: identitySessionsApi.reducer,
     [secretsApi.reducerPath]: secretsApi.reducer,
     [decryptionExclusionsApi.reducerPath]: decryptionExclusionsApi.reducer,
+    [decryptionFailurePolicyApi.reducerPath]: decryptionFailurePolicyApi.reducer,
     [decryptionMirrorApi.reducerPath]: decryptionMirrorApi.reducer,
     [sslBypassApi.reducerPath]: sslBypassApi.reducer,
     [rulesApi.reducerPath]: rulesApi.reducer,
@@ -78,6 +80,7 @@ export const store = configureStore({
       identitySessionsApi.middleware,
       secretsApi.middleware,
       decryptionExclusionsApi.middleware,
+      decryptionFailurePolicyApi.middleware,
       decryptionMirrorApi.middleware,
       sslBypassApi.middleware,
       zonesApi.middleware,

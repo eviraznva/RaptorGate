@@ -25,6 +25,7 @@ import { ExportConfigUseCase } from "../application/use-cases/export-config.use-
 import { FactoryResetUseCase } from "../application/use-cases/factory-reset.use-case.js";
 import { GetConfigDiffUseCase } from "../application/use-cases/get-config-diff.use-case.js";
 import { GetConfigHistoryUseCase } from "../application/use-cases/get-config-history.use-case.js";
+import { GetDecryptionFailurePolicyUseCase } from "../application/use-cases/get-decryption-failure-policy.use-case.js";
 import { GetDecryptionMirrorConfigUseCase } from "../application/use-cases/get-decryption-mirror-config.use-case.js";
 import { GetIdentityConfigUseCase } from "../application/use-cases/get-identity-config.use-case.js";
 import { GetSslBypassDomainsUseCase } from "../application/use-cases/get-ssl-bypass-domains.use-case.js";
@@ -33,6 +34,7 @@ import { RollbackConfigUseCase } from "../application/use-cases/rollback-config.
 import { TestLdapProfileUseCase } from "../application/use-cases/test-ldap-profile.use-case.js";
 import { TestRadiusProfileUseCase } from "../application/use-cases/test-radius-profile.use-case.js";
 import { UpdateAuthenticationProfileUseCase } from "../application/use-cases/update-authentication-profile.use-case.js";
+import { UpdateDecryptionFailurePolicyUseCase } from "../application/use-cases/update-decryption-failure-policy.use-case.js";
 import { UpdateDecryptionMirrorConfigUseCase } from "../application/use-cases/update-decryption-mirror-config.use-case.js";
 import { UpdateIdentitySettingsUseCase } from "../application/use-cases/update-identity-settings.use-case.js";
 import { UpdateLdapProfileUseCase } from "../application/use-cases/update-ldap-profile.use-case.js";
@@ -87,6 +89,7 @@ import { JsonZoneRepository } from "../infrastructure/persistence/repositories/j
 import { JsonZoneInterfaceRepository } from "../infrastructure/persistence/repositories/json-zone-interface.repository.js";
 import { JsonZonePairRepository } from "../infrastructure/persistence/repositories/json-zone-pair.repository.js";
 import { ConfigController } from "../presentation/controllers/config.controller.js";
+import { DecryptionFailurePolicyController } from "../presentation/controllers/decryption-failure-policy.controller.js";
 import { DecryptionMirrorController } from "../presentation/controllers/decryption-mirror.controller.js";
 import { IdentityConfigController } from "../presentation/controllers/identity-config.controller.js";
 import { SslBypassController } from "../presentation/controllers/ssl-bypass.controller.js";
@@ -226,6 +229,7 @@ import { SecretModule } from "./secret.module.js";
   ],
   controllers: [
     ConfigController,
+    DecryptionFailurePolicyController,
     DecryptionMirrorController,
     IdentityConfigController,
     SslBypassController,
@@ -242,6 +246,7 @@ import { SecretModule } from "./secret.module.js";
     DeleteRadiusProfileUseCase,
     GetConfigDiffUseCase,
     GetConfigHistoryUseCase,
+    GetDecryptionFailurePolicyUseCase,
     GetDecryptionMirrorConfigUseCase,
     GetIdentityConfigUseCase,
     GetSslBypassDomainsUseCase,
@@ -252,6 +257,7 @@ import { SecretModule } from "./secret.module.js";
     TestLdapProfileUseCase,
     TestRadiusProfileUseCase,
     UpdateAuthenticationProfileUseCase,
+    UpdateDecryptionFailurePolicyUseCase,
     UpdateDecryptionMirrorConfigUseCase,
     UpdateIdentitySettingsUseCase,
     UpdateLdapProfileUseCase,

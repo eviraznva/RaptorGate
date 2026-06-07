@@ -610,9 +610,7 @@ export class GrpcConfigSnapshotPushService
       stripEchDns: policy?.strip_ech_dns ?? true,
       logEchAttempts: policy?.log_ech_attempts ?? true,
       knownPinnedDomains: [...(policy?.known_pinned_domains ?? [])],
-      decryptionExclusions: [
-        ...(policy?.decryption_exclusions ?? policy?.known_pinned_domains ?? []),
-      ],
+      decryptionExclusions: [...(policy?.decryption_exclusions ?? [])],
       decryptionMirror: this.toDecryptionMirrorConfig(
         policy?.decryption_mirror,
       ),
@@ -637,9 +635,9 @@ export class GrpcConfigSnapshotPushService
       localExclusionTtlSec: config?.local_exclusion_ttl_sec ?? 86400,
       maxEntries: config?.max_entries ?? 4096,
       action:
-        config?.action === "block"
-          ? DecryptionFailureAction.DECRYPTION_FAILURE_ACTION_BLOCK
-          : DecryptionFailureAction.DECRYPTION_FAILURE_ACTION_CACHE_AND_BYPASS,
+        config?.action === "cache_and_bypass"
+          ? DecryptionFailureAction.DECRYPTION_FAILURE_ACTION_CACHE_AND_BYPASS
+          : DecryptionFailureAction.DECRYPTION_FAILURE_ACTION_BLOCK,
     };
   }
 

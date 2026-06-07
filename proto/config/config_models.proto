@@ -216,7 +216,7 @@ message TlsInspectionPolicy {
   bool            block_all_ech       = 2; // blokuj wszystkie polaczenia z ECH
   bool            strip_ech_dns       = 3; // usuwaj rekordy HTTPS z ECH config
   bool            log_ech_attempts    = 4; // loguj proba uzycia ECH
-  repeated string known_pinned_domains = 5; // legacy alias dla wykluczen deszyfrowania
+  repeated string known_pinned_domains = 5; // legacy pole informacyjne dla dawnych konfiguracji
   DecryptionMirrorConfig decryption_mirror = 6; // mirror odszyfrowanego plaintextu
   repeated string decryption_exclusions = 7; // domeny wykluczone z deszyfrowania TLS
   DecryptionFailureCacheConfig decryption_failure_cache = 8; // lokalne wykluczenia po awarii deszyfrowania
