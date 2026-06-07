@@ -190,6 +190,7 @@ cp -f \
   ../"$MODEL_SRC"/"$MODEL_NAME".onnx.data \
   ../"$MODEL_SRC"/"$MODEL_NAME".onnx.json \
   .router_sync/"$PROJECT_NAME"/ml/
+cp -f ../"$MODEL_SRC"/"$MODEL_NAME".onnx.data .router_sync/"$PROJECT_NAME"/ml/model.onnx.data
 cp -rf ../bin/backend/* .router_sync/backend/
 rm -rf .router_sync/backend/data/json-db
 mkdir -p .router_sync/backend/data

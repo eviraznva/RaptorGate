@@ -20,6 +20,7 @@ struct BufferedBytes {
     dir: Direction,
     tcp_payload_start_seq: u32,
     payload: Vec<u8>,
+    forwarded: bool,
 }
 
 pub struct ApplicationRouterStage<ZR: ZoneResolver> {
@@ -61,19 +62,23 @@ impl<ZR: ZoneResolver> ApplicationRouterStage<ZR> {
             return L4Outcome::Forward(vec![packet_id]);
         }
 
-        self.pending_bytes += payload.len();
+        let pending_bytes = self.pending_bytes + payload.len();
+        let app_proto = app_proto.or_else(|| {
+            (pending_bytes > MAX_PENDING_BYTES).then_some(AppProto::Unknown)
+        });
+        let forwarded = app_proto.is_none();
+
+        self.pending_bytes = pending_bytes;
         self.pending.push(BufferedBytes {
             packet_id,
             dir,
             tcp_payload_start_seq,
             payload: payload.to_vec(),
+            forwarded,
         });
 
-        let app_proto = app_proto.or_else(|| {
-            (self.pending_bytes > MAX_PENDING_BYTES).then_some(AppProto::Unknown)
-        });
         let Some(app_proto) = app_proto else {
-            return L4Outcome::Continue;
+            return L4Outcome::Forward(vec![packet_id]);
         };
 
         let mut selected = self.pipeline_for_app_proto(app_proto);
@@ -92,7 +97,7 @@ impl<ZR: ZoneResolver> ApplicationRouterStage<ZR> {
             let out = selected
                 .on_bytes(ctx, item.packet_id, item.dir, item.tcp_payload_start_seq, &item.payload)
                 .await;
-            parts.push(out);
+            parts.push_replayed(out, item.forwarded.then_some(item.packet_id));
             if parts.terminate.is_some() {
                 return parts.finish();
             }
@@ -135,6 +140,14 @@ impl OutcomeParts {
                 self.emit.extend(emit);
             }
             L4Outcome::Terminate { reason, reset } => self.terminate = Some((reason, reset)),
+        }
+    }
+
+    fn push_replayed(&mut self, outcome: L4Outcome, already_forwarded: Option<PacketId>) {
+        self.push(outcome);
+        if let Some(packet_id) = already_forwarded {
+            self.forward.retain(|id| *id != packet_id);
+            self.drop.retain(|id| *id != packet_id);
         }
     }
 

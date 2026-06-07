@@ -2,7 +2,7 @@
 # Prosty endpoint testowy na h2 dla Issue 1 (kryterium: h2 ma dzialajacy endpoint).
 # Ochrona to zadanie firewalla (Issue 5/6), ten serwis tylko odpowiada.
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN_ADDR = ("0.0.0.0", 8080)
 
@@ -42,4 +42,4 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    HTTPServer(LISTEN_ADDR, Handler).serve_forever()
+    ThreadingHTTPServer(LISTEN_ADDR, Handler).serve_forever()

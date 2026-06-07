@@ -116,14 +116,14 @@ let httpServer: DetachedCommand | null = null;
 async function startHttpServer(): Promise<void> {
 	await performCommand({
 		host: "h2",
-		command: `sudo pkill -9 -f 'http.server ${HTTP_SERVER_PORT}'; sleep 1; true`,
+		command: `sudo pkill -9 -f 'http.server ${HTTP_SERVER_PORT}|[n]cat -lk 0[.]0[.]0[.]0 ${HTTP_SERVER_PORT}'; sleep 1; true`,
 	})
 		.discardError()
 		.run();
 
 	httpServer = await performCommand({
 		host: "h2",
-		command: `cd /tmp && exec python3 -u -m http.server ${HTTP_SERVER_PORT} --bind 0.0.0.0 2>&1`,
+		command: `timeout 120 ncat -lk 0.0.0.0 ${HTTP_SERVER_PORT} -c 'awk '\\''{ if ($0 == "\\r") exit }'\\''; printf "HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok"'`,
 	}).runDetached();
 
 	await performCommand({
@@ -140,10 +140,12 @@ async function stopHttpServer(): Promise<void> {
 }
 
 async function httpRequest(payload: string, expectReply: boolean): Promise<void> {
+	const headerPayload = payload.replaceAll("'", "'\\''");
 	const command =
 		`curl --silent --show-error --max-time 4 ` +
+		`--header 'X-RaptorGate-Test: ${headerPayload}' ` +
 		`--write-out 'STATUS=%{http_code}\\n' --output /dev/null ` +
-		`'http://${HTTP_SERVER_HOST}:${HTTP_SERVER_PORT}/?q=${encodeURIComponent(payload)}'; ` +
+		`'http://${HTTP_SERVER_HOST}:${HTTP_SERVER_PORT}/'; ` +
 		`code=$?; echo CURL_EXIT=$code; exit $code`;
 
 	const builder = performCommand({ host: "h1", command });

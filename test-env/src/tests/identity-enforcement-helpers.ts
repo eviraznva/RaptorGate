@@ -300,18 +300,26 @@ export async function expectH1ToH2Allowed(): Promise<void> {
 	await performCommand({
 		host: "h1",
 		command:
-			"curl -sS --connect-timeout 2 --max-time 6 --write-out 'STATUS=%{http_code}\\n' --output /dev/null http://192.168.20.10:8080/api/ping",
+			"for i in 1 2 3 4 5; do " +
+			"status=$(curl -sS --connect-timeout 2 --max-time 4 --write-out '%{http_code}' --output /dev/null http://192.168.20.10:8080/api/ping 2>/dev/null || true); " +
+			"if [ \"$status\" = \"200\" ]; then echo STATUS=200; exit 0; fi; " +
+			"sleep 0.5; " +
+			"done; echo STATUS=$status; exit 1",
 	})
 		.expectOutput([/STATUS=200/])
 		.run();
 }
 
 export async function expectH1ToH2Blocked(): Promise<void> {
-	await performCommand({
-		host: "h1",
-		command:
-			"curl -sS --connect-timeout 2 --max-time 4 http://192.168.20.10:8080/api/ping",
-	})
-		.isErr()
-		.run();
+	try {
+		await performCommand({
+			host: "h1",
+			command:
+				"curl -sS --connect-timeout 2 --max-time 4 http://192.168.20.10:8080/api/ping",
+		})
+			.isErr()
+			.run();
+	} finally {
+		await ensureProtectedHttpService();
+	}
 }

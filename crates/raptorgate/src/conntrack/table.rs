@@ -522,6 +522,21 @@ impl Conntrack {
         n
     }
 
+    pub fn flush_nat(&self) -> usize {
+        let victims: Vec<Arc<ConntrackEntry>> = self.iter_entries()
+            .into_iter()
+            .filter(|entry| entry.nat.lock().is_some())
+            .collect();
+
+        let n = victims.len();
+
+        for v in victims {
+            self.destroy(&v, DestroyReason::Manual);
+        }
+
+        n
+    }
+
     pub fn register_observer(&self, observer: Arc<dyn CtObserver>) {
         self.observers.register(Arc::clone(&observer));
 
@@ -815,6 +830,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
     use crate::conntrack::tuple::Protocol;
+    use crate::conntrack::entry::{NatTransform, TupleManip};
     use crate::conntrack::observer::CtObserver;
     use crate::conntrack::proto::udp::UdpProtoState;
     use crate::conntrack::proto::{NewStateError, NewStateOutcome, ProtoState, ProtocolHandler};
@@ -1014,6 +1030,44 @@ mod tests {
 
         assert_eq!(n, 10);
         assert_eq!(ct.entries_count(), 0);
+    }
+
+    #[test]
+    fn flush_nat_removes_only_entries_with_nat_transform() {
+        let (ct, _h) = build_ct();
+
+        let nat_entry = make_entry(&ct, tuple_a());
+        *nat_entry.nat.lock() = Some(NatTransform {
+            rule_id: "dnat-1".into(),
+            binding_id: nat_entry.id,
+            manip_bits: NatTransform::MANIP_DST,
+            src_manip: None,
+            dst_manip: Some(TupleManip {
+                ip: IpAddr::V4(Ipv4Addr::new(192, 168, 20, 10)),
+                port: Some(80),
+            }),
+            allocated_ip: None,
+            allocated_port: None,
+            proto: Protocol::Udp,
+        });
+        assert!(ct.confirm(&nat_entry));
+
+        let plain_tuple = FlowTuple::new(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            10001,
+            IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)),
+            53,
+            Protocol::Udp,
+        );
+        let plain_entry = make_entry(&ct, plain_tuple);
+        assert!(ct.confirm(&plain_entry));
+
+        let n = ct.flush_nat();
+
+        assert_eq!(n, 1);
+        assert!(matches!(ct.lookup(&nat_entry.original), LookupResult::NotFound));
+        assert!(matches!(ct.lookup(&plain_tuple), LookupResult::Found { .. }));
+        assert_eq!(ct.entries_count(), 1);
     }
 
     #[test]

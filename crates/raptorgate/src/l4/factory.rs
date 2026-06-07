@@ -518,6 +518,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn application_router_forwards_unknown_payload_while_waiting_for_detection() {
+        let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever(), Some(tls_inspection_config()));
+        let mut pipe = factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 12345));
+        let mut ctx = SessionContext::open(sample_tcp_entry_with_ports(12345, 12345), &StubZoneResolver);
+
+        assert_eq!(pipe.on_session_open(&mut ctx).await, L4Outcome::Continue);
+        let id = PacketId::next();
+        let out = pipe.on_bytes_with_app_proto(
+            &mut ctx,
+            id,
+            Direction::Reply,
+            0,
+            b"hello\n",
+            None,
+        ).await;
+
+        assert_eq!(out, L4Outcome::Forward(vec![id]));
+    }
+
+    #[tokio::test]
     async fn application_router_replays_buffered_smtp_greeting_on_non_default_port() {
         let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever(), Some(tls_inspection_config()));
         let mut pipe = factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 2525));
@@ -533,7 +553,7 @@ mod tests {
             b"220 mail.example.com ESMTP\r\n",
             None,
         ).await;
-        assert_eq!(out, L4Outcome::Continue);
+        assert_eq!(out, L4Outcome::Forward(vec![greeting]));
 
         let ehlo = PacketId::next();
         let out = pipe.on_bytes_with_app_proto(
@@ -545,7 +565,7 @@ mod tests {
             Some(AppProto::Smtp),
         ).await;
 
-        assert_eq!(out, L4Outcome::Forward(vec![greeting, ehlo]));
+        assert_eq!(out, L4Outcome::Forward(vec![ehlo]));
         assert_eq!(ctx.application_protocol(), Some(AppProto::Smtp));
     }
 }

@@ -1167,11 +1167,23 @@ where
         rules: &[crate::proto::config::NatRule],
     ) -> anyhow::Result<()> {
         let nat_config = NatConfig::from_proto_rules(rules)?;
+        let nat_changed = {
+            let current = self.nat_store.get_config();
+            current.as_ref() != &nat_config
+        };
         let runtime_rules = nat_config.to_runtime_rules()?;
 
         self.nat_store.swap_config(nat_config).await?;
 
         self.nat_engine.replace_rules(runtime_rules.clone());
+        if nat_changed {
+            let flushed = self.conntrack.flush_nat();
+            tracing::info!(
+                event = "nat.conntrack.flushed",
+                entries = flushed,
+                "flushed NAT conntrack entries after NAT config change"
+            );
+        }
 
         // Refresh kernel-side coexistence rules (notrack for SNAT/MASQ replies,
         // TLS-redirect VIP bypass) to match the new active NAT rule set.

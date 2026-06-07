@@ -33,11 +33,18 @@ function pushNatSnapshot(natRules: any[]) {
 async function cleanupNatListeners() {
 	await performCommand({
 		host: "h2",
-		command: "pkill -f 'python3 -m http[.]server 80 --bind 192[.]168[.]20[.]10|[n]cat -l 9999' || true",
+		command: "pkill -f 'python3 -m http[.]server 80 --bind 192[.]168[.]20[.]10|[n]cat' || true",
 	})
 		.discardError()
 		.run();
 	await sleep(200);
+}
+
+async function startNatHttpServer(timeoutSeconds: number) {
+	return performCommand({
+		host: "h2",
+		command: `timeout ${timeoutSeconds} ncat -lk 192.168.20.10 80 -c 'awk '\\''{ if ($0 == "\\r") exit }'\\''; printf "HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok"'`,
+	}).runDetached();
 }
 
 // ---------------------------------------------------------------------------
@@ -75,10 +82,7 @@ describe("NAT E2E", () => {
 
 			await sleep(500);
 
-			const httpServer = await performCommand({
-				host: "h2",
-				command: "timeout 10 python3 -m http.server 80 --bind 192.168.20.10",
-			}).runDetached();
+			const httpServer = await startNatHttpServer(10);
 
 			try {
 				await performCommand({
@@ -121,10 +125,7 @@ describe("NAT E2E", () => {
 
 			await sleep(500);
 
-			const httpServer = await performCommand({
-				host: "h2",
-				command: "timeout 10 python3 -m http.server 80 --bind 192.168.20.10",
-			}).runDetached();
+			const httpServer = await startNatHttpServer(10);
 
 			try {
 				await performCommand({
@@ -166,10 +167,7 @@ describe("NAT E2E", () => {
 
 			await sleep(500);
 
-			const httpServer = await performCommand({
-				host: "h2",
-				command: "timeout 10 python3 -m http.server 80 --bind 192.168.20.10",
-			}).runDetached();
+			const httpServer = await startNatHttpServer(10);
 
 			try {
 				await performCommand({
@@ -303,10 +301,7 @@ describe("NAT E2E", () => {
 
 			await sleep(500);
 
-			const httpServer = await performCommand({
-				host: "h2",
-				command: "timeout 15 python3 -m http.server 80 --bind 192.168.20.10",
-			}).runDetached();
+			const httpServer = await startNatHttpServer(15);
 
 			try {
 				// 3 sequential requests — all should succeed through same PAT rule

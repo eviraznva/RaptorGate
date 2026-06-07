@@ -6,7 +6,7 @@
 	"scripts": {
 		"start": "bun run index.ts",
 		"generate": "bun run scripts/generate-proto.ts",
-		"test": "bun test"
+		"test": "bun test --max-concurrency=1"
 	},
 	"devDependencies": {
 		"@types/bun": "latest",

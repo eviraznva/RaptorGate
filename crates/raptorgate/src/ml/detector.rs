@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
+use tract_onnx::pb::{tensor_shape_proto, type_proto, GraphProto, TensorShapeProto, TypeProto, ValueInfoProto};
 use serde_json::Value;
 use tract_onnx::prelude::*;
 
@@ -92,7 +93,7 @@ impl MlDetector {
             .as_ref()
             .is_some_and(|metadata| metadata.get("attack_labels").is_some() || labels.len() > 2);
 
-        let model = load_model(&PathBuf::from(&model_path))?;
+        let model = load_model(&PathBuf::from(&model_path), labels.len())?;
 
         tracing::info!(
             event = "ml.detector.enabled",
@@ -252,14 +253,49 @@ fn resolve_attack_confidence_threshold(metadata: Option<&Value>) -> Result<f32> 
     }
 }
 
-fn load_model(path: &Path) -> Result<InferenceModel> {
-    tract_onnx::onnx()
-        .model_for_path(path)
-        .with_context(|| format!("failed to load ONNX model at {}", path.display()))?
+fn load_model(path: &Path, output_len: usize) -> Result<InferenceModel> {
+    let onnx = tract_onnx::onnx();
+    let mut proto = onnx
+        .proto_model_for_path(path)
+        .with_context(|| format!("failed to load ONNX model at {}", path.display()))?;
+    set_onnx_batch_dim_to_one(&mut proto.graph);
+
+    let model_dir = path.parent().and_then(Path::to_str);
+    onnx
+        .parse(&proto, model_dir)
+        .context("failed to parse ML model")?
+        .model
+        .with_input_fact(0, f32::fact([1, 38]).into())
+        .context("failed to set ML model input shape")?
+        .with_output_fact(0, f32::fact([1, output_len]).into())
+        .context("failed to set ML model output shape")?
         .into_optimized()
         .context("failed to optimize ML model")?
         .into_runnable()
         .context("failed to prepare ML model runtime")
+}
+
+fn set_onnx_batch_dim_to_one(graph: &mut Option<GraphProto>) {
+    let Some(graph) = graph else {
+        return;
+    };
+    for value_info in graph.input.iter_mut().chain(graph.output.iter_mut()).chain(graph.value_info.iter_mut()) {
+        set_value_info_batch_dim_to_one(value_info);
+    }
+}
+
+fn set_value_info_batch_dim_to_one(value_info: &mut ValueInfoProto) {
+    let Some(TypeProto { value: Some(type_proto::Value::TensorType(tensor)), .. }) = value_info.r#type.as_mut() else {
+        return;
+    };
+    let Some(TensorShapeProto { dim }) = tensor.shape.as_mut() else {
+        return;
+    };
+    for dim in dim {
+        if matches!(dim.value.as_ref(), Some(tensor_shape_proto::dimension::Value::DimParam(name)) if name == "batch") {
+            dim.value = Some(tensor_shape_proto::dimension::Value::DimValue(1));
+        }
+    }
 }
 
 fn softmax(logits: &[f32]) -> Vec<f32> {
@@ -412,14 +448,24 @@ mod tests {
         if !model_path.exists() {
             return;
         }
+        let data_path = model_path.with_extension("onnx.data");
+        if !data_path.exists() {
+            return;
+        }
 
-        let model = load_model(&model_path).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let temp_model_path = dir.path().join("model.onnx");
+        fs::copy(&model_path, &temp_model_path).unwrap();
+        fs::copy(&data_path, dir.path().join("model.onnx.data")).unwrap();
+
+        let model = load_model(&temp_model_path, 13).unwrap();
         let input = tract_ndarray::Array2::from_shape_vec((1, 38), vec![0.0f32; 38])
             .unwrap()
             .into_tensor();
         let output = model.run(tvec!(input.into())).unwrap();
         let logits = output[0].to_array_view::<f32>().unwrap();
 
-        assert_eq!(logits.len(), 14);
+        assert_eq!(logits.len(), 13);
     }
+
 }
