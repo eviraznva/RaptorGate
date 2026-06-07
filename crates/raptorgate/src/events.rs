@@ -8,9 +8,12 @@ use tokio::{select, sync::mpsc, time::interval};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::conntrack::tcp_identity::EndpointIdentifier;
+use crate::l4::AppProto;
 use crate::proto::events as proto;
 use crate::proto::services::backend_event_service_client::BackendEventServiceClient;
+use crate::rule_tree::Port;
 use crate::tls::session_meta::{Direction, InspectionMode};
+use crate::zones::ResolvedZonePair;
 
 #[cfg(any(test, feature = "test-capture"))]
 mod capture;
@@ -405,48 +408,17 @@ pub enum EventKind {
     PolicyWarning { message: String, verdict: &'static str },
     EventBusConnectedEvent {},
     SmtpSessionStateChanged { session: SmtpSessionInfo, new_state: String },
+
+    DecidedAppProtocol {
+        protocol: AppProto,
+        zone_pair_in_to_out: ResolvedZonePair,
+        zone_pair_out_to_in: ResolvedZonePair,
+    }
 }
 
 impl EventKind {
     pub const fn is_immediate(&self) -> bool {
-        use EventKind as E;
-        match self {
-            E::TcpSessionSubstateChanged { .. }
-            | E::TcpSessionEstabilished { .. }
-            | E::TcpSessionRemoved { .. }
-            | E::TcpConnectionRejected { .. }
-            | E::TcpSessionAbortedMidClose { .. }
-            | E::TcpSessionEnteredTimeWait { .. }
-            | E::TunDeviceSwapped { .. }
-            | E::SnifferConfigChanged { .. }
-            | E::SnifferReconnecting { .. }
-            | E::SnifferReconnected { .. }
-            | E::TlsInterceptStarted { .. }
-            | E::TlsHandshakeComplete { .. }
-            | E::TlsSessionClosed { .. }
-            | E::InboundTlsInterceptStarted { .. }
-            | E::InboundTlsHandshakeComplete { .. }
-            | E::InboundTlsSessionClosed { .. }
-            | E::DecryptedTrafficClassified { .. }
-            | E::DecryptedIpsMatch { .. }
-            | E::TlsUntrustedCertDetected { .. }
-            | E::TlsBypassApplied { .. }
-            | E::InboundTlsBypassApplied { .. }
-            | E::PinningFailureDetected { .. }
-            | E::PinningAutoBypassActivated { .. }
-            | E::TlsHandshakeFailed { .. }
-            | E::EchAttemptDetected { .. }
-            | E::InterfaceStateChanged { .. }
-            | E::InterfaceRenamed { .. }
-            | E::IpsSignatureMatched { .. }
-            | E::MlThreatDetected { .. }
-            | E::RouteAdded { .. }
-            | E::RouteModified { .. }
-            | E::RouteDeleted { .. }
-            | E::PolicyWarning { .. }
-            | E::EventBusConnectedEvent { .. }
-            | E::SmtpSessionStateChanged { .. } => true,
-        }
+        true
     }
 }
 
@@ -807,6 +779,12 @@ impl From<EventKind> for proto::EventKind {
                             server: session.server.map(Into::into),
                         }),
                         new_state,
+                    }),
+                EventKind::DecidedAppProtocol { protocol, zone_pair_in_to_out, zone_pair_out_to_in } =>
+                    Item::DecidedAppProtocol(proto::DecidedAppProtocol {
+                        protocol: protocol.to_string(),
+                        zone_pair_in_to_out: Some(zone_pair_in_to_out.into()),
+                        zone_pair_out_to_in: Some(zone_pair_out_to_in.into()),
                     }),
             }),
         }

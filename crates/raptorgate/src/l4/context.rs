@@ -1,10 +1,13 @@
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use crate::conntrack::entry::ConntrackEntry;
 use crate::conntrack::tcp_identity::EndpointIdentifier;
 use crate::conntrack::tuple::Direction;
 use crate::dpi::AppProto;
+use crate::events::{Event, EventKind, emit};
 use crate::l4::reset::{TcpResetAction, TcpResetBuilder, TcpResetUnavailable};
+use crate::proto::events::DecidedAppProtocol;
 use crate::zones::resolver::ZoneResolver;
 use crate::zones::{DirectionalZonePairs, ResolvedZonePair};
 
@@ -37,6 +40,14 @@ impl SessionContext {
     }
 
     pub fn set_application_protocol(&mut self, app_proto: AppProto) {
+        emit(Event {
+            emitted_at: SystemTime::now(),
+            kind: EventKind::DecidedAppProtocol {
+                protocol: app_proto,
+                zone_pair_in_to_out: self.zone_pair_in_to_out.clone(),
+                zone_pair_out_to_in: self.zone_pair_out_to_in.clone(),
+            },
+        });
         self.application_protocol = Some(app_proto);
     }
 

@@ -4,6 +4,7 @@ package raptorgate.events;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "config/config_models.proto";
 
 message Event {
   google.protobuf.Timestamp emitted_at = 1;
@@ -71,6 +72,7 @@ message EventKind {
     PolicyWarningEvent policy_warning = 31;
     SmtpSessionStateChangedEvent smtp_session_state_changed = 32;
     TcpSessionSubstateChangedEvent tcp_session_substate_changed = 33;
+    DecidedAppProtocol decided_app_protocol = 34;
   }
 }
 
@@ -349,4 +351,10 @@ message InterfaceRenamedEvent {
 message PolicyWarningEvent {
   string message = 1;
   string verdict = 2;
+}
+
+message DecidedAppProtocol {
+  string protocol = 1;
+  config.ZonePair zone_pair_in_to_out = 2;
+  config.ZonePair zone_pair_out_to_in = 3;
 }
