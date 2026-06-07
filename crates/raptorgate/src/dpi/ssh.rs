@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::sync::Arc;
 
 use derive_more::derive;
 use ssh_parser::{SshPacket, SshVersion, parse_ssh_identification, parse_ssh_packet};
@@ -7,7 +7,7 @@ use crate::{conntrack::tuple::Direction, data_plane::packet_context::PacketId, d
 
 const MAX_HANDSHAKE_PACKET_SIZE: usize = 2048;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SshHost {
     Client,
     Server,
@@ -137,17 +137,30 @@ struct SshSessionInfo {
 
 pub(crate) struct SshSession<ZR> where ZR: ZoneResolver {
     state: SshState,
-    assembler: SshPacketAssembler,
+    assemblers: [SshPacketAssembler; 2],
     confirmed_ssh: bool,
-
-    buffered_ids: VecDeque<PacketId>,
     policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
 }
 
 
 impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
     pub fn new(policy_retriever: Arc<SmtpPolicyRetriever<ZR>>) -> Self {
-        SshSession { state: SshState::Clear(ClearStage { state: ClearState::VersionExchange, expected_host: SshHost::Client }), buffered_ids: VecDeque::new(), policy_retriever, assembler: SshPacketAssembler::new(), confirmed_ssh: false }
+        SshSession {
+            state: SshState::Clear(ClearStage {
+                state: ClearState::VersionExchange,
+                expected_host: SshHost::Client,
+            }),
+            assemblers: [SshPacketAssembler::new(), SshPacketAssembler::new()],
+            confirmed_ssh: false,
+            policy_retriever,
+        }
+    }
+
+    fn get_assembler_for(&mut self, host: SshHost) -> &mut SshPacketAssembler {
+        match host {
+            SshHost::Client => &mut self.assemblers[0],
+            SshHost::Server => &mut self.assemblers[1],
+        }
     }
 
     pub(crate) fn process_bytes(
@@ -161,7 +174,10 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
             return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete }
         }
 
-        let body = match self.assembler.push(payload, self.state.clone()) {
+        let host = SshHost::from(dir);
+        let current_stage = self.state.clone();
+
+        let body = match self.get_assembler_for(host).push(payload, current_stage) {
             AssemblerVerdict::NeedMore => return BufferingDisposition { packet: PacketAction::QueueAndHalt, unit: UnitStatus::Incomplete },
             AssemblerVerdict::TooLarge | AssemblerVerdict::Invalid => {
                 if !self.confirmed_ssh {
@@ -170,10 +186,10 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
 
                 return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
             }
-            AssemblerVerdict::PacketComplete(p) => { 
+            AssemblerVerdict::PacketComplete(p) => {
                 self.confirmed_ssh = true;
                 ctx.set_application_protocol(AppProto::Ssh);
-                p 
+                p
             },
 
         };
@@ -187,7 +203,7 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
                 return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
             };
 
-            if self.state.advance_with_version(SshHost::from(dir)).is_err() {
+            if self.state.advance_with_version(host).is_err() {
                 return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
             }
 
@@ -201,13 +217,19 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
 
         match parsed {
             Ok((_, (ssh_packet, _))) => {
-                let from = SshHost::from(dir);
                 match &ssh_packet {
-                    SshPacket::KeyExchange(_)
-                    | SshPacket::NewKeys
+                    SshPacket::KeyExchange(_) => {
+                        if self.state.advance_with_packet(&ssh_packet, host).is_err() {
+                            tracing::info!(ssh_packet=?ssh_packet, dir=?host, "SSH parsed and errored on dir");
+                            return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
+                        }
+
+                        tracing::info!(ssh_packet=?ssh_packet, dir=?host, "SSH parsed and advanced from key exchange on dir");
+                    }
+                    SshPacket::NewKeys
                     | SshPacket::DiffieHellmanInit(_)
                     | SshPacket::DiffieHellmanReply(_) => {
-                        if self.state.advance_with_packet(&ssh_packet, from).is_err() {
+                        if self.state.advance_with_packet(&ssh_packet, host).is_err() {
                             return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
                         }
 
@@ -216,7 +238,10 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
                     _ => {}
                 }
             }
-            Err(_) => return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete },
+            Err(_) => {
+                tracing::info!(state=?self.state, "SSH error during parsing on state");
+                return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
+            },
         }
 
         BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete }
@@ -821,5 +846,56 @@ mod tests {
                 reset: true,
             }
         );
+    }
+
+    #[test]
+    fn interleaved_kexinit_segments_dont_mix_directions() {
+        let mut session = SshSession::new(mock_policy_retriever());
+        let mut ctx = session_context();
+
+        drive(&mut session, &mut ctx, Direction::Original, b"SSH-2.0-OpenSSH_8.9\r\n");
+
+        let kex = kex_init_bytes();
+        let mid = kex.len() / 2;
+        drive(&mut session, &mut ctx, Direction::Original, &kex[..mid]);
+        drive(&mut session, &mut ctx, Direction::Reply, b"SSH-2.0-dropbear_2022.83\r\n");
+        drive(&mut session, &mut ctx, Direction::Original, &kex[mid..]);
+        drive(&mut session, &mut ctx, Direction::Reply, &kex);
+
+        assert!(matches!(
+            session.state,
+            SshState::Clear(ClearStage {
+                state: ClearState::KeyExchange,
+                expected_host: SshHost::Client,
+            })
+        ));
+    }
+
+    #[test]
+    fn interleaved_dh_segments_dont_mix_directions() {
+        let mut session = SshSession::new(mock_policy_retriever());
+        let mut ctx = session_context();
+
+        drive(&mut session, &mut ctx, Direction::Original, b"SSH-2.0-OpenSSH_8.9\r\n");
+        drive(&mut session, &mut ctx, Direction::Reply, b"SSH-2.0-dropbear_2022.83\r\n");
+        drive(&mut session, &mut ctx, Direction::Original, &kex_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &kex_init_bytes());
+
+        let init = dh_init_bytes();
+        let reply = dh_reply_bytes();
+        let init_mid = init.len() / 2;
+        let reply_mid = reply.len() / 2;
+        drive(&mut session, &mut ctx, Direction::Original, &init[..init_mid]);
+        drive(&mut session, &mut ctx, Direction::Reply, &reply[..reply_mid]);
+        drive(&mut session, &mut ctx, Direction::Original, &init[init_mid..]);
+        drive(&mut session, &mut ctx, Direction::Reply, &reply[reply_mid..]);
+
+        assert!(matches!(
+            session.state,
+            SshState::Clear(ClearStage {
+                state: ClearState::NewKeys,
+                expected_host: SshHost::Client,
+            })
+        ));
     }
 }
