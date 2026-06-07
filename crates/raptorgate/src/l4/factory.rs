@@ -5,7 +5,7 @@ use crate::conntrack::entry::ConntrackEntry;
 use crate::conntrack::tuple::Direction;
 use crate::data_plane::packet_context::PacketId;
 use crate::dpi::smtp::smtp_policy_retriever::SmtpPolicyRetriever;
-use crate::dpi::stages::SmtpL4Stage;
+use crate::dpi::stages::{SmtpL4Stage, SshL4Stage};
 use crate::dpi::AppProto;
 use crate::l4::context::SessionContext;
 use crate::l4::http::HttpL4Stage;
@@ -21,6 +21,7 @@ pub type IcmpNoopPipeline = NoopIcmpStage;
 pub enum TcpSessionPipeline<ZR: ZoneResolver> {
     Http(HttpL4Stage),
     Smtp(SmtpL4Stage<ZR>),
+    Ssh(SshL4Stage<ZR>),
     TlsHttp(TlsHttpL4Stage),
     #[cfg(test)]
     TestOutcome(TcpTestOutcomeStage),
@@ -33,6 +34,7 @@ impl<ZR: ZoneResolver> TcpSessionPipeline<ZR> {
         match self {
             Self::Http(s) => s.protocol(),
             Self::Smtp(s) => s.protocol(),
+            Self::Ssh(s) => s.protocol(),
             Self::TlsHttp(s) => s.protocol(),
             #[cfg(test)]
             Self::TestOutcome(s) => s.protocol(),
@@ -45,6 +47,7 @@ impl<ZR: ZoneResolver> TcpSessionPipeline<ZR> {
         match self {
             Self::Http(s) => s.on_session_open(ctx).await,
             Self::Smtp(s) => s.on_session_open(ctx).await,
+            Self::Ssh(s) => s.on_session_open(ctx).await,
             Self::TlsHttp(s) => s.on_session_open(ctx).await,
             #[cfg(test)]
             Self::TestOutcome(s) => s.on_session_open(ctx).await,
@@ -64,6 +67,7 @@ impl<ZR: ZoneResolver> TcpSessionPipeline<ZR> {
         match self {
             Self::Http(s) => s.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
             Self::Smtp(s) => s.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
+            Self::Ssh(s) => s.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
             Self::TlsHttp(s) => s.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
             #[cfg(test)]
             Self::TestOutcome(s) => s.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
@@ -76,6 +80,7 @@ impl<ZR: ZoneResolver> TcpSessionPipeline<ZR> {
         match self {
             Self::Http(s) => s.drain(ctx).await,
             Self::Smtp(s) => s.drain(ctx).await,
+            Self::Ssh(s) => s.drain(ctx).await,
             Self::TlsHttp(s) => s.drain(ctx).await,
             #[cfg(test)]
             Self::TestOutcome(s) => s.drain(ctx).await,
@@ -88,6 +93,7 @@ impl<ZR: ZoneResolver> TcpSessionPipeline<ZR> {
         match self {
             Self::Http(s) => s.on_session_close(ctx, reason).await,
             Self::Smtp(s) => s.on_session_close(ctx, reason).await,
+            Self::Ssh(s) => s.on_session_close(ctx, reason).await,
             Self::TlsHttp(s) => s.on_session_close(ctx, reason).await,
             #[cfg(test)]
             Self::TestOutcome(s) => s.on_session_close(ctx, reason).await,
@@ -298,6 +304,8 @@ impl<ZR: ZoneResolver> TcpL4PipelineFactory<ZR> {
                     TcpSessionPipeline::PassThrough(TcpPassThroughStage::default())
                 } else if matches!(src, 25 | 587) || matches!(dst, 25 | 587) {
                     TcpSessionPipeline::Smtp(SmtpL4Stage::new(Arc::clone(smtp_policy_retriever)))
+                } else if src == 22 || dst == 22 {
+                    TcpSessionPipeline::Ssh(SshL4Stage::new(Arc::clone(smtp_policy_retriever)))
                 } else if src == 80 || dst == 80 {
                     TcpSessionPipeline::Http(HttpL4Stage::new())
                 } else if (src == 443 || dst == 443) && tls_inspection.is_some() {
@@ -473,7 +481,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn application_router_selects_http_smtp_or_passthrough_by_port() {
+    async fn application_router_selects_http_smtp_ssh_or_passthrough_by_port() {
         let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever(), Some(tls_inspection_config()));
 
         assert!(matches!(
@@ -486,8 +494,28 @@ mod tests {
         ));
         assert!(matches!(
             factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 22)),
-            TcpSessionPipeline::PassThrough(_)
+            TcpSessionPipeline::Ssh(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn ssh_factory_pipeline_forwards_packet_id() {
+        let factory = TcpL4PipelineFactory::<StubZoneResolver>::new_application_router(
+            smtp_policy_retriever(),
+            Some(tls_inspection_config()),
+        );
+        let mut pipe = factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 22));
+        let mut ctx = SessionContext::open(sample_tcp_entry_with_ports(12345, 22), &StubZoneResolver);
+
+        let id = PacketId::next();
+        let out = pipe.on_bytes(&mut ctx, id, Direction::Original, 0, b"SSH-2.0-OpenSSH_8.9\r\n").await;
+
+        assert_eq!(out, L4Outcome::Forward(vec![id]));
+
+        let TcpSessionPipeline::Ssh(stage) = pipe else {
+            panic!("expected SSH pipeline");
+        };
+        assert_eq!(stage.protocol(), AppProto::Ssh);
     }
 
     #[tokio::test]

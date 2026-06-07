@@ -3,7 +3,7 @@ use std::{collections::VecDeque, sync::Arc};
 use derive_more::derive;
 use ssh_parser::{SshPacket, SshVersion, parse_ssh_identification, parse_ssh_packet};
 
-use crate::{conntrack::tuple::Direction, data_plane::packet_context::PacketId, dpi::smtp::{smtp_policy_retriever::SmtpPolicyRetriever, BufferingDisposition, PacketAction, UnitStatus}, l4::{L4Outcome, SessionContext}, zones::resolver::ZoneResolver};
+use crate::{conntrack::tuple::Direction, data_plane::packet_context::PacketId, dpi::smtp::{BufferingDisposition, PacketAction, UnitStatus, smtp_policy_retriever::SmtpPolicyRetriever}, l4::{AppProto, L4Outcome, SessionContext}, zones::resolver::ZoneResolver};
 
 const MAX_HANDSHAKE_PACKET_SIZE: usize = 2048;
 
@@ -135,7 +135,7 @@ struct SshSessionInfo {
     version_server_banner: Option<SshVersionOwned>,
 }
 
-struct SshSession<ZR> where ZR: ZoneResolver {
+pub(crate) struct SshSession<ZR> where ZR: ZoneResolver {
     state: SshState,
     assembler: SshPacketAssembler,
     confirmed_ssh: bool,
@@ -170,7 +170,11 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
 
                 return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
             }
-            AssemblerVerdict::PacketComplete(p) => p,
+            AssemblerVerdict::PacketComplete(p) => { 
+                self.confirmed_ssh = true;
+                ctx.set_application_protocol(AppProto::Ssh);
+                p 
+            },
 
         };
 
@@ -206,6 +210,8 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
                         if self.state.advance_with_packet(&ssh_packet, from).is_err() {
                             return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
                         }
+
+                        tracing::info!(ssh_packet=?ssh_packet, "SSH parsed and advanced");
                     }
                     _ => {}
                 }
@@ -281,6 +287,10 @@ mod tests {
     use crate::conntrack::proto::tcp::{TcpConntrack, TcpProtoState};
     use crate::conntrack::proto::ProtoState;
     use crate::conntrack::tuple::{FlowTuple, Protocol};
+    use crate::data_plane::packet_context::PacketId;
+    use crate::dpi::stages::SshL4Stage;
+    use crate::dpi::AppProto;
+    use crate::l4::stage::{L4Outcome, L4Stage, TerminateReason};
     use crate::l4::SessionContext;
     use crate::policy::provider::DiskPolicyProvider;
     use crate::policy::{Policy, PolicyId};
@@ -665,6 +675,151 @@ mod tests {
         assert_eq!(
             d,
             BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete }
+        );
+    }
+
+    async fn drive_l4(
+        stage: &mut SshL4Stage<StubZoneResolver>,
+        ctx: &mut SessionContext,
+        id: PacketId,
+        dir: Direction,
+        payload: &[u8],
+    ) -> L4Outcome {
+        stage.on_bytes(ctx, id, dir, 0, payload).await
+    }
+
+    #[tokio::test]
+    async fn ssh_l4_stage_forwards_full_handshake() {
+        let mut stage = SshL4Stage::new(mock_policy_retriever());
+        let mut ctx = session_context();
+
+        let id1 = PacketId::next();
+        let id2 = PacketId::next();
+        let id3 = PacketId::next();
+        let id4 = PacketId::next();
+        let id5 = PacketId::next();
+        let id6 = PacketId::next();
+        let id7 = PacketId::next();
+        let id8 = PacketId::next();
+
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, id1, Direction::Original, b"SSH-2.0-OpenSSH_8.9\r\n").await,
+            L4Outcome::Forward(vec![id1])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, id2, Direction::Reply, b"SSH-2.0-dropbear_2022.83\r\n").await,
+            L4Outcome::Forward(vec![id2])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, id3, Direction::Original, &kex_init_bytes()).await,
+            L4Outcome::Forward(vec![id3])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, id4, Direction::Reply, &kex_init_bytes()).await,
+            L4Outcome::Forward(vec![id4])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, id5, Direction::Original, &dh_init_bytes()).await,
+            L4Outcome::Forward(vec![id5])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, id6, Direction::Reply, &dh_reply_bytes()).await,
+            L4Outcome::Forward(vec![id6])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, id7, Direction::Original, &new_keys_bytes()).await,
+            L4Outcome::Forward(vec![id7])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, id8, Direction::Reply, &new_keys_bytes()).await,
+            L4Outcome::Forward(vec![id8])
+        );
+
+        assert_eq!(ctx.application_protocol(), Some(AppProto::Ssh));
+    }
+
+    #[tokio::test]
+    async fn ssh_l4_stage_forwards_after_encrypted() {
+        let mut stage = SshL4Stage::new(mock_policy_retriever());
+        let mut ctx = session_context();
+
+        let ids: Vec<PacketId> = (0..8).map(|_| PacketId::next()).collect();
+
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, ids[0], Direction::Original, b"SSH-2.0-OpenSSH_8.9\r\n").await,
+            L4Outcome::Forward(vec![ids[0]])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, ids[1], Direction::Reply, b"SSH-2.0-dropbear_2022.83\r\n").await,
+            L4Outcome::Forward(vec![ids[1]])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, ids[2], Direction::Original, &kex_init_bytes()).await,
+            L4Outcome::Forward(vec![ids[2]])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, ids[3], Direction::Reply, &kex_init_bytes()).await,
+            L4Outcome::Forward(vec![ids[3]])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, ids[4], Direction::Original, &dh_init_bytes()).await,
+            L4Outcome::Forward(vec![ids[4]])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, ids[5], Direction::Reply, &dh_reply_bytes()).await,
+            L4Outcome::Forward(vec![ids[5]])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, ids[6], Direction::Original, &new_keys_bytes()).await,
+            L4Outcome::Forward(vec![ids[6]])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, ids[7], Direction::Reply, &new_keys_bytes()).await,
+            L4Outcome::Forward(vec![ids[7]])
+        );
+
+        let enc1 = PacketId::next();
+        let enc2 = PacketId::next();
+
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, enc1, Direction::Original, b"\x00\x01\x02").await,
+            L4Outcome::Forward(vec![enc1])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, enc2, Direction::Reply, b"\x00\x01\x02").await,
+            L4Outcome::Forward(vec![enc2])
+        );
+    }
+
+    #[tokio::test]
+    async fn ssh_l4_stage_terminates_on_invalid_packet() {
+        let mut stage = SshL4Stage::new(mock_policy_retriever());
+        let mut ctx = session_context();
+
+        let banner_id_1 = PacketId::next();
+        let banner_id_2 = PacketId::next();
+        let bad_id = PacketId::next();
+
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, banner_id_1, Direction::Original, b"SSH-2.0-OpenSSH_8.9\r\n").await,
+            L4Outcome::Forward(vec![banner_id_1])
+        );
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, banner_id_2, Direction::Reply, b"SSH-2.0-dropbear_2022.83\r\n").await,
+            L4Outcome::Forward(vec![banner_id_2])
+        );
+
+        let bad_packet: &[u8] = &[
+            0x00, 0x00, 0x00, 0x08,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        ];
+
+        assert_eq!(
+            drive_l4(&mut stage, &mut ctx, bad_id, Direction::Original, bad_packet).await,
+            L4Outcome::Terminate {
+                reason: TerminateReason::StageRequested,
+                reset: true,
+            }
         );
     }
 }

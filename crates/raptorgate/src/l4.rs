@@ -17,6 +17,7 @@ pub use factory::{
     IcmpL4PipelineFactory, IcmpNoopPipeline, TcpForceTerminateStage, TcpL4PipelineFactory, TcpSessionPipeline,
     UdpL4PipelineFactory, UdpNoopPipeline,
 };
+pub use crate::dpi::stages::SshL4Stage;
 pub use http::HttpL4Stage;
 pub use noop::{NoopIcmpStage, NoopTcpStage, NoopUdpStage};
 pub use release::{DropReason, ReleaseAction};

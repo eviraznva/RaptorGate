@@ -210,7 +210,7 @@ pub struct ZonePair {
     pub default_policy: DefaultPolicy,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedZonePair {
     pub id: ZonePairId,
     pub default_policy: DefaultPolicy,
@@ -222,7 +222,7 @@ pub struct DirectionalZonePairs {
     pub reverse: Option<ResolvedZonePair>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DefaultPolicy {
     Unspecified,
     Allow,
@@ -236,6 +236,28 @@ impl From<common::DefaultPolicy> for DefaultPolicy {
             External::Unspecified => DefaultPolicy::Unspecified,
             External::Allow => DefaultPolicy::Allow,
             External::Drop => DefaultPolicy::Drop,
+        }
+    }
+}
+
+impl From<DefaultPolicy> for common::DefaultPolicy {
+    fn from(value: DefaultPolicy) -> Self {
+        use common::DefaultPolicy as External;
+        match value {
+            DefaultPolicy::Unspecified => External::Unspecified,
+            DefaultPolicy::Allow => External::Allow,
+            DefaultPolicy::Drop => External::Drop,
+        }
+    }
+}
+
+impl From<ResolvedZonePair> for config::ZonePair {
+    fn from(value: ResolvedZonePair) -> Self {
+        config::ZonePair {
+            id: value.id.to_string(),
+            src_zone_id: String::new(),
+            dst_zone_id: String::new(),
+            default_policy: common::DefaultPolicy::from(value.default_policy) as i32,
         }
     }
 }
