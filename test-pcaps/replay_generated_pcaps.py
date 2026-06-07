@@ -25,8 +25,16 @@ def iter_pcaps(path):
 def send_tcp(dst_ip, dst_port, payload, timeout):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)
-        sock.connect((dst_ip, dst_port))
-        sock.sendall(payload)
+        try:
+            sock.connect((dst_ip, dst_port))
+        except socket.timeout:
+            return "connect_timeout"
+        except OSError as exc:
+            return f"connect_error:{exc.__class__.__name__}"
+        try:
+            sock.sendall(payload)
+        except ConnectionResetError:
+            return "reset"
         try:
             data = sock.recv(4096)
             return "response" if data else "closed"
@@ -47,10 +55,12 @@ def send_udp(dst_ip, dst_port, payload, timeout):
             return "timeout"
 
 
-def replay_pcap(path, dst_ip, tcp_port, udp_port, timeout, delay):
+def replay_pcap(path, dst_ip, tcp_port, udp_port, timeout, delay, max_packets):
     kind = "benign" if path.name.startswith("benign") else "attack"
     sent = good = bad = 0
     for packet in rdpcap(str(path)):
+        if max_packets and sent >= max_packets:
+            break
         if Raw not in packet:
             continue
         payload = bytes(packet[Raw].load)
@@ -66,11 +76,12 @@ def replay_pcap(path, dst_ip, tcp_port, udp_port, timeout, delay):
         except OSError as exc:
             result = f"error:{exc.__class__.__name__}"
         sent += 1
+        payload_was_tested = not result.startswith("connect_")
         passed = result == "response"
         if kind == "attack":
-            ok = not passed          # atak: dobrze gdy NIE przeszedl
+            ok = payload_was_tested and not passed
         else:
-            ok = passed              # benign: dobrze gdy przeszedl
+            ok = passed
         good += ok
         bad += not ok
         print(f"[{kind}] {path.name}: len={len(payload)} result={result} {'OK' if ok else 'BAD'}")
@@ -87,6 +98,7 @@ def main():
     parser.add_argument("--udp-port", type=int, default=18090)
     parser.add_argument("--timeout", type=float, default=2.0)
     parser.add_argument("--delay", type=float, default=0.05)
+    parser.add_argument("--max-packets-per-pcap", type=int, default=12)
     args = parser.parse_args()
 
     pcaps = list(iter_pcaps(args.pcaps))
@@ -97,7 +109,8 @@ def main():
     atk_total = atk_leaked = ben_total = ben_blocked = 0
     for pcap in pcaps:
         kind, sent, good, bad = replay_pcap(
-            pcap, args.dst_ip, args.tcp_port, args.udp_port, args.timeout, args.delay
+            pcap, args.dst_ip, args.tcp_port, args.udp_port, args.timeout, args.delay,
+            args.max_packets_per_pcap
         )
         if kind == "attack":
             atk_total += sent

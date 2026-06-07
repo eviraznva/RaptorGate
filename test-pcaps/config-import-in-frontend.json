@@ -361,9 +361,7 @@
             "caseInsensitive": false,
             "severity": "SEVERITY_CRITICAL",
             "action": "IPS_ACTION_BLOCK",
-            "appProtocols": [
-              "IPS_APP_PROTOCOL_HTTP"
-            ],
+            "appProtocols": [],
             "srcPorts": [],
             "dstPorts": [
               18090
@@ -401,9 +399,7 @@
             "caseInsensitive": false,
             "severity": "SEVERITY_HIGH",
             "action": "IPS_ACTION_BLOCK",
-            "appProtocols": [
-              "IPS_APP_PROTOCOL_HTTP"
-            ],
+            "appProtocols": [],
             "srcPorts": [],
             "dstPorts": [
               18090
@@ -441,9 +437,7 @@
             "caseInsensitive": false,
             "severity": "SEVERITY_CRITICAL",
             "action": "IPS_ACTION_BLOCK",
-            "appProtocols": [
-              "IPS_APP_PROTOCOL_HTTP"
-            ],
+            "appProtocols": [],
             "srcPorts": [],
             "dstPorts": [
               18090
@@ -462,9 +456,7 @@
             "caseInsensitive": false,
             "severity": "SEVERITY_CRITICAL",
             "action": "IPS_ACTION_BLOCK",
-            "appProtocols": [
-              "IPS_APP_PROTOCOL_HTTP"
-            ],
+            "appProtocols": [],
             "srcPorts": [],
             "dstPorts": [
               18090
@@ -483,9 +475,7 @@
             "caseInsensitive": false,
             "severity": "SEVERITY_HIGH",
             "action": "IPS_ACTION_BLOCK",
-            "appProtocols": [
-              "IPS_APP_PROTOCOL_HTTP"
-            ],
+            "appProtocols": [],
             "srcPorts": [],
             "dstPorts": [
               18090
@@ -561,9 +551,7 @@
             "caseInsensitive": false,
             "severity": "SEVERITY_LOW",
             "action": "IPS_ACTION_BLOCK",
-            "appProtocols": [
-              "IPS_APP_PROTOCOL_HTTP"
-            ],
+            "appProtocols": [],
             "srcPorts": [],
             "dstPorts": [
               18090
@@ -582,9 +570,7 @@
             "caseInsensitive": false,
             "severity": "SEVERITY_LOW",
             "action": "IPS_ACTION_BLOCK",
-            "appProtocols": [
-              "IPS_APP_PROTOCOL_HTTP"
-            ],
+            "appProtocols": [],
             "srcPorts": [],
             "dstPorts": [
               18090
@@ -603,9 +589,7 @@
             "caseInsensitive": false,
             "severity": "SEVERITY_MEDIUM",
             "action": "IPS_ACTION_BLOCK",
-            "appProtocols": [
-              "IPS_APP_PROTOCOL_HTTP"
-            ],
+            "appProtocols": [],
             "srcPorts": [],
             "dstPorts": [
               18090

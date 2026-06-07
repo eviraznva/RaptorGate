@@ -238,6 +238,8 @@ def main():
     parser = argparse.ArgumentParser(description="Download + carve real attack packets into h1->h2 test pcaps")
     parser.add_argument("--config", default="test-pcaps/config-import-in-frontend.json")
     parser.add_argument("--out-dir", default="test-pcaps/generated")
+    parser.add_argument("--attack-per-source", type=int, default=12,
+                        help="ile pakietow-atak wyciac na zrodlo")
     parser.add_argument("--benign-per-source", type=int, default=3,
                         help="ile czystych requestow HTTP (bez sygnatury) wyciac na zrodlo")
     parser.add_argument("--keep-raw", action="store_true")
@@ -265,6 +267,7 @@ def main():
 
     attack_pkts = 0
     benign_pkts = 0
+    attack_seen = set()
     benign_seen = set()
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -276,7 +279,8 @@ def main():
                 download(source["url"], raw_path)
                 capture = extract(raw_path, source["kind"], source["password"], work)
 
-                atk = carve_pcap(capture, out_dir / f"attack_{name}.pcap", is_attack)
+                atk = carve_pcap(capture, out_dir / f"attack_{name}.pcap", is_attack,
+                                 limit=args.attack_per_source, seen=attack_seen)
                 if atk:
                     attack_pkts += atk
                     print(f"    -> attack_{name}.pcap: {atk} pakietow-atak")
