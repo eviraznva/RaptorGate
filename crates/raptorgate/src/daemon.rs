@@ -35,7 +35,7 @@ use crate::pipeline::wrappers::{
     ConntrackConfirmStage, ConntrackInStage, DnsBlockListStage, DnsEchMitigationStage,
     DnsTunnelingStage, DpiStage, FtpAlgStage, IdentityLookupStage, IpsStage, L4StateStage,
     LocalOwnershipStage, MetricsStage, MlAlertStage, NatPostroutingStage, NatPreroutingStage,
-    PolicyEvalStage, SessionHandoffStage, SmtpStage, TlsPortEnforcementStage, ValidationStage,
+    PolicyEvalStage, SessionHandoffStage, SmtpStage, ValidationStage,
 };
 use crate::pipeline::{
     Chain, ExecutionItem, ExecutionReceiver, ExecutionSender, ExecutionStage, Stage, StageOutcome,
@@ -151,41 +151,38 @@ pub type DataPipeline<D> = Chain<
                     Chain<
                         DpiStage,
                         Chain<
-                            TlsPortEnforcementStage<<D as DaemonDeps>::ConfigStore>,
+                            DnsBlockListStage,
                             Chain<
-                                DnsBlockListStage,
+                                DnsTunnelingStage,
                                 Chain<
-                                    DnsTunnelingStage,
+                                    DnsEchMitigationStage,
                                     Chain<
-                                        DnsEchMitigationStage,
+                                        IpsStage,
                                         Chain<
-                                            IpsStage,
+                                            NatPreroutingStage,
                                             Chain<
-                                                NatPreroutingStage,
+                                                L4StateStage,
                                                 Chain<
-                                                    L4StateStage,
+                                                    MlAlertStage,
                                                     Chain<
-                                                        MlAlertStage,
+                                                        PolicyEvalStage<
+                                                            RoutingZoneResolver<
+                                                                <D as DaemonDeps>::IfaceMon,
+                                                            >,
+                                                            <D as DaemonDeps>::Dnssec,
+                                                        >,
                                                         Chain<
-                                                            PolicyEvalStage<
-                                                                RoutingZoneResolver<
-                                                                    <D as DaemonDeps>::IfaceMon,
-                                                                >,
-                                                                <D as DaemonDeps>::Dnssec,
+                                                            NatPostroutingStage<
+                                                                <D as DaemonDeps>::IfaceMon,
+                                                                <D as DaemonDeps>::Routes,
                                                             >,
                                                             Chain<
-                                                                NatPostroutingStage<
-                                                                    <D as DaemonDeps>::IfaceMon,
-                                                                    <D as DaemonDeps>::Routes,
-                                                                >,
+                                                                FtpAlgStage,
                                                                 Chain<
-                                                                    FtpAlgStage,
+                                                                    SmtpStage,
                                                                     Chain<
-                                                                        SmtpStage,
-                                                                        Chain<
-                                                                            ConntrackConfirmStage,
-                                                                            ExecutionStage,
-                                                                        >,
+                                                                        ConntrackConfirmStage,
+                                                                        ExecutionStage,
                                                                     >,
                                                                 >,
                                                             >,
@@ -331,65 +328,60 @@ fn build_pipeline<D: DaemonDeps<IfaceMon = NetworkInterfaceMonitor>>(deps: &Arc<
                                 pinning_detector: Some(s.decision_engine.pinning_detector_arc()),
                             },
                             tail: Chain {
-                                head: TlsPortEnforcementStage {
-                                    config_provider: Arc::clone(s.config_provider),
+                                head: DnsBlockListStage {
+                                    inspection: Arc::clone(s.dns_inspection),
                                 },
                                 tail: Chain {
-                                    head: DnsBlockListStage {
+                                    head: DnsTunnelingStage {
                                         inspection: Arc::clone(s.dns_inspection),
                                     },
                                     tail: Chain {
-                                        head: DnsTunnelingStage {
+                                        head: DnsEchMitigationStage {
                                             inspection: Arc::clone(s.dns_inspection),
                                         },
                                         tail: Chain {
-                                            head: DnsEchMitigationStage {
-                                                inspection: Arc::clone(s.dns_inspection),
+                                            head: IpsStage {
+                                                inspection: Arc::clone(s.ips),
                                             },
                                             tail: Chain {
-                                                head: IpsStage {
-                                                    inspection: Arc::clone(s.ips),
+                                                head: NatPreroutingStage {
+                                                    engine: Arc::clone(s.nat_engine),
+                                                    zone_interface_provider: Arc::clone(s.zone_interfaces),
                                                 },
                                                 tail: Chain {
-                                                    head: NatPreroutingStage {
-                                                        engine: Arc::clone(s.nat_engine),
-                                                        zone_interface_provider: Arc::clone(s.zone_interfaces),
+                                                    head: L4StateStage {
+                                                        flow_stats: Arc::clone(s.ml_flow_stats),
                                                     },
                                                     tail: Chain {
-                                                        head: L4StateStage {
-                                                            flow_stats: Arc::clone(s.ml_flow_stats),
-                                                        },
+                                                        head: MlAlertStage::new(Arc::clone(s.ml_detector)),
                                                         tail: Chain {
-                                                            head: MlAlertStage::new(Arc::clone(s.ml_detector)),
+                                                            head: PolicyEvalStage {
+                                                                policy_engine: Arc::clone(s.policy_engine),
+                                                                zone_resolver: Arc::clone(s.zone_resolver),
+                                                                dnssec: Some(Arc::clone(s.policy_dnssec)),
+                                                            },
                                                             tail: Chain {
-                                                                head: PolicyEvalStage {
-                                                                    policy_engine: Arc::clone(s.policy_engine),
-                                                                    zone_resolver: Arc::clone(s.zone_resolver),
-                                                                    dnssec: Some(Arc::clone(s.policy_dnssec)),
+                                                                head: NatPostroutingStage {
+                                                                    engine: Arc::clone(s.nat_engine),
+                                                                    routes: Arc::clone(s.routing_table),
+                                                                    interface_monitor: Arc::clone(s.interface_monitor),
+                                                                    zone_interface_provider: Arc::clone(s.zone_interfaces),
                                                                 },
                                                                 tail: Chain {
-                                                                    head: NatPostroutingStage {
-                                                                        engine: Arc::clone(s.nat_engine),
-                                                                        routes: Arc::clone(s.routing_table),
-                                                                        interface_monitor: Arc::clone(s.interface_monitor),
-                                                                        zone_interface_provider: Arc::clone(s.zone_interfaces),
+                                                                    head: FtpAlgStage {
+                                                                        conntrack: Arc::clone(s.conntrack),
+                                                                        helpers: Arc::clone(s.helpers),
                                                                     },
                                                                     tail: Chain {
-                                                                        head: FtpAlgStage {
-                                                                            conntrack: Arc::clone(s.conntrack),
-                                                                            helpers: Arc::clone(s.helpers),
+                                                                        head: SmtpStage {
+                                                                            tracker: Arc::clone(s.smtp_tracker),
                                                                         },
                                                                         tail: Chain {
-                                                                            head: SmtpStage {
-                                                                                tracker: Arc::clone(s.smtp_tracker),
+                                                                            head: ConntrackConfirmStage {
+                                                                                ct: Arc::clone(s.conntrack),
                                                                             },
-                                                                            tail: Chain {
-                                                                                head: ConntrackConfirmStage {
-                                                                                    ct: Arc::clone(s.conntrack),
-                                                                                },
-                                                                                tail: ExecutionStage {
-                                                                                    tx: exec_tx.clone(),
-                                                                                },
+                                                                            tail: ExecutionStage {
+                                                                                tx: exec_tx.clone(),
                                                                             },
                                                                         },
                                                                     },

@@ -7,18 +7,20 @@ use crate::data_plane::packet_context::PacketId;
 use crate::dpi::smtp_l4_stage::SmtpL4Stage;
 use crate::dpi::smtp_policy_retriever::SmtpPolicyRetriever;
 use crate::dpi::AppProto;
+use crate::l4::application_router::ApplicationRouterStage;
 use crate::l4::context::SessionContext;
 use crate::l4::http::HttpL4Stage;
 use crate::l4::noop::{NoopIcmpStage, NoopUdpStage};
 use crate::l4::stage::{CloseReason, L4Outcome, L4Stage, TerminateReason};
 use crate::l4::tls::TlsHttpL4Stage;
-use crate::tls::l4_inspection::{TlsL4InspectionConfig, TlsL4InspectionService};
+use crate::tls::l4_inspection::TlsL4InspectionConfig;
 use crate::zones::resolver::ZoneResolver;
 
 pub type UdpNoopPipeline = NoopUdpStage;
 pub type IcmpNoopPipeline = NoopIcmpStage;
 
 pub enum TcpSessionPipeline<ZR: ZoneResolver> {
+    ApplicationRouter(ApplicationRouterStage<ZR>),
     Http(HttpL4Stage),
     Smtp(SmtpL4Stage<ZR>),
     TlsHttp(TlsHttpL4Stage),
@@ -31,6 +33,7 @@ pub enum TcpSessionPipeline<ZR: ZoneResolver> {
 impl<ZR: ZoneResolver> TcpSessionPipeline<ZR> {
     pub fn protocol(&self) -> AppProto {
         match self {
+            Self::ApplicationRouter(s) => s.protocol(),
             Self::Http(s) => s.protocol(),
             Self::Smtp(s) => s.protocol(),
             Self::TlsHttp(s) => s.protocol(),
@@ -43,6 +46,7 @@ impl<ZR: ZoneResolver> TcpSessionPipeline<ZR> {
 
     pub async fn on_session_open(&mut self, ctx: &mut SessionContext) -> L4Outcome {
         match self {
+            Self::ApplicationRouter(s) => s.on_session_open(ctx).await,
             Self::Http(s) => s.on_session_open(ctx).await,
             Self::Smtp(s) => s.on_session_open(ctx).await,
             Self::TlsHttp(s) => s.on_session_open(ctx).await,
@@ -62,6 +66,7 @@ impl<ZR: ZoneResolver> TcpSessionPipeline<ZR> {
         payload: &[u8],
     ) -> L4Outcome {
         match self {
+            Self::ApplicationRouter(s) => s.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
             Self::Http(s) => s.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
             Self::Smtp(s) => s.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
             Self::TlsHttp(s) => s.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
@@ -72,8 +77,24 @@ impl<ZR: ZoneResolver> TcpSessionPipeline<ZR> {
         }
     }
 
+    pub async fn on_bytes_with_app_proto(
+        &mut self,
+        ctx: &mut SessionContext,
+        packet_id: PacketId,
+        dir: Direction,
+        tcp_payload_start_seq: u32,
+        payload: &[u8],
+        app_proto: Option<AppProto>,
+    ) -> L4Outcome {
+        match self {
+            Self::ApplicationRouter(s) => s.on_bytes_with_app_proto(ctx, packet_id, dir, tcp_payload_start_seq, payload, app_proto).await,
+            _ => self.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
+        }
+    }
+
     pub async fn drain(&mut self, ctx: &mut SessionContext) -> L4Outcome {
         match self {
+            Self::ApplicationRouter(s) => s.drain(ctx).await,
             Self::Http(s) => s.drain(ctx).await,
             Self::Smtp(s) => s.drain(ctx).await,
             Self::TlsHttp(s) => s.drain(ctx).await,
@@ -86,6 +107,7 @@ impl<ZR: ZoneResolver> TcpSessionPipeline<ZR> {
 
     pub async fn on_session_close(&mut self, ctx: &mut SessionContext, reason: CloseReason) {
         match self {
+            Self::ApplicationRouter(s) => s.on_session_close(ctx, reason).await,
             Self::Http(s) => s.on_session_close(ctx, reason).await,
             Self::Smtp(s) => s.on_session_close(ctx, reason).await,
             Self::TlsHttp(s) => s.on_session_close(ctx, reason).await,
@@ -278,7 +300,10 @@ impl<ZR: ZoneResolver> TcpL4PipelineFactory<ZR> {
 
     pub fn build(&self) -> TcpSessionPipeline<ZR> {
         match &self.kind {
-            TcpFactoryKind::ApplicationRouter { .. } => TcpSessionPipeline::PassThrough(TcpPassThroughStage::default()),
+            TcpFactoryKind::ApplicationRouter {
+                smtp_policy_retriever,
+                tls_inspection,
+            } => TcpSessionPipeline::ApplicationRouter(ApplicationRouterStage::new(Arc::clone(smtp_policy_retriever), tls_inspection.as_ref().map(Arc::clone))),
             TcpFactoryKind::Http => TcpSessionPipeline::Http(HttpL4Stage::new()),
             TcpFactoryKind::ForceTerminate => TcpSessionPipeline::ForceTerminate(TcpForceTerminateStage::default()),
             #[cfg(test)]
@@ -286,29 +311,8 @@ impl<ZR: ZoneResolver> TcpL4PipelineFactory<ZR> {
         }
     }
 
-    pub fn build_for_entry(&self, entry: &ConntrackEntry) -> TcpSessionPipeline<ZR> {
-        match &self.kind {
-            TcpFactoryKind::ApplicationRouter {
-                smtp_policy_retriever,
-                tls_inspection,
-            } => {
-                let src = entry.original.src_port;
-                let dst = entry.original.dst_port;
-                if src == 465 || dst == 465 {
-                    TcpSessionPipeline::PassThrough(TcpPassThroughStage::default())
-                } else if matches!(src, 25 | 587) || matches!(dst, 25 | 587) {
-                    TcpSessionPipeline::Smtp(SmtpL4Stage::new(Arc::clone(smtp_policy_retriever)))
-                } else if src == 80 || dst == 80 {
-                    TcpSessionPipeline::Http(HttpL4Stage::new())
-                } else if (src == 443 || dst == 443) && tls_inspection.is_some() {
-                    let tls_inspection = tls_inspection.as_ref().expect("checked is_some");
-                    TcpSessionPipeline::TlsHttp(TlsHttpL4Stage::new(TlsL4InspectionService::new(Arc::clone(tls_inspection))))
-                } else {
-                    TcpSessionPipeline::PassThrough(TcpPassThroughStage::default())
-                }
-            }
-            _ => self.build(),
-        }
+    pub fn build_for_entry(&self, _entry: &ConntrackEntry) -> TcpSessionPipeline<ZR> {
+        self.build()
     }
 }
 
@@ -473,40 +477,75 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn application_router_selects_http_smtp_or_passthrough_by_port() {
+    async fn application_router_detects_http_on_non_default_port() {
         let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever(), Some(tls_inspection_config()));
+        let mut pipe = factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 8080));
+        let mut ctx = SessionContext::open(sample_tcp_entry_with_ports(12345, 8080), &StubZoneResolver);
 
-        assert!(matches!(
-            factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 80)),
-            TcpSessionPipeline::Http(_)
-        ));
-        assert!(matches!(
-            factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 25)),
-            TcpSessionPipeline::Smtp(_)
-        ));
-        assert!(matches!(
-            factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 22)),
-            TcpSessionPipeline::PassThrough(_)
-        ));
+        assert_eq!(pipe.on_session_open(&mut ctx).await, L4Outcome::Continue);
+        let id = PacketId::next();
+        let out = pipe.on_bytes_with_app_proto(
+            &mut ctx,
+            id,
+            Direction::Original,
+            0,
+            b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+            Some(AppProto::Http),
+        ).await;
+
+        assert_eq!(out, L4Outcome::Forward(vec![id]));
+        assert_eq!(ctx.application_protocol(), Some(AppProto::Http));
     }
 
     #[tokio::test]
-    async fn application_router_selects_tls_http_for_https() {
+    async fn application_router_forwards_empty_packets_while_waiting_for_detection() {
         let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever(), Some(tls_inspection_config()));
+        let mut pipe = factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 8080));
+        let mut ctx = SessionContext::open(sample_tcp_entry_with_ports(12345, 8080), &StubZoneResolver);
 
-        assert!(matches!(
-            factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 443)),
-            TcpSessionPipeline::TlsHttp(_)
-        ));
+        assert_eq!(pipe.on_session_open(&mut ctx).await, L4Outcome::Continue);
+        let empty = PacketId::next();
+        let out = pipe.on_bytes_with_app_proto(
+            &mut ctx,
+            empty,
+            Direction::Original,
+            0,
+            b"",
+            None,
+        ).await;
+
+        assert_eq!(out, L4Outcome::Forward(vec![empty]));
     }
 
     #[tokio::test]
-    async fn application_router_bypasses_smtps_for_now() {
+    async fn application_router_replays_buffered_smtp_greeting_on_non_default_port() {
         let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever(), Some(tls_inspection_config()));
+        let mut pipe = factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 2525));
+        let mut ctx = SessionContext::open(sample_tcp_entry_with_ports(12345, 2525), &StubZoneResolver);
 
-        assert!(matches!(
-            factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 465)),
-            TcpSessionPipeline::PassThrough(_)
-        ));
+        assert_eq!(pipe.on_session_open(&mut ctx).await, L4Outcome::Continue);
+        let greeting = PacketId::next();
+        let out = pipe.on_bytes_with_app_proto(
+            &mut ctx,
+            greeting,
+            Direction::Reply,
+            0,
+            b"220 mail.example.com ESMTP\r\n",
+            None,
+        ).await;
+        assert_eq!(out, L4Outcome::Continue);
+
+        let ehlo = PacketId::next();
+        let out = pipe.on_bytes_with_app_proto(
+            &mut ctx,
+            ehlo,
+            Direction::Original,
+            0,
+            b"EHLO client.example.com\r\n",
+            Some(AppProto::Smtp),
+        ).await;
+
+        assert_eq!(out, L4Outcome::Forward(vec![greeting, ehlo]));
+        assert_eq!(ctx.application_protocol(), Some(AppProto::Smtp));
     }
 }

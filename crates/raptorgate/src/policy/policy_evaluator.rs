@@ -4,10 +4,11 @@ use std::net::IpAddr;
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 use crate::data_plane::dns_inspection::types::DnssecStatus;
+use crate::dpi::app_defaults::is_default_service;
 use crate::dpi::DpiContext;
 use crate::identity::IdentityContext;
 use crate::rule_tree::{
-    ArrivalInfo, FieldValue, IpVer, MatchKind, Operation, Pattern, Port, Protocol, RuleTree, Step,
+    AppService, ArrivalInfo, FieldValue, IpVer, MatchKind, Operation, Pattern, Port, Protocol, RuleTree, Step,
     TreeWalker, Verdict,
 };
 
@@ -25,6 +26,7 @@ pub struct PolicyEvalContext<'a, 'p> {
     pub dns: Option<&'a DnsEvalContext>,
     pub dpi: Option<&'a DpiContext>,
     pub identity: Option<&'a IdentityContext>,
+    pub service_dst_port: Option<u16>,
 }
 
 #[derive(Clone)]
@@ -115,6 +117,17 @@ impl PolicyEvaluator {
                 let proto = ctx.dpi?.app_proto?;
                 Some(FieldValue::AppProto(proto))
             }
+            MatchKind::AppService => {
+                let app_proto = ctx.dpi?.app_proto?;
+                let protocol = packet_protocol(ctx.packet)?;
+                let port = ctx.service_dst_port.or_else(|| packet_dst_port(ctx.packet))?;
+                let service = if is_default_service(app_proto, protocol, port) {
+                    AppService::ApplicationDefault
+                } else {
+                    AppService::NonDefault
+                };
+                Some(FieldValue::AppService(service))
+            }
             MatchKind::SrcPort => match &ctx.packet.transport {
                 Some(TransportSlice::Tcp(tcp)) => {
                     Some(FieldValue::Port(Port::from(tcp.source_port())))
@@ -156,7 +169,7 @@ impl PolicyEvaluator {
 
     fn missing_value_matches(kind: MatchKind, pattern: &Pattern) -> bool {
         match kind {
-            MatchKind::AppProto => Self::pattern_accepts_missing(pattern),
+            MatchKind::AppProto | MatchKind::AppService => Self::pattern_accepts_missing(pattern),
             _ => false,
         }
     }
@@ -220,6 +233,24 @@ impl PolicyEvaluator {
     }
 }
 
+fn packet_protocol(packet: &SlicedPacket<'_>) -> Option<crate::conntrack::tuple::Protocol> {
+    match &packet.transport {
+        Some(TransportSlice::Tcp(_)) => Some(crate::conntrack::tuple::Protocol::Tcp),
+        Some(TransportSlice::Udp(_)) => Some(crate::conntrack::tuple::Protocol::Udp),
+        Some(TransportSlice::Icmpv4(_)) => Some(crate::conntrack::tuple::Protocol::Icmp),
+        Some(TransportSlice::Icmpv6(_)) => Some(crate::conntrack::tuple::Protocol::IcmpV6),
+        _ => None,
+    }
+}
+
+fn packet_dst_port(packet: &SlicedPacket<'_>) -> Option<u16> {
+    match &packet.transport {
+        Some(TransportSlice::Tcp(tcp)) => Some(tcp.destination_port()),
+        Some(TransportSlice::Udp(udp)) => Some(udp.destination_port()),
+        _ => None,
+    }
+}
+
 impl Display for PolicyEvaluator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -237,7 +268,7 @@ mod tests {
     use super::*;
     use crate::dpi::{AppProto, DpiContext};
     use crate::rule_tree::{
-        ArmEnd, ArrivalInfo, Hour, IpGlobbable, IpVer, MatchBuilder, Octet, Port, Protocol, Weekday,
+        AppService, ArmEnd, ArrivalInfo, Hour, IpGlobbable, IpVer, MatchBuilder, Octet, Port, Protocol, Weekday,
     };
 
     type IP = IpGlobbable;
@@ -303,6 +334,16 @@ mod tests {
         arrival: &ArrivalInfo,
         dpi: Option<&DpiContext>,
     ) -> Verdict {
+        eval_with_dpi_and_service_port(tree, raw, arrival, dpi, None)
+    }
+
+    fn eval_with_dpi_and_service_port(
+        tree: RuleTree,
+        raw: &[u8],
+        arrival: &ArrivalInfo,
+        dpi: Option<&DpiContext>,
+        service_dst_port: Option<u16>,
+    ) -> Verdict {
         let sliced = SlicedPacket::from_ethernet(raw).unwrap();
         let evaluator = PolicyEvaluator::new(tree, Verdict::Drop);
         evaluator.evaluate(PolicyEvalContext {
@@ -311,6 +352,7 @@ mod tests {
             dns: None,
             dpi,
             identity: None,
+            service_dst_port,
         })
     }
 
@@ -478,6 +520,48 @@ mod tests {
         assert_eq!(
             eval_with_dpi(tree, &default_packet(), &default_arrival(), None),
             Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn app_service_matches_application_default_port() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::AppService,
+                Pattern::Equal(FieldValue::AppService(AppService::ApplicationDefault)),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let dpi = DpiContext {
+            app_proto: Some(AppProto::Http),
+            ..Default::default()
+        };
+        assert_eq!(
+            eval_with_dpi_and_service_port(tree, &tcp_packet([192, 168, 1, 10], [10, 0, 0, 1], 12345, 8080), &default_arrival(), Some(&dpi), Some(80)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn app_service_rejects_non_default_port() {
+        let tree = RuleTree::new(
+            MatchBuilder::with_arm(
+                MatchKind::AppService,
+                Pattern::Equal(FieldValue::AppService(AppService::ApplicationDefault)),
+                ArmEnd::Verdict(Verdict::Allow),
+            )
+            .build()
+            .unwrap(),
+        );
+        let dpi = DpiContext {
+            app_proto: Some(AppProto::Http),
+            ..Default::default()
+        };
+        assert_eq!(
+            eval_with_dpi_and_service_port(tree, &tcp_packet([192, 168, 1, 10], [10, 0, 0, 1], 12345, 8080), &default_arrival(), Some(&dpi), Some(8080)),
+            Verdict::Drop
         );
     }
 

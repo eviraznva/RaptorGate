@@ -56,6 +56,7 @@ pub enum L4Input {
         bytes: Vec<u8>,
         packet_id: PacketId,
         tcp_payload_start_seq: u32,
+        app_proto: Option<AppProto>,
     },
     Close {
         reason: CloseReason,
@@ -72,6 +73,7 @@ struct PendingPayload {
     dir: Direction,
     bytes: Vec<u8>,
     tcp_payload_start_seq: u32,
+    app_proto: Option<AppProto>,
 }
 
 struct SessionPending {
@@ -172,9 +174,10 @@ impl<ZR: ZoneResolver + Send + Sync + 'static> Phase1L4Pipeline<ZR> {
         dir: Direction,
         tcp_payload_start_seq: u32,
         payload: &[u8],
+        app_proto: Option<AppProto>,
     ) -> L4Outcome {
         match self {
-            Self::Tcp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
+            Self::Tcp(p) => p.on_bytes_with_app_proto(ctx, packet_id, dir, tcp_payload_start_seq, payload, app_proto).await,
             Self::Udp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
             Self::Icmp(p) => p.on_bytes(ctx, packet_id, dir, tcp_payload_start_seq, payload).await,
         }
@@ -241,7 +244,13 @@ fn take_ready_payloads(pending: &mut SessionPending) -> Vec<PendingPayload> {
             break;
         }
 
-        ready.push(pending.payloads.pop_front().expect("front payload"));
+        let app_proto = pending
+            .map
+            .get(&payload.packet_id)
+            .and_then(|entry| entry.packet.borrow_dpi_ctx().as_ref().and_then(|dpi| dpi.app_proto));
+        let mut payload = pending.payloads.pop_front().expect("front payload");
+        payload.app_proto = app_proto;
+        ready.push(payload);
     }
     ready
 }
@@ -253,6 +262,7 @@ fn send_l4_payloads(tx: &mpsc::UnboundedSender<L4Input>, payloads: Vec<PendingPa
             bytes: payload.bytes,
             packet_id: payload.packet_id,
             tcp_payload_start_seq: payload.tcp_payload_start_seq,
+            app_proto: payload.app_proto,
         });
     }
 }
@@ -610,6 +620,7 @@ where
             return;
         };
         let packet_id = packet.packet_id();
+        let app_proto = packet.borrow_dpi_ctx().as_ref().and_then(|dpi| dpi.app_proto);
         let empty_payload_start_seq = match packet.borrow_sliced_packet().transport.as_ref() {
             Some(TransportSlice::Tcp(tcp)) if tcp.payload().is_empty() => Some(tcp.sequence_number()),
             Some(TransportSlice::Udp(udp)) if udp.payload().is_empty() => {
@@ -637,6 +648,7 @@ where
                 bytes: Vec::new(),
                 packet_id,
                 tcp_payload_start_seq,
+                app_proto,
             });
         }
     }
@@ -922,6 +934,7 @@ where
                                 bytes,
                                 packet_id,
                                 tcp_payload_start_seq,
+                                app_proto,
                             } => {
                                 if let Some(t) = &trace {
                                     t.lock().expect("trace").push("bytes".to_string());
@@ -932,6 +945,7 @@ where
                                     dir,
                                     tcp_payload_start_seq,
                                     &bytes,
+                                    app_proto,
                                 )
                                 .await;
                                 let mut pending = pending_arc.lock().expect("session pending");
@@ -1046,6 +1060,7 @@ where
                 dir,
                 bytes: chunk.payload.clone(),
                 tcp_payload_start_seq: chunk.tcp_payload_start_seq,
+                app_proto: None,
             });
             take_ready_payloads(&mut pending)
         } else {
@@ -1054,6 +1069,7 @@ where
                 dir,
                 bytes: chunk.payload.clone(),
                 tcp_payload_start_seq: chunk.tcp_payload_start_seq,
+                app_proto: None,
             }]
         };
 
@@ -1516,12 +1532,14 @@ mod tests {
             dir: Direction::Original,
             bytes: b"first".to_vec(),
             tcp_payload_start_seq: 1000,
+            app_proto: None,
         });
         pending.payloads.push_back(PendingPayload {
             packet_id: late_id,
             dir: Direction::Original,
             bytes: b"second".to_vec(),
             tcp_payload_start_seq: 1005,
+            app_proto: None,
         });
 
         assert!(take_ready_payloads(&mut pending).is_empty());

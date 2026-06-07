@@ -165,6 +165,7 @@ mod tests {
             dns: None,
             dpi: None,
             identity: None,
+            service_dst_port: None,
         };
 
         assert_eq!(engine.evaluate(&zp_id, ctx), Some(Verdict::Allow));
@@ -208,6 +209,7 @@ mod tests {
             dns: None,
             dpi: None,
             identity: None,
+            service_dst_port: None,
         };
 
         assert_eq!(
@@ -249,6 +251,7 @@ mod tests {
             dns: None,
             dpi: None,
             identity: None,
+            service_dst_port: None,
         };
 
         assert_eq!(

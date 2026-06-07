@@ -133,6 +133,14 @@ impl Display for Pattern {
 }
 
 #[derive(Debug, Display, Clone, PartialEq)]
+pub enum AppService {
+    #[display("application_default")]
+    ApplicationDefault,
+    #[display("non_default")]
+    NonDefault,
+}
+
+#[derive(Debug, Display, Clone, PartialEq)]
 pub enum FieldValue {
     Ip(IpGlobbable),
     IpVer(IpVer),
@@ -140,6 +148,7 @@ pub enum FieldValue {
     Hour(Hour),
     Protocol(Protocol),
     AppProto(AppProto),
+    AppService(AppService),
     Port(Port),
     /// Status walidacji DNSSEC — dopasowywany przez `match dns_dnssec_status { = secure : ... }`.
     #[display("{_0}")]
@@ -163,6 +172,7 @@ pub enum MatchKind {
     Hour,
     Protocol,
     AppProto,
+    AppService,
     SrcPort,
     DstPort,
     /// Status walidacji DNSSEC — pasuje do wartości `FieldValue::DnssecStatus`.
@@ -185,6 +195,7 @@ impl std::fmt::Display for MatchKind {
             MatchKind::Hour        => "hour",
             MatchKind::Protocol    => "protocol",
             MatchKind::AppProto    => "app_proto",
+            MatchKind::AppService  => "app_service",
             MatchKind::SrcPort     => "src_port",
             MatchKind::DstPort     => "dst_port",
             MatchKind::DnssecStatus => "dns_dnssec_status",
@@ -223,10 +234,10 @@ impl Pattern {
             (Pattern::Comparison(..), MatchKind::DnssecStatus) => {
                 Err(RuleError::InvalidPattern(self.clone()))
             }
-            // Identity matchery wspieraja tylko Equal/Or/And/Wildcard.
+            // Te matchery wspieraja tylko Equal/Or/And/Wildcard.
             (
                 Pattern::Comparison(..),
-                MatchKind::AuthState | MatchKind::IdentityUser | MatchKind::IdentityGroup,
+                MatchKind::AppService | MatchKind::AuthState | MatchKind::IdentityUser | MatchKind::IdentityGroup,
             ) => Err(RuleError::InvalidPattern(self.clone())),
             (Pattern::Comparison(..), _) => Err(RuleError::InvalidPattern(self.clone())),
 

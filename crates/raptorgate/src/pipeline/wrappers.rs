@@ -859,6 +859,7 @@ where
         let dns_ctx = dnssec_status.map(|status| DnsEvalContext {
             dnssec_status: Some(status),
         });
+        let service_dst_port = ctx.ct().map(|ct| ct.original.dst_port);
 
         let verdict = self.policy_engine.evaluate(pair_id, PolicyEvalContext {
             packet: ctx.borrow_sliced_packet(),
@@ -866,6 +867,7 @@ where
             dns: dns_ctx.as_ref(),
             dpi: ctx.borrow_dpi_ctx().as_ref(),
             identity: ctx.borrow_identity_ctx().as_ref(),
+            service_dst_port,
         });
 
         match verdict {

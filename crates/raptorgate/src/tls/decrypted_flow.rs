@@ -225,6 +225,7 @@ impl DecryptedFlowStage for DecryptedPolicyStage {
             dns: dns_ctx.as_ref(),
             dpi: Some(&ctx.dpi),
             identity: ctx.identity.as_ref(),
+            service_dst_port: Some(ctx.session.server.port()),
         });
 
         match verdict {

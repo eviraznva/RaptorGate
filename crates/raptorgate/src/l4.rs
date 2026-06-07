@@ -1,3 +1,4 @@
+pub mod application_router;
 pub mod chain;
 pub mod context;
 pub mod egress;

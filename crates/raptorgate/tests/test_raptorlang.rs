@@ -6,7 +6,7 @@ use ngfw::identity::AuthState;
 use ngfw::rule_tree::{
     matcher::{Match, MatchBuilder},
     parsing::parse_rule_tree,
-    ArmEnd, FieldValue, Hour, IpGlobbable as IP, IpVer, MatchKind, Octet, Operation,
+    AppService, ArmEnd, FieldValue, Hour, IpGlobbable as IP, IpVer, MatchKind, Octet, Operation,
     Pattern, Port, Protocol, Verdict, Weekday,
 };
 
@@ -86,6 +86,16 @@ test_parse_and_stringify!(
         MatchKind::AppProto,
         Pattern::Equal(FieldValue::AppProto(AppProto::Http)),
         ArmEnd::Verdict(Verdict::Drop),
+    )
+);
+
+test_parse_and_stringify!(
+    lower_equal_app_service_application_default,
+    "match app_service { = application_default : verdict allow }",
+    MatchBuilder::with_arm(
+        MatchKind::AppService,
+        Pattern::Equal(FieldValue::AppService(AppService::ApplicationDefault)),
+        ArmEnd::Verdict(Verdict::Allow),
     )
 );
 

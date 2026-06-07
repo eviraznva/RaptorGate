@@ -11,6 +11,12 @@ use super::AppProto;
 
 const MAX_INSPECT_BYTES: usize = 16_384;
 const MAX_INSPECT_PACKETS: u8 = 5;
+const FTP_CLIENT_PREFIXES: &[&[u8]] = &[
+    b"USER", b"PASS", b"PORT", b"PASV", b"EPRT", b"EPSV",
+    b"RETR", b"STOR", b"LIST", b"QUIT", b"CWD ", b"TYPE",
+    b"SYST", b"FEAT",
+];
+const SMTP_CLIENT_PREFIXES: &[&[u8]] = &[b"EHLO", b"HELO", b"MAIL"];
 
 // Wynik inspekcji pakietu przez klasyfikator DPI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +134,16 @@ impl DpiClassifier {
         }
 
         if let Some(ctx) = Self::try_classify(&session.buffer) {
+            let ambiguous_ftp_greeting = ctx.app_proto == Some(AppProto::Ftp)
+                && (session.buffer.starts_with(b"220 ") || session.buffer.starts_with(b"220-"))
+                && !session
+                    .buffer
+                    .split(|b| *b == b'\n')
+                    .skip(1)
+                    .any(|line| FTP_CLIENT_PREFIXES.iter().any(|p| line.starts_with(*p)));
+            if ambiguous_ftp_greeting && !session.limits_exceeded() {
+                return InspectResult::NeedMore;
+            }
             session.result = Some(ctx.clone());
             return InspectResult::Done(ctx);
         }
@@ -200,8 +216,8 @@ const CLASSIFIERS: &[Classifier] = &[
     classify_dns,
     classify_http,
     classify_ssh,
-    classify_ftp,
     classify_smtp,
+    classify_ftp,
     classify_smb,
     classify_rdp,
     classify_quic,
@@ -255,8 +271,11 @@ fn classify_ftp(buf: &[u8]) -> Option<DpiContext> {
 
 // SMTP: komendy EHLO/HELO/MAIL na początku sesji.
 fn classify_smtp(buf: &[u8]) -> Option<DpiContext> {
-    const PREFIXES: &[&[u8]] = &[b"EHLO", b"HELO", b"MAIL"];
-    (buf.len() >= 4 && PREFIXES.iter().any(|p| buf.starts_with(p)))
+    let smtp_command_line = |line: &[u8]| SMTP_CLIENT_PREFIXES.iter().any(|p| line.starts_with(*p));
+    (buf.len() >= 4
+        && (smtp_command_line(buf)
+            || ((buf.starts_with(b"220 ") || buf.starts_with(b"220-"))
+                && buf.split(|b| *b == b'\n').skip(1).any(smtp_command_line))))
         .then(|| DpiContext { app_proto: Some(AppProto::Smtp), ..Default::default() })
 }
 
@@ -420,6 +439,27 @@ mod tests {
         let result = DpiClassifier::try_classify(buf);
         assert!(result.is_some());
         assert_eq!(result.unwrap().app_proto, Some(AppProto::Smtp));
+    }
+
+    #[test]
+    fn test_classify_server_first_smtp_after_greeting() {
+        let buf = b"220 mx ESMTP ready\r\nEHLO mail.example.com\r\n";
+        let result = DpiClassifier::try_classify(buf);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().app_proto, Some(AppProto::Smtp));
+    }
+
+    #[test]
+    fn test_inspect_waits_on_ambiguous_220_then_classifies_smtp() {
+        let classifier = DpiClassifier::new();
+        let server = "192.168.20.51".parse().unwrap();
+        let client = "192.168.10.51".parse().unwrap();
+
+        let first = classifier.inspect_flow_payload(server, 25, client, 41_021, b"220 mx ESMTP ready\r\n");
+        assert_eq!(first, InspectResult::NeedMore);
+
+        let second = classifier.inspect_flow_payload(client, 41_021, server, 25, b"EHLO mail.example.com\r\n");
+        assert_eq!(second, InspectResult::Done(DpiContext { app_proto: Some(AppProto::Smtp), ..Default::default() }));
     }
 
     #[test]

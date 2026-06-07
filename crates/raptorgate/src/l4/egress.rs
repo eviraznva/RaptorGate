@@ -75,6 +75,7 @@ where
             dns: dns_ctx.as_ref(),
             dpi: packet.borrow_dpi_ctx().as_ref(),
             identity: packet.borrow_identity_ctx().as_ref(),
+            service_dst_port: Some(session.entry().original.dst_port),
         },
     );
 

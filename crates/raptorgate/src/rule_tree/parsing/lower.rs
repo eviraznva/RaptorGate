@@ -56,6 +56,7 @@ fn lower_kind(s: &Spanned<String>) -> Result<MatchKind, LowerError> {
         "hour" => Ok(MatchKind::Hour),
         "protocol" => Ok(MatchKind::Protocol),
         "app_proto" => Ok(MatchKind::AppProto),
+        "app_service" => Ok(MatchKind::AppService),
         "src_port" => Ok(MatchKind::SrcPort),
         "dst_port" => Ok(MatchKind::DstPort),
         "dns_dnssec_status" => Ok(MatchKind::DnssecStatus),
@@ -114,6 +115,15 @@ fn lower_value(kind: MatchKind, v: Spanned<AstValue>) -> Result<FieldValue, Lowe
                 "quic" => Ok(FieldValue::AppProto(AppProto::Quic)),
                 "unknown" => Ok(FieldValue::AppProto(AppProto::Unknown)),
                 "any" => Ok(FieldValue::AppProto(AppProto::Any)),
+                other => Err(LowerError::UnknownValue {
+                    kind,
+                    value: other.to_string(),
+                    pos,
+                }),
+            },
+            MatchKind::AppService => match s.val.as_str() {
+                "application_default" => Ok(FieldValue::AppService(crate::rule_tree::AppService::ApplicationDefault)),
+                "non_default" => Ok(FieldValue::AppService(crate::rule_tree::AppService::NonDefault)),
                 other => Err(LowerError::UnknownValue {
                     kind,
                     value: other.to_string(),
@@ -431,6 +441,14 @@ mod tests {
     }
 
     #[test]
+    fn lower_kind_app_service() {
+        assert_eq!(
+            lower_kind(&sp("app_service".into())).unwrap(),
+            MatchKind::AppService
+        );
+    }
+
+    #[test]
     fn lower_kind_src_port() {
         assert_eq!(
             lower_kind(&sp("src_port".into())).unwrap(),
@@ -559,6 +577,18 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn lower_value_app_service_application_default() {
+        let fv = lower_value(MatchKind::AppService, sp(AstValue::Ident(sp("application_default".into())))).unwrap();
+        assert_eq!(fv, FieldValue::AppService(crate::rule_tree::AppService::ApplicationDefault));
+    }
+
+    #[test]
+    fn lower_value_app_service_non_default() {
+        let fv = lower_value(MatchKind::AppService, sp(AstValue::Ident(sp("non_default".into())))).unwrap();
+        assert_eq!(fv, FieldValue::AppService(crate::rule_tree::AppService::NonDefault));
     }
 
     #[test]
