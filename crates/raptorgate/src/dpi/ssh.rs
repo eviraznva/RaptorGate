@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use derive_more::derive;
 use ssh_parser::{SshPacket, SshVersion, parse_ssh_identification, parse_ssh_packet};
 
 use crate::{conntrack::tuple::Direction, data_plane::packet_context::PacketId, dpi::smtp::{BufferingDisposition, PacketAction, UnitStatus, smtp_policy_retriever::SmtpPolicyRetriever}, l4::{AppProto, L4Outcome, SessionContext}, zones::resolver::ZoneResolver};
@@ -25,7 +24,8 @@ impl From<Direction> for SshHost {
 #[derive(Debug, Clone)]
 enum SshState {
     Clear(ClearStage),
-    Encrypted
+    PartiallyEncrypted(SshHost),
+    Encrypted,
 }
 
 #[derive(Debug, Clone)]
@@ -75,31 +75,39 @@ impl SshState {
     }
 
     pub fn advance_with_packet(&mut self, new_packet: &SshPacket, from: SshHost) -> Result<(), ()> {
-        let is_valid = match self {
-            SshState::Clear(ClearStage { state, expected_host }) if *expected_host == from => {
-                match (state, from) {
-                    (ClearState::AlgorithmNegotiation, _) => {
-                        matches!(new_packet, SshPacket::KeyExchange(_))
-                    }
-                    (ClearState::KeyExchange, SshHost::Client) => {
-                        matches!(new_packet, SshPacket::DiffieHellmanInit(_))
-                    }
-                    (ClearState::KeyExchange, SshHost::Server) => {
-                        matches!(new_packet, SshPacket::DiffieHellmanReply(_))
-                    }
-                    (ClearState::NewKeys, _) => {
-                        matches!(new_packet, SshPacket::NewKeys)
-                    }
-                    _ => false,
+        match self {
+            SshState::Clear(ClearStage { state: ClearState::NewKeys, .. }) => {
+                if !matches!(new_packet, SshPacket::NewKeys) {
+                    return Err(());
+                }
+                *self = SshState::PartiallyEncrypted(from);
+                Ok(())
+            }
+            SshState::PartiallyEncrypted(encrypted) => {
+                if from != *encrypted && matches!(new_packet, SshPacket::NewKeys) {
+                    *self = SshState::Encrypted;
+                    Ok(())
+                } else {
+                    Err(())
                 }
             }
-            _ => false,
-        };
-
-        if is_valid {
-            self.next_state_or_host()
-        } else {
-            Err(())
+            SshState::Clear(ClearStage { state: ClearState::KeyExchange, expected_host })
+                if *expected_host == from =>
+            {
+                let ok = match from {
+                    SshHost::Client => matches!(new_packet, SshPacket::DiffieHellmanInit(_)),
+                    SshHost::Server => matches!(new_packet, SshPacket::DiffieHellmanReply(_)),
+                };
+                if ok { self.next_state_or_host() } else { Err(()) }
+            }
+            SshState::Clear(ClearStage { state: ClearState::AlgorithmNegotiation, .. }) => {
+                if matches!(new_packet, SshPacket::KeyExchange(_)) {
+                    self.next_state_or_host()
+                } else {
+                    Err(())
+                }
+            }
+            _ => Err(()),
         }
     }
 }
@@ -170,11 +178,13 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
         dir: Direction,
         payload: &[u8],
     ) -> BufferingDisposition {
-        if matches!(self.state, SshState::Encrypted) {
-            return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete }
-        }
-
         let host = SshHost::from(dir);
+
+        match &self.state {
+            SshState::Encrypted => return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete },
+            SshState::PartiallyEncrypted(h) if *h == host => return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete },
+            _ => {},
+        }
         let current_stage = self.state.clone();
 
         let body = match self.get_assembler_for(host).push(payload, current_stage) {
@@ -687,10 +697,7 @@ mod tests {
         drive(&mut session, &mut ctx, Direction::Original, &new_keys_bytes());
         assert!(matches!(
             session.state,
-            SshState::Clear(ClearStage {
-                state: ClearState::NewKeys,
-                expected_host: SshHost::Server
-            })
+            SshState::PartiallyEncrypted(SshHost::Client)
         ));
 
         drive(&mut session, &mut ctx, Direction::Reply, &new_keys_bytes());
