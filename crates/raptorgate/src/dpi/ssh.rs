@@ -171,6 +171,29 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
         }
     }
 
+    fn handle_complete_message(
+        &mut self,
+        ctx: &mut SessionContext,
+        body: Vec<u8>,
+        host: SshHost,
+    ) -> Result<(), ()> {
+        if !self.confirmed_ssh {
+            self.confirmed_ssh = true;
+            ctx.set_application_protocol(AppProto::Ssh);
+        }
+
+        if matches!(self.state, SshState::Clear(ClearStage { state: ClearState::VersionExchange, .. })) {
+            let Ok((_, _)) = parse_ssh_identification(&body) else { return Err(()) };
+            self.state.advance_with_version(host).map_err(|_| ())
+        } else {
+            let mut wire = Vec::with_capacity(4 + body.len());
+            wire.extend_from_slice(&(body.len() as u32).to_be_bytes());
+            wire.extend_from_slice(&body);
+            let Ok((_, (packet, _))) = parse_ssh_packet(&wire) else { return Err(()) };
+            self.state.advance_with_packet(&packet, host).map_err(|_| ())
+        }
+    }
+
     pub(crate) fn process_bytes(
         &mut self,
         ctx: &mut SessionContext,
@@ -185,96 +208,71 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
             SshState::PartiallyEncrypted(h) if *h == host => return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete },
             _ => {},
         }
-        let current_stage = self.state.clone();
 
-        let body = match self.get_assembler_for(host).push(payload, current_stage) {
-            AssemblerVerdict::NeedMore => return BufferingDisposition { packet: PacketAction::QueueAndHalt, unit: UnitStatus::Incomplete },
-            AssemblerVerdict::TooLarge | AssemblerVerdict::Invalid => {
-                if !self.confirmed_ssh {
-                    return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete }
+        self.get_assembler_for(host).push(payload);
+
+        loop {
+            let stage = self.state.clone();
+            let verdict = self.get_assembler_for(host).take(&stage);
+            match verdict {
+                AssemblerVerdict::NeedMore => {
+                    return BufferingDisposition { packet: PacketAction::QueueAndHalt, unit: UnitStatus::Incomplete };
                 }
-
-                return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
-            }
-            AssemblerVerdict::PacketComplete(p) => {
-                self.confirmed_ssh = true;
-                ctx.set_application_protocol(AppProto::Ssh);
-                p
-            },
-
-        };
-
-        if matches!(self.state, SshState::Clear(ClearStage { state: ClearState::VersionExchange, .. })) {
-            let Ok((_, (_banners, _version))) = parse_ssh_identification(&body) else {
-                if !self.confirmed_ssh {
-                    return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete }
-                }
-
-                return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
-            };
-
-            if self.state.advance_with_version(host).is_err() {
-                return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
-            }
-
-            return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete }
-        }
-
-        let mut wire = Vec::with_capacity(4 + body.len());
-        wire.extend_from_slice(&(body.len() as u32).to_be_bytes());
-        wire.extend_from_slice(&body);
-        let parsed = parse_ssh_packet(&wire);
-
-        match parsed {
-            Ok((_, (ssh_packet, _))) => {
-                match &ssh_packet {
-                    SshPacket::KeyExchange(_) => {
-                        if self.state.advance_with_packet(&ssh_packet, host).is_err() {
-                            tracing::info!(ssh_packet=?ssh_packet, dir=?host, "SSH parsed and errored on dir");
-                            return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
-                        }
-
-                        tracing::info!(ssh_packet=?ssh_packet, dir=?host, "SSH parsed and advanced from key exchange on dir");
+                AssemblerVerdict::TooLarge | AssemblerVerdict::Invalid => {
+                    if !self.confirmed_ssh {
+                        return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
                     }
-                    SshPacket::NewKeys
-                    | SshPacket::DiffieHellmanInit(_)
-                    | SshPacket::DiffieHellmanReply(_) => {
-                        if self.state.advance_with_packet(&ssh_packet, host).is_err() {
-                            return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
-                        }
-
-                        tracing::info!(ssh_packet=?ssh_packet, "SSH parsed and advanced");
+                    return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete };
+                }
+                AssemblerVerdict::PacketComplete(body) => {
+                    if self.handle_complete_message(ctx, body, host).is_err() {
+                        return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete };
                     }
-                    _ => {}
+                    let should_pass = match &self.state {
+                        SshState::Encrypted => true,
+                        SshState::PartiallyEncrypted(h) => *h == host,
+                        _ => false,
+                    };
+                    if should_pass {
+                        self.get_assembler_for(host).clear();
+                        return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
+                    }
+                    continue;
                 }
             }
-            Err(_) => {
-                tracing::info!(state=?self.state, "SSH error during parsing on state");
-                return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete }
-            },
         }
-
-        BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete }
     }
 }
 
 struct SshPacketAssembler {
     buffer: Vec<u8>,
+    overflowed: bool,
 }
 
 impl SshPacketAssembler {
     pub fn new() -> Self {
-        Self { buffer: Vec::new() }
+        Self { buffer: Vec::new(), overflowed: false }
     }
-    pub fn push(&mut self, payload: &[u8], current_stage: SshState) -> AssemblerVerdict {
+
+    pub fn push(&mut self, payload: &[u8]) {
+        if self.overflowed {
+            return;
+        }
         if self.buffer.len() + payload.len() > MAX_HANDSHAKE_PACKET_SIZE {
             self.buffer.clear();
+            self.overflowed = true;
+            return;
+        }
+        self.buffer.extend_from_slice(payload);
+    }
+
+    pub fn take(&mut self, stage: &SshState) -> AssemblerVerdict {
+        if self.overflowed {
+            self.overflowed = false;
             return AssemblerVerdict::TooLarge;
         }
 
-        self.buffer.extend_from_slice(payload);
-
-        if matches!(current_stage, SshState::Clear(ClearStage { state: ClearState::VersionExchange, .. })) {
+        if matches!(stage, SshState::Clear(ClearStage { state: ClearState::VersionExchange, .. })) {
             if let Some(pos) = self.buffer.iter().position(|&b| b == b'\n') {
                 let line: Vec<u8> = self.buffer.drain(..pos + 1).collect();
                 return AssemblerVerdict::PacketComplete(line);
@@ -302,6 +300,11 @@ impl SshPacketAssembler {
         } else {
             AssemblerVerdict::NeedMore
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.buffer.clear();
+        self.overflowed = false;
     }
 }
 
@@ -446,15 +449,22 @@ mod tests {
         let split2 = cycle2.len() / 4;
 
         let mut v = Vec::with_capacity(7);
-        v.push(assembler.push(&cycle1[..split1], state.clone()));
-        v.push(assembler.push(&cycle1[split1..2 * split1], state.clone()));
-        v.push(assembler.push(&cycle1[2 * split1..3 * split1], state.clone()));
+        assembler.push(&cycle1[..split1]);
+        v.push(assembler.take(&state));
+        assembler.push(&cycle1[split1..2 * split1]);
+        v.push(assembler.take(&state));
+        assembler.push(&cycle1[2 * split1..3 * split1]);
+        v.push(assembler.take(&state));
         let mut push4 = Vec::from(&cycle1[3 * split1..]);
         push4.extend_from_slice(&cycle2[..split2]);
-        v.push(assembler.push(&push4, state.clone()));
-        v.push(assembler.push(&cycle2[split2..2 * split2], state.clone()));
-        v.push(assembler.push(&cycle2[2 * split2..3 * split2], state.clone()));
-        v.push(assembler.push(&cycle2[3 * split2..], state.clone()));
+        assembler.push(&push4);
+        v.push(assembler.take(&state));
+        assembler.push(&cycle2[split2..2 * split2]);
+        v.push(assembler.take(&state));
+        assembler.push(&cycle2[2 * split2..3 * split2]);
+        v.push(assembler.take(&state));
+        assembler.push(&cycle2[3 * split2..]);
+        v.push(assembler.take(&state));
 
         v.try_into().unwrap()
     }
@@ -598,7 +608,8 @@ mod tests {
         let state = in_clear(ClearState::AlgorithmNegotiation, SshHost::Client);
         let mut verdicts = Vec::new();
         for byte in packet {
-            verdicts.push(a.push(&[*byte], state.clone()));
+            a.push(&[*byte]);
+            verdicts.push(a.take(&state));
         }
         assert_eq!(verdicts.len(), 12);
         for (i, verdict) in verdicts.iter().enumerate().take(7) {
@@ -634,7 +645,7 @@ mod tests {
         );
         assert_eq!(
             d,
-            BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete }
+            BufferingDisposition { packet: PacketAction::QueueAndHalt, unit: UnitStatus::Incomplete }
         );
         assert!(matches!(
             session.state,
@@ -904,5 +915,57 @@ mod tests {
                 expected_host: SshHost::Client,
             })
         ));
+    }
+
+    #[test]
+    fn server_coalesces_dh_reply_new_keys_and_encrypted() {
+        let mut session = SshSession::new(mock_policy_retriever());
+        let mut ctx = session_context();
+
+        drive(&mut session, &mut ctx, Direction::Original, b"SSH-2.0-OpenSSH_8.9\r\n");
+        drive(&mut session, &mut ctx, Direction::Reply, b"SSH-2.0-dropbear_2022.83\r\n");
+        drive(&mut session, &mut ctx, Direction::Original, &kex_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &kex_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Original, &dh_init_bytes());
+
+        assert!(matches!(
+            session.state,
+            SshState::Clear(ClearStage { state: ClearState::KeyExchange, expected_host: SshHost::Server })
+        ));
+
+        let mut payload = dh_reply_bytes();
+        payload.extend_from_slice(&new_keys_bytes());
+        payload.extend_from_slice(b"\x00\x01\x02\x03");
+        let d = drive(&mut session, &mut ctx, Direction::Reply, &payload);
+        assert_eq!(d, BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete });
+        assert!(matches!(session.state, SshState::PartiallyEncrypted(SshHost::Server)));
+    }
+
+    #[test]
+    fn client_coalesces_new_keys_and_encrypted_after_server_encrypted() {
+        let mut session = SshSession::new(mock_policy_retriever());
+        let mut ctx = session_context();
+
+        drive(&mut session, &mut ctx, Direction::Original, b"SSH-2.0-OpenSSH_8.9\r\n");
+        drive(&mut session, &mut ctx, Direction::Reply, b"SSH-2.0-dropbear_2022.83\r\n");
+        drive(&mut session, &mut ctx, Direction::Original, &kex_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &kex_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Original, &dh_init_bytes());
+
+        let mut server_payload = dh_reply_bytes();
+        server_payload.extend_from_slice(&new_keys_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &server_payload);
+        assert!(matches!(session.state, SshState::PartiallyEncrypted(SshHost::Server)));
+
+        let mut client_payload = new_keys_bytes();
+        client_payload.extend_from_slice(b"\x00\x01\x02\x03");
+        let d = drive(&mut session, &mut ctx, Direction::Original, &client_payload);
+        assert_eq!(d, BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete });
+        assert!(matches!(session.state, SshState::Encrypted));
+
+        let d = drive(&mut session, &mut ctx, Direction::Original, b"\x00\x01\x02\x03");
+        assert_eq!(d, BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete });
+        let d = drive(&mut session, &mut ctx, Direction::Reply, b"\x00\x01\x02\x03");
+        assert_eq!(d, BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete });
     }
 }
