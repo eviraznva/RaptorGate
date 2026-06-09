@@ -1,8 +1,17 @@
 use std::sync::Arc;
 
-use ssh_parser::{SshPacket, SshVersion, parse_ssh_identification, parse_ssh_packet};
+use ssh_parser::{parse_ssh_identification, parse_ssh_packet};
 
-use crate::{conntrack::tuple::Direction, data_plane::packet_context::PacketId, dpi::smtp::{BufferingDisposition, PacketAction, UnitStatus, smtp_policy_retriever::SmtpPolicyRetriever}, l4::{AppProto, L4Outcome, SessionContext}, zones::resolver::ZoneResolver};
+use crate::{
+    conntrack::tuple::Direction,
+    data_plane::packet_context::PacketId,
+    dpi::smtp::{
+        smtp_policy_retriever::SmtpPolicyRetriever, BufferingDisposition, PacketAction, UnitStatus,
+    },
+    dpi::AppProto,
+    l4::SessionContext,
+    zones::resolver::ZoneResolver,
+};
 
 use tracing;
 
@@ -25,8 +34,7 @@ impl From<Direction> for SshHost {
 
 #[derive(Debug, Clone)]
 pub(crate) enum SshState {
-    Clear(ClearStage),
-    PartiallyEncrypted(SshHost),
+    Clear(ClearState),
     Encrypted,
 }
 
@@ -35,82 +43,74 @@ pub(crate) enum ClearState {
     VersionExchange,
     AlgorithmNegotiation,
     KeyExchange,
-    NewKeys,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ClearStage {
-    state: ClearState,
-    expected_host: SshHost,
+pub(crate) enum SshPacket {
+    Disconnect,
+    Ignore,
+    Unimplemented(u32),
+    Debug,
+    ServiceRequest,
+    ServiceAccept,
+    KeyExchange,
+    NewKeys,
+    DiffieHellmanInit,
+    DiffieHellmanReply,
+    ExtInfo,
+    KexMethod(u8),
+}
+
+impl<'a> From<&'a ssh_parser::SshPacket<'a>> for SshPacket {
+    fn from(p: &'a ssh_parser::SshPacket<'a>) -> Self {
+        match p {
+            ssh_parser::SshPacket::Disconnect(_) => SshPacket::Disconnect,
+            ssh_parser::SshPacket::Ignore(_) => SshPacket::Ignore,
+            ssh_parser::SshPacket::Unimplemented(n) => SshPacket::Unimplemented(*n),
+            ssh_parser::SshPacket::Debug(_) => SshPacket::Debug,
+            ssh_parser::SshPacket::ServiceRequest(_) => SshPacket::ServiceRequest,
+            ssh_parser::SshPacket::ServiceAccept(_) => SshPacket::ServiceAccept,
+            ssh_parser::SshPacket::KeyExchange(_) => SshPacket::KeyExchange,
+            ssh_parser::SshPacket::NewKeys => SshPacket::NewKeys,
+            ssh_parser::SshPacket::DiffieHellmanInit(_) => SshPacket::DiffieHellmanInit,
+            ssh_parser::SshPacket::DiffieHellmanReply(_) => SshPacket::DiffieHellmanReply,
+        }
+    }
 }
 
 impl SshState {
-    fn next_state_or_host(&mut self) -> Result<(), ()> {
-        if let SshState::Clear(c) = self.clone() {
-            if c.expected_host == SshHost::Client {
-                *self = SshState::Clear(ClearStage { state: c.state, expected_host: SshHost::Server });
-                return Ok(())
-            }
-
-            match c.state {
-                ClearState::VersionExchange => *self = SshState::Clear(ClearStage { state: ClearState::AlgorithmNegotiation, expected_host: SshHost::Client }),
-                ClearState::AlgorithmNegotiation => *self = SshState::Clear(ClearStage { state: ClearState::KeyExchange, expected_host: SshHost::Client }),
-                ClearState::KeyExchange => *self = SshState::Clear(ClearStage { state: ClearState::NewKeys, expected_host: SshHost::Client }),
-                ClearState::NewKeys => *self = SshState::Encrypted,
-            }
-
-            return Ok(())
-        }
-
-        Err(())
-    }
-
-
-    pub fn advance_with_version(&mut self, from: SshHost) -> Result<(), ()> {
-        match self {
-            SshState::Clear(ClearStage { state: ClearState::VersionExchange, expected_host: s }) if *s == from => {
-                self.next_state_or_host()
-            }
-
-            _ => Err(())
-        }
-    }
-
-    pub fn advance_with_packet(&mut self, new_packet: &SshPacket, from: SshHost) -> Result<(), ()> {
-        match self {
-            SshState::Clear(ClearStage { state: ClearState::NewKeys, .. }) => {
-                if !matches!(new_packet, SshPacket::NewKeys) {
-                    return Err(());
-                }
-                *self = SshState::PartiallyEncrypted(from);
+    fn advance_version(state: &mut SshState) -> Result<(), ()> {
+        match state {
+            SshState::Clear(ClearState::VersionExchange) => {
+                *state = SshState::Clear(ClearState::AlgorithmNegotiation);
                 Ok(())
-            }
-            SshState::PartiallyEncrypted(encrypted) => {
-                if from != *encrypted && matches!(new_packet, SshPacket::NewKeys) {
-                    *self = SshState::Encrypted;
-                    Ok(())
-                } else {
-                    Err(())
-                }
-            }
-            SshState::Clear(ClearStage { state: ClearState::KeyExchange, expected_host })
-                if *expected_host == from =>
-            {
-                let ok = match from {
-                    SshHost::Client => matches!(new_packet, SshPacket::DiffieHellmanInit(_)),
-                    SshHost::Server => matches!(new_packet, SshPacket::DiffieHellmanReply(_)),
-                };
-                if ok { self.next_state_or_host() } else { Err(()) }
-            }
-            SshState::Clear(ClearStage { state: ClearState::AlgorithmNegotiation, .. }) => {
-                if matches!(new_packet, SshPacket::KeyExchange(_)) {
-                    self.next_state_or_host()
-                } else {
-                    Err(())
-                }
             }
             _ => Err(()),
         }
+    }
+
+    fn advance_with_packet(state: &mut SshState, packet: &SshPacket) -> Result<(), ()> {
+        let transition = match state {
+            SshState::Clear(ClearState::AlgorithmNegotiation) => match packet {
+                SshPacket::KeyExchange => Some(SshState::Clear(ClearState::KeyExchange)),
+                SshPacket::ExtInfo => None,
+                SshPacket::Disconnect | SshPacket::Ignore | SshPacket::Unimplemented(_) | SshPacket::Debug => None,
+                _ => return Err(()),
+            },
+            SshState::Clear(ClearState::KeyExchange) => match packet {
+                SshPacket::NewKeys => Some(SshState::Encrypted),
+                SshPacket::DiffieHellmanInit | SshPacket::DiffieHellmanReply | SshPacket::KexMethod(_) => None,
+                SshPacket::KeyExchange => None,
+                SshPacket::ExtInfo => None,
+                SshPacket::Disconnect | SshPacket::Ignore | SshPacket::Unimplemented(_) | SshPacket::Debug => None,
+                _ => return Err(()),
+            },
+            _ => return Err(()),
+        };
+        if let Some(s) = transition {
+            *state = s;
+        }
+        Ok(())
     }
 }
 
@@ -129,8 +129,8 @@ pub struct SshVersionOwned {
     pub comments: Option<Vec<u8>>,
 }
 
-impl<'a> From<SshVersion<'a>> for SshVersionOwned {
-    fn from(v: SshVersion<'a>) -> Self {
+impl<'a> From<ssh_parser::SshVersion<'a>> for SshVersionOwned {
+    fn from(v: ssh_parser::SshVersion<'a>) -> Self {
         Self {
             proto: v.proto.to_vec(),
             software: v.software.to_vec(),
@@ -139,37 +139,51 @@ impl<'a> From<SshVersion<'a>> for SshVersionOwned {
     }
 }
 
-
-struct SshSessionInfo {
-    version_client_banner: Option<SshVersionOwned>,
-    version_server_banner: Option<SshVersionOwned>,
-}
-
-pub(crate) struct SshSession<ZR> where ZR: ZoneResolver {
-    state: SshState,
-    assemblers: [SshPacketAssembler; 2],
+pub(crate) struct SshSession<ZR>
+where
+    ZR: ZoneResolver,
+{
+    pub(crate) client_state: SshState,
+    pub(crate) server_state: SshState,
+    pub(crate) client_assembler: SshPacketAssembler,
+    pub(crate) server_assembler: SshPacketAssembler,
     confirmed_ssh: bool,
     policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
 }
 
-
-impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
+impl<ZR> SshSession<ZR>
+where
+    ZR: ZoneResolver,
+{
     pub fn new(policy_retriever: Arc<SmtpPolicyRetriever<ZR>>) -> Self {
         SshSession {
-            state: SshState::Clear(ClearStage {
-                state: ClearState::VersionExchange,
-                expected_host: SshHost::Client,
-            }),
-            assemblers: [SshPacketAssembler::new(), SshPacketAssembler::new()],
+            client_state: SshState::Clear(ClearState::VersionExchange),
+            server_state: SshState::Clear(ClearState::VersionExchange),
+            client_assembler: SshPacketAssembler::new(),
+            server_assembler: SshPacketAssembler::new(),
             confirmed_ssh: false,
             policy_retriever,
         }
     }
 
-    fn get_assembler_for(&mut self, host: SshHost) -> &mut SshPacketAssembler {
+    fn host_state(&self, host: SshHost) -> &SshState {
         match host {
-            SshHost::Client => &mut self.assemblers[0],
-            SshHost::Server => &mut self.assemblers[1],
+            SshHost::Client => &self.client_state,
+            SshHost::Server => &self.server_state,
+        }
+    }
+
+    fn host_state_mut(&mut self, host: SshHost) -> &mut SshState {
+        match host {
+            SshHost::Client => &mut self.client_state,
+            SshHost::Server => &mut self.server_state,
+        }
+    }
+
+    fn host_assembler(&mut self, host: SshHost) -> &mut SshPacketAssembler {
+        match host {
+            SshHost::Client => &mut self.client_assembler,
+            SshHost::Server => &mut self.server_assembler,
         }
     }
 
@@ -184,25 +198,47 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
             ctx.set_application_protocol(AppProto::Ssh);
         }
 
-        if matches!(self.state, SshState::Clear(ClearStage { state: ClearState::VersionExchange, .. })) {
+        if matches!(self.host_state(host), SshState::Clear(ClearState::VersionExchange)) {
             if parse_ssh_identification(&body).is_err() {
-                tracing::info!("SSH ERROR invalid version line from {host:?} in state={:?}, packet=version", self.state);
+                tracing::info!("SSH ERROR invalid version line from {host:?}");
                 return Err(());
             }
-            self.state.advance_with_version(host).map_err(|_| {
-                tracing::info!("SSH ERROR unexpected version from {host:?} in state={:?}", self.state);
+            SshState::advance_version(self.host_state_mut(host)).map_err(|_| {
+                tracing::info!("SSH ERROR unexpected version from {host:?}");
             })
         } else {
-            let mut wire = Vec::with_capacity(4 + body.len());
-            wire.extend_from_slice(&(body.len() as u32).to_be_bytes());
-            wire.extend_from_slice(&body);
-            if parse_ssh_packet(&wire).is_err() {
-                tracing::info!("SSH ERROR invalid packet body (len={}) from {host:?} in state={:?}, packet=unknown", body.len(), self.state);
+            if body.len() < 2 {
                 return Err(());
             }
-            let (_, (packet, _)) = parse_ssh_packet(&wire).expect("just checked");
-            self.state.advance_with_packet(&packet, host).map_err(|_| {
-                tracing::info!("SSH ERROR unexpected packet {packet:?} from {host:?} in state={:?}", self.state);
+            let msg_type = body[1];
+            let packet = match msg_type {
+                1..=6 | 20 | 21 | 30 | 31 => {
+                    let mut wire = Vec::with_capacity(4 + body.len());
+                    wire.extend_from_slice(&(body.len() as u32).to_be_bytes());
+                    wire.extend_from_slice(&body);
+                    let (_, (parsed, _)) = parse_ssh_packet(&wire).map_err(|_| {
+                        tracing::info!(
+                            "SSH ERROR invalid packet body (len={}) from {host:?}, msg_type={msg_type}",
+                            body.len()
+                        );
+                    })?;
+                    SshPacket::from(&parsed)
+                }
+                7 => SshPacket::ExtInfo,
+                32..=49 => SshPacket::KexMethod(msg_type),
+                _ => {
+                    tracing::info!(
+                        "SSH ERROR unknown msg_type {msg_type} from {host:?} in state={:?}",
+                        self.host_state(host)
+                    );
+                    return Err(());
+                }
+            };
+            let state = self.host_state(host).clone();
+            SshState::advance_with_packet(self.host_state_mut(host), &packet).map_err(|_| {
+                tracing::info!(
+                    "SSH ERROR unexpected packet {packet:?} from {host:?} in state={state:?}"
+                );
             })
         }
     }
@@ -216,50 +252,57 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
     ) -> BufferingDisposition {
         let host = SshHost::from(dir);
 
-        match &self.state {
-            SshState::Encrypted => {
-                tracing::info!("SSH FORWARDED encrypted data from {host:?}");
-                return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
-            }
-            SshState::PartiallyEncrypted(h) if *h == host => {
-                tracing::info!("SSH FORWARDED partially encrypted data from {host:?}");
-                return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
-            }
-            _ => {},
+        if matches!(self.host_state(host), SshState::Encrypted) {
+            tracing::info!("SSH FORWARDED encrypted data from {host:?}");
+            return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
         }
 
-        self.get_assembler_for(host).push(payload);
+        self.host_assembler(host).push(payload);
 
         loop {
-            let stage = self.state.clone();
-            let verdict = self.get_assembler_for(host).take(&stage);
+            let state = self.host_state(host).clone();
+            let verdict = self.host_assembler(host).take(&state);
             match verdict {
                 AssemblerVerdict::NeedMore => {
                     tracing::info!("SSH FORWARDED incomplete message from {host:?}");
-                    return BufferingDisposition { packet: PacketAction::QueueAndHalt, unit: UnitStatus::Incomplete };
+                    return BufferingDisposition {
+                        packet: PacketAction::QueueAndHalt,
+                        unit: UnitStatus::Incomplete,
+                    };
                 }
                 AssemblerVerdict::TooLarge | AssemblerVerdict::Invalid => {
                     if !self.confirmed_ssh {
                         tracing::info!("SSH FORWARDED non-ssh data from {host:?}");
-                        return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
+                        return BufferingDisposition {
+                            packet: PacketAction::Pass,
+                            unit: UnitStatus::Complete,
+                        };
                     }
-                    tracing::info!("SSH ERROR invalid/too-large from {host:?} after confirmed ssh, state={stage:?}");
-                    return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete };
+                    tracing::info!(
+                        "SSH ERROR invalid/too-large from {host:?} after confirmed ssh, state={state:?}"
+                    );
+                    return BufferingDisposition {
+                        packet: PacketAction::Drop,
+                        unit: UnitStatus::Complete,
+                    };
                 }
                 AssemblerVerdict::PacketComplete(body) => {
                     if self.handle_complete_message(ctx, body, host).is_err() {
-                        tracing::info!("SSH ERROR handle_complete_message failed for {host:?}, state={stage:?}");
-                        return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete };
+                        tracing::info!(
+                            "SSH ERROR handle_complete_message failed for {host:?}, state={state:?}"
+                        );
+                        return BufferingDisposition {
+                            packet: PacketAction::Drop,
+                            unit: UnitStatus::Complete,
+                        };
                     }
-                    let should_pass = match &self.state {
-                        SshState::Encrypted => true,
-                        SshState::PartiallyEncrypted(h) => *h == host,
-                        _ => false,
-                    };
-                    if should_pass {
+                    if matches!(self.host_state(host), SshState::Encrypted) {
                         tracing::info!("SSH FORWARDED encrypted complete message from {host:?}");
-                        self.get_assembler_for(host).clear();
-                        return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
+                        self.host_assembler(host).clear();
+                        return BufferingDisposition {
+                            packet: PacketAction::Pass,
+                            unit: UnitStatus::Complete,
+                        };
                     }
                     continue;
                 }
@@ -299,7 +342,7 @@ impl SshPacketAssembler {
             return AssemblerVerdict::TooLarge;
         }
 
-        if matches!(stage, SshState::Clear(ClearStage { state: ClearState::VersionExchange, .. })) {
+        if matches!(stage, SshState::Clear(ClearState::VersionExchange)) {
             if let Some(pos) = self.buffer.iter().position(|&b| b == b'\n') {
                 let line: Vec<u8> = self.buffer.drain(..pos + 1).collect();
                 return AssemblerVerdict::PacketComplete(line);
@@ -363,8 +406,8 @@ mod tests {
     use crate::zones::resolver::ZoneResolver;
     use crate::zones::{DefaultPolicy, DirectionalZonePairs, ResolvedZonePair, ZonePairId};
 
-    fn in_clear(state: ClearState, host: SshHost) -> SshState {
-        SshState::Clear(ClearStage { state, expected_host: host })
+    fn in_clear(state: ClearState) -> SshState {
+        SshState::Clear(state)
     }
 
     struct StubZoneResolver;
@@ -506,7 +549,7 @@ mod tests {
             &mut a,
             cycle1,
             cycle2,
-            in_clear(ClearState::VersionExchange, SshHost::Client),
+            in_clear(ClearState::VersionExchange),
         );
         match &v[3] {
             AssemblerVerdict::PacketComplete(bytes) => assert_eq!(bytes, cycle1),
@@ -527,7 +570,7 @@ mod tests {
             &mut a,
             cycle1,
             cycle2,
-            in_clear(ClearState::VersionExchange, SshHost::Client),
+            in_clear(ClearState::VersionExchange),
         );
         for (i, verdict) in v.iter().enumerate() {
             assert!(
@@ -546,13 +589,14 @@ mod tests {
             &mut a,
             &cycle1,
             &cycle2,
-            in_clear(ClearState::VersionExchange, SshHost::Client),
+            in_clear(ClearState::VersionExchange),
         );
-        assert!(
-            matches!(v[3], AssemblerVerdict::TooLarge),
-            "expected TooLarge at push 4, got {:?}",
-            v[3]
-        );
+        for (i, verdict) in v.iter().enumerate() {
+            assert!(
+                matches!(verdict, AssemblerVerdict::TooLarge),
+                "verdict {i} expected TooLarge"
+            );
+        }
     }
 
     #[test]
@@ -566,7 +610,7 @@ mod tests {
             &mut a,
             &cycle1,
             &cycle2,
-            in_clear(ClearState::AlgorithmNegotiation, SshHost::Client),
+            in_clear(ClearState::AlgorithmNegotiation),
         );
         match &v[3] {
             AssemblerVerdict::PacketComplete(bytes) => assert_eq!(bytes, b"abcdefghijkl"),
@@ -585,7 +629,7 @@ mod tests {
             &mut a,
             &[0, 0, 0, 100, b'X'],
             &[0, 0, 0, 100, b'Y'],
-            in_clear(ClearState::AlgorithmNegotiation, SshHost::Client),
+            in_clear(ClearState::AlgorithmNegotiation),
         );
         for (i, verdict) in v.iter().enumerate() {
             assert!(
@@ -602,7 +646,7 @@ mod tests {
             &mut a,
             &[0, 0, 0, 0, b'X'],
             &[0, 0, 0, 0, b'Y'],
-            in_clear(ClearState::AlgorithmNegotiation, SshHost::Client),
+            in_clear(ClearState::AlgorithmNegotiation),
         );
         assert!(
             matches!(v[3], AssemblerVerdict::Invalid),
@@ -620,7 +664,7 @@ mod tests {
             &mut a,
             &cycle1,
             &cycle2,
-            in_clear(ClearState::AlgorithmNegotiation, SshHost::Client),
+            in_clear(ClearState::AlgorithmNegotiation),
         );
         assert!(
             matches!(v[3], AssemblerVerdict::TooLarge),
@@ -633,7 +677,7 @@ mod tests {
     fn fragmented_packet_size() {
         let mut a = SshPacketAssembler::new();
         let packet: &[u8] = &[0, 0, 0, 8, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h'];
-        let state = in_clear(ClearState::AlgorithmNegotiation, SshHost::Client);
+        let state = in_clear(ClearState::AlgorithmNegotiation);
         let mut verdicts = Vec::new();
         for byte in packet {
             a.push(&[*byte]);
@@ -658,11 +702,12 @@ mod tests {
         let mut ctx = session_context();
 
         assert!(matches!(
-            session.state,
-            SshState::Clear(ClearStage {
-                state: ClearState::VersionExchange,
-                expected_host: SshHost::Client
-            })
+            session.client_state,
+            SshState::Clear(ClearState::VersionExchange)
+        ));
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::VersionExchange)
         ));
 
         let d = drive(
@@ -676,11 +721,12 @@ mod tests {
             BufferingDisposition { packet: PacketAction::QueueAndHalt, unit: UnitStatus::Incomplete }
         );
         assert!(matches!(
-            session.state,
-            SshState::Clear(ClearStage {
-                state: ClearState::VersionExchange,
-                expected_host: SshHost::Server
-            })
+            session.client_state,
+            SshState::Clear(ClearState::AlgorithmNegotiation)
+        ));
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::VersionExchange)
         ));
 
         drive(
@@ -690,57 +736,64 @@ mod tests {
             b"SSH-2.0-dropbear_2022.83\r\n",
         );
         assert!(matches!(
-            session.state,
-            SshState::Clear(ClearStage {
-                state: ClearState::AlgorithmNegotiation,
-                expected_host: SshHost::Client
-            })
+            session.client_state,
+            SshState::Clear(ClearState::AlgorithmNegotiation)
+        ));
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::AlgorithmNegotiation)
         ));
 
         drive(&mut session, &mut ctx, Direction::Original, &kex_init_bytes());
         assert!(matches!(
-            session.state,
-            SshState::Clear(ClearStage {
-                state: ClearState::AlgorithmNegotiation,
-                expected_host: SshHost::Server
-            })
+            session.client_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::AlgorithmNegotiation)
         ));
 
         drive(&mut session, &mut ctx, Direction::Reply, &kex_init_bytes());
         assert!(matches!(
-            session.state,
-            SshState::Clear(ClearStage {
-                state: ClearState::KeyExchange,
-                expected_host: SshHost::Client
-            })
+            session.client_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::KeyExchange)
         ));
 
         drive(&mut session, &mut ctx, Direction::Original, &dh_init_bytes());
         assert!(matches!(
-            session.state,
-            SshState::Clear(ClearStage {
-                state: ClearState::KeyExchange,
-                expected_host: SshHost::Server
-            })
+            session.client_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::KeyExchange)
         ));
 
         drive(&mut session, &mut ctx, Direction::Reply, &dh_reply_bytes());
         assert!(matches!(
-            session.state,
-            SshState::Clear(ClearStage {
-                state: ClearState::NewKeys,
-                expected_host: SshHost::Client
-            })
+            session.client_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::KeyExchange)
         ));
 
         drive(&mut session, &mut ctx, Direction::Original, &new_keys_bytes());
+        assert!(matches!(session.client_state, SshState::Encrypted));
         assert!(matches!(
-            session.state,
-            SshState::PartiallyEncrypted(SshHost::Client)
+            session.server_state,
+            SshState::Clear(ClearState::KeyExchange)
         ));
 
         drive(&mut session, &mut ctx, Direction::Reply, &new_keys_bytes());
-        assert!(matches!(session.state, SshState::Encrypted));
+        assert!(matches!(session.client_state, SshState::Encrypted));
+        assert!(matches!(session.server_state, SshState::Encrypted));
 
         let d = drive(&mut session, &mut ctx, Direction::Original, b"\x00\x01\x02\x03");
         assert_eq!(
@@ -909,11 +962,12 @@ mod tests {
         drive(&mut session, &mut ctx, Direction::Reply, &kex);
 
         assert!(matches!(
-            session.state,
-            SshState::Clear(ClearStage {
-                state: ClearState::KeyExchange,
-                expected_host: SshHost::Client,
-            })
+            session.client_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::KeyExchange)
         ));
     }
 
@@ -937,11 +991,12 @@ mod tests {
         drive(&mut session, &mut ctx, Direction::Reply, &reply[reply_mid..]);
 
         assert!(matches!(
-            session.state,
-            SshState::Clear(ClearStage {
-                state: ClearState::NewKeys,
-                expected_host: SshHost::Client,
-            })
+            session.client_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::KeyExchange)
         ));
     }
 
@@ -957,8 +1012,12 @@ mod tests {
         drive(&mut session, &mut ctx, Direction::Original, &dh_init_bytes());
 
         assert!(matches!(
-            session.state,
-            SshState::Clear(ClearStage { state: ClearState::KeyExchange, expected_host: SshHost::Server })
+            session.server_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
+        assert!(matches!(
+            session.client_state,
+            SshState::Clear(ClearState::KeyExchange)
         ));
 
         let mut payload = dh_reply_bytes();
@@ -966,7 +1025,11 @@ mod tests {
         payload.extend_from_slice(b"\x00\x01\x02\x03");
         let d = drive(&mut session, &mut ctx, Direction::Reply, &payload);
         assert_eq!(d, BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete });
-        assert!(matches!(session.state, SshState::PartiallyEncrypted(SshHost::Server)));
+        assert!(matches!(session.server_state, SshState::Encrypted));
+        assert!(matches!(
+            session.client_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
     }
 
     #[test]
@@ -983,17 +1046,157 @@ mod tests {
         let mut server_payload = dh_reply_bytes();
         server_payload.extend_from_slice(&new_keys_bytes());
         drive(&mut session, &mut ctx, Direction::Reply, &server_payload);
-        assert!(matches!(session.state, SshState::PartiallyEncrypted(SshHost::Server)));
+        assert!(matches!(session.server_state, SshState::Encrypted));
+        assert!(matches!(
+            session.client_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
 
         let mut client_payload = new_keys_bytes();
         client_payload.extend_from_slice(b"\x00\x01\x02\x03");
         let d = drive(&mut session, &mut ctx, Direction::Original, &client_payload);
         assert_eq!(d, BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete });
-        assert!(matches!(session.state, SshState::Encrypted));
+        assert!(matches!(session.client_state, SshState::Encrypted));
+        assert!(matches!(session.server_state, SshState::Encrypted));
 
         let d = drive(&mut session, &mut ctx, Direction::Original, b"\x00\x01\x02\x03");
         assert_eq!(d, BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete });
         let d = drive(&mut session, &mut ctx, Direction::Reply, b"\x00\x01\x02\x03");
         assert_eq!(d, BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete });
+    }
+
+    #[test]
+    fn client_newkeys_before_server_finishes_kex() {
+        let mut session = SshSession::new(mock_policy_retriever());
+        let mut ctx = session_context();
+
+        drive(&mut session, &mut ctx, Direction::Original, b"SSH-2.0-OpenSSH_8.9\r\n");
+        drive(&mut session, &mut ctx, Direction::Reply, b"SSH-2.0-dropbear_2022.83\r\n");
+        drive(&mut session, &mut ctx, Direction::Original, &kex_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Original, &dh_init_bytes());
+
+        // Client sends NEWKEYS before server has sent its KEXINIT/DH reply
+        let d = drive(&mut session, &mut ctx, Direction::Original, &new_keys_bytes());
+        assert_eq!(
+            d,
+            BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete }
+        );
+        assert!(matches!(session.client_state, SshState::Encrypted));
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::AlgorithmNegotiation)
+        ));
+
+        // Server can still progress
+        drive(&mut session, &mut ctx, Direction::Reply, &kex_init_bytes());
+        assert!(matches!(
+            session.server_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
+        drive(&mut session, &mut ctx, Direction::Reply, &dh_reply_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &new_keys_bytes());
+        assert!(matches!(session.server_state, SshState::Encrypted));
+    }
+
+    #[test]
+    fn unsupported_kex_method_accepted() {
+        let mut session = SshSession::new(mock_policy_retriever());
+        let mut ctx = session_context();
+
+        drive(&mut session, &mut ctx, Direction::Original, b"SSH-2.0-OpenSSH_8.9\r\n");
+        drive(&mut session, &mut ctx, Direction::Reply, b"SSH-2.0-dropbear_2022.83\r\n");
+        drive(&mut session, &mut ctx, Direction::Original, &kex_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &kex_init_bytes());
+
+        // Build a minimal SSH packet with msg_type 32 (KEX method)
+        let mut body = vec![4u8];      // padding_length
+        body.push(32);                // msg_type = 32
+        body.extend_from_slice(&[0u8; 4]); // padding
+        let mut wire = Vec::with_capacity(4 + body.len());
+        wire.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        wire.extend_from_slice(&body);
+
+        let d = drive(&mut session, &mut ctx, Direction::Original, &wire);
+        assert_eq!(
+            d,
+            BufferingDisposition {
+                packet: PacketAction::QueueAndHalt,
+                unit: UnitStatus::Incomplete
+            }
+        );
+        assert!(matches!(
+            session.client_state,
+            SshState::Clear(ClearState::KeyExchange)
+        ));
+
+        // Complete the handshake normally
+        drive(&mut session, &mut ctx, Direction::Original, &dh_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &dh_reply_bytes());
+        drive(&mut session, &mut ctx, Direction::Original, &new_keys_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &new_keys_bytes());
+        assert!(matches!(session.client_state, SshState::Encrypted));
+        assert!(matches!(session.server_state, SshState::Encrypted));
+    }
+
+    #[test]
+    fn ssh_msg_ext_info_accepted() {
+        let mut session = SshSession::new(mock_policy_retriever());
+        let mut ctx = session_context();
+
+        drive(&mut session, &mut ctx, Direction::Original, b"SSH-2.0-OpenSSH_8.9\r\n");
+
+        // Build ExtInfo packet (msg_type 7) during AlgorithmNegotiation
+        let mut body = vec![4u8];      // padding_length
+        body.push(7);                 // msg_type = 7 (EXT_INFO)
+        body.extend_from_slice(&[0u8; 4]); // nr_extensions=0 as u32 + padding
+        let mut wire = Vec::with_capacity(4 + body.len());
+        wire.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        wire.extend_from_slice(&body);
+
+        let d = drive(&mut session, &mut ctx, Direction::Original, &wire);
+        assert_eq!(
+            d,
+            BufferingDisposition {
+                packet: PacketAction::QueueAndHalt,
+                unit: UnitStatus::Incomplete
+            }
+        );
+        assert!(matches!(
+            session.client_state,
+            SshState::Clear(ClearState::AlgorithmNegotiation)
+        ));
+
+        // Complete handshake normally
+        drive(&mut session, &mut ctx, Direction::Reply, b"SSH-2.0-dropbear_2022.83\r\n");
+        drive(&mut session, &mut ctx, Direction::Original, &kex_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &kex_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Original, &dh_init_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &dh_reply_bytes());
+        drive(&mut session, &mut ctx, Direction::Original, &new_keys_bytes());
+        drive(&mut session, &mut ctx, Direction::Reply, &new_keys_bytes());
+        assert!(matches!(session.client_state, SshState::Encrypted));
+        assert!(matches!(session.server_state, SshState::Encrypted));
+    }
+
+    #[test]
+    fn independent_assemblers_after_rename() {
+        let mut session = SshSession::new(mock_policy_retriever());
+        session.client_assembler.push(b"SSH-2.0-client\r\n");
+        session.server_assembler.push(b"SSH-2.0-server\r\n");
+
+        let v1 = session.client_assembler.take(&SshState::Clear(ClearState::VersionExchange));
+        assert!(matches!(v1, AssemblerVerdict::PacketComplete(ref b) if b == b"SSH-2.0-client\r\n"));
+        let v2 = session.server_assembler.take(&SshState::Clear(ClearState::VersionExchange));
+        assert!(matches!(v2, AssemblerVerdict::PacketComplete(ref b) if b == b"SSH-2.0-server\r\n"));
+
+        // After taking, both buffers are empty -- take returns NeedMore
+        assert!(matches!(
+            session.client_assembler.take(&SshState::Clear(ClearState::VersionExchange)),
+            AssemblerVerdict::NeedMore
+        ));
+        assert!(matches!(
+            session.server_assembler.take(&SshState::Clear(ClearState::VersionExchange)),
+            AssemblerVerdict::NeedMore
+        ));
     }
 }

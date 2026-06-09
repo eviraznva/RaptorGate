@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use raptorgate_testkit::{
     event, event_capture_concurrency_mutex, set_event_capture, smoke_tcp_allow_warn_bundle,
-    EventCapture, Expectation, PipelineOutcome, Scenario, SocketV4, TestDaemon,
+    EventCapture, Expectation, PacketDispositionOutcome, PipelineOutcome, Scenario, SocketV4,
+    TestDaemon,
 };
 
 // SSH client (OpenSSH 9.6p1) ↔ server (OpenBSD 9.6 sshd) full-handshake payloads.
@@ -10,41 +11,53 @@ use raptorgate_testkit::{
 // Banners are NOT length-prefixed; the SshPacketAssembler scans for '\n' and drains
 // the line itself (see crates/raptorgate/src/dpi/ssh.rs:240-246).
 fn kex_init_minimal() -> Vec<u8> {
-    // msg_type=20 (SSH_MSG_KEXINIT) + 16-byte cookie (zeros) +
-    // 10 name-lists (each length=0) + first_kex_packet_follows=0 + reserved=0.
-    let mut body = Vec::with_capacity(62);
-    body.push(20);
-    body.extend_from_slice(&[0u8; 16]);
+    // SSH_MSG_KEXINIT: padding_length(4) + msg_type(20) + 16-byte cookie (zeros) +
+    // 10 empty name-lists + first_kex_packet_follows=0 + reserved=0 + padding(4).
+    let mut body = Vec::with_capacity(67);
+    body.push(4); // padding_length
+    body.push(20); // msg_type
+    body.extend_from_slice(&[0u8; 16]); // cookie
     for _ in 0..10 {
         body.extend_from_slice(&0u32.to_be_bytes());
     }
-    body.push(0);
-    body.extend_from_slice(&[0u8; 4]);
+    body.push(0); // first_kex_packet_follows
+    body.extend_from_slice(&[0u8; 4]); // reserved
+    body.extend_from_slice(&[0u8; 4]); // padding
     ssh_packet(&body)
 }
 
 fn dh_init_minimal() -> Vec<u8> {
-    // msg_type=30 (SSH_MSG_KEXDH_INIT) + mpint e=empty.
-    let mut body = Vec::with_capacity(5);
-    body.push(30);
-    body.extend_from_slice(&0u32.to_be_bytes());
+    // SSH_MSG_KEXDH_INIT: padding_length(4) + msg_type(30) + mpint e=empty + padding(4).
+    let mut body = Vec::with_capacity(10);
+    body.push(4); // padding_length
+    body.push(30); // msg_type
+    body.extend_from_slice(&0u32.to_be_bytes()); // e = empty string
+    body.extend_from_slice(&[0u8; 4]); // padding
     ssh_packet(&body)
 }
 
 fn dh_reply_minimal() -> Vec<u8> {
-    // msg_type=31 (SSH_MSG_KEXDH_REPLY) + string host_key=empty + mpint f=empty
-    // + string signature=empty.
-    let mut body = Vec::with_capacity(13);
-    body.push(31);
-    body.extend_from_slice(&0u32.to_be_bytes());
-    body.extend_from_slice(&0u32.to_be_bytes());
-    body.extend_from_slice(&0u32.to_be_bytes());
+    // SSH_MSG_KEXDH_REPLY: padding_length(4) + msg_type(31) + 3 empty strings + padding(4).
+    let mut body = Vec::with_capacity(17);
+    body.push(4); // padding_length
+    body.push(31); // msg_type
+    body.extend_from_slice(&0u32.to_be_bytes()); // host_key
+    body.extend_from_slice(&0u32.to_be_bytes()); // f
+    body.extend_from_slice(&0u32.to_be_bytes()); // signature
+    body.extend_from_slice(&[0u8; 4]); // padding
     ssh_packet(&body)
 }
 
 fn new_keys() -> Vec<u8> {
-    // msg_type=21 (SSH_MSG_NEWKEYS).
-    ssh_packet(&[21])
+    // SSH_MSG_NEWKEYS: padding_length(4) + msg_type(21) + padding(4).
+    let body = vec![4u8, 21, 0, 0, 0, 0];
+    ssh_packet(&body)
+}
+
+fn ext_info() -> Vec<u8> {
+    // SSH_MSG_EXT_INFO: padding_length(4) + msg_type(7) + nr_extensions=0 + padding(4).
+    let body = vec![4u8, 7, 0, 0, 0, 0, 0, 0, 0, 0];
+    ssh_packet(&body)
 }
 
 fn ssh_packet(body: &[u8]) -> Vec<u8> {
@@ -128,6 +141,7 @@ fn real_kex_init(
     macs: &[&str],
 ) -> Vec<u8> {
     let mut body = Vec::new();
+    body.push(4); // padding_length
     body.push(20); // SSH_MSG_KEXINIT
     body.extend_from_slice(&[0u8; 16]); // cookie
     body.extend(name_list(kex_algs));
@@ -142,6 +156,7 @@ fn real_kex_init(
     body.extend(name_list(&[]));
     body.push(0); // first_kex_packet_follows
     body.extend_from_slice(&[0u8; 4]); // reserved
+    body.extend_from_slice(&[0u8; 4]); // padding
     ssh_packet(&body)
 }
 
@@ -231,50 +246,50 @@ async fn ssh_l4_stage_forwards_real_openssh_96_handshake() {
     set_event_capture(None);
 }
 
-// #[tokio::test]
-// async fn ssh_l4_stage_forwards_ext_info_before_server_newkeys() {
-//     let _guard = event_capture_concurrency_mutex().lock().await;
-//     let cap = Arc::new(EventCapture::new());
-//     set_event_capture(Some(cap.clone()));
-//     let td = TestDaemon::builder()
-//         .with_bundle(smoke_tcp_allow_warn_bundle())
-//         .build()
-//         .await
-//         .expect("test daemon");
-//     let expect_ssh_event = event!(|e: &raptorgate_testkit::Event| matches!(
-//         &e.kind,
-//         raptorgate_testkit::EventKind::DecidedAppProtocol { protocol, .. }
-//             if *protocol == ngfw::l4::AppProto::Ssh
-//     ));
-//     Scenario::tcp(
-//         SocketV4 { ip: [192, 168, 10, 52], port: 40_124 },
-//         SocketV4 { ip: [192, 168, 20, 24], port: 22 },
-//     )
-//     .open()
-//     .client_sends(b"SSH-2.0-OpenSSH_8.9\r\n")
-//     .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
-//     .server_sends(b"SSH-2.0-dropbear_2022.83\r\n")
-//     .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
-//     .client_sends(&real_openssh_client_kex_init())
-//     .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
-//     .server_sends(&real_openssh_sshd_kex_init())
-//     .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
-//     .client_sends(&dh_init_minimal())
-//     .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
-//     .server_sends(&dh_reply_minimal())
-//     .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
-//     .client_sends(&new_keys())
-//     .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
-//     .client_sends(b"\x00\x00\x00\x01\xff")
-//     .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
-//     .server_sends(&new_keys())
-//     .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
-//     .expect_event(expect_ssh_event)
-//     .run_v2(&td, &cap)
-//     .await
-//     .expect("ssh scenario");
-//     set_event_capture(None);
-// }
+#[tokio::test]
+async fn ssh_l4_stage_forwards_ext_info_before_server_newkeys() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_tcp_allow_warn_bundle())
+        .build()
+        .await
+        .expect("test daemon");
+    let expect_ssh_event = event!(|e: &raptorgate_testkit::Event| matches!(
+        &e.kind,
+        raptorgate_testkit::EventKind::DecidedAppProtocol { protocol, .. }
+            if *protocol == ngfw::l4::AppProto::Ssh
+    ));
+    Scenario::tcp(
+        SocketV4 { ip: [192, 168, 10, 52], port: 40_124 },
+        SocketV4 { ip: [192, 168, 20, 24], port: 22 },
+    )
+    .open()
+    .client_sends(b"SSH-2.0-OpenSSH_8.9\r\n")
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .server_sends(b"SSH-2.0-dropbear_2022.83\r\n")
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .client_sends(&real_openssh_client_kex_init())
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .server_sends(&real_openssh_sshd_kex_init())
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .client_sends(&dh_init_minimal())
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .server_sends(&dh_reply_minimal())
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .client_sends(&new_keys())
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .client_sends(&ext_info())
+    .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Forward))
+    .server_sends(&new_keys())
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .expect_event(expect_ssh_event)
+    .run_v2(&td, &cap)
+    .await
+    .expect("ssh scenario");
+    set_event_capture(None);
+}
 
 const CLIENT_KEXINIT_PART1_HEX: &str = "000005fc0714f07b23c9c235d3643352984a654fa14200000131736e747275703736317832353531392d736861353132406f70656e7373682e636f6d2c637572766532353531392d7368613235362c637572766532353531392d736861323536406c69627373682e6f72672c656364682d736861322d6e697374703235362c656364682d736861322d6e697374703338342c656364682d736861322d6e697374703532312c6469666669652d68656c6c6d616e2d67726f75702d65786368616e67652d7368613235362c6469666669652d68656c6c6d616e2d67726f757031362d7368613531322c6469666669652d68656c6c6d616e2d67726f757031382d7368613531322c6469666669652d68656c6c6d616e2d67726f757031342d7368613235362c6578742d696e666f2d632c6b65782d7374726963742d632d763030406f70656e7373682e636f6d000001cf7373682d656432353531392d636572742d763031406f70656e7373682e636f6d2c65636473612d736861322d6e697374703235362d636572742d763031406f70656e7373682e636f6d2c65636473612d736861322d6e697374703338342d636572742d763031406f70656e7373682e636f6d2c65636473612d736861322d6e697374703532312d636572742d763031406f70656e7373682e636f6d2c736b2d7373682d656432353531392d636572742d763031406f70656e7373682e636f6d2c736b2d65636473612d736861322d6e697374703235362d636572742d763031406f70656e7373682e636f6d2c7273612d736861322d3531322d636572742d763031406f70656e7373682e636f6d2c7273612d736861322d3235362d636572742d763031406f70656e7373682e636f6d2c7373682d656432353531392c65636473612d736861322d6e697374703235362c65636473612d736861322d6e697374703338342c65636473612d736861322d6e697374703532312c736b2d7373682d65643235353139406f70656e7373682e636f6d2c736b2d65636473612d736861322d6e69737470323536406f70656e7373682e636f6d2c7273612d736861322d3531322c7273612d736861322d3235360000006c63686163686132302d706f6c7931333035406f70656e7373682e636f6d2c6165733132382d6374722c6165733139322d6374722c6165733235362d6374722c6165733132382d67636d406f70656e7373682e636f6d2c6165733235362d67636d406f70656e7373682e636f6d0000006c63686163686132302d706f6c7931333035406f70656e7373682e636f6d2c6165733132382d6374722c6165733139322d6374722c6165733235362d6374722c6165733132382d67636d406f70656e7373682e636f6d2c6165733235362d67636d406f70656e7373682e636f6d000000d5756d61632d36342d65746d406f70656e7373682e636f6d2c756d61632d3132382d65746d406f70656e7373682e636f6d2c686d61632d736861322d3235362d65746d406f70656e7373682e636f6d2c686d61632d736861322d3531322d65746d406f70656e7373682e636f6d2c686d61632d736861312d65746d406f70656e7373682e636f6d2c756d61632d3634406f70656e7373682e636f6d2c756d61632d313238406f70656e7373682e636f6d2c686d61632d736861322d3235362c686d61632d736861322d3531322c686d61632d73686131000000d5756d61632d36342d65746d406f70656e7373682e636f6d2c756d61632d3132382d65746d406f70656e7373682e636f6d2c686d61632d736861322d3235362d65746d406f70656e7373682e636f6d2c686d61632d736861322d3531322d65746d406f70656e7373682e636f6d2c686d61632d736861312d65746d406f70656e7373682e636f6d2c756d61632d3634406f70656e7373682e636f6d2c756d61632d313238406f70656e7373682e636f6d2c686d61632d736861322d3235362c686d61632d736861322d3531322c68";
 
