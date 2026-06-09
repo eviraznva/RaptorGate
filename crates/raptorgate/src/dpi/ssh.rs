@@ -4,7 +4,9 @@ use ssh_parser::{SshPacket, SshVersion, parse_ssh_identification, parse_ssh_pack
 
 use crate::{conntrack::tuple::Direction, data_plane::packet_context::PacketId, dpi::smtp::{BufferingDisposition, PacketAction, UnitStatus, smtp_policy_retriever::SmtpPolicyRetriever}, l4::{AppProto, L4Outcome, SessionContext}, zones::resolver::ZoneResolver};
 
-const MAX_HANDSHAKE_PACKET_SIZE: usize = 2048;
+use tracing;
+
+const MAX_HANDSHAKE_PACKET_SIZE: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SshHost {
@@ -22,14 +24,14 @@ impl From<Direction> for SshHost {
 }
 
 #[derive(Debug, Clone)]
-enum SshState {
+pub(crate) enum SshState {
     Clear(ClearStage),
     PartiallyEncrypted(SshHost),
     Encrypted,
 }
 
 #[derive(Debug, Clone)]
-enum ClearState {
+pub(crate) enum ClearState {
     VersionExchange,
     AlgorithmNegotiation,
     KeyExchange,
@@ -37,7 +39,7 @@ enum ClearState {
 }
 
 #[derive(Debug, Clone)]
-struct ClearStage {
+pub(crate) struct ClearStage {
     state: ClearState,
     expected_host: SshHost,
 }
@@ -183,14 +185,25 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
         }
 
         if matches!(self.state, SshState::Clear(ClearStage { state: ClearState::VersionExchange, .. })) {
-            let Ok((_, _)) = parse_ssh_identification(&body) else { return Err(()) };
-            self.state.advance_with_version(host).map_err(|_| ())
+            if parse_ssh_identification(&body).is_err() {
+                tracing::info!("SSH ERROR invalid version line from {host:?} in state={:?}, packet=version", self.state);
+                return Err(());
+            }
+            self.state.advance_with_version(host).map_err(|_| {
+                tracing::info!("SSH ERROR unexpected version from {host:?} in state={:?}", self.state);
+            })
         } else {
             let mut wire = Vec::with_capacity(4 + body.len());
             wire.extend_from_slice(&(body.len() as u32).to_be_bytes());
             wire.extend_from_slice(&body);
-            let Ok((_, (packet, _))) = parse_ssh_packet(&wire) else { return Err(()) };
-            self.state.advance_with_packet(&packet, host).map_err(|_| ())
+            if parse_ssh_packet(&wire).is_err() {
+                tracing::info!("SSH ERROR invalid packet body (len={}) from {host:?} in state={:?}, packet=unknown", body.len(), self.state);
+                return Err(());
+            }
+            let (_, (packet, _)) = parse_ssh_packet(&wire).expect("just checked");
+            self.state.advance_with_packet(&packet, host).map_err(|_| {
+                tracing::info!("SSH ERROR unexpected packet {packet:?} from {host:?} in state={:?}", self.state);
+            })
         }
     }
 
@@ -204,8 +217,14 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
         let host = SshHost::from(dir);
 
         match &self.state {
-            SshState::Encrypted => return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete },
-            SshState::PartiallyEncrypted(h) if *h == host => return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete },
+            SshState::Encrypted => {
+                tracing::info!("SSH FORWARDED encrypted data from {host:?}");
+                return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
+            }
+            SshState::PartiallyEncrypted(h) if *h == host => {
+                tracing::info!("SSH FORWARDED partially encrypted data from {host:?}");
+                return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
+            }
             _ => {},
         }
 
@@ -216,16 +235,20 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
             let verdict = self.get_assembler_for(host).take(&stage);
             match verdict {
                 AssemblerVerdict::NeedMore => {
+                    tracing::info!("SSH FORWARDED incomplete message from {host:?}");
                     return BufferingDisposition { packet: PacketAction::QueueAndHalt, unit: UnitStatus::Incomplete };
                 }
                 AssemblerVerdict::TooLarge | AssemblerVerdict::Invalid => {
                     if !self.confirmed_ssh {
+                        tracing::info!("SSH FORWARDED non-ssh data from {host:?}");
                         return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
                     }
+                    tracing::info!("SSH ERROR invalid/too-large from {host:?} after confirmed ssh, state={stage:?}");
                     return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete };
                 }
                 AssemblerVerdict::PacketComplete(body) => {
                     if self.handle_complete_message(ctx, body, host).is_err() {
+                        tracing::info!("SSH ERROR handle_complete_message failed for {host:?}, state={stage:?}");
                         return BufferingDisposition { packet: PacketAction::Drop, unit: UnitStatus::Complete };
                     }
                     let should_pass = match &self.state {
@@ -234,6 +257,7 @@ impl<ZR> SshSession<ZR> where ZR: ZoneResolver {
                         _ => false,
                     };
                     if should_pass {
+                        tracing::info!("SSH FORWARDED encrypted complete message from {host:?}");
                         self.get_assembler_for(host).clear();
                         return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
                     }
@@ -256,9 +280,11 @@ impl SshPacketAssembler {
 
     pub fn push(&mut self, payload: &[u8]) {
         if self.overflowed {
+            tracing::info!("SSH ERROR assembler overflowed, dropping {} bytes", payload.len());
             return;
         }
         if self.buffer.len() + payload.len() > MAX_HANDSHAKE_PACKET_SIZE {
+            tracing::info!("SSH ERROR assembler buffer would exceed max size (buffer={}, payload={}), clearing", self.buffer.len(), payload.len());
             self.buffer.clear();
             self.overflowed = true;
             return;
@@ -268,6 +294,7 @@ impl SshPacketAssembler {
 
     pub fn take(&mut self, stage: &SshState) -> AssemblerVerdict {
         if self.overflowed {
+            tracing::info!("SSH ERROR assembler returning TooLarge from overflowed state");
             self.overflowed = false;
             return AssemblerVerdict::TooLarge;
         }
@@ -287,6 +314,7 @@ impl SshPacketAssembler {
         let declared_length = u32::from_be_bytes(self.buffer[..4].try_into().unwrap_or([0, 0, 0, 0]));
 
         if declared_length > MAX_HANDSHAKE_PACKET_SIZE as u32 || declared_length == 0 {
+            tracing::info!("SSH ERROR invalid declared length {} from buffer len={} stage={stage:?}", declared_length, self.buffer.len());
             return AssemblerVerdict::Invalid;
         }
 
@@ -512,8 +540,8 @@ mod tests {
     #[test]
     fn version_exchange_too_large() {
         let mut a = SshPacketAssembler::new();
-        let cycle1 = vec![b'X'; 2052];
-        let cycle2 = vec![b'X'; 2052];
+        let cycle1 = vec![b'X'; 992_052];
+        let cycle2 = vec![b'X'; 992_052];
         let v = run_two_cycles(
             &mut a,
             &cycle1,
@@ -586,8 +614,8 @@ mod tests {
     #[test]
     fn regular_too_large() {
         let mut a = SshPacketAssembler::new();
-        let cycle1 = vec![b'X'; 2052];
-        let cycle2 = vec![b'X'; 2052];
+        let cycle1 = vec![b'X'; 992_052];
+        let cycle2 = vec![b'X'; 992_052];
         let v = run_two_cycles(
             &mut a,
             &cycle1,
