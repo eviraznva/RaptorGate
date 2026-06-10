@@ -1428,12 +1428,24 @@ pub struct SmtpStage {
     pub tracker: Arc<SmtpTracker>,
 }
 
+// Only engage on SMTP ports. The tracker queues-and-halts payloads that
+// parse as incomplete SMTP lines (no LF), which black-holes binary
+// protocols like SSH if it runs on every TCP flow.
+fn smtp_stage_applicable(ctx: &PacketContext) -> bool {
+    if ctx.ct().is_none() {
+        return false;
+    }
+    match &ctx.borrow_sliced_packet().transport {
+        Some(TransportSlice::Tcp(tcp)) => {
+            matches!(tcp.source_port(), 25 | 587) || matches!(tcp.destination_port(), 25 | 587)
+        }
+        _ => false,
+    }
+}
+
 impl Stage for SmtpStage {
     fn is_applicable(&self, ctx: &PacketContext) -> bool {
-        ctx.ct().is_some() && matches!(
-            ctx.borrow_sliced_packet().transport,
-            Some(TransportSlice::Tcp(_))
-        )
+        smtp_stage_applicable(ctx)
     }
 
     async fn process(&self, ctx: &mut PacketContext, _tx: &ExecutionSender) -> StageOutcome {
@@ -1748,6 +1760,44 @@ mod tests {
             packet_destination_ip(&ctx),
             Some("192.168.20.10".parse().unwrap())
         );
+    }
+
+    #[test]
+    fn smtp_stage_applies_only_to_smtp_ports() {
+        use std::time::Duration;
+        use crate::conntrack::entry::{ConntrackEntry, CtInfo};
+        use crate::conntrack::proto::tcp::TcpProtoState;
+        use crate::conntrack::proto::ProtoState;
+        use crate::conntrack::tuple::{FlowTuple, Protocol};
+
+        let ctx_for = |dst_port: u16| {
+            let mut ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], dst_port, "eth1");
+            let tuple = FlowTuple::new(
+                "10.0.0.1".parse().unwrap(),
+                12345,
+                "192.168.20.10".parse().unwrap(),
+                dst_port,
+                Protocol::Tcp,
+            );
+            let entry = Arc::new(ConntrackEntry::new(
+                1,
+                tuple,
+                ProtoState::Tcp(TcpProtoState::default()),
+                Duration::from_secs(60),
+                0,
+            ));
+            ctx.set_conntrack(entry, CtInfo::New, Direction::Original, true);
+            ctx
+        };
+
+        assert!(!smtp_stage_applicable(&ctx_for(22)), "SSH must not enter SMTP tracker");
+        assert!(!smtp_stage_applicable(&ctx_for(443)));
+        assert!(smtp_stage_applicable(&ctx_for(25)));
+        assert!(smtp_stage_applicable(&ctx_for(587)));
+
+        // no conntrack entry → not applicable even on SMTP port
+        let ctx = tcp_context([10, 0, 0, 1], [192, 168, 20, 10], 25, "eth1");
+        assert!(!smtp_stage_applicable(&ctx));
     }
 
     #[tokio::test]
