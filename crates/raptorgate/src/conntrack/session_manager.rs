@@ -1041,14 +1041,36 @@ where
 
         let queued_payloads = if let Some(pending_arc) = self.pending_by_flow.get(&flow) {
             let mut pending = pending_arc.lock().expect("session pending");
+            tracing::trace!(
+                dir = ?dir,
+                packet_id = ?chunk.packet_id,
+                payload_len = chunk.payload.len(),
+                queue_len = pending.payloads.len(),
+                map_len = pending.map.len(),
+                "on_ct_payload push"
+            );
             pending.payloads.push_back(PendingPayload {
                 packet_id: chunk.packet_id,
                 dir,
                 bytes: chunk.payload.clone(),
                 tcp_payload_start_seq: chunk.tcp_payload_start_seq,
             });
-            take_ready_payloads(&mut pending)
+            let ready = take_ready_payloads(&mut pending);
+            tracing::trace!(
+                dir = ?dir,
+                ready_len = ready.len(),
+                queue_len = pending.payloads.len(),
+                map_len = pending.map.len(),
+                "on_ct_payload take"
+            );
+            ready
         } else {
+            tracing::trace!(
+                dir = ?dir,
+                packet_id = ?chunk.packet_id,
+                payload_len = chunk.payload.len(),
+                "on_ct_payload no pending"
+            );
             vec![PendingPayload {
                 packet_id: chunk.packet_id,
                 dir,

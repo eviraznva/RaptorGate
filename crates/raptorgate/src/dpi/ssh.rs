@@ -257,7 +257,13 @@ where
             return BufferingDisposition { packet: PacketAction::Pass, unit: UnitStatus::Complete };
         }
 
+        let payload_len = payload.len();
         self.host_assembler(host).push(payload);
+        let buffer_len = self.host_assembler(host).buffer_len();
+        tracing::trace!(
+            "SSH ASSEMBLER pushed {payload_len} bytes to {host:?}, buffer now {buffer_len} bytes, state={:?}",
+            self.host_state(host),
+        );
 
         loop {
             let state = self.host_state(host).clone();
@@ -266,8 +272,8 @@ where
                 AssemblerVerdict::NeedMore => {
                     tracing::info!("SSH FORWARDED incomplete message from {host:?}");
                     return BufferingDisposition {
-                        packet: PacketAction::QueueAndHalt,
-                        unit: UnitStatus::Incomplete,
+                        packet: PacketAction::Pass,
+                        unit: UnitStatus::Complete,
                     };
                 }
                 AssemblerVerdict::TooLarge | AssemblerVerdict::Invalid => {
@@ -278,8 +284,9 @@ where
                             unit: UnitStatus::Complete,
                         };
                     }
+                    let hexdump: String = self.host_assembler(host).buffer_dump();
                     tracing::info!(
-                        "SSH ERROR invalid/too-large from {host:?} after confirmed ssh, state={state:?}"
+                        "SSH ERROR invalid/too-large from {host:?} after confirmed ssh, state={state:?} hex={hexdump}"
                     );
                     return BufferingDisposition {
                         packet: PacketAction::Drop,
@@ -321,6 +328,10 @@ impl SshPacketAssembler {
         Self { buffer: Vec::new(), overflowed: false }
     }
 
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.len()
+    }
+
     pub fn push(&mut self, payload: &[u8]) {
         if self.overflowed {
             tracing::info!("SSH ERROR assembler overflowed, dropping {} bytes", payload.len());
@@ -347,10 +358,18 @@ impl SshPacketAssembler {
                 let line: Vec<u8> = self.buffer.drain(..pos + 1).collect();
                 return AssemblerVerdict::PacketComplete(line);
             }
+            tracing::trace!(
+                "SSH ASSEMBLER NeedMore (version): buffer.len={}",
+                self.buffer.len()
+            );
             return AssemblerVerdict::NeedMore;
         }
 
         if self.buffer.len() < 4 {
+            tracing::trace!(
+                "SSH ASSEMBLER NeedMore (no header): buffer.len={}",
+                self.buffer.len()
+            );
             return AssemblerVerdict::NeedMore;
         }
 
@@ -369,6 +388,12 @@ impl SshPacketAssembler {
                     .collect()
             )
         } else {
+            tracing::trace!(
+                "SSH ASSEMBLER NeedMore (partial): declared_length={} buffer.len={} need={}",
+                declared_length,
+                self.buffer.len(),
+                4 + declared_length,
+            );
             AssemblerVerdict::NeedMore
         }
     }
@@ -376,6 +401,15 @@ impl SshPacketAssembler {
     pub fn clear(&mut self) {
         self.buffer.clear();
         self.overflowed = false;
+    }
+
+    pub fn buffer_dump(&self) -> String {
+        let n = self.buffer.len().min(32);
+        self.buffer[..n]
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
