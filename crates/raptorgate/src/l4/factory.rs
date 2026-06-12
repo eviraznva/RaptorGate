@@ -352,7 +352,11 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
 
+    use uuid::Uuid;
+
     use crate::policy::provider::DiskPolicyProvider;
+    use crate::policy::{Policy, PolicyId, SmtpPolicy, SshPolicy};
+    use crate::rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
     use crate::conntrack::proto::tcp::TcpProtoState;
     use crate::conntrack::proto::udp::UdpProtoState;
     use crate::conntrack::proto::ProtoState;
@@ -423,9 +427,27 @@ mod tests {
     }
 
     fn policy_retriever() -> Arc<PolicyRetriever<StubZoneResolver>> {
+        let zone_pair_id = ZonePairId::from(Uuid::nil());
+        let policy_id = PolicyId::from(Uuid::from_u128(1));
+        let mut policies = HashMap::new();
+        policies.insert(
+            policy_id,
+            Policy {
+                name: "factory-test".to_string(),
+                zone_pair_id,
+                priority: 0,
+                rule_tree: RuleTree::new(
+                    MatchBuilder::with_arm(MatchKind::IpVer, Pattern::Wildcard, ArmEnd::Verdict(Verdict::Allow))
+                        .build()
+                        .unwrap(),
+                ),
+                smtp_policy: SmtpPolicy::default(),
+                ssh_policy: SshPolicy::permissive(),
+            },
+        );
         Arc::new(PolicyRetriever::new(
             Arc::new(StubZoneResolver),
-            Arc::new(DiskPolicyProvider::from_policies(HashMap::new(), PathBuf::from("/tmp"))),
+            Arc::new(DiskPolicyProvider::from_policies(policies, PathBuf::from("/tmp"))),
         ))
     }
 
