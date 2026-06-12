@@ -7,7 +7,8 @@ pub mod scenario;
 pub mod static_infra;
 
 pub use config_bundle::{
-    physical_zone_interface, smoke_icmp_allow_warn_bundle, smoke_tcp_allow_warn_bundle,
+    permissive_ssh_matchers, physical_zone_interface, smoke_icmp_allow_warn_bundle,
+    smoke_tcp_allow_warn_bundle, smoke_tcp_allow_warn_bundle_with_ssh,
     ConfigBundleBuilder,
 };
 pub use conntrack_queries::ConntrackSnapshotExt;

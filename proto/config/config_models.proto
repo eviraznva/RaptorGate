@@ -24,6 +24,36 @@ message SmtpMatchers {
   repeated SmtpMatch message = 3;
 }
 
+message SshMatch {
+  string regex = 1;
+  SshMatchAction on_match = 2;
+}
+
+enum SshMatchAction {
+  SSH_MATCH_ACTION_UNSPECIFIED = 0;
+  SSH_MATCH_ACTION_ALLOW = 1;
+  SSH_MATCH_ACTION_DENY = 2;
+}
+
+message SshReasonMatch {
+  repeated uint32 codes = 1;
+  SshMatchAction on_match = 2;
+}
+
+message SshMatchers {
+  repeated SshMatch client_software = 1;
+  repeated SshMatch server_software = 2;
+  repeated SshMatch client_proto_version = 3;
+  repeated SshMatch server_proto_version = 4;
+  repeated SshMatch kex = 5;
+  repeated SshMatch host_key_alg = 6;
+  repeated SshMatch cipher = 7;
+  repeated SshMatch mac = 8;
+  repeated SshMatch compression = 9;
+  repeated SshMatch host_key_type = 10;
+  repeated SshReasonMatch disconnect_reason = 11;
+}
+
 message Rule {
   string id           = 1;
   string name         = 2;
@@ -31,6 +61,7 @@ message Rule {
   uint32 priority     = 4;
   string content      = 5;  // źródło reguły w języku RaptorLang
   optional SmtpMatchers smtp_matchers = 6;
+  optional SshMatchers ssh_matchers = 7;
 }
 
 message RuleSet {

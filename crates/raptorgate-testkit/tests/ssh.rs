@@ -1,5 +1,7 @@
 use std::sync::Arc;
+
 use raptorgate_testkit::{
+    config_bundle::{permissive_ssh_matchers, smoke_tcp_allow_warn_bundle_with_ssh},
     event, event_capture_concurrency_mutex, set_event_capture, smoke_tcp_allow_warn_bundle,
     EventCapture, Expectation, PacketDispositionOutcome, PipelineOutcome, Scenario, SocketV4,
     TestDaemon,
@@ -343,5 +345,42 @@ async fn ssh_replays_pcap_fragmented_handshake() {
     .run_v2(&td, &cap)
     .await
     .expect("ssh pcap replay scenario");
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn ssh_l4_permissive_bundle_allows_real_openssh_negotiation() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_tcp_allow_warn_bundle_with_ssh(permissive_ssh_matchers()))
+        .build()
+        .await
+        .expect("test daemon");
+
+    Scenario::tcp(
+        SocketV4 {
+            ip: [192, 168, 10, 61],
+            port: 40_131,
+        },
+        SocketV4 {
+            ip: [192, 168, 20, 31],
+            port: 22,
+        },
+    )
+    .open()
+    .client_sends(b"SSH-2.0-OpenSSH_8.9\r\n")
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .server_sends(b"SSH-2.0-dropbear_2022.83\r\n")
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .client_sends(&real_openssh_client_kex_init())
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .server_sends(&real_openssh_sshd_kex_init())
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .run_v2(&td, &cap)
+    .await
+    .expect("ssh permissive negotiated scenario");
     set_event_capture(None);
 }

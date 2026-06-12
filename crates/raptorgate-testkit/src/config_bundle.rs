@@ -1,7 +1,38 @@
 use ngfw::proto::common::DefaultPolicy;
-use ngfw::proto::config::{InterfaceStatus, PhysicalInterface, Rule, Zone, ZoneInterface, ZonePair};
+use ngfw::proto::config::{
+    InterfaceStatus, PhysicalInterface, Rule, SshMatch, SshMatchAction, SshMatchers, Zone,
+    ZoneInterface, ZonePair,
+};
 use ngfw::proto::services::ConfigBundle;
 use uuid::Uuid;
+
+pub fn smoke_tcp_allow_warn_bundle_with_ssh(ssh_matchers: SshMatchers) -> ConfigBundle {
+    let mut bundle = smoke_tcp_allow_warn_bundle();
+    for rule in &mut bundle.rules {
+        rule.ssh_matchers = Some(ssh_matchers.clone());
+    }
+    bundle
+}
+
+pub fn permissive_ssh_matchers() -> SshMatchers {
+    let allow = SshMatch {
+        regex: ".*".to_string(),
+        on_match: SshMatchAction::Allow as i32,
+    };
+    SshMatchers {
+        client_software: vec![allow.clone()],
+        server_software: vec![allow.clone()],
+        client_proto_version: vec![allow.clone()],
+        server_proto_version: vec![allow.clone()],
+        kex: vec![allow.clone()],
+        host_key_alg: vec![allow.clone()],
+        cipher: vec![allow.clone()],
+        mac: vec![allow.clone()],
+        compression: vec![allow.clone()],
+        host_key_type: vec![allow],
+        disconnect_reason: vec![],
+    }
+}
 
 pub struct ConfigBundleBuilder {
     inner: ConfigBundle,
@@ -48,6 +79,7 @@ impl ConfigBundleBuilder {
 	"#
             .to_string(),
             smtp_matchers: None,
+            ssh_matchers: None,
         };
 
         Self {
@@ -174,6 +206,7 @@ pub fn smoke_icmp_allow_warn_bundle() -> ConfigBundle {
           "#
             .to_string(),
             smtp_matchers: None,
+            ssh_matchers: None,
         },
         Rule {
             id: Uuid::now_v7().to_string(),
@@ -189,6 +222,7 @@ pub fn smoke_icmp_allow_warn_bundle() -> ConfigBundle {
           "#
             .to_string(),
             smtp_matchers: None,
+            ssh_matchers: None,
         },
     ];
 
@@ -258,6 +292,7 @@ pub fn smoke_tcp_allow_warn_bundle() -> ConfigBundle {
           "#
             .to_string(),
             smtp_matchers: None,
+            ssh_matchers: Some(permissive_ssh_matchers()),
         },
         Rule {
             id: Uuid::now_v7().to_string(),
@@ -273,6 +308,7 @@ pub fn smoke_tcp_allow_warn_bundle() -> ConfigBundle {
           "#
             .to_string(),
             smtp_matchers: None,
+            ssh_matchers: Some(permissive_ssh_matchers()),
         },
     ];
 

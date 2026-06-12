@@ -62,6 +62,7 @@ fn drop_tcp_bundle() -> ngfw::proto::services::ConfigBundle {
           "#
         .to_string(),
         smtp_matchers: None,
+        ssh_matchers: None,
     }];
 
     ConfigBundleBuilder::new()

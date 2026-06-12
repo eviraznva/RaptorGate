@@ -21,7 +21,7 @@ use ngfw::data_plane::ips::config::IpsConfig;
 use ngfw::data_plane::ips::ips::Ips;
 use ngfw::SingleDiskStore;
 use ngfw::dpi::smtp::SmtpTracker;
-use ngfw::dpi::smtp::smtp_policy_retriever::SmtpPolicyRetriever;
+use ngfw::policy::retriever::PolicyRetriever;
 use ngfw::dpi::DpiClassifier;
 use ngfw::identity::IdentitySessionStore;
 use ngfw::ip_defrag::{DefragConfig, IpDefragEngine};
@@ -76,7 +76,7 @@ pub struct TestDeps {
     pub interface_monitor: Arc<NetworkInterfaceMonitor>,
     pub helpers: Arc<HelperRegistry>,
     pub smtp_tracker: Arc<SmtpTracker>,
-    pub smtp_policy_retriever: Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>,
+    pub policy_retriever: Arc<PolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>,
     pub tls_l4_inspection: Option<Arc<TlsL4InspectionConfig>>,
 }
 
@@ -108,7 +108,7 @@ impl DaemonDeps for TestDeps {
             interface_monitor: &self.interface_monitor,
             helpers: &self.helpers,
             smtp_tracker: &self.smtp_tracker,
-            smtp_policy_retriever: &self.smtp_policy_retriever,
+            policy_retriever: &self.policy_retriever,
             tls_l4_inspection: &self.tls_l4_inspection,
         }
     }
@@ -419,11 +419,11 @@ impl TestDaemonBuilder {
         nat_engine.attach_conntrack(&conntrack);
         conntrack.register_observer(Arc::clone(&nat_engine) as Arc<dyn ngfw::conntrack::observer::CtObserver>);
 
-        let smtp_policy_retriever = Arc::new(SmtpPolicyRetriever::new(
+        let policy_retriever = Arc::new(PolicyRetriever::new(
             Arc::clone(&zone_resolver),
             Arc::clone(&policy_store),
         ));
-        let smtp_tracker = Arc::new(SmtpTracker::new(Arc::clone(&smtp_policy_retriever)));
+        let smtp_tracker = Arc::new(SmtpTracker::new(Arc::clone(&policy_retriever)));
         conntrack.register_observer(Arc::clone(&smtp_tracker) as Arc<dyn ngfw::conntrack::observer::CtObserver>);
 
         let helpers = {
@@ -472,7 +472,7 @@ impl TestDaemonBuilder {
             interface_monitor,
             helpers,
             smtp_tracker,
-            smtp_policy_retriever,
+            policy_retriever,
             tls_l4_inspection: None,
         });
 

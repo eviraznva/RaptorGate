@@ -63,6 +63,7 @@ pub fn dual_zone_allow_ipv4_bundle() -> ConfigBundle {
             priority: 0,
             content: allow_v4.to_string(),
             smtp_matchers: None,
+            ssh_matchers: None,
         },
         Rule {
             id: Uuid::now_v7().to_string(),
@@ -71,6 +72,7 @@ pub fn dual_zone_allow_ipv4_bundle() -> ConfigBundle {
             priority: 0,
             content: allow_v4.to_string(),
             smtp_matchers: None,
+            ssh_matchers: None,
         },
     ];
 
@@ -140,6 +142,7 @@ pub fn dual_zone_allow_ipv4_smtp_bundle(smtp_matchers: SmtpMatchers) -> ConfigBu
             priority: 0,
             content: allow_v4.to_string(),
             smtp_matchers: Some(smtp_matchers),
+            ssh_matchers: None,
         },
         Rule {
             id: Uuid::now_v7().to_string(),
@@ -148,6 +151,7 @@ pub fn dual_zone_allow_ipv4_smtp_bundle(smtp_matchers: SmtpMatchers) -> ConfigBu
             priority: 0,
             content: allow_v4.to_string(),
             smtp_matchers: None,
+            ssh_matchers: None,
         },
     ];
 
@@ -193,6 +197,7 @@ pub fn default_zone_dual_iface_dst_port_rule_bundle() -> ConfigBundle {
         }"#
         .to_string(),
         smtp_matchers: None,
+        ssh_matchers: None,
     }];
 
     ConfigBundleBuilder::new()
