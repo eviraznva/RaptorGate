@@ -612,15 +612,31 @@ fn tcp_in_window(state: &mut TcpProtoState, tcp: &TcpSlice, flags: TcpFlags, dir
 
     let in_window = cond1 && cond2 && cond3 && cond4;
 
+    let has_ack = flags.contains(TcpFlags::ACK);
+
     if in_window {
-        update_sender_after_accept(&mut state.seen[sender_idx], end, ack, win);
+        update_window_after_accept_in_seen(
+            &mut state.seen,
+            sender_idx,
+            end,
+            ack,
+            win,
+            has_ack,
+        );
 
         record_last(&mut state.seen[sender_idx], seq, ack, end, win_raw, scale, flags);
         infer_reply_from_accepted_original_ack(state, tcp, flags, dir);
 
         WindowVerdict::InWindow
     } else if config.tcp.be_liberal {
-        update_sender_after_accept(&mut state.seen[sender_idx], end, ack, win);
+        update_window_after_accept_in_seen(
+            &mut state.seen,
+            sender_idx,
+            end,
+            ack,
+            win,
+            has_ack,
+        );
 
         record_last(&mut state.seen[sender_idx], seq, ack, end, win_raw, scale, flags);
         infer_reply_from_accepted_original_ack(state, tcp, flags, dir);
@@ -689,10 +705,59 @@ fn tcp_sack(receiver: &mut TcpDirState, blocks: &[(u32, u32)]) {
     }
 }
 
-/// Wrapper na `update_sender_after_accept` używający surowego pakietu — używany
+fn update_window_after_accept_in_seen(
+    seen: &mut [TcpDirState; 2],
+    sender_idx: usize,
+    end: u32,
+    ack: u32,
+    win: u32,
+    has_ack: bool,
+) {
+    let (left, right) = seen.split_at_mut(1);
+    let (sender, receiver) = if sender_idx == 0 {
+        (&mut left[0], &mut right[0])
+    } else {
+        (&mut right[0], &mut left[0])
+    };
+    update_window_after_accept(sender, receiver, end, ack, win, has_ack);
+}
+
+fn update_window_after_accept(
+    sender: &mut TcpDirState,
+    receiver: &mut TcpDirState,
+    end: u32,
+    ack: u32,
+    win: u32,
+    has_ack: bool,
+) {
+    if sender.td_end == 0 || seq_after(end, sender.td_end) {
+        sender.td_end = end;
+    }
+
+    if win > sender.td_maxwin {
+        sender.td_maxwin = win;
+    }
+
+    let sender_maxend = sender.td_end.wrapping_add(receiver.td_maxwin.max(1));
+    if sender.td_maxend == 0 || seq_after(sender_maxend, sender.td_maxend) {
+        sender.td_maxend = sender_maxend;
+    }
+
+    if has_ack {
+        let mut receiver_maxend = ack.wrapping_add(win);
+        if win == 0 {
+            receiver_maxend = receiver_maxend.wrapping_add(1);
+        }
+        if receiver.td_maxend == 0 || seq_after(receiver_maxend, receiver.td_maxend) {
+            receiver.td_maxend = receiver_maxend;
+        }
+    }
+}
+
+/// Wrapper na `update_window_after_accept` używający surowego pakietu — używany
 /// w jednostkowych testach żeby walidować zachowanie aktualizacji per pakiet.
 #[cfg(test)]
-fn update_sender_state(seen: &mut TcpDirState, tcp: &TcpSlice, flags: TcpFlags) {
+fn update_sender_state(seen: &mut [TcpDirState; 2], dir: Direction, tcp: &TcpSlice, flags: TcpFlags) {
     let seq = tcp.sequence_number();
     let ack = tcp.acknowledgment_number();
 
@@ -702,30 +767,33 @@ fn update_sender_state(seen: &mut TcpDirState, tcp: &TcpSlice, flags: TcpFlags) 
     let syn_fin = u32::from(flags.contains(TcpFlags::SYN)) + u32::from(flags.contains(TcpFlags::FIN));
     let end = seq.wrapping_add(payload).wrapping_add(syn_fin);
 
-    let win_eff = if seen.td_scale > 0 { win_raw << seen.td_scale } else { win_raw }.max(1);
+    let sender_idx = dir as usize;
+    let scale = seen[sender_idx].td_scale;
+    let win = if scale > 0 { win_raw << scale } else { win_raw };
 
-    update_sender_after_accept(seen, end, ack, win_eff);
-}
-
-fn update_sender_after_accept(s: &mut TcpDirState, end: u32, ack: u32, win: u32) {
-    if s.td_end == 0 || seq_after(end, s.td_end) {
-        s.td_end = end;
-    }
-
-    let maxend = ack.wrapping_add(win.max(1));
-
-    if s.td_maxend == 0 || seq_after(maxend, s.td_maxend) {
-        s.td_maxend = maxend;
-    }
-
-    if win > s.td_maxwin { s.td_maxwin = win; }
+    update_window_after_accept_in_seen(
+        seen,
+        sender_idx,
+        end,
+        ack,
+        win,
+        flags.contains(TcpFlags::ACK),
+    );
 }
 
 pub(crate) fn record_generated_tcp_segment(state: &mut TcpProtoState, dir: Direction, seq: u32, ack: u32, payload_len: u32, win: u32) {
     let end = seq.wrapping_add(payload_len);
     let dir_idx = dir as usize;
     let scale = state.seen[dir_idx].td_scale;
-    update_sender_after_accept(&mut state.seen[dir_idx], end, ack, win.max(1));
+    let win_eff = win.max(1);
+    update_window_after_accept_in_seen(
+        &mut state.seen,
+        dir_idx,
+        end,
+        ack,
+        win_eff,
+        true,
+    );
     record_last(&mut state.seen[dir_idx], seq, ack, end, win, scale, TcpFlags::ACK);
     state.last_dir = Some(dir);
     state.last_index = TcpFlagBit::Ack;
@@ -1738,100 +1806,252 @@ mod tests {
 
     #[test]
     fn update_sender_state_initializes_from_zero() {
-        let mut seen = TcpDirState::default();
+        let mut seen = [TcpDirState::default(), TcpDirState::default()];
 
         let buf = syn_packet_seq(1000);
 
         let tcp = extract_tcp_slice(&buf);
 
-        update_sender_state(&mut seen, &tcp, parse_flags(&tcp));
+        update_sender_state(&mut seen, Direction::Original, &tcp, parse_flags(&tcp));
 
         // SYN konsumuje 1 seq → td_end = 1001.
-        assert_eq!(seen.td_end, 1001);
+        assert_eq!(seen[0].td_end, 1001);
         // td_maxwin ≥ raw window (5840) bo bez scale.
-        assert!(seen.td_maxwin >= 5840);
+        assert!(seen[0].td_maxwin >= 5840);
     }
 
     #[test]
     fn update_sender_state_advances_only_forward() {
-        let mut seen = TcpDirState { td_end: 5000, td_maxwin: 4000, ..Default::default() };
+        let mut seen = [
+            TcpDirState { td_end: 5000, td_maxwin: 4000, ..Default::default() },
+            TcpDirState::default(),
+        ];
 
         // Pakiet z mniejszym seq (retransmit) nie powinien cofać td_end.
         let buf = ack_packet(2000, 0, 4000);
         let tcp = extract_tcp_slice(&buf);
 
-        update_sender_state(&mut seen, &tcp, parse_flags(&tcp));
+        update_sender_state(&mut seen, Direction::Original, &tcp, parse_flags(&tcp));
 
-        assert_eq!(seen.td_end, 5000);  // bez zmian
+        assert_eq!(seen[0].td_end, 5000);  // bez zmian
     }
 
     #[test]
     fn update_sender_state_handles_wraparound() {
-        let mut seen = TcpDirState {
-            td_end: u32::MAX - 100,
-            td_maxwin: 1000,
-            ..Default::default()
-        };
+        let mut seen = [
+            TcpDirState {
+                td_end: u32::MAX - 100,
+                td_maxwin: 1000,
+                ..Default::default()
+            },
+            TcpDirState::default(),
+        ];
 
         // Pakiet z seq=50 (po wraparound).
         let buf = ack_packet(50, 0, 1000);
         let tcp = extract_tcp_slice(&buf);
 
-        update_sender_state(&mut seen, &tcp, parse_flags(&tcp));
+        update_sender_state(&mut seen, Direction::Original, &tcp, parse_flags(&tcp));
 
         // td_end powinno przejść na nową wartość bo seq_after po wraparound.
-        assert_eq!(seen.td_end, 50);
+        assert_eq!(seen[0].td_end, 50);
     }
 
     #[test]
-    fn update_sender_state_zero_window_treated_as_one() {
-        let mut seen = TcpDirState::default();
+    fn update_sender_state_zero_window_increments_receiver_maxend() {
+        let mut seen = [TcpDirState::default(), TcpDirState::default()];
 
-        let buf = ack_packet(1000, 0, 0);  // win = 0
+        let buf = ack_packet(1000, 5000, 0);  // win = 0
         let tcp = extract_tcp_slice(&buf);
 
-        update_sender_state(&mut seen, &tcp, parse_flags(&tcp));
+        update_sender_state(&mut seen, Direction::Original, &tcp, parse_flags(&tcp));
 
-        // win_eff = max(0, 1) = 1, więc maxend = ack + 1.
-        assert!(seen.td_maxwin >= 1);
+        assert_eq!(seen[1].td_maxend, 5001);
+    }
+
+    #[test]
+    fn update_sender_state_ack_updates_receiver_not_sender_maxend() {
+        let mut seen = [
+            TcpDirState { td_end: 1001, td_maxend: 6841, td_maxwin: 5840, ..Default::default() },
+            TcpDirState { td_end: 2001, td_maxwin: 5840, ..Default::default() },
+        ];
+
+        let buf = ack_packet(1001, 2001, 5840);
+        let tcp = extract_tcp_slice(&buf);
+
+        update_sender_state(&mut seen, Direction::Original, &tcp, parse_flags(&tcp));
+
+        assert_eq!(seen[1].td_maxend, 2001 + 5840);
+        assert_eq!(seen[0].td_maxend, 6841);
     }
 
     #[test]
     fn update_sender_state_uses_window_scale() {
-        let mut seen = TcpDirState { td_scale: 7, ..Default::default() };
+        let mut seen = [TcpDirState { td_scale: 7, ..Default::default() }, TcpDirState::default()];
 
         let buf = ack_packet(1000, 0, 100);  // raw win = 100
         let tcp = extract_tcp_slice(&buf);
 
-        update_sender_state(&mut seen, &tcp, parse_flags(&tcp));
+        update_sender_state(&mut seen, Direction::Original, &tcp, parse_flags(&tcp));
 
-        // win_eff = 100 << 7 = 12800.
-        assert_eq!(seen.td_maxwin, 12800);
+        // win = 100 << 7 = 12800.
+        assert_eq!(seen[0].td_maxwin, 12800);
     }
 
     #[test]
     fn update_sender_state_records_max_window() {
-        let mut seen = TcpDirState { td_maxwin: 10_000, ..Default::default() };
+        let mut seen = [TcpDirState { td_maxwin: 10_000, ..Default::default() }, TcpDirState::default()];
 
         // Pakiet z mniejszym window — nie obniżamy max.
         let buf = ack_packet(1000, 0, 5000);
         let tcp = extract_tcp_slice(&buf);
 
-        update_sender_state(&mut seen, &tcp, parse_flags(&tcp));
+        update_sender_state(&mut seen, Direction::Original, &tcp, parse_flags(&tcp));
 
-        assert_eq!(seen.td_maxwin, 10_000);  // niezmienione
+        assert_eq!(seen[0].td_maxwin, 10_000);  // niezmienione
     }
 
     #[test]
     fn update_sender_state_fin_consumes_one_seq() {
-        let mut seen = TcpDirState::default();
+        let mut seen = [TcpDirState::default(), TcpDirState::default()];
 
         let buf = build_from_client(1000, 5840, |b| b.fin().ack(1));
         let tcp = extract_tcp_slice(&buf);
 
-        update_sender_state(&mut seen, &tcp, parse_flags(&tcp));
+        update_sender_state(&mut seen, Direction::Original, &tcp, parse_flags(&tcp));
 
         // FIN konsumuje 1 jak SYN → td_end = 1001.
-        assert_eq!(seen.td_end, 1001);
+        assert_eq!(seen[0].td_end, 1001);
+    }
+
+    // === ISN mismatch regression ===
+
+    struct PostHandshakePacket {
+        dir: Direction,
+        seq: u32,
+        ack: u32,
+        win: u16,
+        payload_len: usize,
+    }
+
+    fn build_from_client_with_payload(seq: u32, ack: u32, win: u16, payload: &[u8]) -> Vec<u8> {
+        let b = PacketBuilder::ipv4(CLIENT_IP, SERVER_IP, 64)
+            .tcp(CLIENT_PORT, SERVER_PORT, seq, win)
+            .psh()
+            .ack(ack);
+        let mut buf = Vec::with_capacity(b.size(payload.len()));
+        b.write(&mut buf, payload).unwrap();
+        buf
+    }
+
+    fn build_from_server_with_payload(seq: u32, ack: u32, win: u16, payload: &[u8]) -> Vec<u8> {
+        let b = PacketBuilder::ipv4(SERVER_IP, CLIENT_IP, 64)
+            .tcp(SERVER_PORT, CLIENT_PORT, seq, win)
+            .ack(ack);
+        let mut buf = Vec::with_capacity(b.size(payload.len()));
+        b.write(&mut buf, payload).unwrap();
+        buf
+    }
+
+    fn build_post_handshake_packet(pkt: &PostHandshakePacket) -> Vec<u8> {
+        let payload = vec![0u8; pkt.payload_len];
+        match pkt.dir {
+            Direction::Original => build_from_client_with_payload(pkt.seq, pkt.ack, pkt.win, &payload),
+            Direction::Reply => build_from_server_with_payload(pkt.seq, pkt.ack, pkt.win, &payload),
+        }
+    }
+
+    fn assert_update_accepts(
+        h: &TcpHandler,
+        entry: &ConntrackEntry,
+        buf: &[u8],
+        dir: Direction,
+        cfg: &ConntrackConfig,
+    ) {
+        let pkt = parse(buf);
+        assert_eq!(
+            h.update(entry, &pkt, dir, Instant::now(), cfg, PacketId(0)),
+            CtVerdict::Accept,
+            "expected Accept for {:?} packet",
+            dir
+        );
+    }
+
+    fn drive_handshake_and_post_data(
+        h: &TcpHandler,
+        cfg: &ConntrackConfig,
+        client_isn: u32,
+        server_isn: u32,
+        post_packets: &[PostHandshakePacket],
+    ) {
+        let syn = build_from_client(client_isn, 5840, |b| b.syn());
+        let syn_pkt = parse(&syn);
+        let initial = h.new_state(&syn_pkt, Direction::Original, cfg).unwrap();
+        let NewStateOutcome::State(ProtoState::Tcp(s)) = initial else { panic!() };
+        let entry = entry_with(s);
+
+        let synack = build_from_server(server_isn, 5840, |b| b.syn().ack(client_isn + 1));
+        assert_update_accepts(h, &entry, &synack, Direction::Reply, cfg);
+        assert_eq!(extract_state(&entry).state, TcpConntrack::SynRecv);
+
+        let handshake_ack = build_from_client(client_isn + 1, 5840, |b| b.ack(server_isn + 1));
+        assert_update_accepts(h, &entry, &handshake_ack, Direction::Original, cfg);
+        assert_eq!(extract_state(&entry).state, TcpConntrack::Established);
+
+        for pkt in post_packets {
+            let buf = build_post_handshake_packet(pkt);
+            assert_update_accepts(h, &entry, &buf, pkt.dir, cfg);
+        }
+    }
+
+    fn ssh_like_post_handshake_packets(client_isn: u32, server_isn: u32) -> Vec<PostHandshakePacket> {
+        let client_seq = client_isn + 1;
+        let server_ack = server_isn + 1;
+        let mut seq = client_seq;
+        let mut packets = vec![
+            PostHandshakePacket {
+                dir: Direction::Original,
+                seq,
+                ack: server_ack,
+                win: 5840,
+                payload_len: 0,
+            },
+        ];
+        for len in [43usize, 44, 84, 128] {
+            packets.push(PostHandshakePacket {
+                dir: Direction::Original,
+                seq,
+                ack: server_ack,
+                win: 5840,
+                payload_len: len,
+            });
+            seq = seq.wrapping_add(len as u32);
+        }
+        packets.push(PostHandshakePacket {
+            dir: Direction::Reply,
+            seq: server_ack,
+            ack: seq,
+            win: 5840,
+            payload_len: 0,
+        });
+        packets
+    }
+
+    #[test]
+    fn handshake_and_post_data_accepts_when_server_isn_gt_client_isn() {
+        let h = TcpHandler::new(Arc::new(ObserverRegistry::default()));
+        let cfg = cfg_strict();
+        let post_packets = ssh_like_post_handshake_packets(1_000, 0xAABB_CCDD);
+
+        drive_handshake_and_post_data(&h, &cfg, 1_000, 0xAABB_CCDD, &post_packets);
+    }
+
+    #[test]
+    fn handshake_and_post_data_accepts_when_server_isn_lt_client_isn() {
+        let h = TcpHandler::new(Arc::new(ObserverRegistry::default()));
+        let cfg = cfg_strict();
+        let post_packets = ssh_like_post_handshake_packets(0xAABB_CCDD, 1_000);
+
+        drive_handshake_and_post_data(&h, &cfg, 0xAABB_CCDD, 1_000, &post_packets);
     }
 }

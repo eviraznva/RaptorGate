@@ -425,9 +425,12 @@ Vagrant.configure("2") do |config|
       netmask: "255.255.255.0",
       libvirt__network_name: "intnet1"
 
-    h1.vm.provision "file",
-      source: ".vagrant/machines/h2/libvirt/private_key",
-      destination: "/home/vagrant/.ssh/id_ed25519"
+    private_key_path = ".vagrant/machines/h2/libvirt/private_key"
+    if File.exist?(private_key_path)
+      h1.vm.provision "file",
+        source: private_key_path,
+        destination: "/home/vagrant/.ssh/id_ed25519"
+    end
 
     h1_provision = install_dependencies("hping3 python3 ncat ethtool python3-scapy postfix dovecot-imapd iperf3 lftp openssh-client")
     h1_provision += setup_email_server
@@ -512,7 +515,11 @@ Vagrant.configure("2") do |config|
       configure_interface("eth2", "192.168.20.254", "24") +
       setup_nat_test_addresses +
       configure_interface("eth3", "192.168.56.254", "24") +
-      setup_tun_device + setup_nftables + setup_ngfw_service + setup_observability + install_dependencies("arping traceroute")
+      setup_tun_device + setup_nftables + setup_ngfw_service + setup_observability + install_dependencies("arping traceroute ethtool") +
+      <<-SHELL
+      ethtool -K eth1 gro off gso off tso off sg off
+      ethtool -K eth2 gro off gso off tso off sg off
+      SHELL
 
     unless ENV['NO_BACKEND'] == '1'
       r1_provision += setup_backend_service + setup_frontend_service
