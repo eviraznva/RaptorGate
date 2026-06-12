@@ -321,6 +321,7 @@ fn create_valid_bundle(rule_name: &str, content: &str) -> ValidBundle {
         priority: 0,
         content: content.to_string(),
         smtp_matchers: None,
+        ssh_matchers: None,
     };
 
     let bundle = ConfigBundle {

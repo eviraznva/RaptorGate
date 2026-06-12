@@ -302,12 +302,12 @@ async fn main() {
         Arc::clone(&interface_monitor),
     ));
 
-    let smtp_policy_retriever = Arc::new(crate::dpi::smtp::smtp_policy_retriever::SmtpPolicyRetriever::new(
+    let policy_retriever = Arc::new(crate::policy::retriever::PolicyRetriever::new(
         Arc::clone(&zone_resolver),
         Arc::clone(&policy_provider),
     ));
 
-    let smtp_tracker = Arc::new(crate::dpi::smtp::SmtpTracker::new(Arc::clone(&smtp_policy_retriever)));
+    let smtp_tracker = Arc::new(crate::dpi::smtp::SmtpTracker::new(Arc::clone(&policy_retriever)));
     conntrack.register_observer(Arc::clone(&smtp_tracker) as Arc<dyn crate::conntrack::observer::CtObserver>);
 
     let loaded_policies = policy_provider.get_policies();
@@ -537,7 +537,7 @@ async fn main() {
         interface_monitor: Arc::clone(&interface_monitor),
         helpers: Arc::clone(&helpers),
         smtp_tracker: Arc::clone(&smtp_tracker),
-        smtp_policy_retriever: Arc::clone(&smtp_policy_retriever),
+        policy_retriever: Arc::clone(&policy_retriever),
         tls_l4_inspection,
     });
 

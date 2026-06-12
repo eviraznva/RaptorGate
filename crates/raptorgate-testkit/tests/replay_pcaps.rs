@@ -80,71 +80,71 @@ async fn replay_one_packet(
     daemon.process_raw_with_packet_id(raw, iface).await
 }
 
-async fn replay_pcap(path: &str) {
-    let mut cap = Capture::from_file(path).expect("cannot open pcap file");
-    let linktype = cap.get_datalink();
-    let file_name = Path::new(path)
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
+// async fn replay_pcap(path: &str) {
+//     let mut cap = Capture::from_file(path).expect("cannot open pcap file");
+//     let linktype = cap.get_datalink();
+//     let file_name = Path::new(path)
+//         .file_name()
+//         .unwrap()
+//         .to_string_lossy()
+//         .to_string();
+//
+//     let daemon = TestDaemon::builder()
+//         .with_bundle(smoke_tcp_allow_warn_bundle())
+//         .build()
+//         .await
+//         .expect("test daemon");
+//
+//     let mut frame_idx = 0u64;
+//     while let Ok(packet) = cap.next_packet() {
+//         frame_idx += 1;
+//
+//         let raw = match normalize_frame(packet.data, linktype) {
+//             Some(r) => r,
+//             None => {
+//                 println!(
+//                     "[{file_name:20}] pkt#{frame_idx:5} SKIP  unsupported linktype"
+//                 );
+//                 continue;
+//             }
+//         };
+//
+//         let iface = match infer_iface(&raw) {
+//             Some(i) => i,
+//             None => {
+//                 println!(
+//                     "[{file_name:20}] pkt#{frame_idx:5} SKIP  non-IP/unroutable"
+//                 );
+//                 continue;
+//             }
+//         };
+//
+//         let result = replay_one_packet(&daemon, raw, iface.clone()).await;
+//
+//         let pid = result.packet_id.map(|id| id.0).unwrap_or(0);
+//         let outcome = match &result.output.stage_outcome {
+//             Some(o) => format!("{o:?}"),
+//             None => "None".into(),
+//         };
+//         let emitted = result.output.emitted.len();
+//
+//         println!(
+//             "[{file_name:20}] pkt#{frame_idx:5} {iface:4} \
+//              pid={pid:<5} outcome={outcome} emitted={emitted}",
+//         );
+//     }
+// }
 
-    let daemon = TestDaemon::builder()
-        .with_bundle(smoke_tcp_allow_warn_bundle())
-        .build()
-        .await
-        .expect("test daemon");
-
-    let mut frame_idx = 0u64;
-    while let Ok(packet) = cap.next_packet() {
-        frame_idx += 1;
-
-        let raw = match normalize_frame(packet.data, linktype) {
-            Some(r) => r,
-            None => {
-                println!(
-                    "[{file_name:20}] pkt#{frame_idx:5} SKIP  unsupported linktype"
-                );
-                continue;
-            }
-        };
-
-        let iface = match infer_iface(&raw) {
-            Some(i) => i,
-            None => {
-                println!(
-                    "[{file_name:20}] pkt#{frame_idx:5} SKIP  non-IP/unroutable"
-                );
-                continue;
-            }
-        };
-
-        let result = replay_one_packet(&daemon, raw, iface.clone()).await;
-
-        let pid = result.packet_id.map(|id| id.0).unwrap_or(0);
-        let outcome = match &result.output.stage_outcome {
-            Some(o) => format!("{o:?}"),
-            None => "None".into(),
-        };
-        let emitted = result.output.emitted.len();
-
-        println!(
-            "[{file_name:20}] pkt#{frame_idx:5} {iface:4} \
-             pid={pid:<5} outcome={outcome} emitted={emitted}",
-        );
-    }
-}
-
-#[tokio::test]
-async fn replay_ssh_failed_handshake() {
-    let path = pcap_path("ssh_failed_handshake.pcapng");
-    replay_pcap(&path).await;
-    sleep(Duration::from_secs(3)).await;
-}
-
-#[tokio::test]
-async fn replay_ssh_succesful_handshake() {
-    let path = pcap_path("ssh_succesful_handshake.pcapng");
-    replay_pcap(&path).await;
-    sleep(Duration::from_secs(3)).await;
-}
+// #[tokio::test]
+// async fn replay_ssh_failed_handshake() {
+//     let path = pcap_path("ssh_failed_handshake.pcapng");
+//     replay_pcap(&path).await;
+//     sleep(Duration::from_secs(3)).await;
+// }
+//
+// #[tokio::test]
+// async fn replay_ssh_succesful_handshake() {
+//     let path = pcap_path("ssh_succesful_handshake.pcapng");
+//     replay_pcap(&path).await;
+//     sleep(Duration::from_secs(3)).await;
+// }

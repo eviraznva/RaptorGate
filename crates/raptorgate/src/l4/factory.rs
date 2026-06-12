@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::conntrack::entry::ConntrackEntry;
 use crate::conntrack::tuple::Direction;
 use crate::data_plane::packet_context::PacketId;
-use crate::dpi::smtp::smtp_policy_retriever::SmtpPolicyRetriever;
+use crate::policy::retriever::PolicyRetriever;
 use crate::dpi::stages::{SmtpL4Stage, SshL4Stage};
 use crate::dpi::AppProto;
 use crate::l4::context::SessionContext;
@@ -223,7 +223,7 @@ impl L4Stage for TcpTestOutcomeStage {
 #[derive(Clone)]
 enum TcpFactoryKind<ZR: ZoneResolver> {
     ApplicationRouter {
-        smtp_policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
+        policy_retriever: Arc<PolicyRetriever<ZR>>,
         tls_inspection: Option<Arc<TlsL4InspectionConfig>>,
     },
     Http,
@@ -240,12 +240,12 @@ pub struct TcpL4PipelineFactory<ZR: ZoneResolver> {
 
 impl<ZR: ZoneResolver> TcpL4PipelineFactory<ZR> {
     pub fn new_application_router(
-        policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
+        policy_retriever: Arc<PolicyRetriever<ZR>>,
         tls_inspection: Option<Arc<TlsL4InspectionConfig>>,
     ) -> Self {
         Self {
             kind: TcpFactoryKind::ApplicationRouter {
-                smtp_policy_retriever: policy_retriever,
+                policy_retriever,
                 tls_inspection,
             },
             _zr: PhantomData,
@@ -295,7 +295,7 @@ impl<ZR: ZoneResolver> TcpL4PipelineFactory<ZR> {
     pub fn build_for_entry(&self, entry: &ConntrackEntry) -> TcpSessionPipeline<ZR> {
         match &self.kind {
             TcpFactoryKind::ApplicationRouter {
-                smtp_policy_retriever,
+                policy_retriever,
                 tls_inspection,
             } => {
                 let src = entry.original.src_port;
@@ -303,9 +303,9 @@ impl<ZR: ZoneResolver> TcpL4PipelineFactory<ZR> {
                 if src == 465 || dst == 465 {
                     TcpSessionPipeline::PassThrough(TcpPassThroughStage::default())
                 } else if matches!(src, 25 | 587) || matches!(dst, 25 | 587) {
-                    TcpSessionPipeline::Smtp(SmtpL4Stage::new(Arc::clone(smtp_policy_retriever)))
+                    TcpSessionPipeline::Smtp(SmtpL4Stage::new(Arc::clone(policy_retriever)))
                 } else if src == 22 || dst == 22 {
-                    TcpSessionPipeline::Ssh(SshL4Stage::new(Arc::clone(smtp_policy_retriever)))
+                    TcpSessionPipeline::Ssh(SshL4Stage::new(Arc::clone(policy_retriever)))
                 } else if src == 80 || dst == 80 {
                     TcpSessionPipeline::Http(HttpL4Stage::new())
                 } else if (src == 443 || dst == 443) && tls_inspection.is_some() {
@@ -422,8 +422,8 @@ mod tests {
         ))
     }
 
-    fn smtp_policy_retriever() -> Arc<SmtpPolicyRetriever<StubZoneResolver>> {
-        Arc::new(SmtpPolicyRetriever::new(
+    fn policy_retriever() -> Arc<PolicyRetriever<StubZoneResolver>> {
+        Arc::new(PolicyRetriever::new(
             Arc::new(StubZoneResolver),
             Arc::new(DiskPolicyProvider::from_policies(HashMap::new(), PathBuf::from("/tmp"))),
         ))
@@ -482,7 +482,7 @@ mod tests {
 
     #[tokio::test]
     async fn application_router_selects_http_smtp_ssh_or_passthrough_by_port() {
-        let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever(), Some(tls_inspection_config()));
+        let factory = TcpL4PipelineFactory::new_application_router(policy_retriever(), Some(tls_inspection_config()));
 
         assert!(matches!(
             factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 80)),
@@ -501,7 +501,7 @@ mod tests {
     #[tokio::test]
     async fn ssh_factory_pipeline_forwards_packet_id() {
         let factory = TcpL4PipelineFactory::<StubZoneResolver>::new_application_router(
-            smtp_policy_retriever(),
+            policy_retriever(),
             Some(tls_inspection_config()),
         );
         let mut pipe = factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 22));
@@ -520,7 +520,7 @@ mod tests {
 
     #[tokio::test]
     async fn application_router_selects_tls_http_for_https() {
-        let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever(), Some(tls_inspection_config()));
+        let factory = TcpL4PipelineFactory::new_application_router(policy_retriever(), Some(tls_inspection_config()));
 
         assert!(matches!(
             factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 443)),
@@ -530,7 +530,7 @@ mod tests {
 
     #[tokio::test]
     async fn application_router_bypasses_smtps_for_now() {
-        let factory = TcpL4PipelineFactory::new_application_router(smtp_policy_retriever(), Some(tls_inspection_config()));
+        let factory = TcpL4PipelineFactory::new_application_router(policy_retriever(), Some(tls_inspection_config()));
 
         assert!(matches!(
             factory.build_for_entry(&sample_tcp_entry_with_ports(12345, 465)),

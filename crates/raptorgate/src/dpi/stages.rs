@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::data_plane::packet_context::PacketId;
 use crate::conntrack::tuple::Direction;
 use crate::dpi::smtp::smtp_l4_session::SmtpSession;
-use crate::dpi::smtp::smtp_policy_retriever::SmtpPolicyRetriever;
+use crate::policy::retriever::PolicyRetriever;
 use crate::dpi::smtp::{BufferingDisposition, PacketAction};
 use crate::dpi::ssh::SshSession;
 use crate::dpi::AppProto;
@@ -16,7 +16,7 @@ pub struct SmtpL4Stage<ZR> {
 }
 
 impl<ZR: ZoneResolver> SmtpL4Stage<ZR> {
-    pub fn new(policy_retriever: Arc<SmtpPolicyRetriever<ZR>>) -> Self {
+    pub fn new(policy_retriever: Arc<PolicyRetriever<ZR>>) -> Self {
         Self {
             session: SmtpSession::new(policy_retriever),
         }
@@ -56,7 +56,7 @@ pub struct SshL4Stage<ZR: ZoneResolver> {
 }
 
 impl<ZR: ZoneResolver> SshL4Stage<ZR> {
-    pub fn new(policy_retriever: Arc<SmtpPolicyRetriever<ZR>>) -> Self {
+    pub fn new(policy_retriever: Arc<PolicyRetriever<ZR>>) -> Self {
         Self {
             session: SshSession::new(policy_retriever),
         }

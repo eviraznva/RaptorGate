@@ -66,6 +66,7 @@ pub fn default_drop_policy() -> anyhow::Result<(PolicyId, Policy)> {
                 ArmEnd::Verdict(Verdict::DropWarn("Using default drop all policy".into())
                 )).build()?),
         smtp_policy: crate::policy::SmtpPolicy::default(),
+        ssh_policy: crate::policy::SshPolicy::default(),
     };
 
     Ok((Uuid::nil().into(), policy))
@@ -82,6 +83,7 @@ impl DiskPolicyProvider {
                 priority: 0,
                 rule_tree: RuleTree::new(parse_rule_tree(policy_override).expect("COULDNT APPLY DEV POLICY OVERRIDE")),
                 smtp_policy: crate::policy::SmtpPolicy::default(),
+                ssh_policy: crate::policy::SshPolicy::default(),
             };
 
             let policies = HashMap::from([(Uuid::nil().into(), dev_policy)]);

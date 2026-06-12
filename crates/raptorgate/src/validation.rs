@@ -225,6 +225,7 @@ mod tests {
             priority: 1,
             rule_tree: RuleTree::new(head),
             smtp_policy: crate::policy::SmtpPolicy::default(),
+            ssh_policy: crate::policy::SshPolicy::default(),
         };
         (policy_id, policy)
     }

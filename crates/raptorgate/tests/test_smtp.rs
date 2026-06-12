@@ -5,7 +5,7 @@ use std::sync::Arc;
 use etherparse::{PacketBuilder, SlicedPacket};
 use ngfw::conntrack::tcp_identity::{EndpointIdentifier, TcpIdentifier};
 use ngfw::dpi::smtp::SmtpTracker;
-use ngfw::dpi::smtp::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
+use ngfw::policy::retriever::{PolicyRetriever, SmtpSessionPolicies};
 use ngfw::policy::provider::DiskPolicyProvider;
 use ngfw::policy::{Policy, PolicyId, SmtpPolicy, SmtpMatch, SmtpMatchAction};
 use ngfw::rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
@@ -92,6 +92,7 @@ impl SmtpTestFixture {
                     .unwrap(),
                 ),
                 smtp_policy,
+                ssh_policy: ngfw::policy::SshPolicy::default(),
             };
             policy_map.insert(policy_id, policy);
         }
@@ -101,12 +102,12 @@ impl SmtpTestFixture {
             std::path::PathBuf::from("/tmp"),
         ));
 
-        let smtp_policy_retriever = Arc::new(SmtpPolicyRetriever::new(
+        let policy_retriever = Arc::new(PolicyRetriever::new(
             zone_resolver,
             policy_provider,
         ));
 
-        let tracker = Arc::new(SmtpTracker::new(smtp_policy_retriever));
+        let tracker = Arc::new(SmtpTracker::new(policy_retriever));
 
         Self {
             tracker,

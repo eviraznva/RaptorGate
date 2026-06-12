@@ -1,7 +1,7 @@
 mod classifier;
 mod context;
 mod flow_key;
-mod ssh;
+pub mod ssh;
 pub mod parsers;
 mod proto;
 pub mod smtp;

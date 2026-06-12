@@ -5,23 +5,22 @@ use ssh_parser::{parse_ssh_identification, parse_ssh_packet};
 use crate::{
     conntrack::tuple::Direction,
     data_plane::packet_context::PacketId,
-    dpi::smtp::{
-        smtp_policy_retriever::SmtpPolicyRetriever, BufferingDisposition, PacketAction, UnitStatus,
-    },
-    dpi::AppProto,
+    dpi::{AppProto, smtp::{BufferingDisposition, PacketAction, UnitStatus}},
     l4::SessionContext,
+    policy::{retriever::PolicyRetriever, SshPolicy},
     zones::resolver::ZoneResolver,
+};
+
+pub mod policy;
+
+use self::policy::{
+    compute_negotiated, first_ssh_string, OwnedKexInit, SshBannerInfo, SshDisconnectInfo, SshHost,
+    SshHostKeyInfo, SshMetadata,
 };
 
 use tracing;
 
 const MAX_HANDSHAKE_PACKET_SIZE: usize = 64 * 1024;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SshHost {
-    Client,
-    Server,
-}
 
 impl From<Direction> for SshHost {
     fn from(dir: Direction) -> Self {
@@ -148,14 +147,16 @@ where
     pub(crate) client_assembler: SshPacketAssembler,
     pub(crate) server_assembler: SshPacketAssembler,
     confirmed_ssh: bool,
-    policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
+    policy_retriever: Arc<PolicyRetriever<ZR>>,
+    ssh_policies: Option<Vec<SshPolicy>>,
+    first_kexinit: Option<(SshHost, OwnedKexInit)>,
 }
 
 impl<ZR> SshSession<ZR>
 where
     ZR: ZoneResolver,
 {
-    pub fn new(policy_retriever: Arc<SmtpPolicyRetriever<ZR>>) -> Self {
+    pub fn new(policy_retriever: Arc<PolicyRetriever<ZR>>) -> Self {
         SshSession {
             client_state: SshState::Clear(ClearState::VersionExchange),
             server_state: SshState::Clear(ClearState::VersionExchange),
@@ -163,7 +164,24 @@ where
             server_assembler: SshPacketAssembler::new(),
             confirmed_ssh: false,
             policy_retriever,
+            ssh_policies: None,
+            first_kexinit: None,
         }
+    }
+
+    fn ensure_policies(&mut self, ctx: &SessionContext) {
+        if self.ssh_policies.is_none() {
+            let tuple = &ctx.entry().original;
+            self.ssh_policies = Some(
+                self.policy_retriever
+                    .retrieve_ssh(tuple.src_ip, tuple.dst_ip),
+            );
+        }
+    }
+
+    fn policies_allow<M: SshMetadata>(&self, meta: &M) -> bool {
+        let policies = self.ssh_policies.as_deref().unwrap_or(&[]);
+        SshPolicy::evaluate_policies(policies, meta)
     }
 
     fn host_state(&self, host: SshHost) -> &SshState {
@@ -192,55 +210,119 @@ where
         ctx: &mut SessionContext,
         body: Vec<u8>,
         host: SshHost,
-    ) -> Result<(), ()> {
+    ) -> Result<bool, ()> {
         if !self.confirmed_ssh {
             self.confirmed_ssh = true;
             ctx.set_application_protocol(AppProto::Ssh);
         }
 
+        self.ensure_policies(ctx);
+
         if matches!(self.host_state(host), SshState::Clear(ClearState::VersionExchange)) {
-            if parse_ssh_identification(&body).is_err() {
+            let (_, (_, version)) = parse_ssh_identification(&body).map_err(|_| {
                 tracing::info!("SSH ERROR invalid version line from {host:?}");
-                return Err(());
+            })?;
+            let banner = SshBannerInfo {
+                host,
+                proto_version: version.proto.to_vec(),
+                software: version.software.to_vec(),
+                comments: version.comments.map(|c| c.to_vec()),
+            };
+            if !self.policies_allow(&banner) {
+                tracing::info!("SSH POLICY denied banner from {host:?}");
+                return Ok(false);
             }
             SshState::advance_version(self.host_state_mut(host)).map_err(|_| {
                 tracing::info!("SSH ERROR unexpected version from {host:?}");
-            })
-        } else {
-            if body.len() < 2 {
+            })?;
+            return Ok(true);
+        }
+
+        if body.len() < 2 {
+            return Err(());
+        }
+        let msg_type = body[1];
+        let packet = match msg_type {
+            1..=6 | 20 | 21 | 30 | 31 => {
+                let mut wire = Vec::with_capacity(4 + body.len());
+                wire.extend_from_slice(&(body.len() as u32).to_be_bytes());
+                wire.extend_from_slice(&body);
+                let (_, (parsed, _)) = parse_ssh_packet(&wire).map_err(|_| {
+                    tracing::info!(
+                        "SSH ERROR invalid packet body (len={}) from {host:?}, msg_type={msg_type}",
+                        body.len()
+                    );
+                })?;
+                if !self.evaluate_parsed_packet(&parsed, host)? {
+                    return Ok(false);
+                }
+                SshPacket::from(&parsed)
+            }
+            7 => SshPacket::ExtInfo,
+            32..=49 => SshPacket::KexMethod(msg_type),
+            _ => {
+                tracing::info!(
+                    "SSH ERROR unknown msg_type {msg_type} from {host:?} in state={:?}",
+                    self.host_state(host)
+                );
                 return Err(());
             }
-            let msg_type = body[1];
-            let packet = match msg_type {
-                1..=6 | 20 | 21 | 30 | 31 => {
-                    let mut wire = Vec::with_capacity(4 + body.len());
-                    wire.extend_from_slice(&(body.len() as u32).to_be_bytes());
-                    wire.extend_from_slice(&body);
-                    let (_, (parsed, _)) = parse_ssh_packet(&wire).map_err(|_| {
-                        tracing::info!(
-                            "SSH ERROR invalid packet body (len={}) from {host:?}, msg_type={msg_type}",
-                            body.len()
-                        );
-                    })?;
-                    SshPacket::from(&parsed)
+        };
+        let state = self.host_state(host).clone();
+        SshState::advance_with_packet(self.host_state_mut(host), &packet).map_err(|_| {
+            tracing::info!(
+                "SSH ERROR unexpected packet {packet:?} from {host:?} in state={state:?}"
+            );
+        })?;
+        Ok(true)
+    }
+
+    fn evaluate_parsed_packet(
+        &mut self,
+        parsed: &ssh_parser::SshPacket<'_>,
+        host: SshHost,
+    ) -> Result<bool, ()> {
+        match parsed {
+            ssh_parser::SshPacket::KeyExchange(kex) => {
+                let owned = OwnedKexInit::from_kexinit(kex);
+                if let Some((first_host, first_kex)) = self.first_kexinit.take() {
+                    let (client_kex, server_kex) = if first_host == SshHost::Client {
+                        (first_kex, owned)
+                    } else {
+                        (owned, first_kex)
+                    };
+                    let negotiated = compute_negotiated(&client_kex, &server_kex);
+                    if !self.policies_allow(&negotiated) {
+                        tracing::info!("SSH POLICY denied negotiated algorithms");
+                        return Ok(false);
+                    }
+                } else {
+                    self.first_kexinit = Some((host, owned));
                 }
-                7 => SshPacket::ExtInfo,
-                32..=49 => SshPacket::KexMethod(msg_type),
-                _ => {
-                    tracing::info!(
-                        "SSH ERROR unknown msg_type {msg_type} from {host:?} in state={:?}",
-                        self.host_state(host)
-                    );
-                    return Err(());
+            }
+            ssh_parser::SshPacket::DiffieHellmanReply(reply) => {
+                if let Some(key_type) = first_ssh_string(reply.pubkey_and_cert) {
+                    let info = SshHostKeyInfo {
+                        key_type: key_type.to_vec(),
+                    };
+                    if !self.policies_allow(&info) {
+                        tracing::info!("SSH POLICY denied host key type");
+                        return Ok(false);
+                    }
                 }
-            };
-            let state = self.host_state(host).clone();
-            SshState::advance_with_packet(self.host_state_mut(host), &packet).map_err(|_| {
-                tracing::info!(
-                    "SSH ERROR unexpected packet {packet:?} from {host:?} in state={state:?}"
-                );
-            })
+            }
+            ssh_parser::SshPacket::Disconnect(d) => {
+                let info = SshDisconnectInfo {
+                    reason_code: d.reason_code,
+                };
+                if !self.policies_allow(&info) {
+                    tracing::info!("SSH POLICY denied disconnect reason {}", d.reason_code);
+                    return Ok(false);
+                }
+            }
+            _ => {}
         }
+        Ok(true)
     }
 
     pub(crate) fn process_bytes(
@@ -272,8 +354,8 @@ where
                 AssemblerVerdict::NeedMore => {
                     tracing::info!("SSH FORWARDED incomplete message from {host:?}");
                     return BufferingDisposition {
-                        packet: PacketAction::Pass,
-                        unit: UnitStatus::Complete,
+                        packet: PacketAction::QueueAndHalt,
+                        unit: UnitStatus::Incomplete,
                     };
                 }
                 AssemblerVerdict::TooLarge | AssemblerVerdict::Invalid => {
@@ -294,14 +376,24 @@ where
                     };
                 }
                 AssemblerVerdict::PacketComplete(body) => {
-                    if self.handle_complete_message(ctx, body, host).is_err() {
-                        tracing::info!(
-                            "SSH ERROR handle_complete_message failed for {host:?}, state={state:?}"
-                        );
-                        return BufferingDisposition {
-                            packet: PacketAction::Drop,
-                            unit: UnitStatus::Complete,
-                        };
+                    match self.handle_complete_message(ctx, body, host) {
+                        Ok(false) => {
+                            tracing::info!("SSH POLICY denied {host:?}, state={state:?}");
+                            return BufferingDisposition {
+                                packet: PacketAction::Drop,
+                                unit: UnitStatus::Complete,
+                            };
+                        }
+                        Err(()) => {
+                            tracing::info!(
+                                "SSH ERROR handle_complete_message failed for {host:?}, state={state:?}"
+                            );
+                            return BufferingDisposition {
+                                packet: PacketAction::Drop,
+                                unit: UnitStatus::Complete,
+                            };
+                        }
+                        Ok(true) => {}
                     }
                     if matches!(self.host_state(host), SshState::Encrypted) {
                         tracing::info!("SSH FORWARDED encrypted complete message from {host:?}");
@@ -436,7 +528,9 @@ mod tests {
     use crate::l4::stage::{L4Outcome, L4Stage, TerminateReason};
     use crate::l4::SessionContext;
     use crate::policy::provider::DiskPolicyProvider;
-    use crate::policy::{Policy, PolicyId};
+    use crate::policy::retriever::PolicyRetriever;
+    use crate::policy::{Policy, PolicyId, SshPolicy};
+    use crate::rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
     use crate::zones::resolver::ZoneResolver;
     use crate::zones::{DefaultPolicy, DirectionalZonePairs, ResolvedZonePair, ZonePairId};
 
@@ -463,13 +557,41 @@ mod tests {
         }
     }
 
-    fn mock_policy_retriever() -> Arc<SmtpPolicyRetriever<StubZoneResolver>> {
+    fn mock_policy_retriever_with_ssh(policies: Vec<SshPolicy>) -> Arc<PolicyRetriever<StubZoneResolver>> {
         let zone_resolver = Arc::new(StubZoneResolver);
+        let zone_pair_id = ZonePairId::from(Uuid::nil());
+        let mut policy_map = HashMap::new();
+        for (index, ssh_policy) in policies.into_iter().enumerate() {
+            let policy_id = PolicyId::from(Uuid::from_u128(3000 + index as u128));
+            policy_map.insert(
+                policy_id,
+                Policy {
+                    name: format!("ssh-test-policy-{index}"),
+                    zone_pair_id: zone_pair_id.clone(),
+                    priority: index as u32,
+                    rule_tree: RuleTree::new(
+                        MatchBuilder::with_arm(
+                            MatchKind::IpVer,
+                            Pattern::Wildcard,
+                            ArmEnd::Verdict(Verdict::Allow),
+                        )
+                        .build()
+                        .unwrap(),
+                    ),
+                    smtp_policy: crate::policy::SmtpPolicy::default(),
+                    ssh_policy,
+                },
+            );
+        }
         let policy_provider = Arc::new(DiskPolicyProvider::from_policies(
-            HashMap::<PolicyId, Policy>::new(),
+            policy_map,
             PathBuf::from("/tmp"),
         ));
-        Arc::new(SmtpPolicyRetriever::new(zone_resolver, policy_provider))
+        Arc::new(PolicyRetriever::new(zone_resolver, policy_provider))
+    }
+
+    fn mock_policy_retriever() -> Arc<PolicyRetriever<StubZoneResolver>> {
+        mock_policy_retriever_with_ssh(vec![SshPolicy::permissive()])
     }
 
     fn session_context() -> SessionContext {
@@ -844,6 +966,135 @@ mod tests {
         payload: &[u8],
     ) -> L4Outcome {
         stage.on_bytes(ctx, id, dir, 0, payload).await
+    }
+
+    #[tokio::test]
+    async fn ssh_l4_stage_terminates_on_default_deny_policy_set() {
+        let empty_retriever = Arc::new(PolicyRetriever::new(
+            Arc::new(StubZoneResolver),
+            Arc::new(DiskPolicyProvider::from_policies(
+                HashMap::new(),
+                PathBuf::from("/tmp"),
+            )),
+        ));
+        let mut stage = SshL4Stage::new(empty_retriever);
+        let mut ctx = session_context();
+        let banner_id = PacketId::next();
+
+        assert_eq!(
+            drive_l4(
+                &mut stage,
+                &mut ctx,
+                banner_id,
+                Direction::Original,
+                b"SSH-2.0-OpenSSH_8.9\r\n",
+            )
+            .await,
+            L4Outcome::Terminate {
+                reason: TerminateReason::StageRequested,
+                reset: true,
+            }
+        );
+    }
+
+    fn kex_init_with_algs(kex: &[&str]) -> Vec<u8> {
+        let list = kex.join(",");
+        let mut body = vec![4u8, 20];
+        body.extend_from_slice(&[0u8; 16]);
+        body.extend_from_slice(&(list.len() as u32).to_be_bytes());
+        body.extend_from_slice(list.as_bytes());
+        for _ in 0..9 {
+            body.extend_from_slice(&0u32.to_be_bytes());
+        }
+        body.push(0);
+        body.extend_from_slice(&[0u8; 4]);
+        body.extend_from_slice(&[0u8; 4]);
+        let mut wire = Vec::with_capacity(4 + body.len());
+        wire.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        wire.extend_from_slice(&body);
+        wire
+    }
+
+    #[tokio::test]
+    async fn ssh_l4_stage_terminates_when_negotiated_kex_denied() {
+        let deny_policy = SshPolicy {
+            kex: vec![crate::policy::SshMatch {
+                regex: regex::bytes::Regex::new("curve25519-sha256").unwrap(),
+                on_match: crate::policy::SshMatchAction::Deny,
+            }],
+            ..SshPolicy::default()
+        };
+        let mut stage = SshL4Stage::new(mock_policy_retriever_with_ssh(vec![deny_policy]));
+        let mut ctx = session_context();
+
+        drive_l4(
+            &mut stage,
+            &mut ctx,
+            PacketId::next(),
+            Direction::Original,
+            b"SSH-2.0-OpenSSH_8.9\r\n",
+        )
+        .await;
+        drive_l4(
+            &mut stage,
+            &mut ctx,
+            PacketId::next(),
+            Direction::Reply,
+            b"SSH-2.0-dropbear_2022.83\r\n",
+        )
+        .await;
+        drive_l4(
+            &mut stage,
+            &mut ctx,
+            PacketId::next(),
+            Direction::Original,
+            &kex_init_with_algs(&["curve25519-sha256", "diffie-hellman-group14-sha256"]),
+        )
+        .await;
+        let id = PacketId::next();
+        assert_eq!(
+            drive_l4(
+                &mut stage,
+                &mut ctx,
+                id,
+                Direction::Reply,
+                &kex_init_with_algs(&["curve25519-sha256"]),
+            )
+            .await,
+            L4Outcome::Terminate {
+                reason: TerminateReason::StageRequested,
+                reset: true,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn ssh_l4_stage_terminates_when_banner_denied() {
+        let deny_policy = SshPolicy {
+            client_software: vec![crate::policy::SshMatch {
+                regex: regex::bytes::Regex::new("dropbear_.*").unwrap(),
+                on_match: crate::policy::SshMatchAction::Deny,
+            }],
+            ..SshPolicy::default()
+        };
+        let mut stage = SshL4Stage::new(mock_policy_retriever_with_ssh(vec![deny_policy]));
+        let mut ctx = session_context();
+        let banner_id = PacketId::next();
+
+        assert_eq!(
+            drive_l4(
+                &mut stage,
+                &mut ctx,
+                banner_id,
+                Direction::Original,
+                b"SSH-2.0-dropbear_2022.83\r\n",
+            )
+            .await,
+            L4Outcome::Terminate {
+                reason: TerminateReason::StageRequested,
+                reset: true,
+            }
+        );
     }
 
     #[tokio::test]

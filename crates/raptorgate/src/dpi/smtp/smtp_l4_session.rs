@@ -7,7 +7,7 @@ use crate::conntrack::tcp_identity::EndpointIdentifier;
 use crate::conntrack::tuple::Direction;
 use crate::data_plane::packet_context::PacketId;
 use crate::dpi::smtp::{BdatState, BufferingDisposition, DataState, PacketAction, SessionState, SessionTransition, TerminatedSmtpSession, UnitStatus};
-use super::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
+use crate::policy::retriever::{PolicyRetriever, SmtpSessionPolicies};
 use crate::dpi::AppProto;
 use crate::l4::context::SessionContext;
 use crate::l4::stage::{L4Outcome, TerminateReason};
@@ -79,12 +79,12 @@ pub(crate) struct SmtpSession<ZR> {
     inner: L4SmtpState,
     buffered_ids: VecDeque<PacketId>,
     terminated: Option<TerminatedSmtpSession>,
-    policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
+    policy_retriever: Arc<PolicyRetriever<ZR>>,
     app_proto_set: bool,
 }
 
 impl<ZR: ZoneResolver> SmtpSession<ZR> {
-    pub(crate) fn new(policy_retriever: Arc<SmtpPolicyRetriever<ZR>>) -> Self {
+    pub(crate) fn new(policy_retriever: Arc<PolicyRetriever<ZR>>) -> Self {
         Self {
             inner: L4SmtpState::default(),
             buffered_ids: VecDeque::new(),
@@ -252,7 +252,7 @@ impl L4SmtpState {
         &mut self,
         packet_queue: Option<&mut VecDeque<crate::data_plane::packet_context::PacketContext>>,
         id_queue: Option<&mut VecDeque<PacketId>>,
-        policy_retriever: &Arc<SmtpPolicyRetriever<ZR>>,
+        policy_retriever: &Arc<PolicyRetriever<ZR>>,
         terminated: &mut Option<TerminatedSmtpSession>,
         src: EndpointIdentifier,
         dst: EndpointIdentifier,
@@ -471,7 +471,7 @@ impl L4SmtpState {
 
                 self.server = Some(src.clone());
                 self.client = Some(dst.clone());
-                self.policies = Some(policy_retriever.retrieve(dst.ip, src.ip));
+                self.policies = Some(policy_retriever.retrieve_smtp(dst.ip, src.ip));
                 self.request_receiver = RequestReceiver::default();
                 if self
                     .apply_transition(&mut packet_queue, &mut id_queue, SessionTransition::Response(response))
@@ -495,14 +495,14 @@ impl L4SmtpState {
                         let result = current_state.transition(SessionTransition::Request(request));
                         self.client = Some(src.clone());
                         self.server = Some(dst.clone());
-                        self.policies = Some(policy_retriever.retrieve(src.ip, dst.ip));
+                        self.policies = Some(policy_retriever.retrieve_smtp(src.ip, dst.ip));
                         self.response_receiver = ResponseReceiver::default();
                         if self.apply_transition_result(&mut packet_queue, &mut id_queue, result).is_err() {
                             should_remove = true;
                         }
                     }
                     Err(smtp_proto::Error::NeedsMoreData { .. }) => {
-                        self.policies = Some(policy_retriever.retrieve(src.ip, dst.ip));
+                        self.policies = Some(policy_retriever.retrieve_smtp(src.ip, dst.ip));
                         self.client = Some(src);
                         self.server = Some(dst);
                         self.response_receiver = ResponseReceiver::default();

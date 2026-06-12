@@ -9,14 +9,13 @@ use crate::conntrack::observer::{CtObserver, DestroyReason};
 use crate::conntrack::entry::ConntrackEntry;
 use crate::conntrack::tcp_identity::{EndpointIdentifier, TcpIdentifier};
 use crate::data_plane::packet_context::PacketId;
-use self::smtp_policy_retriever::{SmtpPolicyRetriever, SmtpSessionPolicies};
+use crate::policy::retriever::{PolicyRetriever, SmtpSessionPolicies};
 use crate::events::{emit, Event, EventKind, SmtpSessionInfo};
 use crate::interfaces::NetworkInterfaceMonitor;
 use crate::policy::{SmtpMatch, SmtpMatchAction, SmtpPolicy};
 use crate::zones::resolver::{RoutingZoneResolver, ZoneResolver};
 
 pub mod smtp_l4_session;
-pub mod smtp_policy_retriever;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TcpSeqSnapshot {
@@ -416,7 +415,7 @@ impl SmtpProtocolMachine {
         &mut self,
         packet_queue: Option<&mut VecDeque<crate::data_plane::packet_context::PacketContext>>,
         id_queue: Option<&mut VecDeque<PacketId>>,
-        policy_retriever: &Arc<SmtpPolicyRetriever<ZR>>,
+        policy_retriever: &Arc<PolicyRetriever<ZR>>,
         terminated_sessions: &DashMap<TcpIdentifier, TerminatedSmtpSession>,
         flow: &TcpIdentifier,
         src: EndpointIdentifier,
@@ -671,7 +670,7 @@ impl SmtpProtocolMachine {
                 if st.server_seq.is_none() {
                     st.server_seq = Some(snapshot.clone());
                 }
-                st.policies = Some(policy_retriever.retrieve(dst.ip, src.ip));
+                st.policies = Some(policy_retriever.retrieve_smtp(dst.ip, src.ip));
                 st.request_receiver = RequestReceiver::default();
                 if st
                     .apply_transition(&mut packet_queue, &mut id_queue, SessionTransition::Response(response))
@@ -698,14 +697,14 @@ impl SmtpProtocolMachine {
                         if st.client_seq.is_none() {
                             st.client_seq = Some(snapshot.clone());
                         }
-                        st.policies = Some(policy_retriever.retrieve(src.ip, dst.ip));
+                        st.policies = Some(policy_retriever.retrieve_smtp(src.ip, dst.ip));
                         st.response_receiver = ResponseReceiver::default();
                         if st.apply_transition_result(&mut packet_queue, &mut id_queue, result).is_err() {
                             should_remove = true;
                         }
                     }
                     Err(smtp_proto::Error::NeedsMoreData { .. }) => {
-                        st.policies = Some(policy_retriever.retrieve(src.ip, dst.ip));
+                        st.policies = Some(policy_retriever.retrieve_smtp(src.ip, dst.ip));
                         st.client = Some(src);
                         st.server = Some(dst);
                         if st.client_seq.is_none() {
@@ -729,11 +728,11 @@ pub struct SmtpTracker<ZR = RoutingZoneResolver<NetworkInterfaceMonitor>> {
     sessions: DashMap<TcpIdentifier, SmtpFlow>,
     rst_packets: DashMap<TcpIdentifier, Vec<Vec<u8>>>,
     terminated_sessions: DashMap<TcpIdentifier, TerminatedSmtpSession>,
-    policy_retriever: Arc<SmtpPolicyRetriever<ZR>>,
+    policy_retriever: Arc<PolicyRetriever<ZR>>,
 }
 
 impl<ZR: ZoneResolver> SmtpTracker<ZR> {
-    pub fn new(policy_retriever: Arc<SmtpPolicyRetriever<ZR>>) -> Self {
+    pub fn new(policy_retriever: Arc<PolicyRetriever<ZR>>) -> Self {
         SmtpTracker {
             sessions: DashMap::new(),
             rst_packets: DashMap::new(),
@@ -742,7 +741,7 @@ impl<ZR: ZoneResolver> SmtpTracker<ZR> {
         }
     }
 
-    pub fn policy_retriever(&self) -> Arc<SmtpPolicyRetriever<ZR>> {
+    pub fn policy_retriever(&self) -> Arc<PolicyRetriever<ZR>> {
         Arc::clone(&self.policy_retriever)
     }
 
@@ -1198,7 +1197,7 @@ mod tests {
         }
     }
 
-    fn mock_policy_retriever_with_policies(policies: Vec<SmtpPolicy>) -> Arc<SmtpPolicyRetriever<MockZoneResolver>> {
+    fn mock_policy_retriever_with_policies(policies: Vec<SmtpPolicy>) -> Arc<PolicyRetriever<MockZoneResolver>> {
         use crate::policy::provider::DiskPolicyProvider;
         use crate::rule_tree::{ArmEnd, MatchBuilder, MatchKind, Pattern, RuleTree, Verdict};
         use std::path::PathBuf;
@@ -1223,6 +1222,7 @@ mod tests {
                     .unwrap(),
                 ),
                 smtp_policy,
+                ssh_policy: crate::policy::SshPolicy::default(),
             };
             policy_map.insert(policy_id, policy);
         }
@@ -1232,10 +1232,10 @@ mod tests {
             PathBuf::from("/tmp"),
         ));
 
-        Arc::new(SmtpPolicyRetriever::new(zone_resolver, policy_provider))
+        Arc::new(PolicyRetriever::new(zone_resolver, policy_provider))
     }
 
-    fn mock_policy_retriever() -> Arc<SmtpPolicyRetriever<MockZoneResolver>> {
+    fn mock_policy_retriever() -> Arc<PolicyRetriever<MockZoneResolver>> {
         mock_policy_retriever_with_policies(vec![SmtpPolicy::permissive()])
     }
 

@@ -116,6 +116,7 @@ mod tests {
                 .unwrap(),
             ),
             smtp_policy: crate::policy::SmtpPolicy::default(),
+            ssh_policy: crate::policy::SshPolicy::default(),
         }
     }
 

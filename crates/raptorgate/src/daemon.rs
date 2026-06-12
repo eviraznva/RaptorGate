@@ -21,7 +21,7 @@ use crate::data_plane::packet_context::CaptureDirection;
 use crate::data_plane::ips::ips::Ips;
 use crate::disk_store::SingleDiskStore;
 use crate::dpi::smtp::SmtpTracker;
-use crate::dpi::smtp::smtp_policy_retriever::SmtpPolicyRetriever;
+use crate::policy::retriever::PolicyRetriever;
 use crate::dpi::DpiClassifier;
 use crate::identity::IdentitySessionStore;
 use crate::interfaces::{InterfaceMonitor, NetworkInterfaceMonitor};
@@ -67,7 +67,7 @@ pub struct StaticDeps<'a, D: DaemonDeps + ?Sized> {
     pub interface_monitor: &'a Arc<D::IfaceMon>,
     pub helpers: &'a Arc<HelperRegistry>,
     pub smtp_tracker: &'a Arc<SmtpTracker>,
-    pub smtp_policy_retriever: &'a Arc<SmtpPolicyRetriever<RoutingZoneResolver<D::IfaceMon>>>,
+    pub policy_retriever: &'a Arc<PolicyRetriever<RoutingZoneResolver<D::IfaceMon>>>,
     pub tls_l4_inspection: &'a Option<Arc<TlsL4InspectionConfig>>,
 }
 
@@ -100,7 +100,7 @@ pub struct ProdDeps {
     pub interface_monitor: Arc<NetworkInterfaceMonitor>,
     pub helpers: Arc<HelperRegistry>,
     pub smtp_tracker: Arc<SmtpTracker>,
-    pub smtp_policy_retriever: Arc<SmtpPolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>,
+    pub policy_retriever: Arc<PolicyRetriever<RoutingZoneResolver<NetworkInterfaceMonitor>>>,
     pub tls_l4_inspection: Option<Arc<TlsL4InspectionConfig>>,
 }
 
@@ -132,7 +132,7 @@ impl DaemonDeps for ProdDeps {
             interface_monitor: &self.interface_monitor,
             helpers: &self.helpers,
             smtp_tracker: &self.smtp_tracker,
-            smtp_policy_retriever: &self.smtp_policy_retriever,
+            policy_retriever: &self.policy_retriever,
             tls_l4_inspection: &self.tls_l4_inspection,
         }
     }
@@ -531,7 +531,7 @@ where
         let sessions = SessionManager::new(
             Arc::clone(s.conntrack),
             TcpL4PipelineFactory::new_application_router(
-                Arc::clone(s.smtp_policy_retriever),
+                Arc::clone(s.policy_retriever),
                 s.tls_l4_inspection.as_ref().map(Arc::clone),
             ),
             UdpL4PipelineFactory::default(),

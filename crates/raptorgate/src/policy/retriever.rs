@@ -1,7 +1,8 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use crate::policy::{provider::DiskPolicyProvider, SmtpPolicy};
+use crate::policy::provider::DiskPolicyProvider;
+use crate::policy::{SmtpPolicy, SshPolicy};
 use crate::zones::resolver::ZoneResolver;
 
 #[derive(Clone, Debug)]
@@ -10,12 +11,12 @@ pub struct SmtpSessionPolicies {
     pub server_to_client: Vec<SmtpPolicy>,
 }
 
-pub struct SmtpPolicyRetriever<ZR> {
+pub struct PolicyRetriever<ZR> {
     zone_resolver: Arc<ZR>,
     policy_provider: Arc<DiskPolicyProvider>,
 }
 
-impl<ZR: ZoneResolver> SmtpPolicyRetriever<ZR> {
+impl<ZR: ZoneResolver> PolicyRetriever<ZR> {
     pub fn new(zone_resolver: Arc<ZR>, policy_provider: Arc<DiskPolicyProvider>) -> Self {
         Self {
             zone_resolver,
@@ -23,7 +24,7 @@ impl<ZR: ZoneResolver> SmtpPolicyRetriever<ZR> {
         }
     }
 
-    pub fn retrieve(&self, client_ip: IpAddr, server_ip: IpAddr) -> SmtpSessionPolicies {
+    pub fn retrieve_smtp(&self, client_ip: IpAddr, server_ip: IpAddr) -> SmtpSessionPolicies {
         let pairs = self.zone_resolver.resolve_bidirectional(client_ip, server_ip);
         let policies = self.policy_provider.get_policies();
 
@@ -47,5 +48,21 @@ impl<ZR: ZoneResolver> SmtpPolicyRetriever<ZR> {
             client_to_server,
             server_to_client,
         }
+    }
+
+    pub fn retrieve_ssh(&self, client_ip: IpAddr, server_ip: IpAddr) -> Vec<SshPolicy> {
+        let pairs = self.zone_resolver.resolve_bidirectional(client_ip, server_ip);
+        let policies = self.policy_provider.get_policies();
+        let mut ssh_policies = Vec::new();
+
+        if let Some(ref forward) = pairs.forward {
+            for policy in policies.values() {
+                if policy.zone_pair_id == forward.id {
+                    ssh_policies.push(policy.ssh_policy.clone());
+                }
+            }
+        }
+
+        ssh_policies
     }
 }
