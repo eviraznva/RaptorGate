@@ -34,6 +34,41 @@ pub fn permissive_ssh_matchers() -> SshMatchers {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum SshMatcherField {
+    ClientSoftware,
+    ServerSoftware,
+    ClientProtoVersion,
+    ServerProtoVersion,
+    Kex,
+    HostKeyAlg,
+    Cipher,
+    Mac,
+    Compression,
+    HostKeyType,
+}
+
+pub fn deny_ssh_matchers(field: SshMatcherField, regex: &str) -> SshMatchers {
+    let mut matchers = permissive_ssh_matchers();
+    let deny = SshMatch {
+        regex: regex.to_string(),
+        on_match: SshMatchAction::Deny as i32,
+    };
+    match field {
+        SshMatcherField::ClientSoftware => matchers.client_software = vec![deny],
+        SshMatcherField::ServerSoftware => matchers.server_software = vec![deny],
+        SshMatcherField::ClientProtoVersion => matchers.client_proto_version = vec![deny],
+        SshMatcherField::ServerProtoVersion => matchers.server_proto_version = vec![deny],
+        SshMatcherField::Kex => matchers.kex = vec![deny],
+        SshMatcherField::HostKeyAlg => matchers.host_key_alg = vec![deny],
+        SshMatcherField::Cipher => matchers.cipher = vec![deny],
+        SshMatcherField::Mac => matchers.mac = vec![deny],
+        SshMatcherField::Compression => matchers.compression = vec![deny],
+        SshMatcherField::HostKeyType => matchers.host_key_type = vec![deny],
+    }
+    matchers
+}
+
 pub struct ConfigBundleBuilder {
     inner: ConfigBundle,
 }
@@ -318,4 +353,30 @@ pub fn smoke_tcp_allow_warn_bundle() -> ConfigBundle {
         .with_zone_interfaces(zone_interfaces)
         .with_rules(rules)
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use ngfw::dpi::ssh::policy::{SshBannerInfo, SshHost};
+    use ngfw::policy::Policy;
+
+    use super::*;
+
+    #[test]
+    fn deny_ssh_matchers_bundle_denies_matching_client_software() {
+        let bundle = smoke_tcp_allow_warn_bundle_with_ssh(deny_ssh_matchers(
+            SshMatcherField::ClientSoftware,
+            "dropbear_.*",
+        ));
+        for rule in bundle.rules {
+            let (_, policy) = Policy::try_from_rule(rule).unwrap();
+            let banner = SshBannerInfo {
+                host: SshHost::Client,
+                proto_version: b"2.0".to_vec(),
+                software: b"dropbear_2022.83".to_vec(),
+                comments: None,
+            };
+            assert!(!policy.ssh_policy.evaluate(&banner));
+        }
+    }
 }

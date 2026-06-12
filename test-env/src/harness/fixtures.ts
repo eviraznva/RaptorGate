@@ -5,7 +5,10 @@ import type {
 	ZoneInterface,
 	AppConfig,
 	SmtpMatchers,
+	SshMatchers,
+	SshMatch,
 } from "../generated/config/config_models";
+import { SshMatchAction } from "../generated/config/config_models";
 import { DefaultPolicy } from "../generated/common/common";
 import type {
 	FirewallConfigSnapshotServiceClient,
@@ -201,6 +204,117 @@ export function createVlanZoneBundle(rules: Rule[]): ConfigBundle {
 		ipsSignatures: [],
 		firewallCertificates: [],
 	};
+}
+
+export type SshMatcherField = keyof Pick<
+	SshMatchers,
+	| "clientSoftware"
+	| "serverSoftware"
+	| "clientProtoVersion"
+	| "serverProtoVersion"
+	| "kex"
+	| "hostKeyAlg"
+	| "cipher"
+	| "mac"
+	| "compression"
+	| "hostKeyType"
+>;
+
+export function permissiveSshMatchers(): SshMatchers {
+	const allow: SshMatch = {
+		regex: ".*",
+		onMatch: SshMatchAction.SSH_MATCH_ACTION_ALLOW,
+	};
+	return {
+		clientSoftware: [allow],
+		serverSoftware: [{ ...allow }],
+		clientProtoVersion: [{ ...allow }],
+		serverProtoVersion: [{ ...allow }],
+		kex: [{ ...allow }],
+		hostKeyAlg: [{ ...allow }],
+		cipher: [{ ...allow }],
+		mac: [{ ...allow }],
+		compression: [{ ...allow }],
+		hostKeyType: [{ ...allow }],
+		disconnectReason: [],
+	};
+}
+
+export function denySshMatchers(
+	field: SshMatcherField,
+	regex: string,
+): SshMatchers {
+	const matchers = permissiveSshMatchers();
+	matchers[field] = [
+		{
+			regex,
+			onMatch: SshMatchAction.SSH_MATCH_ACTION_DENY,
+		},
+	];
+	return matchers;
+}
+
+export function createSnapshotBundleWithSshMatchers(
+	sshMatchers: SshMatchers,
+	rules?: Rule[],
+): ConfigBundle {
+	const defaultRule = {
+		...DEFAULT_POLICIES[0]!,
+		id: crypto.randomUUID(),
+		zonePairId: DEFAULT_ZONE_PAIRS[0]!.id,
+		sshMatchers,
+	};
+	return createDefaultSnapshotBundle({
+		rules: rules ?? [defaultRule],
+	});
+}
+
+export async function pushSnapshotBundle(
+	snapshotClient: FirewallConfigSnapshotServiceClient,
+	bundle: ConfigBundle,
+	reason = "apply",
+): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		snapshotClient.pushActiveConfigSnapshot(
+			{
+				correlationId: crypto.randomUUID(),
+				reason,
+				snapshot: {
+					id: crypto.randomUUID(),
+					versionNumber: 1,
+					snapshotType: "manual_import",
+					checksum: "test-env-ssh-policy-checksum",
+					isActive: true,
+					changesSummary: reason,
+					createdAt: new Date(),
+					createdBy: "test-env-ssh-policy",
+					bundle,
+				},
+			},
+			(err: Error | null, resp: any) => {
+				if (err) {
+					reject(err);
+					return;
+				}
+				if (!resp?.accepted) {
+					reject(new Error(resp?.message || "snapshot push rejected"));
+					return;
+				}
+				resolve();
+			},
+		);
+	});
+}
+
+export async function pushSnapshotWithSshMatchers(
+	snapshotClient: FirewallConfigSnapshotServiceClient,
+	sshMatchers: SshMatchers,
+	rules?: Rule[],
+): Promise<void> {
+	await pushSnapshotBundle(
+		snapshotClient,
+		createSnapshotBundleWithSshMatchers(sshMatchers, rules),
+	);
 }
 
 export async function resetFirewallState(

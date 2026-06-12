@@ -154,23 +154,137 @@ export async function ssh(
 	return { stdout, stderr, exitCode };
 }
 
+export type SshWithResultOptions = {
+	connectTimeoutSec?: number;
+	timeoutMs?: number;
+};
+
 export async function sshWithResult(
 	host: KnownHost,
 	command: string,
+	opts: SshWithResultOptions = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const configPath = await ensureSshConfig(host);
+	const connectTimeoutSec = opts.connectTimeoutSec ?? 10;
+	const timeoutMs = opts.timeoutMs ?? 30_000;
 
-	const { stdout, stderr, exitCode } = await run("ssh", [
-		"-F",
-		configPath,
-		"-o",
-		"BatchMode=yes",
-		"-o",
-		"ConnectTimeout=10",
-		host,
-		command,
-	]);
+	const { stdout, stderr, exitCode } = await run(
+		"ssh",
+		[
+			"-F",
+			configPath,
+			"-o",
+			"BatchMode=yes",
+			"-o",
+			`ConnectTimeout=${connectTimeoutSec}`,
+			host,
+			command,
+		],
+		{ timeout: timeoutMs },
+	);
 	return { stdout, stderr, exitCode };
+}
+
+class SshPolicyCommandBuilder {
+	private host: KnownHost;
+	private command: string;
+	private outputRegexes: RegExp[] | null = null;
+	private expectError = false;
+	private commandTimeoutMs = 6_000;
+	private connectTimeoutSec = 5;
+	private maxRetries = 5;
+
+	constructor(host: KnownHost, command: string) {
+		this.host = host;
+		this.command = command;
+	}
+
+	isOk(): this {
+		this.expectError = false;
+		return this;
+	}
+
+	isErr(): this {
+		this.expectError = true;
+		return this;
+	}
+
+	expectOutput(regexes: RegExp[]): this {
+		this.outputRegexes = regexes;
+		return this;
+	}
+
+	commandTimeout(ms: number): this {
+		this.commandTimeoutMs = ms;
+		return this;
+	}
+
+	connectTimeout(sec: number): this {
+		this.connectTimeoutSec = sec;
+		return this;
+	}
+
+	retries(n: number): this {
+		this.maxRetries = n;
+		return this;
+	}
+
+	async run(): Promise<void> {
+		let stdout = "";
+		let stderr = "";
+		let exitCode = 1;
+		let aligned = false;
+
+		for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+			const result = await sshWithResult(this.host, this.command, {
+				timeoutMs: this.commandTimeoutMs,
+				connectTimeoutSec: this.connectTimeoutSec,
+			});
+			stdout = result.stdout;
+			stderr = result.stderr;
+			exitCode = result.exitCode;
+			aligned = (exitCode === 0) === !this.expectError;
+			if (aligned) {
+				break;
+			}
+		}
+
+		if (!aligned) {
+			throw new Error(
+				`SSH policy command did not align after ${this.maxRetries} attempt(s) on ${this.host}: ${this.command} (exit ${exitCode}): ${stderr || stdout}`,
+			);
+		}
+
+		if (this.outputRegexes) {
+			const combined = stdout + stderr;
+			const lines = combined.split("\n").filter((l) => l.trim());
+			let lineIdx = 0;
+			for (const regex of this.outputRegexes) {
+				let found = false;
+				while (lineIdx < lines.length) {
+					const line = lines[lineIdx]!;
+					if (regex.test(line)) {
+						found = true;
+						lineIdx++;
+						break;
+					}
+					lineIdx++;
+				}
+				if (!found) {
+					throw new Error(
+						`Output assertion failed: regex ${regex} did not match any line on ${this.host}. Output:\n${combined}`,
+					);
+				}
+			}
+		}
+	}
+}
+
+export function performSshPolicyCommand(
+	host: KnownHost,
+	command: string,
+): SshPolicyCommandBuilder {
+	return new SshPolicyCommandBuilder(host, command);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use raptorgate_testkit::{
-    config_bundle::{permissive_ssh_matchers, smoke_tcp_allow_warn_bundle_with_ssh},
+    config_bundle::{
+        deny_ssh_matchers, permissive_ssh_matchers, smoke_tcp_allow_warn_bundle_with_ssh,
+        SshMatcherField,
+    },
     event, event_capture_concurrency_mutex, set_event_capture, smoke_tcp_allow_warn_bundle,
     EventCapture, Expectation, PacketDispositionOutcome, PipelineOutcome, Scenario, SocketV4,
     TestDaemon,
@@ -382,5 +385,113 @@ async fn ssh_l4_permissive_bundle_allows_real_openssh_negotiation() {
     .run_v2(&td, &cap)
     .await
     .expect("ssh permissive negotiated scenario");
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn ssh_l4_stage_rejects_when_client_banner_denied() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_tcp_allow_warn_bundle_with_ssh(deny_ssh_matchers(
+            SshMatcherField::ClientSoftware,
+            "dropbear_.*",
+        )))
+        .build()
+        .await
+        .expect("test daemon");
+
+    Scenario::tcp(
+        SocketV4 {
+            ip: [192, 168, 10, 62],
+            port: 40_132,
+        },
+        SocketV4 {
+            ip: [192, 168, 20, 32],
+            port: 22,
+        },
+    )
+    .open()
+    .client_sends(b"SSH-2.0-dropbear_2022.83\r\n")
+    .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Drop))
+    .run_v2(&td, &cap)
+    .await
+    .expect("ssh banner denied scenario");
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn ssh_l4_stage_rejects_when_negotiated_kex_denied() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_tcp_allow_warn_bundle_with_ssh(deny_ssh_matchers(
+            SshMatcherField::Kex,
+            "curve25519-sha256",
+        )))
+        .build()
+        .await
+        .expect("test daemon");
+
+    Scenario::tcp(
+        SocketV4 {
+            ip: [192, 168, 10, 63],
+            port: 40_133,
+        },
+        SocketV4 {
+            ip: [192, 168, 20, 33],
+            port: 22,
+        },
+    )
+    .open()
+    .client_sends(b"SSH-2.0-OpenSSH_8.9\r\n")
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .server_sends(b"SSH-2.0-dropbear_2022.83\r\n")
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .client_sends(&real_openssh_client_kex_init())
+    .expect_packet(Expectation::Pipeline(PipelineOutcome::Forwarded))
+    .server_sends(&real_openssh_sshd_kex_init())
+    .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Drop))
+    .run_v2(&td, &cap)
+    .await
+    .expect("ssh kex denied scenario");
+    set_event_capture(None);
+}
+
+#[tokio::test]
+async fn ssh_l4_stage_rejects_on_default_deny_client_software() {
+    let _guard = event_capture_concurrency_mutex().lock().await;
+    let cap = Arc::new(EventCapture::new());
+    set_event_capture(Some(cap.clone()));
+
+    let td = TestDaemon::builder()
+        .with_bundle(smoke_tcp_allow_warn_bundle_with_ssh(deny_ssh_matchers(
+            SshMatcherField::ClientSoftware,
+            ".*",
+        )))
+        .build()
+        .await
+        .expect("test daemon");
+
+    Scenario::tcp(
+        SocketV4 {
+            ip: [192, 168, 10, 64],
+            port: 40_134,
+        },
+        SocketV4 {
+            ip: [192, 168, 20, 34],
+            port: 22,
+        },
+    )
+    .open()
+    .client_sends(b"SSH-2.0-OpenSSH_8.9\r\n")
+    .expect_packet(Expectation::Disposition(PacketDispositionOutcome::Drop))
+    .run_v2(&td, &cap)
+    .await
+    .expect("ssh default deny scenario");
     set_event_capture(None);
 }

@@ -7,9 +7,9 @@ pub mod scenario;
 pub mod static_infra;
 
 pub use config_bundle::{
-    permissive_ssh_matchers, physical_zone_interface, smoke_icmp_allow_warn_bundle,
-    smoke_tcp_allow_warn_bundle, smoke_tcp_allow_warn_bundle_with_ssh,
-    ConfigBundleBuilder,
+    deny_ssh_matchers, permissive_ssh_matchers, physical_zone_interface,
+    smoke_icmp_allow_warn_bundle, smoke_tcp_allow_warn_bundle,
+    smoke_tcp_allow_warn_bundle_with_ssh, ConfigBundleBuilder, SshMatcherField,
 };
 pub use conntrack_queries::ConntrackSnapshotExt;
 pub use daemon::{TestDaemon, TestDaemonBuilder, TestDaemonBuildError, TestDeps};
