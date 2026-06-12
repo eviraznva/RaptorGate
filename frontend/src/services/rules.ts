@@ -1,7 +1,7 @@
 import { createApi } from "@reduxjs/toolkit/query/react";
 import { baseQueryWithReauth } from "./baseQueryWithReauth";
 import type { ApiResponse } from "../types/ApiResponse";
-import type { Rule, SmtpMatchers } from "../types/rules/Rules";
+import type { Rule, SmtpMatchers, SshMatchers } from "../types/rules/Rules";
 
 export type RulesPayload = {
   rules: Rule[];
@@ -15,6 +15,7 @@ export type CreateRuleBody = {
   content: string;
   priority: number;
   smtpMatchers: SmtpMatchers;
+  sshMatchers: SshMatchers;
 };
 
 export type UpdateRuleBody = Partial<CreateRuleBody>;

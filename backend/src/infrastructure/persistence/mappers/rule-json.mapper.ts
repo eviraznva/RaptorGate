@@ -3,6 +3,7 @@ import { Priority } from '../../../domain/value-objects/priority.vo.js';
 import {
   RuleRecord,
   type SmtpMatchers,
+  type SshMatchers,
 } from '../schemas/rules.schema.js';
 
 export class RuleJsonMapper {
@@ -21,6 +22,7 @@ export class RuleJsonMapper {
       new Date(record.updatedAt),
       record.createdBy,
       record.smtpMatchers,
+      record.sshMatchers,
     );
   }
 
@@ -37,6 +39,7 @@ export class RuleJsonMapper {
       updatedAt: rule.getUpdatedAt().toISOString(),
       description: rule.getDescription(),
       smtpMatchers: rule.getSmtpMatchers() as SmtpMatchers,
+      sshMatchers: rule.getSshMatchers() as SshMatchers,
     };
   }
 }

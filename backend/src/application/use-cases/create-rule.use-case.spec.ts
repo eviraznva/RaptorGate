@@ -20,6 +20,20 @@ import {
 } from '../ports/token-service.interface.js';
 import { CreateRuleUseCase } from './create-rule.use-case.js';
 
+const emptySshMatchers = {
+  clientSoftware: [],
+  serverSoftware: [],
+  clientProtoVersion: [],
+  serverProtoVersion: [],
+  kex: [],
+  hostKeyAlg: [],
+  cipher: [],
+  mac: [],
+  compression: [],
+  hostKeyType: [],
+  disconnectReason: [],
+};
+
 describe('CreateRuleUseCase', () => {
   let useCase: CreateRuleUseCase;
 
@@ -98,6 +112,7 @@ describe('CreateRuleUseCase', () => {
       priority: 100,
       accessToken: 'valid-token',
       smtpMatchers: { sender: [], recipient: [], message: [] },
+      sshMatchers: emptySshMatchers,
     };
 
     tokenService.decodeAccessToken.mockReturnValue(validClaims);
@@ -136,6 +151,7 @@ describe('CreateRuleUseCase', () => {
       priority: 50,
       accessToken: 'valid-token',
       smtpMatchers: { sender: [], recipient: [], message: [] },
+      sshMatchers: emptySshMatchers,
     };
     const validationError = new RaptorLangValidationException(
       'Unexpected token at 1:26',
@@ -165,6 +181,7 @@ describe('CreateRuleUseCase', () => {
       priority: 20,
       accessToken: 'bad-token',
       smtpMatchers: { sender: [], recipient: [], message: [] },
+      sshMatchers: emptySshMatchers,
     };
 
     tokenService.decodeAccessToken.mockReturnValue(null);
@@ -190,6 +207,7 @@ describe('CreateRuleUseCase', () => {
       priority: 10,
       accessToken: 'valid-token',
       smtpMatchers: { sender: [], recipient: [], message: [] },
+      sshMatchers: emptySshMatchers,
     };
 
     tokenService.decodeAccessToken.mockReturnValue(validClaims);

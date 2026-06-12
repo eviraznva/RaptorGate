@@ -1,4 +1,5 @@
 import { SmtpMatchersDto } from '../../presentation/dtos/smtp-matchers.dto';
+import { SshMatchersDto } from '../../presentation/dtos/ssh-matchers.dto';
 
 export class EditRuleDto {
   id: string;
@@ -9,4 +10,5 @@ export class EditRuleDto {
   content?: string;
   priority?: number;
   smtpMatchers?: SmtpMatchersDto;
+  sshMatchers?: SshMatchersDto;
 }

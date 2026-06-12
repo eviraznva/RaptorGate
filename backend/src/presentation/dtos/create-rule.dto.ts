@@ -14,6 +14,7 @@ import {
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { SmtpMatchersDto } from './smtp-matchers.dto';
+import { SshMatchersDto } from './ssh-matchers.dto';
 
 export class CreateRuleDto {
   @ApiProperty({
@@ -73,4 +74,9 @@ export class CreateRuleDto {
   @ValidateNested()
   @Type(() => SmtpMatchersDto)
   smtpMatchers: SmtpMatchersDto;
+
+  @ApiProperty({ type: SshMatchersDto })
+  @ValidateNested()
+  @Type(() => SshMatchersDto)
+  sshMatchers: SshMatchersDto;
 }

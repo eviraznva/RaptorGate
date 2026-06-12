@@ -51,6 +51,7 @@ export class CreateRuleUseCase {
       new Date(),
       claims.sub,
       dto.smtpMatchers,
+      dto.sshMatchers,
     );
 
     await this.rulesRepository.save(newRule);

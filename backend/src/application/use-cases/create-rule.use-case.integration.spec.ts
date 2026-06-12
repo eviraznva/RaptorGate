@@ -127,6 +127,19 @@ describeIntegration(
         priority: 100,
         accessToken: 'valid-token',
         smtpMatchers: { sender: [], recipient: [], message: [] },
+        sshMatchers: {
+          clientSoftware: [],
+          serverSoftware: [],
+          clientProtoVersion: [],
+          serverProtoVersion: [],
+          kex: [],
+          hostKeyAlg: [],
+          cipher: [],
+          mac: [],
+          compression: [],
+          hostKeyType: [],
+          disconnectReason: [],
+        },
       };
 
       tokenService.decodeAccessToken.mockReturnValue(validClaims);
@@ -148,6 +161,19 @@ describeIntegration(
         priority: 50,
         accessToken: 'valid-token',
         smtpMatchers: { sender: [], recipient: [], message: [] },
+        sshMatchers: {
+          clientSoftware: [],
+          serverSoftware: [],
+          clientProtoVersion: [],
+          serverProtoVersion: [],
+          kex: [],
+          hostKeyAlg: [],
+          cipher: [],
+          mac: [],
+          compression: [],
+          hostKeyType: [],
+          disconnectReason: [],
+        },
       };
 
       tokenService.decodeAccessToken.mockReturnValue(validClaims);

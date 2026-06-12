@@ -43,10 +43,12 @@ import {
   IpsMatchType,
   IpsPatternEncoding,
   SmtpMatchAction as ProtoSmtpMatchAction,
+  SshMatchAction as ProtoSshMatchAction,
   type DnsInspectionConfig as ProtoDnsInspectionConfig,
   type IpsConfig as ProtoIpsConfig,
   type NatRule as ProtoNatRule,
   type SmtpMatchers as ProtoSmtpMatchers,
+  type SshMatchers as ProtoSshMatchers,
   type TlsInspectionPolicy,
 } from "../grpc/generated/config/config_models.js";
 import type { Timestamp } from "../grpc/generated/google/protobuf/timestamp.js";
@@ -62,6 +64,12 @@ import type {
   SmtpMatchAction as DomainSmtpMatchAction,
   SmtpMatchers as DomainSmtpMatchers,
 } from "../../domain/value-objects/smtp-matchers.vo.js";
+import type {
+  SshMatch as DomainSshMatch,
+  SshMatchAction as DomainSshMatchAction,
+  SshMatchers as DomainSshMatchers,
+  SshReasonMatch as DomainSshReasonMatch,
+} from "../../domain/value-objects/ssh-matchers.vo.js";
 
 export const CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN =
   "CONFIG_SNAPSHOT_PUSH_GRPC_CLIENT_TOKEN";
@@ -245,6 +253,7 @@ export class GrpcConfigSnapshotPushService
         priority: r.getPriority().getValue(),
         content: r.getContent(),
         smtpMatchers: this.toSmtpMatchers(r.getSmtpMatchers()),
+        sshMatchers: this.toSshMatchers(r.getSshMatchers()),
       })),
       zones: b.zones.items.map((z) => ({
         id: z.getId(),
@@ -353,6 +362,60 @@ export class GrpcConfigSnapshotPushService
         return ProtoSmtpMatchAction.SMTP_MATCH_ACTION_ALLOW;
       case "deny":
         return ProtoSmtpMatchAction.SMTP_MATCH_ACTION_DENY;
+    }
+  }
+
+  private toSshMatchers(matchers: DomainSshMatchers): ProtoSshMatchers {
+    return {
+      clientSoftware: matchers.clientSoftware.map((match) =>
+        this.toSshMatch(match),
+      ),
+      serverSoftware: matchers.serverSoftware.map((match) =>
+        this.toSshMatch(match),
+      ),
+      clientProtoVersion: matchers.clientProtoVersion.map((match) =>
+        this.toSshMatch(match),
+      ),
+      serverProtoVersion: matchers.serverProtoVersion.map((match) =>
+        this.toSshMatch(match),
+      ),
+      kex: matchers.kex.map((match) => this.toSshMatch(match)),
+      hostKeyAlg: matchers.hostKeyAlg.map((match) => this.toSshMatch(match)),
+      cipher: matchers.cipher.map((match) => this.toSshMatch(match)),
+      mac: matchers.mac.map((match) => this.toSshMatch(match)),
+      compression: matchers.compression.map((match) => this.toSshMatch(match)),
+      hostKeyType: matchers.hostKeyType.map((match) => this.toSshMatch(match)),
+      disconnectReason: matchers.disconnectReason.map((match) =>
+        this.toSshReasonMatch(match),
+      ),
+    };
+  }
+
+  private toSshMatch(match: DomainSshMatch) {
+    const regex = match.regex.startsWith("(?s)")
+      ? match.regex
+      : `(?s)${match.regex}`;
+    return {
+      regex,
+      onMatch: this.toSshMatchAction(match.onMatch),
+    };
+  }
+
+  private toSshReasonMatch(match: DomainSshReasonMatch) {
+    return {
+      codes: match.codes,
+      onMatch: this.toSshMatchAction(match.onMatch),
+    };
+  }
+
+  private toSshMatchAction(
+    value: DomainSshMatchAction,
+  ): ProtoSshMatchAction {
+    switch (value) {
+      case "allow":
+        return ProtoSshMatchAction.SSH_MATCH_ACTION_ALLOW;
+      case "deny":
+        return ProtoSshMatchAction.SSH_MATCH_ACTION_DENY;
     }
   }
 

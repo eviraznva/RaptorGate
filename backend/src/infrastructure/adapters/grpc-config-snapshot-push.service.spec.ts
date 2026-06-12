@@ -11,7 +11,10 @@ import { ConfigurationSnapshot } from "../../domain/entities/configuration-snaps
 import { Checksum } from "../../domain/value-objects/checksum.vo.js";
 import { SnapshotType } from "../../domain/value-objects/snapshot-type.vo.js";
 import { NatProtocol } from "../grpc/generated/common/common.js";
-import { SmtpMatchAction as GrpcSmtpMatchAction } from "../grpc/generated/config/config_models.js";
+import {
+  SmtpMatchAction as GrpcSmtpMatchAction,
+  SshMatchAction as GrpcSshMatchAction,
+} from "../grpc/generated/config/config_models.js";
 import { GrpcConfigSnapshotPushService } from "./grpc-config-snapshot-push.service.js";
 
 function methodObject(methods: Record<string, unknown>) {
@@ -311,6 +314,19 @@ describe("GrpcConfigSnapshotPushService", () => {
         recipient: [{ regex: "^ops@company\\.com$", onMatch: "deny" }],
         message: [],
       }),
+      getSshMatchers: () => ({
+        clientSoftware: [],
+        serverSoftware: [],
+        clientProtoVersion: [],
+        serverProtoVersion: [],
+        kex: [],
+        hostKeyAlg: [],
+        cipher: [],
+        mac: [],
+        compression: [],
+        hostKeyType: [],
+        disconnectReason: [],
+      }),
     });
 
     const snapshot = ConfigurationSnapshot.create(
@@ -358,6 +374,97 @@ describe("GrpcConfigSnapshotPushService", () => {
           },
         ],
         message: [],
+      },
+    });
+  });
+
+  it("serializes ssh matchers into the gRPC payload", async () => {
+    let request: any;
+    const client = {
+      getService: () => ({
+        pushActiveConfigSnapshot: (value: any) => {
+          request = value;
+          return of({ accepted: true, appliedSnapshotId: value.snapshot.id });
+        },
+      }),
+    } as any;
+    const service = new GrpcConfigSnapshotPushService(client);
+    service.onModuleInit();
+
+    const rule = methodObject({
+      getId: () => "88888888-8888-4888-8888-888888888888",
+      getName: () => "SSH policy",
+      getZonePairId: () => "33333333-3333-4333-8333-333333333333",
+      getPriority: () => Priority.create(10),
+      getContent: () => "match protocol { = ssh : verdict allow }",
+      getSmtpMatchers: () => ({
+        sender: [],
+        recipient: [],
+        message: [],
+      }),
+      getSshMatchers: () => ({
+        clientSoftware: [{ regex: "^OpenSSH_.*$", onMatch: "allow" }],
+        serverSoftware: [],
+        clientProtoVersion: [],
+        serverProtoVersion: [],
+        kex: [{ regex: "(?s)^curve25519.*$", onMatch: "deny" }],
+        hostKeyAlg: [],
+        cipher: [],
+        mac: [],
+        compression: [],
+        hostKeyType: [],
+        disconnectReason: [{ codes: [2, 14], onMatch: "deny" }],
+      }),
+    });
+
+    const snapshot = ConfigurationSnapshot.create(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      1,
+      SnapshotType.create("auto_save"),
+      Checksum.create("0".repeat(64)),
+      true,
+      {
+        bundle: {
+          rules: { items: [rule] },
+          zones: { items: [] },
+          zone_interfaces: { items: [] },
+          zone_pairs: { items: [] },
+          nat_rules: { items: [] },
+          dns_blacklist: { items: [] },
+          ssl_bypass_list: { items: [] },
+          ips_signatures: { items: [] },
+          ml_model: null,
+          firewall_certificates: { items: [] },
+          tls_inspection_policy: undefined,
+        },
+      },
+      "test",
+      new Date("2026-05-09T00:00:00.000Z"),
+      "tester",
+    );
+
+    await service.pushActiveConfigSnapshot(snapshot, "apply");
+
+    expect(request.snapshot.bundle.rules[0]).toMatchObject({
+      sshMatchers: {
+        clientSoftware: [
+          {
+            regex: "(?s)^OpenSSH_.*$",
+            onMatch: GrpcSshMatchAction.SSH_MATCH_ACTION_ALLOW,
+          },
+        ],
+        kex: [
+          {
+            regex: "(?s)^curve25519.*$",
+            onMatch: GrpcSshMatchAction.SSH_MATCH_ACTION_DENY,
+          },
+        ],
+        disconnectReason: [
+          {
+            codes: [2, 14],
+            onMatch: GrpcSshMatchAction.SSH_MATCH_ACTION_DENY,
+          },
+        ],
       },
     });
   });

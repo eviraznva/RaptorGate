@@ -19,6 +19,46 @@ const smtpMatchersSchema = z.object({
 
 export type SmtpMatchers = z.infer<typeof smtpMatchersSchema>;
 
+const sshMatchSchema = z.object({
+  regex: z.string().min(1),
+  onMatch: smtpMatchActionSchema,
+});
+
+const sshReasonMatchSchema = z.object({
+  codes: z.array(z.number().int()),
+  onMatch: smtpMatchActionSchema,
+});
+
+const sshMatchersSchema = z.object({
+  clientSoftware: z.array(sshMatchSchema),
+  serverSoftware: z.array(sshMatchSchema),
+  clientProtoVersion: z.array(sshMatchSchema),
+  serverProtoVersion: z.array(sshMatchSchema),
+  kex: z.array(sshMatchSchema),
+  hostKeyAlg: z.array(sshMatchSchema),
+  cipher: z.array(sshMatchSchema),
+  mac: z.array(sshMatchSchema),
+  compression: z.array(sshMatchSchema),
+  hostKeyType: z.array(sshMatchSchema),
+  disconnectReason: z.array(sshReasonMatchSchema),
+});
+
+export type SshMatchers = z.infer<typeof sshMatchersSchema>;
+
+const emptySshMatchers = {
+  clientSoftware: [],
+  serverSoftware: [],
+  clientProtoVersion: [],
+  serverProtoVersion: [],
+  kex: [],
+  hostKeyAlg: [],
+  cipher: [],
+  mac: [],
+  compression: [],
+  hostKeyType: [],
+  disconnectReason: [],
+};
+
 export const RuleRecordSchema = z
   .object({
     id: uuidSchema,
@@ -36,6 +76,7 @@ export const RuleRecordSchema = z
       recipient: [],
       message: [],
     }),
+    sshMatchers: sshMatchersSchema.default(emptySshMatchers),
   })
   .strict();
 

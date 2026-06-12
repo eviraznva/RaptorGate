@@ -1,4 +1,5 @@
 import { SmtpMatchers } from '../../domain/value-objects/smtp-matchers.vo.js';
+import { SshMatchers } from '../../domain/value-objects/ssh-matchers.vo.js';
 
 export class EditRuleResponseDto {
   id: string;
@@ -12,4 +13,5 @@ export class EditRuleResponseDto {
   updatedAt: Date;
   createdBy: string;
   smtpMatchers: SmtpMatchers;
+  sshMatchers: SshMatchers;
 }

@@ -15,6 +15,7 @@ export class RuleResponseMapper {
       createdAt: rule.getCreatedAt().toISOString(),
       updatedAt: rule.getUpdatedAt().toISOString(),
       smtpMatchers: rule.getSmtpMatchers() as RuleItemResponseDto['smtpMatchers'],
+      sshMatchers: rule.getSshMatchers() as RuleItemResponseDto['sshMatchers'],
     };
   }
 }

@@ -1,5 +1,9 @@
 import { Priority } from '../value-objects/priority.vo.js';
 import {
+  SshMatchers,
+  createEmptySshMatchers,
+} from '../value-objects/ssh-matchers.vo.js';
+import {
   SmtpMatchers,
   createEmptySmtpMatchers,
 } from '../value-objects/smtp-matchers.vo.js';
@@ -17,6 +21,7 @@ export class FirewallRule {
     private updatedAt: Date,
     private readonly createdBy: string,
     private smtpMatchers: SmtpMatchers,
+    private sshMatchers: SshMatchers,
   ) {}
 
   public static create(
@@ -31,6 +36,7 @@ export class FirewallRule {
     updatedAt: Date,
     createdBy: string,
     smtpMatchers?: SmtpMatchers,
+    sshMatchers?: SshMatchers,
   ): FirewallRule {
     return new FirewallRule(
       id,
@@ -44,6 +50,7 @@ export class FirewallRule {
       updatedAt,
       createdBy,
       smtpMatchers ?? createEmptySmtpMatchers(),
+      sshMatchers ?? createEmptySshMatchers(),
     );
   }
 
@@ -91,6 +98,10 @@ export class FirewallRule {
     return this.smtpMatchers;
   }
 
+  public getSshMatchers(): SshMatchers {
+    return this.sshMatchers;
+  }
+
   public setName(name: string): void {
     this.name = name;
   }
@@ -121,5 +132,9 @@ export class FirewallRule {
 
   public setSmtpMatchers(smtpMatchers: SmtpMatchers): void {
     this.smtpMatchers = smtpMatchers;
+  }
+
+  public setSshMatchers(sshMatchers: SshMatchers): void {
+    this.sshMatchers = sshMatchers;
   }
 }

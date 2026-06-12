@@ -32,7 +32,8 @@ export class EditRuleUseCase {
       dto.content === undefined &&
       dto.priority === undefined &&
       dto.zonePairId === undefined &&
-      dto.smtpMatchers === undefined
+      dto.smtpMatchers === undefined &&
+      dto.sshMatchers === undefined
     )
       throw new AtLeastOneFieldRequiredException();
 
@@ -54,6 +55,8 @@ export class EditRuleUseCase {
     if (dto.zonePairId !== undefined) rule.setZonePairId(dto.zonePairId);
     if (dto.smtpMatchers !== undefined)
       rule.setSmtpMatchers(dto.smtpMatchers);
+    if (dto.sshMatchers !== undefined)
+      rule.setSshMatchers(dto.sshMatchers);
 
     rule.setUpdatedAt(new Date());
 
@@ -84,6 +87,7 @@ export class EditRuleUseCase {
       updatedAt: rule.getUpdatedAt(),
       createdBy: rule.getCreatedBy(),
       smtpMatchers: rule.getSmtpMatchers(),
+      sshMatchers: rule.getSshMatchers(),
     };
   }
 }

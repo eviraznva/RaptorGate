@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import type { Rule, SmtpMatchers, SmtpMatch } from "../../types/rules/Rules";
+import type {
+  Rule,
+  SmtpMatchers,
+  SmtpMatch,
+  SshMatchers,
+  SshMatch,
+  SshReasonMatch,
+} from "../../types/rules/Rules";
 import type { ApiSuccess } from "../../types/ApiResponse";
 import {
   useCreateRuleMutation,
@@ -31,6 +38,7 @@ interface FormState {
   description: string;
   isActive: boolean;
   smtpMatchers: SmtpMatchers;
+  sshMatchers: SshMatchers;
 }
 
 interface FormErrors {
@@ -55,6 +63,48 @@ const EMPTY_SMTP_MATCHERS: SmtpMatchers = {
   message: [],
 };
 
+const EMPTY_SSH_MATCHERS: SshMatchers = {
+  clientSoftware: [],
+  serverSoftware: [],
+  clientProtoVersion: [],
+  serverProtoVersion: [],
+  kex: [],
+  hostKeyAlg: [],
+  cipher: [],
+  mac: [],
+  compression: [],
+  hostKeyType: [],
+  disconnectReason: [],
+};
+
+const SSH_REGEX_CATEGORIES = [
+  "clientSoftware",
+  "serverSoftware",
+  "clientProtoVersion",
+  "serverProtoVersion",
+  "kex",
+  "hostKeyAlg",
+  "cipher",
+  "mac",
+  "compression",
+  "hostKeyType",
+] as const;
+
+type SshRegexCategory = (typeof SSH_REGEX_CATEGORIES)[number];
+
+const SSH_CATEGORY_LABELS: Record<SshRegexCategory, string> = {
+  clientSoftware: "Client Software",
+  serverSoftware: "Server Software",
+  clientProtoVersion: "Client Proto Version",
+  serverProtoVersion: "Server Proto Version",
+  kex: "KEX",
+  hostKeyAlg: "Host Key Alg",
+  cipher: "Cipher",
+  mac: "MAC",
+  compression: "Compression",
+  hostKeyType: "Host Key Type",
+};
+
 const EMPTY: FormState = {
   name: "",
   priority: "10",
@@ -63,6 +113,7 @@ const EMPTY: FormState = {
   description: "",
   isActive: true,
   smtpMatchers: EMPTY_SMTP_MATCHERS,
+  sshMatchers: EMPTY_SSH_MATCHERS,
 };
 
 function fromRule(r: Rule): FormState {
@@ -74,6 +125,7 @@ function fromRule(r: Rule): FormState {
     description: r.description ?? "",
     isActive: r.isActive,
     smtpMatchers: r.smtpMatchers ?? EMPTY_SMTP_MATCHERS,
+    sshMatchers: r.sshMatchers ?? EMPTY_SSH_MATCHERS,
   };
 }
 
@@ -205,6 +257,93 @@ export function RuleForm({
     }));
   }
 
+  function addSshMatcher(category: SshRegexCategory) {
+    const newMatch: SshMatch = { regex: "", onMatch: "allow" };
+    setForm((prev) => ({
+      ...prev,
+      sshMatchers: {
+        ...prev.sshMatchers,
+        [category]: [...prev.sshMatchers[category], newMatch],
+      },
+    }));
+  }
+
+  function removeSshMatcher(category: SshRegexCategory, index: number) {
+    setForm((prev) => ({
+      ...prev,
+      sshMatchers: {
+        ...prev.sshMatchers,
+        [category]: prev.sshMatchers[category].filter((_, i) => i !== index),
+      },
+    }));
+  }
+
+  function updateSshMatcher(
+    category: SshRegexCategory,
+    index: number,
+    field: keyof SshMatch,
+    value: string,
+  ) {
+    setForm((prev) => ({
+      ...prev,
+      sshMatchers: {
+        ...prev.sshMatchers,
+        [category]: prev.sshMatchers[category].map((m, i) =>
+          i === index ? { ...m, [field]: value } : m,
+        ),
+      },
+    }));
+  }
+
+  function addSshReasonMatcher() {
+    const newMatch: SshReasonMatch = { codes: [], onMatch: "deny" };
+    setForm((prev) => ({
+      ...prev,
+      sshMatchers: {
+        ...prev.sshMatchers,
+        disconnectReason: [...prev.sshMatchers.disconnectReason, newMatch],
+      },
+    }));
+  }
+
+  function removeSshReasonMatcher(index: number) {
+    setForm((prev) => ({
+      ...prev,
+      sshMatchers: {
+        ...prev.sshMatchers,
+        disconnectReason: prev.sshMatchers.disconnectReason.filter(
+          (_, i) => i !== index,
+        ),
+      },
+    }));
+  }
+
+  function updateSshReasonMatcher(
+    index: number,
+    field: keyof SshReasonMatch,
+    value: string,
+  ) {
+    setForm((prev) => ({
+      ...prev,
+      sshMatchers: {
+        ...prev.sshMatchers,
+        disconnectReason: prev.sshMatchers.disconnectReason.map((m, i) => {
+          if (i !== index) return m;
+          if (field === "codes") {
+            const codes = value
+              .split(",")
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0)
+              .map((s) => Number(s))
+              .filter((n) => Number.isInteger(n));
+            return { ...m, codes };
+          }
+          return { ...m, onMatch: value as SshReasonMatch["onMatch"] };
+        }),
+      },
+    }));
+  }
+
   const handleSelectZonePair = function (
     e: React.ChangeEvent<HTMLSelectElement>,
   ) {
@@ -230,6 +369,7 @@ export function RuleForm({
       content: form.content.trim(),
       priority: Number(form.priority),
       smtpMatchers: form.smtpMatchers,
+      sshMatchers: form.sshMatchers,
     };
 
     try {
@@ -517,6 +657,130 @@ export function RuleForm({
               )}
             </div>
           ))}
+
+          <div className="border-t border-[#262626]" />
+
+          {SSH_REGEX_CATEGORIES.map((category) => (
+            <div key={category}>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[10px] text-[#8a8a8a] uppercase tracking-[0.25em]">
+                  SSH {SSH_CATEGORY_LABELS[category]}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => addSshMatcher(category)}
+                  className="text-[10px] text-[#06b6d4] hover:text-[#0891b2] uppercase tracking-wider"
+                >
+                  + Add
+                </button>
+              </div>
+              {form.sshMatchers[category].length === 0 ? (
+                <div className="text-[10px] text-[#4a4a4a] italic">
+                  No {SSH_CATEGORY_LABELS[category].toLowerCase()} matchers
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {form.sshMatchers[category].map((match, idx) => (
+                    <div key={idx} className="space-y-2">
+                      <input
+                        type="text"
+                        placeholder="Regex pattern"
+                        value={match.regex}
+                        onChange={(e) =>
+                          updateSshMatcher(
+                            category,
+                            idx,
+                            "regex",
+                            e.target.value,
+                          )
+                        }
+                        className="input text-sm"
+                      />
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={match.onMatch}
+                          onChange={(e) =>
+                            updateSshMatcher(
+                              category,
+                              idx,
+                              "onMatch",
+                              e.target.value,
+                            )
+                          }
+                          className="input text-sm w-20 shrink-0"
+                        >
+                          <option value="allow">Allow</option>
+                          <option value="deny">Deny</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => removeSshMatcher(category, idx)}
+                          className="text-[#f43f5e] hover:text-[#fb7185] text-sm px-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-[10px] text-[#8a8a8a] uppercase tracking-[0.25em]">
+                SSH Disconnect Reason
+              </label>
+              <button
+                type="button"
+                onClick={addSshReasonMatcher}
+                className="text-[10px] text-[#06b6d4] hover:text-[#0891b2] uppercase tracking-wider"
+              >
+                + Add
+              </button>
+            </div>
+            {form.sshMatchers.disconnectReason.length === 0 ? (
+              <div className="text-[10px] text-[#4a4a4a] italic">
+                No disconnect reason matchers
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {form.sshMatchers.disconnectReason.map((match, idx) => (
+                  <div key={idx} className="space-y-2">
+                    <input
+                      type="text"
+                      placeholder="Codes (comma-separated, e.g. 2, 14)"
+                      value={match.codes.join(", ")}
+                      onChange={(e) =>
+                        updateSshReasonMatcher(idx, "codes", e.target.value)
+                      }
+                      className="input text-sm"
+                    />
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={match.onMatch}
+                        onChange={(e) =>
+                          updateSshReasonMatcher(idx, "onMatch", e.target.value)
+                        }
+                        className="input text-sm w-20 shrink-0"
+                      >
+                        <option value="allow">Allow</option>
+                        <option value="deny">Deny</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => removeSshReasonMatcher(idx)}
+                        className="text-[#f43f5e] hover:text-[#fb7185] text-sm px-1"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Is Active toggle */}
           <div className="flex items-center justify-between py-3 border-t border-[#262626]">
